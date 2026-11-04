@@ -11,9 +11,9 @@ Licença: o projeto base é AGPL-3.0. Software derivado distribuído (ou ofereci
 ## CP0 — Ambiente
 
 - [x] Clonar `xxsamboladiones/Risk-P2P` em `A:\BRiskCall\Risk-P2P`
-- [ ] `pnpm install` na raiz
-- [ ] Confirmar toolchain: Node, pnpm 10.15, Rust (cargo) para o `desktop-backend`
-- [ ] `pnpm typecheck` e `pnpm test` passando no estado original (linha de base)
+- [x] `pnpm install` na raiz (pnpm 10.15 via corepack; Node 22)
+- [~] Toolchain: Node e pnpm ok; **Rust (cargo) não instalado**, necessário para o `desktop-backend`
+- [x] `pnpm typecheck` e `pnpm test` passando (web 176, rtc 69, desktop 13, protocol 7)
 - [ ] `pnpm dev` abre o app Electron
 
 **Pronto quando:** o app abre e os testes originais passam.

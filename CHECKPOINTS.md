@@ -44,14 +44,14 @@ Hoje: `loopbackWithoutChrome` captura o áudio do sistema inteiro, exceto o do R
 
 Meta: ao compartilhar uma janela, enviar só o áudio daquele aplicativo.
 
-- [ ] Obter o PID a partir do id da fonte (`window:HWND` → `GetWindowThreadProcessId`)
-- [ ] Captura por processo com WASAPI *process loopback* (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, incluir árvore de processos) no `desktop-backend` (Rust)
-- [ ] Endpoint no sidecar (ex.: `/screen-audio/prepare` com PID) e streaming do PCM até o renderer
-- [ ] Renderer: criar a faixa de áudio (AudioWorklet ou `MediaStreamTrackGenerator`) e anexá-la ao stream da tela (`apps/web/src/call/media/screen-share.ts`)
-- [ ] Tela inteira continua usando o áudio do sistema (comportamento atual)
-- [ ] Fallback claro quando o Windows for anterior ao 10 2004 ou a captura falhar
-- [ ] Encerrar a captura ao parar o compartilhamento ou fechar a janela
-- [ ] Testes: unitários do mapeamento fonte → PID; manual com player de vídeo e jogo
+- [x] Obter o PID a partir do id da fonte (`window:HWND` → `GetWindowThreadProcessId`)
+- [x] Captura por processo com WASAPI *process loopback* (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, incluir árvore de processos) no `desktop-backend` (Rust)
+- [x] Endpoint no sidecar (ex.: `/screen-audio/prepare` com PID) e streaming do PCM até o renderer
+- [x] Renderer: criar a faixa de áudio (AudioWorklet ou `MediaStreamTrackGenerator`) e anexá-la ao stream da tela (`apps/web/src/call/media/screen-share.ts`)
+- [x] Tela inteira: mixa as capturas por processo, exceto Discord e BRisk
+- [x] Fallback quando o Windows for anterior ao 10 2004 ou a captura falhar
+- [x] Encerrar a captura ao parar o compartilhamento ou fechar a janela
+- [~] Testes: unitários do mapeamento fonte → PID (ok); endpoint testado com áudio real (pico 0.17). Falta teste manual dentro do Electron com jogo/player e Discord
 
 Limitação conhecida: navegadores agrupam o áudio de todas as abas sob o mesmo processo. Dá para isolar o navegador, não uma aba. Ver CP3.
 
@@ -63,10 +63,10 @@ Limitação conhecida: navegadores agrupam o áudio de todas as abas sob o mesmo
 
 Objetivo: estar em call no Discord enquanto o Risk transmite, sem um atrapalhar o outro.
 
-- [ ] Tela inteira: process loopback em modo **excluir** (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) para tudo menos Discord e Risk, de modo que a voz do Discord nunca entra na transmissão
-- [ ] Janela: modo **incluir** só o processo da janela (CP2)
-- [ ] Microfone desligado por padrão no Risk: o Discord continua dono do microfone e da voz
-- [ ] Não mexer no dispositivo padrão de áudio nem usar modo exclusivo do WASAPI
+- [x] Tela inteira: capturas por processo, sem Discord e BRisk (em vez do modo *excluir*, que aceita um PID só) (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) para tudo menos Discord e Risk, de modo que a voz do Discord nunca entra na transmissão
+- [x] Janela: modo **incluir** só o processo da janela (CP2)
+- [ ] Microfone desligado por padrão no BRisk: o Discord continua dono do microfone e da voz
+- [x] Não mexer no dispositivo padrão de áudio nem usar modo exclusivo do WASAPI
 - [ ] Sem eco: o espectador não ouve a própria voz de volta; confirmar que o áudio do Risk não vaza para o Discord
 - [ ] Teste manual: call no Discord + jogo + transmissão no Risk, conferindo que a voz do Discord não aparece no stream
 

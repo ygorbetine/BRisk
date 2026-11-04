@@ -1,9 +1,15 @@
 import type { ScreenShareProvider } from "@risk/rtc";
+import {
+  isWindowsDesktop,
+  processAudioRequestForSource,
+  startProcessAudioCapture,
+  type ProcessAudioCapture,
+} from "./process-audio";
 
 export type DisplayAudioSettings = MediaTrackSettings & { restrictOwnAudio?: boolean };
 
 export type DesktopScreenAudioPreparation = {
-  mode: "display" | "pipewire" | "unavailable";
+  mode: "display" | "pipewire" | "process" | "unavailable";
   sourceName?: string;
   sourceLabel?: string;
   excludedRisk: boolean;
@@ -42,6 +48,30 @@ export async function startScreenCapture(
     return { stream: await provider.startScreenShare(sourceId, false), desktopAudio: null };
   }
 
+  if (isWindowsDesktop()) {
+    // Áudio por processo: janela = só aquele app; tela = tudo menos Discord e BRisk.
+    const chosenId = sourceId ?? await window.desktop?.chooseScreenSource();
+    if (!chosenId) throw new DOMException("Compartilhamento cancelado.", "NotAllowedError");
+    const request = processAudioRequestForSource(chosenId);
+    const processAudio = request ? await startProcessAudioCapture(request).catch(() => null) : null;
+    if (processAudio) {
+      activeProcessAudio = processAudio;
+      try {
+        const stream = await startDesktopVideoShare(chosenId);
+        stream.addTrack(processAudio.track);
+        return {
+          stream,
+          desktopAudio: { mode: "process", excludedRisk: true, sourceName: request?.mode },
+        };
+      } catch (error) {
+        await stopActiveProcessAudio();
+        throw error;
+      }
+    }
+    // Sem suporte (Windows antigo etc.): mantém o loopback do sistema sem o Risk.
+    sourceId = chosenId;
+  }
+
   const desktopAudio = await prepareDesktopScreenAudio(excludeRisk).catch((error) => {
     console.warn("Não foi possível consultar o backend de áudio de tela; usando captura padrão.", error);
     return null;
@@ -61,6 +91,10 @@ export function reportScreenAudioExclusion(
   excludeRisk: boolean,
 ): void {
   if (!excludeRisk) return;
+  if (preparation?.mode === "process") {
+    console.info("BRisk screen audio isolated by process", { scope: preparation.sourceName });
+    return;
+  }
   if (preparation?.mode === "pipewire" && preparation.excludedRisk) {
     console.info("Risk screen audio exclusion active", {
       mode: "pipewire-node-exclusion",
@@ -100,7 +134,16 @@ export async function prepareDesktopScreenAudio(excludeRisk: boolean): Promise<D
   return response.json() as Promise<DesktopScreenAudioPreparation>;
 }
 
+let activeProcessAudio: ProcessAudioCapture | undefined;
+
+async function stopActiveProcessAudio(): Promise<void> {
+  const current = activeProcessAudio;
+  activeProcessAudio = undefined;
+  await current?.stop().catch(() => undefined);
+}
+
 export async function stopDesktopScreenAudio(): Promise<void> {
+  await stopActiveProcessAudio();
   if (!window.desktop?.getBackendConfig) return;
   try {
     const config = await window.desktop.getBackendConfig();

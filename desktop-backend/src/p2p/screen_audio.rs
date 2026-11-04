@@ -74,6 +74,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/screen-audio/prepare", post(prepare))
         .route("/screen-audio/stop", post(stop))
+        .route("/screen-audio/process-capture", post(super::process_audio::process_capture))
 }
 
 async fn prepare(Json(input): Json<PrepareInput>) -> Json<PrepareResponse> {
@@ -114,6 +115,7 @@ async fn prepare(Json(input): Json<PrepareInput>) -> Json<PrepareResponse> {
 }
 
 async fn stop() -> Json<Value> {
+    super::process_audio::stop_process_capture().await;
     stop_pipewire().await;
     Json(serde_json::json!({ "ok": true }))
 }

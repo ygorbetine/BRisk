@@ -1,3 +1,4 @@
+import { BriskMark } from "./BriskMark";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
@@ -596,7 +597,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
 
   return <main className="room call-workspace">
     <header>
-      <div className="brand"><Sparkles/> BRisk</div>
+      <div className="brand"><BriskMark size={26}/> BRisk</div>
       <div><strong>{context?.voiceChannelName ?? "Sala ao vivo"}</strong><span>{context?.groupName ? `${context.groupName} · ` : ""}{roomId}</span></div>
       <div className="call-header-actions">
         <button className="minimize-call" onClick={() => {

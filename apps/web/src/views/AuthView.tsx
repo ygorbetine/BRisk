@@ -1,5 +1,5 @@
+import { BriskMark } from "../components/BriskMark";
 import { useState, type FormEvent } from "react";
-import { Sparkles } from "lucide-react";
 import { useRiskApplication } from "../application/ApplicationContext";
 import { useCallStore } from "../store";
 
@@ -24,7 +24,7 @@ export function AuthView() {
   }
 
   return <main className="auth"><section className="auth-card">
-    <div className="brand"><Sparkles/> BRisk</div>
+    <div className="brand"><BriskMark size={26}/> BRisk</div>
     <h1>{register ? "Crie seu espaço" : "Bom ter você de volta"}</h1>
     <p>Conversas que parecem estar na mesma sala.</p>
     <form onSubmit={submit}>

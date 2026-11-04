@@ -153,7 +153,7 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 - [x] Nome do produto: **BRisk** (interface, título da janela, bandeja, `productName`, `appId` `com.brisk.calls`, nome do instalador)
 - [ ] Renomear os identificadores internos de Risk para BRisk (pacotes `@risk/*`, `RISK_*`, `risk-desktop-token`, esquema de protocolo, diretório de dados). Só depois de o app rodar, porque mexe no protocolo e nos dados locais
 - [ ] Atualizar `README.md`, `docs/` e `infrastructure/coturn/README.md` com o nome novo
-- [ ] Ícone e logo próprios do BRisk
+- [x] Ícone e logo próprios do BRisk (marca "B" em degradê magenta/violeta: `apps/web/src/assets/brisk-mark.svg`, `icon.png`/`icon.ico` do desktop, favicon)
 - [ ] Revisar o `THIRD_PARTY_NOTICES.md` e manter a licença AGPL
 - [ ] `pnpm package:win` gera o instalador
 - [ ] Teste de ponta a ponta entre duas máquinas

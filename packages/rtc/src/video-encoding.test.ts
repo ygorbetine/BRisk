@@ -34,4 +34,16 @@ describe("política de codificação de vídeo", () => {
       priority: "low",
     });
   });
+
+  it("sem bitrate forçado mantém o teto de 12 Mbps e a divisão da malha", () => {
+    const screen = { source: "screen" as const, maxBitrate: 30_000_000 };
+    expect(resolveVideoSenderPolicy(screen, 1).maxBitrate).toBe(12_000_000);
+  });
+
+  it("bitrate forçado pelo usuário vai até 50 Mbps e ignora o teto da malha", () => {
+    const screen = { source: "screen" as const, maxBitrate: 30_000_000, forceBitrate: true };
+    expect(resolveVideoSenderPolicy(screen, 1).maxBitrate).toBe(30_000_000);
+    expect(resolveVideoSenderPolicy(screen, 6).maxBitrate).toBe(30_000_000);
+    expect(resolveVideoSenderPolicy({ ...screen, maxBitrate: 90_000_000 }, 1).maxBitrate).toBe(50_000_000);
+  });
 });

@@ -9,6 +9,10 @@ export type ScreenQualityProfile = {
   fps: number;
   maxBitrate: number;
   contentHint: "detail" | "motion";
+  /** Bitrate escolhido pelo usuário (Alto/Máximo/Personalizado): ignora o teto de proteção da malha. */
+  forceBitrate?: boolean;
+  /** O que sacrificar quando a rede não aguenta. */
+  degradation?: "balanced" | "resolution" | "framerate";
 };
 
 type ScreenCaptureConstraints = MediaTrackConstraints & { resizeMode?: "crop-and-scale" };
@@ -31,7 +35,12 @@ export function screenVideoPublication(profile: ScreenQualityProfile): VideoPubl
     maxFramerate: profile.fps,
     targetWidth: profile.width,
     targetHeight: profile.height,
-    degradationPreference: profile.contentHint === "motion" ? "balanced" : "maintain-resolution",
+    forceBitrate: profile.forceBitrate,
+    degradationPreference: profile.degradation === "resolution"
+      ? "maintain-resolution"
+      : profile.degradation === "framerate"
+        ? "maintain-framerate"
+        : profile.contentHint === "motion" ? "balanced" : "maintain-resolution",
   };
 }
 

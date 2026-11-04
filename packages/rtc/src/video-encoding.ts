@@ -7,6 +7,8 @@ export type VideoPublicationOptions = {
   targetWidth?: number;
   targetHeight?: number;
   degradationPreference?: RTCDegradationPreference;
+  /** O usuário escolheu o bitrate: sem o teto de proteção da malha, até 50 Mbps. */
+  forceBitrate?: boolean;
 };
 
 export type VideoSenderPolicy = {
@@ -21,6 +23,7 @@ export type VideoSenderPolicy = {
 // completos de 1080p60; em grupos maiores o custo do mesh é diluído.
 const MAX_SCREEN_MESH_BITRATE = 18_000_000;
 const MIN_SCREEN_BITRATE_PER_PEER = 1_800_000;
+const FORCED_SCREEN_BITRATE_CEILING = 50_000_000;
 
 export function resolveVideoSenderPolicy(
   options: VideoPublicationOptions | undefined,
@@ -30,10 +33,14 @@ export function resolveVideoSenderPolicy(
 ): VideoSenderPolicy {
   const peers = Math.max(1, Math.floor(activePeers));
   if (options?.source === "screen") {
-    const requestedBitrate = clamp(options.maxBitrate ?? 6_000_000, 750_000, 12_000_000);
+    const requestedBitrate = clamp(
+      options.maxBitrate ?? 6_000_000,
+      750_000,
+      options.forceBitrate ? FORCED_SCREEN_BITRATE_CEILING : 12_000_000,
+    );
     const meshBitrate = Math.max(MIN_SCREEN_BITRATE_PER_PEER, Math.floor(MAX_SCREEN_MESH_BITRATE / peers));
     return {
-      maxBitrate: Math.min(requestedBitrate, meshBitrate),
+      maxBitrate: options.forceBitrate ? requestedBitrate : Math.min(requestedBitrate, meshBitrate),
       maxFramerate: options.maxFramerate ? clamp(options.maxFramerate, 1, 60) : undefined,
       scaleResolutionDownBy: resolutionScale(capture, options),
       degradationPreference: options.degradationPreference ?? "balanced",

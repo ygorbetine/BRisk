@@ -33,10 +33,12 @@ import { incompatiblePeerMessage } from "../services/protocol-compatibility";
 import { observeVoiceActivity } from "../services/audio/voice-activity";
 import { networkPreferenceLabel } from "../services/network/settings";
 import {
-  isScreenQuality,
-  SCREEN_QUALITY_PROFILES as QUALITY_PROFILES,
-  type ScreenQuality,
-} from "../services/rtc/screen-quality";
+  buildScreenQualityProfile,
+  loadScreenQualitySettings,
+  saveScreenQualitySettings,
+  type ScreenQualitySettings,
+} from "../services/rtc/screen-quality-settings";
+import { ScreenQualityPanel } from "./ScreenQualityPanel";
 import { useCallStore, type Participant } from "../store";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { responsiveCallGrid } from "./call-layout";
@@ -47,13 +49,7 @@ import "./call-workspace.css";
 
 type ViewMode = "call" | "chat";
 
-const SCREEN_QUALITY_KEY = "risk.screenShareQuality";
 const SCREEN_AUDIO_KEY = "risk.screenShareAudio";
-
-function initialScreenQuality(): ScreenQuality {
-  const saved = localStorage.getItem(SCREEN_QUALITY_KEY);
-  return isScreenQuality(saved) ? saved : "1080p30";
-}
 
 function initialScreenAudio(): boolean {
   return localStorage.getItem(SCREEN_AUDIO_KEY) !== "false";
@@ -336,7 +332,9 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [attachments, setAttachments] = useState<ChatAttachmentRecord[]>([]);
   const [attachmentProgress, setAttachmentProgress] = useState<Record<string, ChatAttachmentProgress | undefined>>({});
-  const [quality, setQuality] = useState<ScreenQuality>(initialScreenQuality);
+  const [qualitySettings, setQualitySettings] = useState<ScreenQualitySettings>(() => loadScreenQualitySettings());
+  const [qualityPanelOpen, setQualityPanelOpen] = useState(false);
+  const qualityProfile = useMemo(() => buildScreenQualityProfile(qualitySettings), [qualitySettings]);
   const [screenAudioEnabled, setScreenAudioEnabled] = useState(initialScreenAudio);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
@@ -466,11 +464,11 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   }, [chat, context?.displayName, context?.textChannelId, setError, token]);
 
   useEffect(() => {
-    localStorage.setItem(SCREEN_QUALITY_KEY, quality);
-    void call.updateScreenQuality(QUALITY_PROFILES[quality]).catch((cause) => {
+    saveScreenQualitySettings(qualitySettings);
+    void call.updateScreenQuality(qualityProfile).catch((cause) => {
       setError(cause instanceof Error ? cause.message : "Não foi possível atualizar a qualidade da transmissão.");
     });
-  }, [call, quality, setError]);
+  }, [call, qualityProfile, qualitySettings, setError]);
 
   useEffect(() => {
     localStorage.setItem(SCREEN_AUDIO_KEY, String(screenAudioEnabled));
@@ -510,7 +508,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       return;
     }
     if (!window.desktop?.listScreenSources) {
-      await call.toggleScreen(roomId, undefined, screenAudioEnabled, QUALITY_PROFILES[quality]);
+      await call.toggleScreen(roomId, undefined, screenAudioEnabled, qualityProfile);
       return;
     }
     setSourcePickerOpen(true);
@@ -528,7 +526,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   async function chooseScreen(source: RiskDesktopSource): Promise<void> {
     setSourcePickerOpen(false);
     try {
-      await call.toggleScreen(roomId, source.id, screenAudioEnabled, QUALITY_PROFILES[quality]);
+      await call.toggleScreen(roomId, source.id, screenAudioEnabled, qualityProfile);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível iniciar o compartilhamento.");
     }
@@ -647,7 +645,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
         {localPreviews.screen && <LocalVideoTile
           stream={localPreviews.screen}
           tileId="local-screen"
-          label={localState.screenAudio ? `Tela · ${QUALITY_PROFILES[quality].label}` : `Tela · sem áudio · ${QUALITY_PROFILES[quality].label}`}
+          label={localState.screenAudio ? `Tela · ${qualityProfile.label}` : `Tela · sem áudio · ${qualityProfile.label}`}
           mirrored={false}
           microphone={localState.microphone}
           focused={focused === "local-screen"}
@@ -708,9 +706,9 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           <option value="audio">Com áudio</option>
           <option value="silent">Sem áudio</option>
         </select>
-        <select value={quality} onChange={(event) => setQuality(event.target.value as ScreenQuality)} aria-label="Qualidade da transmissão" title="Qualidade da transmissão">
-          {Object.entries(QUALITY_PROFILES).map(([value, profile]) => <option key={value} value={value}>{profile.label}</option>)}
-        </select>
+        <button className={qualityPanelOpen ? "quality-trigger active" : "quality-trigger"} onClick={() => setQualityPanelOpen((current) => !current)} title="Resolução, FPS e bitrate da transmissão" aria-expanded={qualityPanelOpen}>
+          {qualityProfile.label}
+        </button>
       </div>
       <button className="hangup" onClick={() => {
         setAudioSettingsOpen(false);
@@ -721,7 +719,8 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       }}><PhoneOff/><span>Sair</span></button>
     </footer>
 
-    {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>} 
+    {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>}
+    {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} onClose={() => setQualityPanelOpen(false)}/>} 
     {diagnosticsOpen && <section className="network-diagnostics" role="dialog" aria-label="Diagnóstico da conexão">
       <header><strong>Diagnóstico da conexão</strong><button onClick={() => setDiagnosticsOpen(false)}><X/></button></header>
       <p>Signaling: <b>{diagnostics?.signaling?.status ?? "indisponível"}</b></p>

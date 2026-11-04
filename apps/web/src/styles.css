@@ -49,3 +49,61 @@ button:focus-visible,input:focus-visible{outline:2px solid #b01fcf;outline-offse
 .member-fingerprint{color:var(--brisk-accent);font-weight:400}
 .member-duplicates{flex:none;padding:4px 9px;border-radius:999px;font-size:12px;background:#8b5cf622;color:#c9b6ff;border:1px solid #8b5cf655}
 .member-cleanup{margin:2px 0 6px 18px;padding:6px 12px;border-radius:999px;font-size:12px;background:#e9555514;color:#ff8585;border:1px solid #e9555530;display:flex;align-items:center;gap:6px}
+
+/* ===== Glassmorphism BRisk ===== */
+:root{
+  --glass-bg:rgba(34,12,52,.50);
+  --glass-bg-soft:rgba(34,12,52,.34);
+  --glass-bg-strong:rgba(24,7,38,.74);
+  --glass-border:rgba(255,255,255,.11);
+  --glass-border-soft:rgba(255,255,255,.07);
+  --glass-blur:blur(20px) saturate(155%);
+  --glass-shadow:0 18px 48px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.09);
+}
+/* Fundo ambiente: manchas de cor que o vidro desfoca */
+html,body,#root{min-height:100%}
+body{
+  background:
+    radial-gradient(60vmax 40vmax at 8% 12%,rgba(176,31,207,.34),transparent 60%),
+    radial-gradient(55vmax 45vmax at 92% 18%,rgba(91,108,249,.30),transparent 62%),
+    radial-gradient(50vmax 40vmax at 55% 100%,rgba(139,92,246,.26),transparent 62%),
+    #0f0316;
+  background-attachment:fixed;
+}
+.glass{background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);box-shadow:var(--glass-shadow)}
+
+html .social-shell{background:transparent}
+html .space-rail{background:var(--glass-bg-soft);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border-soft)}
+html .navigation{background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border-soft)}
+html .content-panel{background:rgba(18,4,28,.30)}
+html .content-header{background:var(--glass-bg-soft);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border-soft)}
+html .account-bar{background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);box-shadow:var(--glass-shadow)}
+html .message-box{background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border-soft);box-shadow:var(--glass-shadow)}
+html .channel:hover,html .mini-user:hover,html .space:hover{background:rgba(255,255,255,.06)}
+html .channel.active{background:linear-gradient(135deg,rgba(176,31,207,.26),rgba(91,108,249,.22));box-shadow:inset 0 0 0 1px rgba(255,255,255,.10)}
+
+html .modal-backdrop{background:rgba(10,2,18,.55);backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%)}
+html .modal{background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);box-shadow:0 30px 90px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.10)}
+
+/* Chamada */
+html .room footer{background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border-soft)}
+html .room header{background:var(--glass-bg-soft);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+html .tile{background:rgba(26,10,38,.55);border:1px solid var(--glass-border-soft);box-shadow:var(--glass-shadow)}
+html .tile-label{background:rgba(20,5,32,.55);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border:1px solid var(--glass-border-soft)}
+html .volume-panel,html .in-call-audio-settings,html .screen-picker{background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);box-shadow:var(--glass-shadow)}
+html .auth-card,html .lobby section{background:var(--glass-bg);backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);border:1px solid var(--glass-border)}
+.quality-trigger{background:rgba(255,255,255,.07);border:1px solid var(--glass-border-soft);color:#e8e0f5}
+.quality-trigger.active{background:linear-gradient(135deg,rgba(176,31,207,.35),rgba(91,108,249,.3))}
+
+@supports not (backdrop-filter:blur(1px)){
+  html .navigation,html .space-rail,html .content-header,html .account-bar,html .message-box,html .modal,html .room footer,html .volume-panel,html .in-call-audio-settings,html .screen-picker,.glass{background:#1a0a26}
+}
+@media (prefers-reduced-transparency:reduce){
+  html .navigation,html .space-rail,html .content-header,html .account-bar,html .message-box,html .modal,html .room footer,html .volume-panel,html .in-call-audio-settings,html .screen-picker,.glass{backdrop-filter:none;-webkit-backdrop-filter:none;background:#1a0a26}
+}
+html .auth,html .lobby{background:
+  radial-gradient(46vmax 36vmax at 12% 18%,rgba(176,31,207,.45),transparent 62%),
+  radial-gradient(44vmax 38vmax at 88% 22%,rgba(91,108,249,.40),transparent 62%),
+  radial-gradient(40vmax 34vmax at 50% 108%,rgba(139,92,246,.34),transparent 64%),
+  #0f0316}
+html .auth-card{box-shadow:0 28px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12),0 0 60px rgba(139,92,246,.18)}

@@ -136,17 +136,23 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 - [ ] Codificação por hardware (NVENC/AMF/QuickSync) para não derrubar o FPS do jogo; verificar as flags do Chromium no Electron
 - [ ] Codec: H.264 por hardware como padrão, AV1/VP9 onde houver suporte
 - [ ] Prioridade de nitidez/fluidez conforme o conteúdo (`contentHint` texto/movimento) e degradação graciosa quando a rede cai
-- [ ] Controles **independentes** de resolução e FPS (ex.: 1440p30, 720p60), não só presets fixos; presets continuam como atalho
-- [ ] Bitrate em **Automático** por padrão (ajusta conforme a rede e o conteúdo)
-- [ ] Níveis de bitrate para forçar qualidade: Automático / Alto / Máximo / Personalizado (Mbps). Em Máximo/Personalizado, prioriza nitidez e avisa sobre o custo de banda
-- [ ] Em rede ruim, a degradação é configurável: preservar resolução (cai FPS) ou preservar FPS (cai resolução)
-- [ ] Aplicar as mudanças com a transmissão ativa (sem reiniciar o compartilhamento), usando `RTCRtpSender.setParameters` / o equivalente do SFU
-- [ ] Limites seguros: validar a combinação resolução × FPS × bitrate contra o hardware e o upload medido
+- [x] Controles **independentes** de resolução e FPS (ex.: 1440p30, 720p60), não só presets fixos; presets continuam como atalho
+- [x] Bitrate em **Automático** por padrão (ajusta conforme a rede e o conteúdo)
+- [x] Níveis de bitrate para forçar qualidade: Automático / Alto / Máximo / Personalizado (Mbps). Em Máximo/Personalizado, prioriza nitidez e avisa sobre o custo de banda
+- [x] Em rede ruim, a degradação é configurável: preservar resolução (cai FPS) ou preservar FPS (cai resolução)
+- [x] Aplicar as mudanças com a transmissão ativa (já existia `updateScreenQuality`; o painel usa o mesmo caminho) (sem reiniciar o compartilhamento), usando `RTCRtpSender.setParameters` / o equivalente do SFU
+- [~] Limites seguros: upload estimado e aviso de banda no painel; falta validar contra o hardware e o upload medido resolução × FPS × bitrate contra o hardware e o upload medido
 - [ ] Medidor de qualidade para o transmissor (bitrate, FPS, perda, RTT)
 - [ ] Latência baixa: meta abaixo de ~300 ms em rede normal
 - [ ] Comparar lado a lado com o Discord (mesmo jogo, mesma rede) e registrar os resultados
 
 **Pronto quando:** em teste lado a lado, nitidez, fluidez e latência ficam equivalentes às do Discord.
+
+---
+
+### Interface (pedido extra)
+- [x] Glassmorfismo: fundo ambiente em degradê, painéis de vidro (menu lateral, cabeçalho, conta, composer, modais, barra da chamada, rótulos), com *fallback* sem `backdrop-filter` e para `prefers-reduced-transparency`
+- [~] Conferir visualmente as telas internas (só vi o login)
 
 ---
 

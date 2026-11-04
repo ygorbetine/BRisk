@@ -1,0 +1,14 @@
+.screen-quality{position:fixed;right:18px;bottom:96px;z-index:30;width:min(340px,calc(100vw - 36px));border-radius:18px;padding:16px;display:grid;gap:12px;color:#ece6f7}
+.screen-quality header{display:flex;align-items:center;justify-content:space-between}
+.screen-quality header .icon-button{background:none;padding:4px;border-radius:8px;color:#bfb2d6}
+.screen-quality label{display:grid;grid-template-columns:1fr 1.2fr;align-items:center;gap:10px;font-size:13px;color:#cfc4e3}
+.screen-quality select,.screen-quality input{width:100%;margin:0;padding:9px 10px;border-radius:10px;background:rgba(0,0,0,.28);border:1px solid var(--glass-border-soft);color:#fff}
+.screen-quality .sq-presets{display:flex;gap:6px;flex-wrap:wrap}
+.screen-quality .sq-presets button{padding:6px 11px;border-radius:999px;font-size:12px;background:rgba(255,255,255,.07);color:#e5dcf4;border:1px solid var(--glass-border-soft)}
+.screen-quality .sq-presets button.active{background:linear-gradient(135deg,#b01fcf,#6d5cf6);color:#fff;border-color:transparent}
+.screen-quality .sq-hint,.screen-quality .sq-note{margin:0;font-size:12px;color:#a592b8}
+.screen-quality .sq-warning{margin:0;font-size:12px;padding:9px 11px;border-radius:10px;background:rgba(233,85,85,.12);border:1px solid rgba(233,85,85,.3);color:#ffb3b3}
+.screen-quality footer{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:10px;border-top:1px solid var(--glass-border-soft)}
+.screen-quality footer div{display:grid;gap:2px}
+.screen-quality footer small{font-size:11px;color:#a592b8}
+.screen-quality footer strong{font-size:15px}

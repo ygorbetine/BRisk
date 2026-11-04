@@ -41,3 +41,10 @@ body::before{content:"";position:fixed;inset:0 0 auto 0;height:3px;z-index:9999;
 .room footer button.active{box-shadow:0 0 16px #8b5cf666}
 button:focus-visible,input:focus-visible{outline:2px solid #b01fcf;outline-offset:2px}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#3a1d55;border-radius:999px}::-webkit-scrollbar-track{background:transparent}
+
+/* Lista de membros agrupada por nome */
+.member-row{display:flex;align-items:center;gap:6px}
+.member-row .mini-user{flex:1;min-width:0}
+.member-copy{padding-left:18px;opacity:.82}
+.member-fingerprint{color:var(--brisk-accent);font-weight:400}
+.member-duplicates{flex:none;padding:4px 9px;border-radius:999px;font-size:12px;background:#8b5cf622;color:#c9b6ff;border:1px solid #8b5cf655}

@@ -42,7 +42,7 @@ import { GroupView } from "./GroupView";
 import { SettingsView } from "./SettingsView";
 import type { LocalProfile } from "../services/offline/profile";
 import { incompatiblePeerMessage } from "../services/protocol-compatibility";
-import { dedupeMembersForDisplay } from "../services/offline/member-display";
+import { dedupeMembersForDisplay, groupMembersByName } from "../services/offline/member-display";
 import { deleteLocalGroupChannel, renameLocalGroupChannel } from "../services/offline/channel-storage";
 import {
   addLocalGroupChannel,
@@ -91,6 +91,7 @@ export function HomeView() {
   const [canEditSelectedGroup, setCanEditSelectedGroup] = useState(false);
   const [localIdentityPeerId, setLocalIdentityPeerId] = useState("");
   const [selectedMember, setSelectedMember] = useState<PublicPeerIdentity | null>(null);
+  const [expandedMemberGroups, setExpandedMemberGroups] = useState<ReadonlySet<string>>(new Set());
   const [memberSaving, setMemberSaving] = useState(false);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
@@ -733,12 +734,46 @@ export function HomeView() {
             <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId && <small>{Object.keys(callParticipants).length + 1}</small>}</button>
             {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear sala de voz" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar sala de voz" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
           </div>)}
-          <div className="nav-section"><span>MEMBROS — {dedupeMembersForDisplay(groupMembers).length}</span>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div>
-          {dedupeMembersForDisplay(groupMembers).map((member) => {
-            const owner = selectedLocalGroup?.ownerPeerId === member.peerId;
-            const administrator = selectedLocalGroup?.administratorPeerIds?.includes(member.peerId);
-            return <button className="mini-user member-menu-trigger" key={member.peerId} onClick={() => { setSelectedMember(member); setModal("manageMember"); }}><ProfileAvatar displayName={member.displayName} avatar={member.avatar}/><span>{member.displayName}</span>{owner ? <em title="Proprietário"><ShieldCheck size={14}/> Dono</em> : administrator ? <em title="Administrador"><Shield size={14}/> Admin</em> : null}</button>;
-          })}
+          {(() => {
+            const memberGroups = groupMembersByName(groupMembers, {
+              self: groupMembers.find((member) => member.peerId === localIdentityPeerId),
+              ownerPeerId: selectedLocalGroup?.ownerPeerId,
+              administratorPeerIds: selectedLocalGroup?.administratorPeerIds,
+            });
+            const identityCount = memberGroups.reduce((total, group) => total + 1 + group.duplicates.length, 0);
+            const renderMember = (member: PublicPeerIdentity, extra?: { count?: number; expanded?: boolean; groupKey?: string; copy?: boolean }) => {
+              const owner = selectedLocalGroup?.ownerPeerId === member.peerId;
+              const administrator = selectedLocalGroup?.administratorPeerIds?.includes(member.peerId);
+              const fingerprint = `${member.publicKey.x ?? member.peerId}`.slice(0, 6);
+              return <div className={extra?.copy ? "member-row member-copy" : "member-row"} key={member.peerId}>
+                <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setModal("manageMember"); }}>
+                  <ProfileAvatar displayName={member.displayName} avatar={member.avatar}/>
+                  <span>{member.displayName}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
+                  {owner ? <em title="Proprietário"><ShieldCheck size={14}/> Dono</em> : administrator ? <em title="Administrador"><Shield size={14}/> Admin</em> : null}
+                </button>
+                {extra?.count ? <button
+                  className="member-duplicates"
+                  title={`${extra.count} outras identidades com este nome. Cada uma tem chave própria.`}
+                  aria-expanded={extra.expanded}
+                  onClick={() => setExpandedMemberGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(extra.groupKey!)) next.delete(extra.groupKey!); else next.add(extra.groupKey!);
+                    return next;
+                  })}
+                >+{extra.count}</button> : null}
+              </div>;
+            };
+            return <>
+              <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div>
+              {memberGroups.flatMap((group) => {
+                const expanded = expandedMemberGroups.has(group.key);
+                return [
+                  renderMember(group.primary, { count: group.duplicates.length, expanded, groupKey: group.key }),
+                  ...(expanded ? group.duplicates.map((copy) => renderMember(copy, { copy: true })) : []),
+                ];
+              })}
+            </>;
+          })()}
         </> : <>
           <button className={!activeFriend ? "channel active" : "channel"} onClick={() => setActiveFriend(null)}><Users/>Amigos</button>
           {activeFriend && <button className="channel active"><MessageCircle/>{activeFriend.displayName}</button>}

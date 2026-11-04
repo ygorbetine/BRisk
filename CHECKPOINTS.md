@@ -14,7 +14,8 @@ Licença: o projeto base é AGPL-3.0. Software derivado distribuído (ou ofereci
 - [x] `pnpm install` na raiz (pnpm 10.15 via corepack; Node 22)
 - [~] Toolchain: Node e pnpm ok; **Rust (cargo) não instalado**, necessário para o `desktop-backend`
 - [x] `pnpm typecheck` e `pnpm test` passando (web 176, rtc 69, desktop 13, protocol 7)
-- [ ] `pnpm dev` abre o app Electron
+- [x] `pnpm dev` abre o app Electron (Rust instalado; backend compilado)
+- [x] Supabase: organização BRiskGroup, projeto `brisk` (plano Free); URL e chave pública no `.env` local (fora do git)
 
 **Pronto quando:** o app abre e os testes originais passam.
 

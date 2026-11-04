@@ -95,6 +95,9 @@ export function ScreenQualityPanel({ settings, viewers, onChange, onClose }: Pro
       {forced && viewers > 1 && <p className="sq-warning">
         Bitrate forçado multiplicado por {viewers} espectadores consome muita banda de envio. Se a imagem travar, volte para Automático.
       </p>}
+      {!forced && viewers >= 4 && <p className="sq-hint">
+        Com {viewers} espectadores na malha P2P o envio é dividido entre todos e a imagem por pessoa fica mais leve. Para qualidade máxima use o SFU.
+      </p>}
       <p className="sq-note">Vale na hora, com a transmissão ativa.</p>
     </section>
   );

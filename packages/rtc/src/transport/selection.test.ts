@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MESH_HARD_MAX_PARTICIPANTS, selectCallTransport } from "./selection";
+import { MESH_HARD_MAX_PARTICIPANTS, MESH_PREFERRED_MAX_PARTICIPANTS, selectCallTransport } from "./selection";
 
 describe("selectCallTransport", () => {
   it("mantém chamadas pequenas no Mesh", () => {
@@ -10,8 +10,8 @@ describe("selectCallTransport", () => {
     });
   });
 
-  it("seleciona SFU automaticamente a partir do quinto participante", () => {
-    expect(selectCallTransport({ participantCount: 5, sfuAvailable: true })).toMatchObject({
+  it("seleciona SFU automaticamente acima do limite preferido do Mesh", () => {
+    expect(selectCallTransport({ participantCount: MESH_PREFERRED_MAX_PARTICIPANTS + 1, sfuAvailable: true })).toMatchObject({
       selected: "sfu",
       recommended: "sfu",
       reason: "participant-threshold",
@@ -19,7 +19,7 @@ describe("selectCallTransport", () => {
   });
 
   it("recomenda SFU sem quebrar o fallback quando o provedor ainda não existe", () => {
-    const result = selectCallTransport({ participantCount: MESH_HARD_MAX_PARTICIPANTS, sfuAvailable: false });
+    const result = selectCallTransport({ participantCount: MESH_HARD_MAX_PARTICIPANTS + 1, sfuAvailable: false });
     expect(result).toMatchObject({ selected: "mesh", recommended: "sfu", reason: "sfu-unavailable" });
     expect(result.label).toContain("não configurado");
   });
@@ -33,7 +33,7 @@ describe("selectCallTransport", () => {
   });
 
   it("respeita escolha manual e recusa SFU indisponível", () => {
-    const manualMesh = selectCallTransport({ participantCount: 6, preference: "mesh", sfuAvailable: true });
+    const manualMesh = selectCallTransport({ participantCount: 8, preference: "mesh", sfuAvailable: true });
     expect(manualMesh.selected).toBe("mesh");
     expect(manualMesh.label).toContain("manual");
     expect(selectCallTransport({ participantCount: 2, preference: "sfu", sfuAvailable: false })).toMatchObject({
@@ -48,7 +48,7 @@ describe("selectCallTransport", () => {
   });
 
   it("distingue recomendação do limite físico do Mesh", () => {
-    expect(selectCallTransport({ participantCount: 7, sfuAvailable: false })).toMatchObject({
+    expect(selectCallTransport({ participantCount: MESH_HARD_MAX_PARTICIPANTS + 1, sfuAvailable: false })).toMatchObject({
       selected: "mesh",
       recommended: "sfu",
       meshCapacityExceeded: true,

@@ -1,7 +1,7 @@
 import type { CallTransportKind, CallTransportPreference } from "./call-transport";
 
-export const MESH_PREFERRED_MAX_PARTICIPANTS = 4;
-export const MESH_HARD_MAX_PARTICIPANTS = 6;
+export const MESH_PREFERRED_MAX_PARTICIPANTS = 8;
+export const MESH_HARD_MAX_PARTICIPANTS = 8;
 
 export type CallNetworkHealth = {
   roundTripTimeMs?: number;

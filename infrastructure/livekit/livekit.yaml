@@ -1,0 +1,15 @@
+# Servidor SFU do BRisk (LiveKit). Substitua as chaves e o domínio.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50200
+  use_external_ip: true
+keys:
+  # gere com: docker run --rm livekit/generate
+  BRISK_API_KEY: TROQUE_ESTE_SEGREDO_COM_32_OU_MAIS_CARACTERES
+turn:
+  enabled: true
+  domain: livekit.seu-dominio.com
+  tls_port: 5349
+  udp_port: 3478

@@ -44,7 +44,7 @@ function persistAccessToken(token: string | null): void {
 }
 
 export const useCallStore = create<CallState>((set) => ({
-  token: storedAccessToken(), roomId: null, callContext: null, callWorkspaceOpen: false, selfPeerId: null, participants: {}, localPreviews: { microphone: null, camera: null, screen: null }, localState: { microphone: true, camera: false, screenShare: false }, error: null,
+  token: storedAccessToken(), roomId: null, callContext: null, callWorkspaceOpen: false, selfPeerId: null, participants: {}, localPreviews: { microphone: null, camera: null, screen: null }, localState: { microphone: false, camera: false, screenShare: false }, error: null,
   setSession: (token) => { persistAccessToken(token); set({ token, error: null }); },
   setRoom: (roomId) => set({ roomId, callWorkspaceOpen: Boolean(roomId) }), setCallContext: (callContext) => set({ callContext }), setCallWorkspaceOpen: (callWorkspaceOpen) => set({ callWorkspaceOpen }), setSelf: (selfPeerId) => set({ selfPeerId }),
   setLocalMedia: (localPreviews, localState) => set({ localPreviews, localState: { ...localState } }),
@@ -54,6 +54,6 @@ export const useCallStore = create<CallState>((set) => ({
   setError: (error) => set({ error }),
   reset: () => {
     persistAccessToken(null);
-    set({ token: null, roomId: null, callContext: null, callWorkspaceOpen: false, selfPeerId: null, participants: {}, localPreviews: { microphone: null, camera: null, screen: null }, localState: { microphone: true, camera: false, screenShare: false }, error: null });
+    set({ token: null, roomId: null, callContext: null, callWorkspaceOpen: false, selfPeerId: null, participants: {}, localPreviews: { microphone: null, camera: null, screen: null }, localState: { microphone: false, camera: false, screenShare: false }, error: null });
   },
 }));

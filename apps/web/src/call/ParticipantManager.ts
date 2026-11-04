@@ -26,7 +26,7 @@ export function placeholderParticipant(peerId: string): Participant {
   return {
     peerId,
     displayName: `Peer ${peerId.slice(0, 6)}`,
-    state: { microphone: true, camera: false, screenShare: false },
+    state: { microphone: false, camera: false, screenShare: false },
     streams: {},
     connection: "new",
   };

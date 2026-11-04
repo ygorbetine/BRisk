@@ -65,7 +65,7 @@ Objetivo: estar em call no Discord enquanto o Risk transmite, sem um atrapalhar 
 
 - [x] Tela inteira: capturas por processo, sem Discord e BRisk (em vez do modo *excluir*, que aceita um PID só) (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) para tudo menos Discord e Risk, de modo que a voz do Discord nunca entra na transmissão
 - [x] Janela: modo **incluir** só o processo da janela (CP2)
-- [ ] Microfone desligado por padrão no BRisk: o Discord continua dono do microfone e da voz
+- [x] Microfone desligado por padrão no BRisk: o Discord continua dono do microfone e da voz
 - [x] Não mexer no dispositivo padrão de áudio nem usar modo exclusivo do WASAPI
 - [ ] Sem eco: o espectador não ouve a própria voz de volta; confirmar que o áudio do Risk não vaza para o Discord
 - [ ] Teste manual: call no Discord + jogo + transmissão no Risk, conferindo que a voz do Discord não aparece no stream
@@ -128,8 +128,8 @@ Requisitos definidos: normalmente 4 pessoas, até 10; várias pessoas podem tran
 Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmissor (ex.: 9 × 8 Mbps = 72 Mbps de upload em 1080p60). Não é viável.
 
 - [x] Decisão: usar um **SFU** (recomendado: LiveKit, que tem servidor aberto, SDK para o navegador e simulcast). Cada transmissor envia um fluxo só; o servidor distribui.
-- [ ] Subir o SFU (VPS com boa banda de saída) e o emissor de tokens de sala
-- [ ] Trocar o transporte em `packages/rtc` (hoje `transport/mesh.ts`) por um cliente do SFU, mantendo a interface `call-transport.ts`
+- [~] Subir o SFU: `infrastructure/livekit` (compose + config + README) e emissor de tokens `supabase/functions/livekit-token` prontos; falta o usuário hospedar o servidor e publicar a função
+- [x] Trocar o transporte em `packages/rtc` (hoje `transport/mesh.ts`) por um cliente do SFU (`transport/sfu.ts`, LiveKit; ativo com `VITE_LIVEKIT_TOKEN_URL`), mantendo a interface `call-transport.ts`
 - [ ] Várias transmissões simultâneas na mesma sala, com layout de grade e foco em uma delas
 - [ ] Simulcast/SVC: o espectador recebe a camada que cabe na sua rede
 - [ ] Manter a malha P2P como modo opcional para 2 a 3 pessoas? (decidir; custo extra de manutenção)

@@ -86,18 +86,20 @@ describe("MediaManager", () => {
     expect(manager.state.cameraStreamId).toBe("local-media");
 
     await manager.toggleScreen(undefined, false);
-    expect(microphone.enabled).toBe(true);
+    expect(microphone.enabled).toBe(false);
     expect(microphone.applyConstraints).toHaveBeenCalledWith(expect.objectContaining({ autoGainControl: false }));
     expect(publishTrack).toHaveBeenLastCalledWith(microphone, manager.localStream);
     await manager.toggleScreen(undefined, false);
     expect(unpublishTrack).toHaveBeenCalledWith(screenTrack);
 
     await manager.toggleMicrophone();
+    expect(microphone.enabled).toBe(true);
+    await manager.toggleMicrophone();
     expect(microphone.enabled).toBe(false);
     expect(sendState).toHaveBeenCalledWith(expect.objectContaining({ microphone: false }), expect.any(String));
 
     await manager.cleanup();
     expect(stop).toHaveBeenCalled();
-    expect(manager.state).toEqual({ microphone: true, camera: false, screenShare: false });
+    expect(manager.state).toEqual({ microphone: false, camera: false, screenShare: false });
   });
 });

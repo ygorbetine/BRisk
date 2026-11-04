@@ -92,7 +92,7 @@ html .tile{background:rgba(26,10,38,.55);border:1px solid var(--glass-border-sof
 html .tile-label{background:rgba(20,5,32,.55);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border:1px solid var(--glass-border-soft)}
 html .volume-panel,html .in-call-audio-settings,html .screen-picker{background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);box-shadow:var(--glass-shadow)}
 html .auth-card,html .lobby section{background:var(--glass-bg);backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);border:1px solid var(--glass-border)}
-.quality-trigger{background:rgba(255,255,255,.07);border:1px solid var(--glass-border-soft);color:#e8e0f5}
+.quality-trigger{background:rgba(255,255,255,.07);border:1px solid var(--glass-border-soft);color:#e8e0f5;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;padding:8px 12px;flex:0 1 auto}
 .quality-trigger.active{background:linear-gradient(135deg,rgba(176,31,207,.35),rgba(91,108,249,.3))}
 
 @supports not (backdrop-filter:blur(1px)){
@@ -107,3 +107,13 @@ html .auth,html .lobby{background:
   radial-gradient(40vmax 34vmax at 50% 108%,rgba(139,92,246,.34),transparent 64%),
   #0f0316}
 html .auth-card{box-shadow:0 28px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12),0 0 60px rgba(139,92,246,.18)}
+
+/* Correções de alinhamento (conta, grupos de membros) */
+html .account-bar{align-items:center;min-height:56px;padding:8px 10px;overflow:hidden}
+html .account-bar .account-profile{background:transparent;border:0;padding:0;justify-self:center}
+html .account-bar .account-identity{align-self:center;text-align:left;min-width:0;background:transparent;border:0;padding:0}
+html .account-bar .account-identity strong,html .account-bar .account-identity small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+html .member-row{min-width:0}
+html .member-row .mini-user{margin:0;width:auto}
+html .member-copy{padding-left:0;margin-left:14px;border-left:2px solid rgba(176,31,207,.35)}
+html .member-cleanup{margin:2px 0 8px 14px;align-self:flex-start;white-space:nowrap}

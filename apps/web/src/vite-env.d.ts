@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_DEBUG_SIGNALING?: string;
   readonly VITE_ICE_SERVERS_JSON?: string;
   readonly VITE_TURN_CREDENTIALS_URL?: string;
+  readonly VITE_LIVEKIT_URL?: string;
+  readonly VITE_LIVEKIT_TOKEN_URL?: string;
   readonly VITE_RISK_APP_VERSION?: string;
 }
 

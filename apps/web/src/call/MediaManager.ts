@@ -42,7 +42,7 @@ export class MediaManager {
   private screenStream?: MediaStream;
   private screenQualityProfile: ScreenQualityProfile = SCREEN_QUALITY_PROFILES["1080p30"];
   private screenQualityRevision = 0;
-  private peerState: PeerState = { microphone: true, camera: false, screenShare: false };
+  private peerState: PeerState = { microphone: false, camera: false, screenShare: false };
 
   constructor(
     private readonly dependencies: MediaManagerDependencies,
@@ -61,7 +61,7 @@ export class MediaManager {
     this.microphoneSettings = undefined;
     this.camera = undefined;
     this.screenStream = undefined;
-    this.peerState = { microphone: true, camera: false, screenShare: false };
+    this.peerState = { microphone: false, camera: false, screenShare: false };
   }
 
   async initializeMicrophone(
@@ -79,6 +79,9 @@ export class MediaManager {
     this.rnnoiseMicrophone = microphoneSession.rnnoise;
     this.microphone = microphoneSession.track;
     this.microphoneSettings = { ...settings };
+    // O microfone começa mudo: evita vazar voz ao entrar (convive com a call do Discord).
+    microphoneSession.track.enabled = false;
+    microphoneSession.inputStream.getAudioTracks().forEach((input) => { input.enabled = false; });
     this.local.addTrack(microphoneSession.track);
     await transport.publishTrack(microphoneSession.track, this.local);
     if (!this.dependencies.isActive(lifecycle)) throw new DOMException("Entrada na chamada cancelada.", "AbortError");

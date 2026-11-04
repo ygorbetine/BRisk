@@ -5,7 +5,7 @@
   "description": "Comunicação P2P com áudio, vídeo, tela e chat via WebRTC",
   "homepage": "https://github.com/xxsamboladiones/Risk-P2P",
   "author": {
-    "name": "Risk P2P",
+    "name": "BRisk",
     "email": "xxsamboladiones@users.noreply.github.com"
   },
   "main": "dist/main.js",
@@ -28,8 +28,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.risk.calls",
-    "productName": "Risk",
+    "appId": "com.brisk.calls",
+    "productName": "BRisk",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -93,7 +93,7 @@
       "icon": "build/icon.png",
       "category": "Network",
       "maintainer": "Risk P2P <xxsamboladiones@users.noreply.github.com>",
-      "artifactName": "Risk-${version}-${arch}.${ext}"
+      "artifactName": "BRisk-${version}-${arch}.${ext}"
     }
   }
 }

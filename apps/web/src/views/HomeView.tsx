@@ -721,7 +721,7 @@ export function HomeView() {
       </aside>
 
       <aside className={`navigation ${roomId ? "in-call" : ""}`}>
-        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "Risk"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
+        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "BRisk"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
         {selectedCommunity ? <>
           <div className="nav-section"><span>CANAIS DE TEXTO</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
           {channels.filter((item) => item.kind === "text").map((channel) => <div className="channel-item" key={channel.id}>
@@ -747,7 +747,7 @@ export function HomeView() {
         {roomId && <section className="voice-session-panel">
           <button className="voice-session-summary" onClick={() => setCallWorkspaceOpen(true)}>
             <span><i/>Voz conectada</span>
-            <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "Risk"}</small>
+            <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "BRisk"}</small>
           </button>
           <div className="voice-session-actions">
             <button className={localCallState.microphone ? "" : "off"} onClick={() => void call.toggleMicrophone(roomId)} title={localCallState.microphone ? "Desativar microfone" : "Ativar microfone"}>{localCallState.microphone ? <Mic/> : <MicOff/>}</button>

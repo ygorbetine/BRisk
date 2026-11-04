@@ -100,7 +100,7 @@ export function VoiceVideoSettingsPanel() {
         {selectedMicrophoneMissing && <option value={settings.microphoneDeviceId}>Microfone salvo — indisponível</option>}
         {microphones.map((microphone) => <option key={microphone.deviceId} value={microphone.deviceId}>{microphone.label}</option>)}
       </select>
-      <small>Escolha o dispositivo de entrada usado nas chamadas. Funciona no Windows e Linux. Se o dispositivo salvo estiver desconectado, o Risk usa o microfone padrão como fallback.</small>
+      <small>Escolha o dispositivo de entrada usado nas chamadas. Funciona no Windows e Linux. Se o dispositivo salvo estiver desconectado, o BRisk usa o microfone padrão como fallback.</small>
     </label>
 
     <button
@@ -141,11 +141,11 @@ export function VoiceVideoSettingsPanel() {
         checked={settings.excludeRiskAudioFromScreenShare}
         onChange={(event) => update({ excludeRiskAudioFromScreenShare: event.target.checked })}
       />
-      <span><strong>Excluir áudio do Risk da transmissão</strong><small>Ao compartilhar a tela, tenta capturar o PC sem retransmitir as vozes reproduzidas pelo próprio Risk.</small></span>
+      <span><strong>Excluir áudio do BRisk da transmissão</strong><small>Ao compartilhar a tela, tenta capturar o PC sem retransmitir as vozes reproduzidas pelo próprio BRisk.</small></span>
     </label>
 
     <div className="settings-note">
-      Configurações salvas automaticamente. Mudanças de microfone e anti-noise entram em vigor na próxima entrada em uma sala de voz; durante uma chamada, use o painel Áudio para aplicá-las sem desconectar. A exclusão do áudio do Risk vale no próximo compartilhamento de tela.
+      Configurações salvas automaticamente. Mudanças de microfone e anti-noise entram em vigor na próxima entrada em uma sala de voz; durante uma chamada, use o painel Áudio para aplicá-las sem desconectar. A exclusão do áudio do BRisk vale no próximo compartilhamento de tela.
       <span className="settings-autosave" key={savedAt}>Salvo automaticamente</span>
     </div>
   </div>;

@@ -24,7 +24,7 @@ export function AuthView() {
   }
 
   return <main className="auth"><section className="auth-card">
-    <div className="brand"><Sparkles/> Risk</div>
+    <div className="brand"><Sparkles/> BRisk</div>
     <h1>{register ? "Crie seu espaço" : "Bom ter você de volta"}</h1>
     <p>Conversas que parecem estar na mesma sala.</p>
     <form onSubmit={submit}>

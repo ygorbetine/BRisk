@@ -116,8 +116,8 @@ if (hasSingleInstanceLock) {
     openMainWindow();
     app.on("activate", showMainWindow);
   }).catch((error) => {
-    console.error("Falha ao iniciar o Risk", error);
-    dialog.showErrorBox("Risk não conseguiu iniciar", error instanceof Error ? error.message : String(error));
+    console.error("Falha ao iniciar o BRisk", error);
+    dialog.showErrorBox("BRisk não conseguiu iniciar", error instanceof Error ? error.message : String(error));
     void backend.clearDevBridge();
     backend.stop();
     app.quit();

@@ -87,7 +87,7 @@ export function AttachmentCard(props: AttachmentCardProps) {
       <div className="attachment-copy">
         <strong title={manifest.filename}>{manifest.filename}</strong>
         <span>{formatBytes(manifest.size)} · {kindLabel(resolvedKind)}</span>
-        {resolvedKind === "executable" && <em className="attachment-warning"><FileWarning size={14}/> Executável recebido. O Risk nunca abre este arquivo automaticamente.</em>}
+        {resolvedKind === "executable" && <em className="attachment-warning"><FileWarning size={14}/> Executável recebido. O BRisk nunca abre este arquivo automaticamente.</em>}
       </div>
     </div>
 

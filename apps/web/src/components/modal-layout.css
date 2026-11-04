@@ -45,7 +45,7 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: #667180 #0d1117;
+  scrollbar-color: #8a7a9e #160620;
 }
 
 .modal-content::-webkit-scrollbar {
@@ -53,13 +53,13 @@
 }
 
 .modal-content::-webkit-scrollbar-track {
-  background: #0d1117;
+  background: #160620;
   border-radius: 999px;
 }
 
 .modal-content::-webkit-scrollbar-thumb {
-  background: #667180;
-  border: 3px solid #0d1117;
+  background: #8a7a9e;
+  border: 3px solid #160620;
   border-radius: 999px;
 }
 
@@ -67,7 +67,7 @@
   position: sticky;
   z-index: 2;
   top: 0;
-  background: #090c11;
+  background: #0f0316;
 }
 
 @media (max-height: 720px) {

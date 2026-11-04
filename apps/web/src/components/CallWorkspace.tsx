@@ -596,14 +596,14 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
 
   return <main className="room call-workspace">
     <header>
-      <div className="brand"><Sparkles/> Risk</div>
+      <div className="brand"><Sparkles/> BRisk</div>
       <div><strong>{context?.voiceChannelName ?? "Sala ao vivo"}</strong><span>{context?.groupName ? `${context.groupName} · ` : ""}{roomId}</span></div>
       <div className="call-header-actions">
         <button className="minimize-call" onClick={() => {
           setAudioSettingsOpen(false);
           setSourcePickerOpen(false);
           onMinimize();
-        }} title="Voltar para o Risk"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
+        }} title="Voltar para o BRisk"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
         <div className="call-view-tabs">
           <button className={view === "call" ? "active" : ""} onClick={() => setView("call")}><Video size={16}/><span>Chamada</span></button>
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")} disabled={!context?.textChannelId}><MessageCircle size={16}/><span>Chat</span></button>

@@ -12,7 +12,7 @@ export function createApplicationTray(iconPath: string, actions: TrayActions): T
     if (source.isEmpty()) throw new Error(`Ícone da bandeja não encontrado em ${iconPath}`);
     const size = process.platform === "darwin" ? 18 : 22;
     const tray = new Tray(source.resize({ width: size, height: size, quality: "best" }));
-    tray.setToolTip("Risk");
+    tray.setToolTip("BRisk");
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: "Abrir app", click: actions.show },
       { label: "Reiniciar app", click: actions.restart },
@@ -22,7 +22,7 @@ export function createApplicationTray(iconPath: string, actions: TrayActions): T
     tray.on("click", actions.show);
     return tray;
   } catch (error) {
-    console.error("Não foi possível criar o ícone da bandeja; fechar a janela encerrará o Risk.", error);
+    console.error("Não foi possível criar o ícone da bandeja; fechar a janela encerrará o BRisk.", error);
     return undefined;
   }
 }

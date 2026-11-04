@@ -84,6 +84,6 @@ export function NetworkSettingsPanel() {
       {error && <div className="settings-device-error">{error}</div>}
     </section>
 
-    <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o Risk ainda pode usar conexão direta, STUN ou TURN.</div>
+    <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o BRisk ainda pode usar conexão direta, STUN ou TURN.</div>
   </div>;
 }

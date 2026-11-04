@@ -34,7 +34,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     height: bounds.height,
     minWidth: bounds.minWidth,
     minHeight: bounds.minHeight,
-    backgroundColor: "#090b10",
+    backgroundColor: "#12041a",
     icon: options.iconPath,
     show: false,
     autoHideMenuBar: true,
@@ -63,14 +63,14 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     if (!options.isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
   window.webContents.on("render-process-gone", (_event, details) => {
-    console.error("Renderer do Risk encerrou inesperadamente", details);
+    console.error("Renderer do BRisk encerrou inesperadamente", details);
     if (rendererRecoveryAttempted || window.isDestroyed() || options.isQuitting()) return;
     rendererRecoveryAttempted = true;
     setTimeout(() => { if (!window.isDestroyed()) void window.loadURL(options.pageUrl); }, 500);
   });
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (!isMainFrame || errorCode === -3 || rendererRecoveryAttempted || window.isDestroyed() || options.isQuitting()) return;
-    console.error("Falha ao carregar renderer do Risk", { errorCode, errorDescription, validatedUrl });
+    console.error("Falha ao carregar renderer do BRisk", { errorCode, errorDescription, validatedUrl });
     rendererRecoveryAttempted = true;
     setTimeout(() => { if (!window.isDestroyed()) void window.loadURL(options.pageUrl); }, 500);
   });
@@ -82,7 +82,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     if (!reportingPackagedOrigin) window.show();
   });
   void window.loadURL(options.pageUrl).catch((error) => {
-    console.error("Falha ao carregar a interface do Risk", error);
+    console.error("Falha ao carregar a interface do BRisk", error);
     if (!reportingPackagedOrigin) window.show();
     else app.exit(1);
   });

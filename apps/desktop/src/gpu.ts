@@ -4,7 +4,7 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync } from "
 export function configurePlatformRuntime(): void {
   if (process.platform === "linux") {
     // pipewire-pulse pode expor o PID do daemon em vez do PID do cliente.
-    process.env["PULSE_PROP_application.name"] = "Risk";
+    process.env["PULSE_PROP_application.name"] = "BRisk";
     process.env["PULSE_PROP_application.id"] = "com.risk.calls";
   }
 

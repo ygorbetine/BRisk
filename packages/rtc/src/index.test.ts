@@ -182,7 +182,7 @@ describe("MeshWebRTCTransport", () => {
     const iceServers = [{ urls: "stun:stun.example.test" }, { urls: "turn:turn.example.test" }];
     const transport = new MeshWebRTCTransport("local", iceServers, events());
     await transport.connect("remote", false);
-    expect(FakePeerConnection.configurations[0]).toEqual({ iceServers, iceTransportPolicy: "all" });
+    expect(FakePeerConnection.configurations[0]).toEqual({ iceServers, iceTransportPolicy: "all", iceCandidatePoolSize: 4 });
   });
 
   it("prioriza o candidate ZeroTier antes de enviá-lo ao peer", async () => {
@@ -374,6 +374,71 @@ describe("MeshWebRTCTransport", () => {
 
     await transport.acceptAnswer(peerId, { type: "answer", sdp: "answer-1" });
     expect(callbacks.sendOffer).toHaveBeenCalledTimes(2);
+  });
+
+  it("reinicia o ICE quando a conexão inicial nunca chega a connected", async () => {
+    vi.useFakeTimers();
+    const callbacks = events();
+    const peerId = "00000000-0000-4000-8000-000000000002";
+    const transport = new MeshWebRTCTransport("00000000-0000-4000-8000-000000000001", [], callbacks);
+    await transport.connect(peerId, true);
+    await transport.acceptAnswer(peerId, { type: "answer", sdp: "answer" });
+    const before = FakePeerConnection.restartIceCalls;
+
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(FakePeerConnection.restartIceCalls).toBe(before);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakePeerConnection.restartIceCalls).toBe(before + 1);
+
+    await transport.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("não reinicia o ICE pelo vigia se a conexão já ficou connected", async () => {
+    vi.useFakeTimers();
+    const transport = new MeshWebRTCTransport("00000000-0000-4000-8000-000000000001", [], events());
+    const peerId = "00000000-0000-4000-8000-000000000002";
+    await transport.connect(peerId, true);
+    const connection = FakePeerConnection.instances[0]!;
+    const before = FakePeerConnection.restartIceCalls;
+    connection.connectionState = "connected";
+    connection.onconnectionstatechange?.();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakePeerConnection.restartIceCalls).toBe(before);
+
+    await transport.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("reinicia o ICE de todos os peers quando a rede local muda", async () => {
+    const transport = new MeshWebRTCTransport("00000000-0000-4000-8000-000000000001", [], events());
+    await transport.connect("00000000-0000-4000-8000-000000000002", true);
+    await transport.connect("00000000-0000-4000-8000-000000000003", true);
+    const before = FakePeerConnection.restartIceCalls;
+
+    await transport.notifyNetworkChange();
+    expect(FakePeerConnection.restartIceCalls).toBe(before + 2);
+    await transport.disconnect();
+  });
+
+  it("o lado de id maior assume a recuperação depois de uma folga", async () => {
+    vi.useFakeTimers();
+    const transport = new MeshWebRTCTransport("00000000-0000-4000-8000-000000000009", [], events());
+    const peerId = "00000000-0000-4000-8000-000000000001";
+    await transport.connect(peerId, false);
+    const connection = FakePeerConnection.instances[0]!;
+    const before = FakePeerConnection.restartIceCalls;
+    connection.connectionState = "failed";
+    connection.onconnectionstatechange?.();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(FakePeerConnection.restartIceCalls).toBe(before);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakePeerConnection.restartIceCalls).toBe(before + 1);
+
+    await transport.disconnect();
+    vi.useRealTimers();
   });
 
   it("preserva o ICE restart quando a queda ocorre com uma offer em andamento", async () => {

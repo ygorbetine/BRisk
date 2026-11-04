@@ -73,6 +73,8 @@ export interface MeshCallTransport extends CallTransport {
   acceptAnswer(peerId: string, description: RTCSessionDescriptionInit): Promise<void>;
   addIceCandidate(peerId: string, candidate: RTCIceCandidateInit): Promise<void>;
   restartIce(peerId: string): Promise<void>;
+  /** Reinicia o ICE de todos os peers após uma mudança de rede local. */
+  notifyNetworkChange?(): Promise<void>;
 }
 
 /** Contrato nominal para a implementação do provedor SFU escolhido no futuro. */

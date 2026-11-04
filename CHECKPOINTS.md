@@ -96,9 +96,10 @@ Infraestrutura (depende de você):
 - [ ] `pnpm verify:turn-config` passando
 
 Código:
-- [ ] Medir onde cai: logs de `connectionState`/`iceConnectionState` e tempo até conectar
-- [ ] Ajustar tempos e tentativas de recuperação (`DISCONNECTED_RECOVERY_DELAY_MS`, `restartIce`)
-- [ ] Conectar mais rápido: coletar candidatos TURN em paralelo e preferir TURN/TCP 443 como último recurso
+- [~] Medir onde cai: os estados já são registrados; falta medir o tempo até conectar em redes reais
+- [x] Ajustar tempos e tentativas de recuperação: queda detectada em 2,5 s (antes 4 s); o lado de id maior assume a recuperação após 6 s se o outro não agir; vigia reinicia o ICE se a conexão inicial não completar em 15 s
+- [x] Conectar mais rápido: pré-coleta de candidatos (`iceCandidatePoolSize: 4`). TURN/TCP 443 depende do servidor TURN (infra)
+- [x] Reiniciar o ICE ao mudar de rede (Wi-Fi/VPN/volta da internet), sem esperar a queda
 - [ ] Reduzir a configuração: entrar por um código/link, sem exigir ajustes de rede
 - [ ] Simplificar o diagnóstico para o usuário: mensagem única do tipo "sem relay disponível"
 - [ ] Testar em redes ruins: 4G/CGNAT, Wi-Fi corporativo, VPN

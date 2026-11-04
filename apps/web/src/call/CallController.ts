@@ -250,6 +250,25 @@ export class CallController {
       window.addEventListener("risk:social-updated", refreshSecurity);
       this.signalingUnsubscribers.push(() => window.removeEventListener("risk:social-updated", refreshSecurity));
     }
+    if (typeof window !== "undefined") {
+      // Troca de rede (Wi-Fi, VPN, volta da internet): reinicia o ICE sem esperar a queda.
+      let networkTimer: ReturnType<typeof setTimeout> | undefined;
+      const onNetworkChange = () => {
+        if (networkTimer) clearTimeout(networkTimer);
+        networkTimer = setTimeout(() => {
+          const current = this.transport;
+          if (current && isMeshCallTransport(current)) void current.notifyNetworkChange?.();
+        }, 1_500);
+      };
+      const connection = (navigator as Navigator & { connection?: EventTarget }).connection;
+      window.addEventListener("online", onNetworkChange);
+      connection?.addEventListener("change", onNetworkChange);
+      this.signalingUnsubscribers.push(() => {
+        if (networkTimer) clearTimeout(networkTimer);
+        window.removeEventListener("online", onNetworkChange);
+        connection?.removeEventListener("change", onNetworkChange);
+      });
+    }
 
       await transport.join({ roomId: rendezvousId, localPeerId, accessToken: token });
       this.transportReady = true;

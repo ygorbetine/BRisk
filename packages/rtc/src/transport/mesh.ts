@@ -35,7 +35,13 @@ import {
 } from "./network-policy";
 
 const DEFAULT_MAX_REMOTE_PEERS = 5;
-const DISCONNECTED_RECOVERY_DELAY_MS = 4_000;
+const DISCONNECTED_RECOVERY_DELAY_MS = 2_500;
+/** Tempo máximo esperando uma conexão nova ficar "connected" antes de reiniciar o ICE. */
+const CONNECT_WATCHDOG_MS = 15_000;
+/** O lado de id maior só assume a recuperação se o lado de id menor não agir. */
+const NON_INITIATOR_RECOVERY_EXTRA_MS = 6_000;
+/** Pré-coleta de candidatos: conecta mais rápido, principalmente com TURN. */
+const ICE_CANDIDATE_POOL_SIZE = 4;
 const MAX_RECOVERY_DELAY_MS = 30_000;
 const RECREATE_PEER_EVERY_ATTEMPTS = 3;
 
@@ -47,6 +53,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
   private readonly pendingRemoteStreams = new Map<string, Map<string, MediaStream>>();
   private readonly activeRemoteStreams = new Map<string, Map<string, MediaStream>>();
   private readonly recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly connectWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly recoveryAttempts = new Map<string, number>();
   private mediaAuthorizationRequired = false;
   private readonly previousOutboundBytes = new Map<string, OutboundBytesSample>();
@@ -301,6 +308,23 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     });
   }
 
+  /**
+   * Chamado quando a rede local muda (Wi-Fi trocou, voltou a ficar online, VPN).
+   * Reinicia o ICE de todos os peers para achar o novo caminho sem esperar a queda.
+   */
+  async notifyNetworkChange(): Promise<void> {
+    const ids = [...this.peers.keys()];
+    await Promise.all(ids.map(async (peerId) => {
+      const entry = this.peers.get(peerId);
+      if (!entry || entry.pc.connectionState === "closed") return;
+      try {
+        await this.restartIce(peerId);
+      } catch (error) {
+        logger.warn("ICE restart after network change failed", { peerId, error: String(error) });
+      }
+    }));
+  }
+
   async restartIce(peerId: string): Promise<void> {
     const entry = this.requirePeer(peerId);
     entry.needsIceRestart = true;
@@ -342,6 +366,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
       const timer = this.recoveryTimers.get(id);
       if (timer) clearTimeout(timer);
       this.recoveryTimers.delete(id);
+      this.clearConnectWatchdog(id);
       this.recoveryAttempts.delete(id);
     });
     await this.applyAdaptiveVideoParameters();
@@ -387,7 +412,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     if (this.peers.size >= this.maxRemotePeers) {
       throw new Error(`Sala cheia: este cliente aceita no máximo ${this.maxRemotePeers + 1} participantes no Mesh.`);
     }
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers, iceTransportPolicy: "all" });
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers, iceTransportPolicy: "all", iceCandidatePoolSize: ICE_CANDIDATE_POOL_SIZE });
     const entry = createMeshPeerEntry(pc);
     this.peers.set(peerId, entry);
     if (!this.mediaAuthorizationRequired || this.mediaAuthorizedPeers.has(peerId)) this.localTracks.forEach(({ track, stream }) => pc.addTrack(track, stream));
@@ -440,8 +465,11 @@ export class MeshWebRTCTransport implements MeshCallTransport {
         this.events.onNegotiationError?.(peerId, error);
       });
     };
+    // Vigia da conexão inicial: se nunca chegar a "connected", reinicia o ICE.
+    this.armConnectWatchdog(peerId, entry);
     pc.onconnectionstatechange = () => {
       this.events.onConnectionState(peerId, pc.connectionState);
+      if (pc.connectionState === "connecting") this.armConnectWatchdog(peerId, entry);
       if (pc.connectionState === "connected") this.clearPeerRecovery(peerId);
       if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
         this.schedulePeerRecovery(
@@ -455,13 +483,14 @@ export class MeshWebRTCTransport implements MeshCallTransport {
   }
 
   private schedulePeerRecovery(peerId: string, entry: PeerEntry, delayMs: number): void {
-    // Um único lado inicia a recuperação para evitar glare. O outro recebe a
-    // oferta de ICE restart pela sinalização e responde normalmente.
-    if (this.localPeerId >= peerId
-      || this.peers.get(peerId) !== entry
+    // O lado de id menor inicia a recuperação. O de id maior só entra depois de
+    // uma folga, caso o outro lado não perceba a queda (estado "connected" preso).
+    // O glare é resolvido pela negociação perfeita (peer educado/impolido).
+    if (this.peers.get(peerId) !== entry
       || entry.pc.connectionState === "connected"
       || entry.pc.connectionState === "closed"
       || this.recoveryTimers.has(peerId)) return;
+    const effectiveDelay = delayMs + (this.localPeerId >= peerId ? NON_INITIATOR_RECOVERY_EXTRA_MS : 0);
     const timer = setTimeout(() => {
       this.recoveryTimers.delete(peerId);
       void this.recoverPeerConnection(peerId, entry).finally(() => {
@@ -471,7 +500,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
         const retryDelay = Math.min(MAX_RECOVERY_DELAY_MS, 2_000 * 2 ** Math.min(attempts, 4));
         this.schedulePeerRecovery(peerId, current, retryDelay);
       });
-    }, delayMs);
+    }, effectiveDelay);
     this.recoveryTimers.set(peerId, timer);
   }
 
@@ -513,7 +542,25 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     await this.applyAdaptiveVideoParameters();
   }
 
+  private armConnectWatchdog(peerId: string, entry: PeerEntry): void {
+    if (this.connectWatchdogs.has(peerId)) return;
+    const timer = setTimeout(() => {
+      this.connectWatchdogs.delete(peerId);
+      const state = entry.pc.connectionState;
+      if (this.peers.get(peerId) !== entry || state === "connected" || state === "closed") return;
+      this.schedulePeerRecovery(peerId, entry, 0);
+    }, CONNECT_WATCHDOG_MS);
+    this.connectWatchdogs.set(peerId, timer);
+  }
+
+  private clearConnectWatchdog(peerId: string): void {
+    const timer = this.connectWatchdogs.get(peerId);
+    if (timer) clearTimeout(timer);
+    this.connectWatchdogs.delete(peerId);
+  }
+
   private clearPeerRecovery(peerId: string): void {
+    this.clearConnectWatchdog(peerId);
     const timer = this.recoveryTimers.get(peerId);
     if (timer) clearTimeout(timer);
     this.recoveryTimers.delete(peerId);
@@ -692,6 +739,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     const timer = this.recoveryTimers.get(peerId);
     if (timer) clearTimeout(timer);
     this.recoveryTimers.delete(peerId);
+    this.clearConnectWatchdog(peerId);
     if (!preserveRecovery) this.recoveryAttempts.delete(peerId);
   }
 

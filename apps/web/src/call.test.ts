@@ -125,7 +125,7 @@ describe("recuperação da conexão da chamada", () => {
       expectedParticipantCount: number;
       transport: { kind: "mesh"; getDiagnostics(): [] };
     };
-    internals.expectedParticipantCount = 5;
+    internals.expectedParticipantCount = 9;
     internals.transport = { kind: "mesh", getDiagnostics: () => [] };
 
     expect(controller.getDiagnostics().transport).toMatchObject({
@@ -177,9 +177,9 @@ describe("recuperação da conexão da chamada", () => {
     expect(controller.getDiagnostics().signaling).toBeNull();
   });
 
-  it("does not allow SDP from a seventh Mesh participant to bypass the hard limit", () => {
+  it("does not allow SDP from a ninth Mesh participant to bypass the hard limit", () => {
     const localPeerId = "peer_capacity_00000000";
-    let presencePeers = Array.from({ length: 6 }, (_, index) => `peer_capacity_${String(index + 1).padStart(8, "0")}`);
+    let presencePeers = Array.from({ length: 8 }, (_, index) => `peer_capacity_${String(index + 1).padStart(8, "0")}`);
     const disconnectPeer = vi.fn(async () => undefined);
     const controller = new CallController();
     const internals = controller as unknown as {
@@ -197,9 +197,9 @@ describe("recuperação da conexão da chamada", () => {
     };
 
     expect(internals.enforceMeshCapacity(presencePeers.at(-1))).toBe(false);
-    expect(useCallStore.getState().error).toContain("limite seguro de 6 participantes");
+    expect(useCallStore.getState().error).toContain("limite seguro de 8 participantes");
 
-    presencePeers = presencePeers.slice(0, 5);
+    presencePeers = presencePeers.slice(0, 7);
     expect(internals.enforceMeshCapacity()).toBe(true);
     expect(useCallStore.getState().error).toBeNull();
   });

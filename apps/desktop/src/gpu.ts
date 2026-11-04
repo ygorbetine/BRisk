@@ -5,13 +5,21 @@ export function configurePlatformRuntime(): void {
   if (process.platform === "linux") {
     // pipewire-pulse pode expor o PID do daemon em vez do PID do cliente.
     process.env["PULSE_PROP_application.name"] = "BRisk";
-    process.env["PULSE_PROP_application.id"] = "com.risk.calls";
+    process.env["PULSE_PROP_application.id"] = "com.brisk.calls";
   }
 
   if (shouldUseLinuxSoftwareRendering()) {
     app.disableHardwareAcceleration();
     app.commandLine.appendSwitch("disable-features", "VaapiVideoDecoder,VaapiVideoEncoder");
     console.info("[desktop] GPU Linux incompatível ou inacessível; usando renderização por software.");
+  }
+
+  if (process.platform === "win32" && process.env.BRISK_DISABLE_GPU_ENCODE !== "1") {
+    // Prefere a codificação/decodificação por hardware (NVENC/AMF/QuickSync via Media Foundation)
+    // para não competir com o jogo pela CPU durante a transmissão.
+    app.commandLine.appendSwitch("ignore-gpu-blocklist");
+    app.commandLine.appendSwitch("enable-gpu-rasterization");
+    app.commandLine.appendSwitch("enable-zero-copy");
   }
 
   app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");

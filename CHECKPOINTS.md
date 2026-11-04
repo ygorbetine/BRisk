@@ -76,11 +76,11 @@ Objetivo: estar em call no Discord enquanto o Risk transmite, sem um atrapalhar 
 
 ## CP3 — Abas do navegador (decisão pendente)
 
-- [ ] Escolher a abordagem:
+- [x] Escolher a abordagem: A (navegador inteiro via loopback de processo), pois áudio no Windows é por processo. Opções B/C ficam como evolução:
   - **A.** Aceitar áudio do navegador inteiro (já resolvido pelo CP2)
   - **B.** Extensão ou captura via Chrome (`tabCapture`) para áudio de uma aba específica
   - **C.** Abrir a aba em janela própria/perfil separado do navegador, para ficar num processo isolado
-- [ ] Implementar a opção escolhida
+- [x] Implementar a opção escolhida (nota explicativa no seletor de tela)
 
 **Pronto quando:** a abordagem está decidida e o comportamento está documentado na interface.
 
@@ -110,7 +110,7 @@ Código:
 
 ## CP5 — Foco em transmissão de tela (enxugar)
 
-- [ ] Decidir o que sai: chat, grupos, amizades, transferência de arquivos, persistência SQLite
+- [x] Decisão: manter chat, grupos e arquivos (você pediu para manter a organização do Risk); nada removido. Decidir o que sai: chat, grupos, amizades, transferência de arquivos, persistência SQLite
 - [ ] Remover o que sobrar do escopo, em commits pequenos
 - [ ] Entrada simples: criar sala → copiar link → transmitir
 - [ ] Presets de qualidade (até 1080p/60) mantidos e testados
@@ -160,10 +160,10 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 
 - [x] Nome do produto: **BRisk** (interface, título da janela, bandeja, `productName`, `appId` `com.brisk.calls`, nome do instalador)
 - [ ] Renomear os identificadores internos de Risk para BRisk (pacotes `@risk/*`, `RISK_*`, `risk-desktop-token`, esquema de protocolo, diretório de dados). Só depois de o app rodar, porque mexe no protocolo e nos dados locais
-- [ ] Atualizar `README.md`, `docs/` e `infrastructure/coturn/README.md` com o nome novo
+- [x] Atualizar `README.md`, `docs/` e `infrastructure/coturn/README.md` com o nome novo
 - [x] Ícone e logo próprios do BRisk (marca "B" em degradê magenta/violeta: `apps/web/src/assets/brisk-mark.svg`, `icon.png`/`icon.ico` do desktop, favicon)
-- [ ] Revisar o `THIRD_PARTY_NOTICES.md` e manter a licença AGPL
-- [ ] `pnpm package:win` gera o instalador
+- [x] Revisar o `THIRD_PARTY_NOTICES.md` e manter a licença AGPL
+- [x] `pnpm package:win` gera o instalador (`BRisk Setup 0.2.1.exe`, ~100 MB, sem assinatura de código)
 - [ ] Teste de ponta a ponta entre duas máquinas
 - [ ] Criar seu próprio repositório (fork) e subir o trabalho
 

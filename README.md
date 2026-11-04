@@ -1,3 +1,33 @@
+# BRisk — transmissão de tela e chamadas
+
+**BRisk** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo BRisk sem que a voz do Discord vaze para o stream.
+
+> Derivado do projeto aberto [Risk-P2P](https://github.com/xxsamboladiones/Risk-P2P) (AGPL-3.0). Este fork mantém a licença AGPL-3.0; veja `LICENSE` e `THIRD_PARTY_NOTICES.md`.
+
+## O que o BRisk acrescenta
+
+- **Áudio só da janela:** ao transmitir uma janela, o som capturado é o do processo dela (Windows, WASAPI), nunca o do sistema inteiro. Discord e o próprio BRisk são excluídos. Abas do navegador compartilham o som do navegador inteiro (limitação do Windows: o áudio é por processo, não por aba).
+- **Qualidade independente:** resolução (720p a 4K), FPS (15 a 60) e bitrate separados. O bitrate é automático por padrão; os níveis Alto, Máximo e Personalizado deixam você "forçar a barra" (até 50 Mbps), com aviso de upload.
+- **Conexão mais estável:** recuperação automática de peers, reinício de ICE ao trocar de rede e pool de candidatos.
+- **Malha P2P até 8 pessoas** e **SFU opcional (LiveKit)** para salas maiores ou várias transmissões com qualidade alta. Veja `infrastructure/livekit/README.md`.
+- **Microfone desligado ao entrar** (o Discord continua dono da voz).
+- **Interface** com a organização do Risk, cores inspiradas no RASTRO e glassmorfismo; lista de membros agrupa o mesmo nome e tem "Limpar duplicados".
+- Aceleração de GPU na codificação ligada por padrão no Windows (`BRISK_DISABLE_GPU_ENCODE=1` desliga).
+
+## Instalar e rodar
+
+```bash
+pnpm install
+pnpm dev            # desenvolvimento (Electron + web)
+pnpm package:win    # gera o instalador em apps/desktop/release
+```
+
+Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase (signaling). TURN (`infrastructure/coturn`) e SFU (`infrastructure/livekit`) são opcionais e hospedados por você. `CHECKPOINTS.md` traz o plano e o estado de cada etapa.
+
+---
+
+# Documentação herdada do Risk
+
 # Risk — comunicação P2P
 
 **Risk** é um aplicativo desktop de comunicação P2P com chamadas de voz e vídeo, compartilhamento de tela, chat, grupos e transferência de arquivos usando WebRTC.

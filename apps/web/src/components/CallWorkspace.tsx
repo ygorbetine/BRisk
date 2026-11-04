@@ -301,6 +301,7 @@ function ScreenSourcePicker({
         >{includeAudio ? <Volume2 size={17}/> : <VolumeX size={17}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span></button>
         <button className="screen-picker-close" onClick={onClose} aria-label="Fechar"><X/></button>
       </header>
+      <p className="screen-picker-note">Janela: só o som dela (sem Discord). Abas do navegador compartilham o som do navegador inteiro.</p>
       {loading ? <div className="screen-picker-loading"><Sparkles/><span>Buscando telas e janelas…</span></div> :
         <div className="screen-source-grid">
           {sources.map((source) => <button key={source.id} className="screen-source" onClick={() => onChoose(source)}>

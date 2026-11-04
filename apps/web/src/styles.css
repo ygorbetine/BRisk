@@ -117,3 +117,4 @@ html .member-row{min-width:0}
 html .member-row .mini-user{margin:0;width:auto}
 html .member-copy{padding-left:0;margin-left:14px;border-left:2px solid rgba(176,31,207,.35)}
 html .member-cleanup{margin:2px 0 8px 14px;align-self:flex-start;white-space:nowrap}
+.screen-picker-note{margin:0 4px 10px;font-size:12px;color:#a592b8}

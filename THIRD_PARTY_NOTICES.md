@@ -1,6 +1,6 @@
 # Third-party notices
 
-Risk is licensed under the GNU Affero General Public License v3.0 as described in the root `LICENSE` file. The components below are third-party dependencies used by the audio pipeline and retain their own licenses.
+BRisk (a fork of Risk-P2P) is licensed under the GNU Affero General Public License v3.0 as described in the root `LICENSE` file. The components below are third-party dependencies used by the audio pipeline and retain their own licenses.
 
 ## RNNoise / Xiph.Org
 
@@ -31,3 +31,15 @@ The generated RNNoise WebAssembly binary remains subject to the RNNoise/Xiph.Org
 - Upstream: https://github.com/sapphi-red/web-noise-suppressor
 
 These notices and the complete third-party license texts are distributed with packaged Risk desktop builds.
+
+## livekit-client
+
+- Component: LiveKit JavaScript client SDK (SFU transport)
+- License: Apache License 2.0
+- Upstream: https://github.com/livekit/client-sdk-js
+
+## wasapi (Rust crate)
+
+- Component: Windows WASAPI bindings used for per-process audio loopback
+- License: MIT
+- Upstream: https://github.com/HEnquist/wasapi-rs

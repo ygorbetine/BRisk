@@ -48,3 +48,4 @@ button:focus-visible,input:focus-visible{outline:2px solid #b01fcf;outline-offse
 .member-copy{padding-left:18px;opacity:.82}
 .member-fingerprint{color:var(--brisk-accent);font-weight:400}
 .member-duplicates{flex:none;padding:4px 9px;border-radius:999px;font-size:12px;background:#8b5cf622;color:#c9b6ff;border:1px solid #8b5cf655}
+.member-cleanup{margin:2px 0 6px 18px;padding:6px 12px;border-radius:999px;font-size:12px;background:#e9555514;color:#ff8585;border:1px solid #e9555530;display:flex;align-items:center;gap:6px}

@@ -666,6 +666,39 @@ export function HomeView() {
     } finally { setMemberSaving(false); }
   }
 
+  /** Identidades duplicadas (mesmo nome) que o usuário atual tem permissão de remover. */
+  function removableDuplicates(duplicates: PublicPeerIdentity[]): PublicPeerIdentity[] {
+    if (!selectedLocalGroup || !canEditSelectedGroup) return [];
+    const isOwner = localIdentityPeerId === selectedLocalGroup.ownerPeerId;
+    return duplicates.filter((member) => member.peerId !== localIdentityPeerId
+      && member.peerId !== selectedLocalGroup.ownerPeerId
+      && (isOwner || !(selectedLocalGroup.administratorPeerIds ?? []).includes(member.peerId)));
+  }
+
+  async function removeDuplicateMembers(primary: PublicPeerIdentity, duplicates: PublicPeerIdentity[]): Promise<void> {
+    if (!selectedLocalGroup || memberSaving) return;
+    const targets = removableDuplicates(duplicates);
+    if (!targets.length) return;
+    const list = targets.map((member) => `• ${member.displayName} (id ${`${member.publicKey.x ?? member.peerId}`.slice(0, 6)})`).join(String.fromCharCode(10));
+    const gap = String.fromCharCode(10, 10);
+    const confirmed = window.confirm(
+      `Remover ${targets.length} identidade(s) duplicada(s) de "${primary.displayName}" do grupo?${gap}${list}${gap}`
+      + "Elas perdem o acesso ao grupo e a remoção é propagada aos outros membros. Se alguma for outra pessoa com o mesmo nome, ela também será removida.",
+    );
+    if (!confirmed) return;
+    setMemberSaving(true);
+    try {
+      let current = selectedLocalGroup;
+      for (const member of targets) {
+        current = await removeLocalGroupMember(current.groupId, member.peerId);
+      }
+      setSelectedLocalGroup(current);
+      setGroupMembers(dedupeMembersForDisplay(current.members));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível remover as identidades duplicadas.");
+    } finally { setMemberSaving(false); }
+  }
+
   function openVoiceActivity(activity: VoiceActivity): void {
     const group = communities.find((item) => item.id === activity.groupId);
     if (group) {
@@ -767,9 +800,16 @@ export function HomeView() {
               <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div>
               {memberGroups.flatMap((group) => {
                 const expanded = expandedMemberGroups.has(group.key);
+                const removable = removableDuplicates(group.duplicates);
                 return [
                   renderMember(group.primary, { count: group.duplicates.length, expanded, groupKey: group.key }),
                   ...(expanded ? group.duplicates.map((copy) => renderMember(copy, { copy: true })) : []),
+                  ...(expanded && removable.length > 0 ? [<button
+                    key={`${group.key}-cleanup`}
+                    className="member-cleanup"
+                    disabled={memberSaving}
+                    onClick={() => void removeDuplicateMembers(group.primary, group.duplicates)}
+                  ><UserMinus size={14}/> {memberSaving ? "Removendo…" : `Limpar ${removable.length} duplicado${removable.length > 1 ? "s" : ""}`}</button>] : []),
                 ];
               })}
             </>;

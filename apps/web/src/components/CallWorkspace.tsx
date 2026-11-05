@@ -721,7 +721,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     </footer>
 
     {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>}
-    {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} onClose={() => setQualityPanelOpen(false)}/>} 
+    {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} readDiagnostics={() => call.getLiveDiagnostics()} onClose={() => setQualityPanelOpen(false)}/>} 
     {diagnosticsOpen && <section className="network-diagnostics" role="dialog" aria-label="Diagnóstico da conexão">
       <header><strong>Diagnóstico da conexão</strong><button onClick={() => setDiagnosticsOpen(false)}><X/></button></header>
       <p>Signaling: <b>{diagnostics?.signaling?.status ?? "indisponível"}</b></p>

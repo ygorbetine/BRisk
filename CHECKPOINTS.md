@@ -130,7 +130,7 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 - [x] Decisão: usar um **SFU** (recomendado: LiveKit, que tem servidor aberto, SDK para o navegador e simulcast). Cada transmissor envia um fluxo só; o servidor distribui.
 - [~] Subir o SFU: `infrastructure/livekit` (compose + config + README) e emissor de tokens `supabase/functions/livekit-token` prontos; falta o usuário hospedar o servidor e publicar a função
 - [x] Trocar o transporte em `packages/rtc` (hoje `transport/mesh.ts`) por um cliente do SFU (`transport/sfu.ts`, LiveKit; ativo com `VITE_LIVEKIT_TOKEN_URL`), mantendo a interface `call-transport.ts`
-- [ ] Várias transmissões simultâneas na mesma sala, com layout de grade e foco em uma delas
+- [x] Várias transmissões simultâneas na mesma sala, com layout de grade e foco em uma delas (grade/foco já existiam no `CallWorkspace`; cada participante tem seu tile de tela)
 - [ ] Simulcast/SVC: o espectador recebe a camada que cabe na sua rede
 - [ ] Manter a malha P2P como modo opcional para 2 a 3 pessoas? (decidir; custo extra de manutenção)
 - [ ] Codificação por hardware (NVENC/AMF/QuickSync) para não derrubar o FPS do jogo; verificar as flags do Chromium no Electron
@@ -142,7 +142,7 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 - [x] Em rede ruim, a degradação é configurável: preservar resolução (cai FPS) ou preservar FPS (cai resolução)
 - [x] Aplicar as mudanças com a transmissão ativa (já existia `updateScreenQuality`; o painel usa o mesmo caminho) (sem reiniciar o compartilhamento), usando `RTCRtpSender.setParameters` / o equivalente do SFU
 - [~] Limites seguros: upload estimado e aviso de banda no painel; falta validar contra o hardware e o upload medido resolução × FPS × bitrate contra o hardware e o upload medido
-- [ ] Medidor de qualidade para o transmissor (bitrate, FPS, perda, RTT)
+- [x] Medidor de qualidade para o transmissor (bitrate enviado, latência, perda; sem FPS) no painel de qualidade
 - [ ] Latência baixa: meta abaixo de ~300 ms em rede normal
 - [ ] Comparar lado a lado com o Discord (mesmo jogo, mesma rede) e registrar os resultados
 

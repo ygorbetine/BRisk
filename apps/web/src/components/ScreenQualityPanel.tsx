@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { summarizeSendMeter, type SendMeter, type SendMeterPeer } from "../services/rtc/send-meter";
 import {
   estimatedUploadBitrate,
   formatMbps,
@@ -22,10 +24,21 @@ type Props = {
   settings: ScreenQualitySettings;
   viewers: number;
   onChange: (settings: ScreenQualitySettings) => void;
+  /** Lê o diagnóstico ao vivo para o medidor de envio. */
+  readDiagnostics?: () => Promise<{ peerConnections: SendMeterPeer[] }>;
   onClose: () => void;
 };
 
-export function ScreenQualityPanel({ settings, viewers, onChange, onClose }: Props) {
+export function ScreenQualityPanel({ settings, viewers, onChange, readDiagnostics, onClose }: Props) {
+  const [meter, setMeter] = useState<SendMeter | null>(null);
+  useEffect(() => {
+    if (!readDiagnostics) return;
+    let alive = true;
+    const tick = () => { void readDiagnostics().then((value) => { if (alive) setMeter(summarizeSendMeter(value.peerConnections)); }).catch(() => undefined); };
+    tick();
+    const timer = window.setInterval(tick, 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [readDiagnostics]);
   const bitrate = resolveScreenBitrate(settings);
   const upload = estimatedUploadBitrate(settings, viewers);
   const forced = settings.bitrateMode !== "auto";
@@ -98,6 +111,11 @@ export function ScreenQualityPanel({ settings, viewers, onChange, onClose }: Pro
       {!forced && viewers >= 4 && <p className="sq-hint">
         Com {viewers} espectadores na malha P2P o envio é dividido entre todos e a imagem por pessoa fica mais leve. Para qualidade máxima use o SFU.
       </p>}
+      {meter && meter.peers > 0 && <div className={`sq-meter ${meter.health}`} aria-label="Medidor de envio">
+        <div><small>Enviando</small><strong>{formatMbps(meter.outboundKbps * 1000)}</strong></div>
+        <div><small>Latência</small><strong>{meter.worstRttMs !== undefined ? `${Math.round(meter.worstRttMs)} ms` : "—"}</strong></div>
+        <div><small>Perda</small><strong>{meter.worstLossPercent !== undefined ? `${meter.worstLossPercent.toFixed(1).replace(".", ",")}%` : "—"}</strong></div>
+      </div>}
       <p className="sq-note">Vale na hora, com a transmissão ativa.</p>
     </section>
   );

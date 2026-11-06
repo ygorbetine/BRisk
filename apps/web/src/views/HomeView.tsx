@@ -799,29 +799,7 @@ export function HomeView() {
     onPin={(message, pinned) => messageAction(() => activeConversationChat.setPinned(message.id, pinned), "Falha ao fixar a mensagem.")}
   />;
 
-  return <>
-    <main className="social-shell">
-      <aside className="space-rail">
-        <button className={!selectedCommunity ? "space active" : "space"} onClick={() => { setSelectedCommunity(null); setActiveFriend(null); }} title="Amigos"><BriksMark size={30}/></button>
-        <div className="rail-separator"/>
-        {communities.map((group) => <button key={group.id} className={selectedCommunity?.id === group.id ? "space active" : "space"} onClick={() => { setActiveFriend(null); setSelectedCommunity(group); }} title={group.name}><ProfileAvatar displayName={group.name} avatar={group.avatar} className="group-space-avatar"/></button>)}
-        <button className="space add" onClick={() => setModal("group")} title="Criar grupo"><Plus/></button>
-      </aside>
-
-      <aside className={`navigation ${roomId ? "in-call" : ""}`}>
-        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "Briks"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
-        {selectedCommunity ? <>
-          <div className="nav-section"><span>CANAIS DE TEXTO</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
-          {channels.filter((item) => item.kind === "text").map((channel) => <div className="channel-item" key={channel.id}>
-            <button className={activeChannel?.id === channel.id ? "channel active" : "channel"} onClick={() => { backgroundChats.clear(channel.id); setActiveChannel(channel); }}><Hash/><span>{channel.name}</span>{Boolean(unreadChannels[channel.id]) && <small className="unread-badge">{unreadChannels[channel.id]}</small>}</button>
-            {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear canal" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar canal" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
-          </div>)}
-          <div className="nav-section"><span>SALAS DE VOZ</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
-          {channels.filter((item) => item.kind === "voice").map((channel) => <div className="channel-item" key={channel.id}>
-            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
-            {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear sala de voz" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar sala de voz" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
-          </div>)}
-          {(() => {
+  const membersPanel = selectedCommunity ? (() => {
             const memberGroups = groupMembersByName(groupMembers, {
               self: groupMembers.find((member) => member.peerId === localIdentityPeerId),
               ownerPeerId: selectedLocalGroup?.ownerPeerId,
@@ -869,7 +847,30 @@ export function HomeView() {
                 ];
               })}
             </>;
-          })()}
+          })() : null;
+
+  return <>
+    <main className={selectedCommunity ? "social-shell with-members" : "social-shell"}>
+      <aside className="space-rail">
+        <button className={!selectedCommunity ? "space active" : "space"} onClick={() => { setSelectedCommunity(null); setActiveFriend(null); }} title="Amigos"><BriksMark size={30}/></button>
+        <div className="rail-separator"/>
+        {communities.map((group) => <button key={group.id} className={selectedCommunity?.id === group.id ? "space active" : "space"} onClick={() => { setActiveFriend(null); setSelectedCommunity(group); }} title={group.name}><ProfileAvatar displayName={group.name} avatar={group.avatar} className="group-space-avatar"/></button>)}
+        <button className="space add" onClick={() => setModal("group")} title="Criar grupo"><Plus/></button>
+      </aside>
+
+      <aside className={`navigation ${roomId ? "in-call" : ""}`}>
+        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "Briks"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
+        {selectedCommunity ? <>
+          <div className="nav-section"><span>CANAIS DE TEXTO</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
+          {channels.filter((item) => item.kind === "text").map((channel) => <div className="channel-item" key={channel.id}>
+            <button className={activeChannel?.id === channel.id ? "channel active" : "channel"} onClick={() => { backgroundChats.clear(channel.id); setActiveChannel(channel); }}><Hash/><span>{channel.name}</span>{Boolean(unreadChannels[channel.id]) && <small className="unread-badge">{unreadChannels[channel.id]}</small>}</button>
+            {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear canal" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar canal" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
+          </div>)}
+          <div className="nav-section"><span>SALAS DE VOZ</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
+          {channels.filter((item) => item.kind === "voice").map((channel) => <div className="channel-item" key={channel.id}>
+            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
+            {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear sala de voz" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar sala de voz" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
+          </div>)}
         </> : <>
           <button className={!activeFriend ? "channel active" : "channel"} onClick={() => setActiveFriend(null)}><Users/>Amigos</button>
           {activeFriend && <button className="channel active"><MessageCircle/>{activeFriend.displayName}</button>}
@@ -953,6 +954,7 @@ export function HomeView() {
           mentionCandidates={[...groupMembers.map((member) => member.displayName), currentUser?.displayName ?? ""]}
         /> : <div className="empty-social"><Headphones/><h2>Escolha uma sala</h2><p>Entre em um canal de voz pela barra lateral.</p></div>}
       </section>
+      {membersPanel && <aside className="members-panel" aria-label="Membros do grupo">{membersPanel}</aside>}
 
       {modal === "friend" && <Modal title="Adicionar amigo" onClose={() => setModal(null)}>{currentUser ? <P2PInvitePanel type="friend" token={token} displayName={currentUser.displayName} onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
       {modal === "account" && <Modal title="Conta e @nick" onClose={() => setModal(null)}><AccountPanel onNickChanged={setAccountNick}/></Modal>}

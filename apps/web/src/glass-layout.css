@@ -65,3 +65,8 @@ body {
 .about-panel h2, .about-panel p { margin: 0; }
 .about-version { font-size: 18px; }
 .about-panel a { color: var(--briks-c3); }
+
+.social-shell.with-members { grid-template-columns: 76px 260px minmax(0, 1fr) 250px; }
+.members-panel { border: 1px solid rgba(255,255,255,.12); border-radius: 22px; background: rgba(22,10,34,.55); backdrop-filter: blur(22px) saturate(140%); box-shadow: 0 18px 50px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06); padding: 4px 10px 12px; overflow-y: auto; scrollbar-width: none; }
+.members-panel::-webkit-scrollbar { display: none; }
+@media (max-width: 1100px) { .social-shell.with-members { grid-template-columns: 70px 230px minmax(0, 1fr); } .members-panel { display: none; } }

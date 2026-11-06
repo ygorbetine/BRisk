@@ -175,10 +175,13 @@ function VideoTile({
     ref={articleRef}
     className={`tile ${source} ${participant.connection === "connected" ? "online" : ""} ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
     onClick={(event) => {
-      if ((event.target as HTMLElement).closest("button,input")) return;
+      if ((event.target as HTMLElement).closest("button,input,.volume-panel")) return;
       onFocus(tileId);
     }}
-    onDoubleClick={() => { void articleRef.current?.requestFullscreen().catch(() => undefined); }}
+    onDoubleClick={(event) => {
+      if ((event.target as HTMLElement).closest("button,input,.volume-panel")) return;
+      void articleRef.current?.requestFullscreen().catch(() => undefined);
+    }}
   >
     <video ref={videoRef} autoPlay playsInline muted className={hasVideo ? source : "hidden-video"}/>
     {!hasVideo && <div className="video-off"><ProfileAvatar displayName={participant.displayName} avatar={participant.avatar} className="call-profile-avatar"/><span>Vídeo desligado</span></div>}

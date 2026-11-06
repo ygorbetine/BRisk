@@ -142,6 +142,8 @@ export default defineConfig(({ command, mode }) => {
     },
     server: { port: 5173 },
     build: {
+      // O worklet de áudio por processo precisa ser um arquivo real: a CSP bloqueia worklets data: URI.
+      assetsInlineLimit: (file) => (file.includes("process-pcm-worklet") ? false : undefined),
       rollupOptions: {
         output: {
           manualChunks(id) {

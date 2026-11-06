@@ -782,6 +782,7 @@ export function HomeView() {
                 <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setModal("manageMember"); }}>
                   <ProfileAvatar displayName={member.displayName} avatar={member.avatar}/>
                   <span>{member.displayName}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
+                  {member.peerId === localIdentityPeerId && <em className="member-self" title="Esta é a sua identidade neste computador">Você</em>}
                   {owner ? <em title="Proprietário"><ShieldCheck size={14}/> Dono</em> : administrator ? <em title="Administrador"><Shield size={14}/> Admin</em> : null}
                 </button>
                 {extra?.count ? <button
@@ -799,7 +800,7 @@ export function HomeView() {
             return <>
               <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div>
               {memberGroups.flatMap((group) => {
-                const expanded = expandedMemberGroups.has(group.key);
+                const expanded = expandedMemberGroups.has(group.key) || group.duplicates.some((copy) => copy.peerId === localIdentityPeerId);
                 const removable = removableDuplicates(group.duplicates);
                 return [
                   renderMember(group.primary, { count: group.duplicates.length, expanded, groupKey: group.key }),

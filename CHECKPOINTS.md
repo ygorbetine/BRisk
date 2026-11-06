@@ -176,3 +176,8 @@ CP0 → CP1 (conferir) → CP2 + CP2b → CP4 → CP5b → CP3 → CP5 → CP6
 O CP4 em paralelo ao CP2, já que a parte de infraestrutura do TURN não depende de código.
 
 Com o SFU, o TURN do CP4 continua necessário para clientes atrás de firewall restrito, mas o LiveKit já traz TURN embutido, então vale avaliar juntar os dois.
+
+
+## Futuro — Identidade por @nick
+
+- [ ] Ver `docs/plano-nick.md` (contas no Supabase, nick único, religar a chave nova ao mesmo nick). Substitui a ideia de exportar/importar identidade, que não é possível: a chave privada é não exportável de propósito.

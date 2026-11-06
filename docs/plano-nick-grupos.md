@@ -50,11 +50,11 @@ Ninguém além de dono/admin altera a lista. Quem não registrou @nick continua 
   concessões de admin (cerca de 40 pontos do código), com testes de duas máquinas. Por isso não foi misturado
   com a Fase 2. Sem a transferência feita antes, o dono perdido não é recuperável.
 
-### Fase 3 (0.6.3) — convite por @nick
+### Fase 3 (0.7.1) — convite por @nick (ENTREGUE)
 - "Adicionar @fulano": busca no Supabase e adiciona direto (sem trocar códigos), para quem já tem conta.
 - Mantém o código atual para quem ainda não tem conta.
 
-### Fase 4 (0.6.4) — limpeza e endurecimento
+### Fase 4 — limpeza (ENTREGUE na Fase 1: agrupa por @nick) e endurecimento (PENDENTE: exige Edge Function no Supabase)
 - "Limpar duplicados" passa a olhar o @nick (remove cópias antigas do mesmo @nick que o dono escolher).
 - Endurecer `register_key`: hoje quem conhece o `peerId` de outra pessoa (por estar no mesmo grupo) poderia
   registrá-lo antes dela com a chave errada, o que só impediria o vínculo dela (negação de serviço, sem

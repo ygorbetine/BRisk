@@ -33,3 +33,10 @@
 .space-rail .space:first-child.active{background:linear-gradient(145deg,#b01fcf,#6d5cf6)}
 .channel.voice .voice-live{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:#75df8c;font-size:11px;font-weight:700}
 .channel.voice .voice-live i{width:7px;height:7px;border-radius:50%;background:#75df8c;box-shadow:0 0 8px #75df8c}
+
+.nick-invite{display:grid;gap:8px;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid #ffffff14}
+.nick-invite label{font-size:12px;font-weight:700;color:#c9b8dc}
+.nick-invite .account-nick input{margin:0;border:0;background:none;box-shadow:none;padding:12px 0}
+.nick-invite small{color:#8c7aa3;font-size:11px}
+.nick-invite-ok{margin:0;color:#75df8c;font-size:12px}
+.nick-invite-error{margin:0;color:#ff8585;font-size:12px}

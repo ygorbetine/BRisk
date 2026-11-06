@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PublicPeerIdentity } from "../offline/social-storage";
 import type { KeyOwner } from "./account-service";
-import { planAdminPromotions, planNickEnrollments } from "./nick-enrollment";
+import { planAdminPromotions, planNickEnrollments, planNickInvite } from "./nick-enrollment";
 
 const key = (seed: string): JsonWebKey => ({ kty: "EC", crv: "P-256", x: `${seed}-x`.padEnd(43, "x"), y: `${seed}-y`.padEnd(43, "y") });
 const member = (peerId: string, seed: string, displayName = peerId): PublicPeerIdentity => ({ peerId, publicKey: key(seed), displayName });
@@ -119,5 +119,25 @@ describe("planAdminPromotions", () => {
       owners: owners([["dono-pc1-00", "becine", "CHAVE-DIFERENTE"], ["dono-pc2-00", "becine", "b"]]),
     });
     expect(plan).toEqual([]);
+  });
+});
+
+describe("planNickInvite", () => {
+  const profile = { nick: "veslei", keys: [{ peerId: "veslei-pc1", publicKey: key("v1") }, { peerId: "veslei-pc2", publicKey: key("v2") }] };
+  it("adiciona todas as instalações do @nick com o nick como nome", () => {
+    const plan = planNickInvite({ profile, members: [member("dono-0001", "a")], maxMembers: 48 });
+    expect(plan.add.map((item) => item.peerId)).toEqual(["veslei-pc1", "veslei-pc2"]);
+    expect(plan.add[0]!.displayName).toBe("veslei");
+  });
+  it("pula quem já é membro, quem foi removido e respeita o limite", () => {
+    const plan = planNickInvite({ profile, members: [member("veslei-pc1", "v1")], removedPeerIds: ["veslei-pc2"], maxMembers: 48 });
+    expect(plan.add).toEqual([]);
+    expect(plan.skipped).toBe(2);
+    const limited = planNickInvite({ profile, members: [member("m1-00000", "a")], maxMembers: 2 });
+    expect(limited.add).toHaveLength(1);
+  });
+  it("recusa chave malformada", () => {
+    const bad = { nick: "x", keys: [{ peerId: "bad-peer-1", publicKey: { kty: "RSA" } as JsonWebKey }] };
+    expect(planNickInvite({ profile: bad, members: [], maxMembers: 48 }).add).toEqual([]);
   });
 });

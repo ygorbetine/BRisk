@@ -38,6 +38,7 @@ import { Modal } from "../components/Modal";
 import { P2PInvitePanel } from "../components/P2PInvitePanel";
 import { ProfileAvatar } from "../components/ProfileAvatar";
 import { BriksMark } from "../components/BriksMark";
+import { NickInvite } from "../components/NickInvite";
 import { ProfileEditor } from "../components/ProfileEditor";
 import { FriendsView } from "./FriendsView";
 import { GroupView } from "./GroupView";
@@ -975,7 +976,7 @@ export function HomeView() {
           window.dispatchEvent(new Event("briks:social-updated"));
         }).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao criar canal"));
       }}><input name="name" minLength={2} maxLength={80} placeholder="Nome do canal" required/><select name="kind"><option value="text">Canal de texto</option><option value="voice">Sala de voz</option></select><button>Criar canal</button></form></Modal>}
-      {modal === "inviteMember" && selectedCommunity && <Modal title="Adicionar membro" onClose={() => setModal(null)}>{currentUser ? <GroupInvitePanel token={token} displayName={currentUser.displayName} preferredGroupId={selectedCommunity.id} preferredGroupName={selectedCommunity.name} preferredGroupChannels={channels} initialMode="create" onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
+      {modal === "inviteMember" && selectedCommunity && <Modal title="Adicionar membro" onClose={() => setModal(null)}>{currentUser ? <><NickInvite groupId={selectedCommunity.id} displayName={currentUser.displayName} onDone={() => void loadSocial()}/><GroupInvitePanel token={token} displayName={currentUser.displayName} preferredGroupId={selectedCommunity.id} preferredGroupName={selectedCommunity.name} preferredGroupChannels={channels} initialMode="create" onComplete={() => void loadSocial()}/></> : <p>Carregando sua identidade…</p>}</Modal>}
       {modal === "manageMember" && selectedMember && selectedLocalGroup && <Modal title="Gerenciar membro" onClose={() => { if (!memberSaving) setModal(null); }}>
         <div className="member-manager"><ProfileAvatar displayName={selectedMember.displayName} avatar={selectedMember.avatar}/><div><strong>{selectedMember.displayName}</strong><small>{selectedLocalGroup.ownerPeerId === selectedMember.peerId ? "Proprietário" : (selectedLocalGroup.administratorPeerIds ?? []).includes(selectedMember.peerId) ? "Administrador" : "Membro"}</small></div></div>
         <div className="member-manager-actions">

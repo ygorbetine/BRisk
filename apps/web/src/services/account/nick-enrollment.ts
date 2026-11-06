@@ -1,5 +1,5 @@
 import { addLocalGroupMember, canManageLocalGroup, loadLocalGroups, setLocalGroupAdministrator, type LocalGroup, type LocalIdentity, type PublicPeerIdentity } from "../offline/social-storage";
-import type { KeyOwner } from "./account-service";
+import { lookupNick, type KeyOwner, type NickProfile } from "./account-service";
 import { resolveKeyOwners, samePublicKey, validDirectoryKey } from "./nick-directory";
 
 const MAX_ENROLLED_GROUP_MEMBERS = 48;
@@ -135,4 +135,44 @@ async function enrollCandidates(group: LocalGroup, identity: LocalIdentity, cand
     maxMembers: MAX_ENROLLED_GROUP_MEMBERS,
   });
   for (const member of plan) await addLocalGroupMember(group, member, identity).catch(() => undefined);
+}
+
+export type NickInvitePlan = { add: PublicPeerIdentity[]; skipped: number };
+
+/**
+ * Convite direto por @nick: todas as instalações ativas do @nick (chaves vindas do banco),
+ * exceto quem já é membro ou foi removido. Respeita o limite do grupo. Função pura.
+ */
+export function planNickInvite(input: { profile: NickProfile; members: readonly PublicPeerIdentity[]; removedPeerIds?: readonly string[]; removedMembers?: readonly PublicPeerIdentity[]; maxMembers: number }): NickInvitePlan {
+  const memberIds = new Set(input.members.map((member) => member.peerId));
+  const removedIds = new Set([...(input.removedPeerIds ?? []), ...(input.removedMembers ?? []).map((member) => member.peerId)]);
+  const removedKeys = (input.removedMembers ?? []).map((member) => member.publicKey);
+  const room = Math.max(0, input.maxMembers - input.members.length);
+  const add: PublicPeerIdentity[] = [];
+  let skipped = 0;
+  for (const key of input.profile.keys) {
+    const usable = validDirectoryKey(key.publicKey) && !memberIds.has(key.peerId) && !removedIds.has(key.peerId) && !removedKeys.some((removed) => samePublicKey(removed, key.publicKey)) && add.length < room;
+    if (!usable) { skipped += 1; continue; }
+    const { kty, crv, x, y } = key.publicKey;
+    add.push({ peerId: key.peerId, publicKey: { kty, crv, x, y }, displayName: input.profile.nick });
+  }
+  return { add, skipped };
+}
+
+/** Dono/admin adiciona alguém pelo @nick, sem trocar códigos. Devolve quantas instalações entraram. */
+export async function inviteMemberByNick(groupId: string, identity: LocalIdentity, nickValue: string): Promise<{ nick: string; added: number }> {
+  const group = (await loadLocalGroups()).find((item) => item.groupId === groupId);
+  if (!group || !canManageLocalGroup(group, identity.peerId)) throw new Error("Somente administradores do grupo podem adicionar membros.");
+  const profile = await lookupNick(nickValue);
+  if (!profile) throw new Error("Esse @nick não foi encontrado.");
+  if (!profile.keys.length) throw new Error(`@${profile.nick} ainda não abriu o Briks com a conta. Use o código de convite.`);
+  const plan = planNickInvite({ profile, members: group.members, removedPeerIds: group.removedPeerIds, removedMembers: group.removedMembers, maxMembers: MAX_ENROLLED_GROUP_MEMBERS });
+  if (!plan.add.length) throw new Error(`@${profile.nick} já está no grupo (ou foi removido).`);
+  let added = 0;
+  for (const member of plan.add) {
+    const current = (await loadLocalGroups()).find((item) => item.groupId === groupId) ?? group;
+    await addLocalGroupMember(current, member, identity).then(() => { added += 1; }, () => undefined);
+  }
+  if (!added) throw new Error("Não foi possível adicionar esse membro.");
+  return { nick: profile.nick, added };
 }

@@ -124,6 +124,11 @@ export default defineConfig(({ command, mode }) => {
     realtimeSources.push(url.origin, `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`);
   } catch { /* validação de configuração apresenta o erro amigável no app */ }
   try {
+    // LiveKit (SFU): a CSP precisa liberar o websocket de sinalização e o HTTPS de validação.
+    const sfu = new URL(env.VITE_LIVEKIT_URL ?? "");
+    realtimeSources.push(`wss://${sfu.host}`, `https://${sfu.host}`);
+  } catch { /* SFU não configurado */ }
+  try {
     turnCredentialSources.push(new URL(env.VITE_TURN_CREDENTIALS_URL ?? "").origin);
   } catch { /* verify-build-env apresenta o erro antes do empacotamento */ }
   const connectSources = ["'self'", "http://127.0.0.1:*", ...(command === "serve" ? ["http://localhost:*", "ws://127.0.0.1:*", "ws://localhost:*"] : []), ...realtimeSources, ...turnCredentialSources].join(" ");

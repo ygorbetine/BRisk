@@ -82,6 +82,7 @@ export class SupabaseSignalingProvider implements SignalingProvider {
     this.roomId = await secureRoomId(`${namespace}:${roomId}`);
     this.peerId = peerId;
     this.channelName = `briks:${namespace}:${this.roomId.slice(0, 32)}`;
+    await this.dropStaleChannels(this.channelName);
     this.channel = this.client.channel(this.channelName, {
       config: { presence: { key: peerId }, broadcast: { self: false, ack: true } },
     });
@@ -201,6 +202,7 @@ export class SupabaseSignalingProvider implements SignalingProvider {
     const previous = this.channel;
     if (previous) await this.removeChannelBestEffort(previous);
     if (this.disconnecting || !this.client || !this.channelName || !this.peerId) return;
+    await this.dropStaleChannels(this.channelName);
     let channel: RealtimeChannel;
     try {
       channel = this.client.channel(this.channelName, { config: { presence: { key: this.peerId }, broadcast: { self: false, ack: true } } });
@@ -231,6 +233,16 @@ export class SupabaseSignalingProvider implements SignalingProvider {
         this.scheduleReconnect();
       }
     });
+  }
+
+  /** O cliente devolve o canal já existente com o mesmo nome; remover os antigos evita adicionar callbacks depois de subscribe(). */
+  private async dropStaleChannels(name: string): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    const topic = `realtime:${name}`;
+    for (const stale of (client.getChannels?.() ?? []).filter((item) => item.topic === topic && item !== this.channel)) {
+      await this.removeChannelBestEffort(stale);
+    }
   }
 
   private async removeChannelBestEffort(channel: RealtimeChannel): Promise<void> {

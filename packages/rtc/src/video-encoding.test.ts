@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveVideoSenderPolicy } from "./video-encoding";
+import { orderVideoCodecs, resolveVideoSenderPolicy } from "./video-encoding";
 
 describe("política de codificação de vídeo", () => {
   it("oferece bitrate apropriado para tela 1080p e limita o total do mesh", () => {
@@ -45,5 +45,18 @@ describe("política de codificação de vídeo", () => {
     expect(resolveVideoSenderPolicy(screen, 1).maxBitrate).toBe(30_000_000);
     expect(resolveVideoSenderPolicy(screen, 6).maxBitrate).toBe(30_000_000);
     expect(resolveVideoSenderPolicy({ ...screen, maxBitrate: 90_000_000 }, 1).maxBitrate).toBe(50_000_000);
+  });
+});
+
+describe("orderVideoCodecs", () => {
+  const codec = (mimeType: string) => ({ mimeType });
+  it("coloca H.264 primeiro, mantém os demais e deixa auxiliares no fim", () => {
+    const ordered = orderVideoCodecs([codec("video/VP8"), codec("video/rtx"), codec("video/AV1"), codec("video/H264"), codec("video/VP9"), codec("video/red")]);
+    expect(ordered.map((item) => item.mimeType)).toEqual(["video/H264", "video/VP9", "video/VP8", "video/AV1", "video/rtx", "video/red"]);
+  });
+  it("preserva a ordem entre variantes do mesmo codec", () => {
+    const first = { mimeType: "video/H264", id: 1 };
+    const second = { mimeType: "video/H264", id: 2 };
+    expect(orderVideoCodecs([second, codec("video/VP8"), first]).map((item) => (item as { id?: number }).id)).toEqual([2, 1, undefined]);
   });
 });

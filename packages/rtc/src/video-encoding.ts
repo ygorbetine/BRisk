@@ -1,3 +1,20 @@
+/** H.264 primeiro: é o codec que as GPUs (NVENC, AMF, Quick Sync) codificam em hardware. */
+export const PREFERRED_VIDEO_CODECS = ["video/h264", "video/vp9", "video/vp8", "video/av1"] as const;
+
+type CodecLike = { mimeType: string };
+
+/**
+ * Reordena os codecs para o SDP oferecer o preferido primeiro. Nada é removido, então quem não
+ * suporta H.264 ainda negocia VP9/VP8. Codecs auxiliares (rtx, red, fec) ficam depois, na ordem original.
+ */
+export function orderVideoCodecs<T extends CodecLike>(codecs: readonly T[], preferred: readonly string[] = PREFERRED_VIDEO_CODECS): T[] {
+  const rank = (codec: T): number => {
+    const index = preferred.indexOf(codec.mimeType.toLowerCase());
+    return index >= 0 ? index : preferred.length;
+  };
+  return codecs.map((codec, order) => ({ codec, order })).sort((a, b) => rank(a.codec) - rank(b.codec) || a.order - b.order).map((item) => item.codec);
+}
+
 export type VideoTrackSource = "camera" | "screen";
 
 export type VideoPublicationOptions = {

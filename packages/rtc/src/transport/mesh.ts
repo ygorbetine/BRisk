@@ -23,7 +23,7 @@ import type {
   PeerConnectionDiagnostics,
   TransportEvents,
 } from "./call-transport";
-import { resolveVideoSenderPolicy, type VideoPublicationOptions } from "../video-encoding";
+import { orderVideoCodecs, resolveVideoSenderPolicy, type VideoPublicationOptions } from "../video-encoding";
 import { isMLineOrderMismatch } from "./negotiation";
 import { createMeshPeerEntry, type MeshPeerEntry as PeerEntry } from "./peer";
 import { addOrQueueIceCandidate, flushPendingIceCandidates } from "./ice";
@@ -129,7 +129,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
       }
     }
     for (const { track, stream } of this.localTracks.values()) {
-      if (!entry.pc.getSenders().some((sender) => sender.track?.id === track.id)) entry.pc.addTrack(track, stream);
+      if (!entry.pc.getSenders().some((sender) => sender.track?.id === track.id)) this.addLocalTrack(entry.pc, track, stream);
     }
     entry.needsNegotiation = true;
     await this.negotiateIfNeeded(peerId, entry);
@@ -173,7 +173,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     for (const [peerId, entry] of this.peers) {
       if (this.mediaAuthorizationRequired && !this.mediaAuthorizedPeers.has(peerId)) continue;
       if (entry.pc.getSenders().some((sender) => sender.track?.id === track.id)) continue;
-      entry.pc.addTrack(track, stream);
+      this.addLocalTrack(entry.pc, track, stream);
       entry.needsNegotiation = true;
       negotiations.push(this.negotiateIfNeeded(peerId, entry));
     }
@@ -415,7 +415,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers, iceTransportPolicy: "all", iceCandidatePoolSize: ICE_CANDIDATE_POOL_SIZE });
     const entry = createMeshPeerEntry(pc);
     this.peers.set(peerId, entry);
-    if (!this.mediaAuthorizationRequired || this.mediaAuthorizedPeers.has(peerId)) this.localTracks.forEach(({ track, stream }) => pc.addTrack(track, stream));
+    if (!this.mediaAuthorizationRequired || this.mediaAuthorizedPeers.has(peerId)) this.localTracks.forEach(({ track, stream }) => this.addLocalTrack(pc, track, stream));
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate) return;
       const prepared = prepareLocalIceCandidate(
@@ -557,6 +557,19 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     const timer = this.connectWatchdogs.get(peerId);
     if (timer) clearTimeout(timer);
     this.connectWatchdogs.delete(peerId);
+  }
+
+  /** Adiciona a trilha e, para vídeo, oferece primeiro o codec com codificação por hardware. */
+  private addLocalTrack(pc: RTCPeerConnection, track: MediaStreamTrack, stream: MediaStream): void {
+    const sender = pc.addTrack(track, stream);
+    if (track.kind !== "video") return;
+    try {
+      const capabilities = typeof RTCRtpSender !== "undefined" ? RTCRtpSender.getCapabilities?.("video") : null;
+      const transceiver = pc.getTransceivers().find((item) => item.sender === sender);
+      if (capabilities?.codecs.length && transceiver?.setCodecPreferences) transceiver.setCodecPreferences(orderVideoCodecs(capabilities.codecs));
+    } catch (error) {
+      logger.warn("Não foi possível priorizar o codec de vídeo", { error: String(error) });
+    }
   }
 
   private clearPeerRecovery(peerId: string): void {

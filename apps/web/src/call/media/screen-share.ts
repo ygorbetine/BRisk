@@ -68,8 +68,10 @@ export async function startScreenCapture(
         throw error;
       }
     }
-    // Sem suporte (Windows antigo etc.): mantém o loopback do sistema sem o Risk.
-    sourceId = chosenId;
+    // Nunca cair no loopback do sistema: ele carregaria a voz do Discord para a transmissão.
+    // Se o áudio por processo falhar, a transmissão segue só com vídeo.
+    console.warn("BRisk: áudio por processo indisponível; transmitindo sem áudio para não vazar o Discord.");
+    return { stream: await provider.startScreenShare(chosenId, false), desktopAudio: null };
   }
 
   const desktopAudio = await prepareDesktopScreenAudio(excludeRisk).catch((error) => {

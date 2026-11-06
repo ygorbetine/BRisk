@@ -37,7 +37,7 @@ export function reconcileRemoteMediaState(
   state: PeerState,
 ): PeerState {
   const streams = Object.values(streamsById ?? {});
-  const videoStreams = streams.filter((stream) => stream.getVideoTracks().length > 0);
+  const videoStreams = streams.filter((stream) => stream.getVideoTracks().length > 0 && stream.id !== state.secondScreenStreamId);
   if (!videoStreams.length) return state;
 
   const next = { ...state };

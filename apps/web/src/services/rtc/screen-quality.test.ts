@@ -37,3 +37,13 @@ describe("qualidade da transmissão de tela", () => {
     expect(applyConstraints).toHaveBeenLastCalledWith({ frameRate: { ideal: 60, max: 60 } });
   });
 });
+
+describe("secondScreenPublication", () => {
+  it("limita a segunda tela a 4 Mbps e ignora bitrate forçado", async () => {
+    const { secondScreenPublication, SCREEN_QUALITY_PROFILES } = await import("./screen-quality");
+    const options = secondScreenPublication({ ...SCREEN_QUALITY_PROFILES["1080p60"], forceBitrate: true, maxBitrate: 30_000_000 });
+    expect(options.maxBitrate).toBe(4_000_000);
+    expect(options.forceBitrate).toBe(false);
+    expect(options.source).toBe("screen");
+  });
+});

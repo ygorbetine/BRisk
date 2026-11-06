@@ -39,3 +39,11 @@ describe("validação de signaling externo", () => {
     vi.useRealTimers();
   });
 });
+
+describe("estado da segunda tela", () => {
+  it("aceita secondScreenStreamId textual e recusa outros tipos", () => {
+    const base = { microphone: true, camera: false, screenShare: true };
+    expect(parsePeerState(envelope("peer.state", { state: { ...base, secondScreenStreamId: "stream-2" } }))).not.toBeNull();
+    expect(parsePeerState(envelope("peer.state", { state: { ...base, secondScreenStreamId: 42 } }))).toBeNull();
+  });
+});

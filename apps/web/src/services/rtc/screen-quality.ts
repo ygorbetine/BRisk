@@ -44,6 +44,13 @@ export function screenVideoPublication(profile: ScreenQualityProfile): VideoPubl
   };
 }
 
+/** A segunda tela divide o upload com a primeira: teto de 4 Mbps e prioridade normal de degradação. */
+export const SECOND_SCREEN_MAX_BITRATE = 4_000_000;
+
+export function secondScreenPublication(profile: ScreenQualityProfile): VideoPublicationOptions {
+  return { ...screenVideoPublication(profile), maxBitrate: Math.min(profile.maxBitrate, SECOND_SCREEN_MAX_BITRATE), forceBitrate: false };
+}
+
 export async function applyScreenCaptureQuality(track: MediaStreamTrack, profile: ScreenQualityProfile): Promise<void> {
   try { track.contentHint = profile.contentHint; } catch { /* contentHint é opcional */ }
   try {

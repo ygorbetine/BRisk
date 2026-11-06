@@ -7,6 +7,7 @@ import {
   applyScreenCaptureQuality,
   SCREEN_QUALITY_PROFILES,
   screenVideoPublication,
+  secondScreenPublication,
   type ScreenQualityProfile,
 } from "../services/rtc/screen-quality";
 import { openCamera } from "./media/camera";
@@ -40,6 +41,8 @@ export class MediaManager {
   private microphoneSettings?: VoiceVideoSettings;
   private camera?: MediaStreamTrack;
   private screenStream?: MediaStream;
+  private secondScreenStream?: MediaStream;
+  private readonly secondScreen: ScreenShareProvider = new WebScreenShareProvider();
   private screenQualityProfile: ScreenQualityProfile = SCREEN_QUALITY_PROFILES["1080p30"];
   private screenQualityRevision = 0;
   private peerState: PeerState = { microphone: false, camera: false, screenShare: false };
@@ -61,6 +64,7 @@ export class MediaManager {
     this.microphoneSettings = undefined;
     this.camera = undefined;
     this.screenStream = undefined;
+    this.secondScreenStream = undefined;
     this.peerState = { microphone: false, camera: false, screenShare: false };
   }
 
@@ -293,6 +297,61 @@ export class MediaManager {
     }
   }
 
+  /** Liga ou desliga a segunda tela (outro monitor). Sem áudio e com bitrate menor para não dobrar o upload. */
+  async toggleSecondScreen(sourceId: string | undefined, qualityProfile?: ScreenQualityProfile): Promise<void> {
+    if (this.secondScreenStream) {
+      await this.stopSecondScreen();
+      return;
+    }
+    if (!this.screenStream) {
+      this.dependencies.reportError(new Error("Inicie a primeira transmissão antes de adicionar a segunda."), "Inicie a primeira transmissão antes.");
+      return;
+    }
+    if (qualityProfile) this.setScreenQualityProfile(qualityProfile);
+    const lifecycle = this.dependencies.currentLifecycle();
+    let stream: MediaStream | undefined;
+    try {
+      stream = await this.secondScreen.startScreenShare(sourceId, false);
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("A fonte selecionada não forneceu vídeo");
+      }
+      const profile = await this.applyLatestScreenCaptureQuality(videoTrack);
+      const transport = this.dependencies.getTransport();
+      if (!this.dependencies.isActive(lifecycle) || !transport) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      this.secondScreenStream = stream;
+      const captured = stream;
+      videoTrack.addEventListener("ended", () => { void this.stopSecondScreen(captured); }, { once: true });
+      this.peerState.screenShare = true;
+      this.peerState.secondScreenStreamId = stream.id;
+      this.notifyState("Não foi possível atualizar a segunda tela.");
+      await transport.publishTrack(videoTrack, stream, secondScreenPublication(profile));
+    } catch (error) {
+      if (stream && this.secondScreenStream === stream) await this.stopSecondScreen().catch(() => undefined);
+      else stream?.getTracks().forEach((track) => track.stop());
+      if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
+        this.dependencies.reportError(error, "Não foi possível compartilhar a segunda tela.");
+      }
+    }
+  }
+
+  private async stopSecondScreen(expected?: MediaStream): Promise<void> {
+    const stream = this.secondScreenStream;
+    if (!stream || (expected && stream !== expected)) return;
+    this.secondScreenStream = undefined;
+    this.peerState.secondScreenStreamId = undefined;
+    this.peerState.screenShare = Boolean(this.screenStream);
+    this.notifyState("Não foi possível atualizar a segunda tela.");
+    const transport = this.dependencies.getTransport();
+    if (transport) await Promise.all(stream.getTracks().map((track) => transport.unpublishTrack(track).catch(() => undefined)));
+    stream.getTracks().forEach((track) => track.stop());
+    await this.secondScreen.stopScreenShare().catch(() => undefined);
+  }
+
   async updateScreenQuality(profile: ScreenQualityProfile): Promise<void> {
     this.setScreenQualityProfile(profile);
     const stream = this.screenStream;
@@ -312,12 +371,15 @@ export class MediaManager {
     const inputStream = this.microphoneInputStream;
     const rnnoise = this.rnnoiseMicrophone;
     const screenStream = this.screenStream;
+    const secondScreenStream = this.secondScreenStream;
     this.reset();
+    secondScreenStream?.getTracks().forEach((track) => track.stop());
+    void this.secondScreen.stopScreenShare().catch(() => undefined);
 
     local.getTracks().forEach((track) => track.stop());
     inputStream?.getTracks().forEach((track) => track.stop());
     screenStream?.getTracks().forEach((track) => track.stop());
-    useCallStore.getState().setLocalMedia({ microphone: null, camera: null, screen: null }, this.peerState);
+    useCallStore.getState().setLocalMedia({ microphone: null, camera: null, screen: null, screen2: null }, this.peerState);
 
     const screenCleanup = this.screen.stopScreenShare().catch(() => undefined);
     const desktopAudioCleanup = stopDesktopScreenAudio();
@@ -398,7 +460,7 @@ export class MediaManager {
     const stream = this.screenStream;
     if (!stream || (expectedStream && stream !== expectedStream)) return;
     this.screenStream = undefined;
-    this.peerState.screenShare = false;
+    this.peerState.screenShare = Boolean(this.secondScreenStream);
     this.peerState.screenStreamId = undefined;
     this.peerState.screenAudio = false;
     this.notifyState("Não foi possível atualizar o compartilhamento de tela.");
@@ -463,6 +525,7 @@ export class MediaManager {
       microphone: this.microphone ? new MediaStream([this.microphone]) : null,
       camera: this.camera ? new MediaStream([this.camera]) : null,
       screen: this.screenStream ? new MediaStream(this.screenStream.getVideoTracks()) : null,
+      screen2: this.secondScreenStream ? new MediaStream(this.secondScreenStream.getVideoTracks()) : null,
     }, this.peerState);
   }
 }

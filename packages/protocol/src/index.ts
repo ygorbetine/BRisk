@@ -4,6 +4,8 @@ export type PeerState = {
   screenShare: boolean;
   cameraStreamId?: string;
   screenStreamId?: string;
+  /** Segunda transmissão de tela (outro monitor). Clientes antigos ignoram o campo. */
+  secondScreenStreamId?: string;
   screenAudio?: boolean;
 };
 

@@ -16,6 +16,7 @@ export type LocalMediaPreviews = {
   microphone: MediaStream | null;
   camera: MediaStream | null;
   screen: MediaStream | null;
+  screen2?: MediaStream | null;
 };
 
 type CallState = {

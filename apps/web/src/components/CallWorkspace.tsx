@@ -1,5 +1,5 @@
 import { BriksMark } from "./BriksMark";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
   Copy,
@@ -159,11 +159,13 @@ function VideoTile({
 }) {
   const streams = Object.values(participant.streams ?? {});
   const screenStream = participant.state.screenStreamId ? participant.streams?.[participant.state.screenStreamId] : undefined;
+  const secondId = participant.state.secondScreenStreamId;
   const cameraStream = (participant.state.cameraStreamId ? participant.streams?.[participant.state.cameraStreamId] : undefined)
-    ?? streams.find((stream) => stream.id !== screenStream?.id && stream.getVideoTracks().length > 0)
-    ?? streams.find((stream) => stream.id !== screenStream?.id);
+    ?? streams.find((stream) => stream.id !== screenStream?.id && stream.id !== secondId && stream.getVideoTracks().length > 0)
+    ?? streams.find((stream) => stream.id !== screenStream?.id && stream.id !== secondId);
   const microphoneStream = streams.find((stream) =>
     stream.id !== screenStream?.id
+    && stream.id !== secondId
     && stream.getAudioTracks().some((track) => track.readyState === "live"),
   ) ?? (cameraStream?.getAudioTracks().length ? cameraStream : undefined);
   const [source, setSource] = useState<"camera" | "screen">("camera");
@@ -218,6 +220,38 @@ function VideoTile({
       {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={setScreenVolume}/>} 
     </div>}
     <div className="tile-label"><span>{participant.displayName}</span>{!participant.state.microphone && <MicOff size={15}/>} {participant.state.screenAudio && !compact && <em>ÁUDIO DA TELA</em>}</div>
+  </article>;
+}
+
+function RemoteSecondScreenTile({ participant, stream, tileId, focused, compact, onFocus }: {
+  participant: Participant;
+  stream: MediaStream;
+  tileId: string;
+  focused: boolean;
+  compact: boolean;
+  onFocus(tileId: string): void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const articleRef = useRef<HTMLElement>(null);
+  const trackKey = stream.getVideoTracks().map((track) => track.id).join(":");
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      void videoRef.current.play().catch(() => undefined);
+    }
+  }, [stream, trackKey]);
+  return <article
+    ref={articleRef}
+    className={`tile screen online ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
+    onClick={(event) => {
+      if ((event.target as HTMLElement).closest("button")) return;
+      onFocus(tileId);
+    }}
+    onDoubleClick={() => { void articleRef.current?.requestFullscreen().catch(() => undefined); }}
+  >
+    <video ref={videoRef} autoPlay playsInline muted className="screen"/>
+    <FullscreenButton target={articleRef}/>
+    <div className="tile-label"><span>{participant.displayName} · 2ª tela</span></div>
   </article>;
 }
 
@@ -361,6 +395,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const [qualityPanelOpen, setQualityPanelOpen] = useState(false);
   const qualityProfile = useMemo(() => buildScreenQualityProfile(qualitySettings), [qualitySettings]);
   const [screenAudioEnabled, setScreenAudioEnabled] = useState(initialScreenAudio);
+  const [pickingSecond, setPickingSecond] = useState(false);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [screenSources, setScreenSources] = useState<BriksDesktopSource[]>([]);
@@ -519,16 +554,24 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     if (!localPreviews.camera) ids.push("local-profile");
     if (localPreviews.camera) ids.push("local-camera");
     if (localPreviews.screen) ids.push("local-screen");
-    peers.forEach((peer) => ids.push(`peer-${peer.peerId}`));
+    if (localPreviews.screen2) ids.push("local-screen2");
+    peers.forEach((peer) => {
+      ids.push(`peer-${peer.peerId}`);
+      if (peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId]) ids.push(`peer2-${peer.peerId}`);
+    });
     return ids;
-  }, [localPreviews.camera, localPreviews.screen, peers]);
+  }, [localPreviews.camera, localPreviews.screen, localPreviews.screen2, peers]);
 
   useEffect(() => {
     if (focusedTile && !tileIds.includes(focusedTile)) setFocusedTile(null);
   }, [focusedTile, tileIds]);
 
-  async function showScreenPicker(): Promise<void> {
-    if (localState.screenShare) {
+  async function showScreenPicker(second = false): Promise<void> {
+    setPickingSecond(second);
+    if (second) {
+      if (localPreviews.screen2) { await call.toggleSecondScreen(roomId); return; }
+      if (!window.desktop?.listScreenSources) { await call.toggleSecondScreen(roomId, undefined, qualityProfile); return; }
+    } else if (localPreviews.screen) {
       await call.toggleScreen(roomId);
       return;
     }
@@ -551,7 +594,8 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   async function chooseScreen(source: BriksDesktopSource): Promise<void> {
     setSourcePickerOpen(false);
     try {
-      await call.toggleScreen(roomId, source.id, screenAudioEnabled, qualityProfile);
+      if (pickingSecond) await call.toggleSecondScreen(roomId, source.id, qualityProfile);
+      else await call.toggleScreen(roomId, source.id, screenAudioEnabled, qualityProfile);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível iniciar o compartilhamento.");
     }
@@ -677,9 +721,21 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           compact={Boolean(focused && focused !== "local-screen")}
           onFocus={(id) => setFocusedTile((current) => current === id ? null : id)}
         />}
+        {localPreviews.screen2 && <LocalVideoTile
+          stream={localPreviews.screen2}
+          tileId="local-screen2"
+          label="2ª tela · sem áudio"
+          mirrored={false}
+          microphone={localState.microphone}
+          focused={focused === "local-screen2"}
+          compact={Boolean(focused && focused !== "local-screen2")}
+          onFocus={(id) => setFocusedTile((current) => current === id ? null : id)}
+        />}
         {peers.map((participant) => {
           const id = `peer-${participant.peerId}`;
-          return <VideoTile
+          const secondStream = participant.state.secondScreenStreamId ? participant.streams?.[participant.state.secondScreenStreamId] : undefined;
+          const id2 = `peer2-${participant.peerId}`;
+          return <React.Fragment key={participant.peerId}>{secondStream && <RemoteSecondScreenTile participant={participant} stream={secondStream} tileId={id2} focused={focused === id2} compact={Boolean(focused && focused !== id2)} onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}/>}<VideoTile
             key={participant.peerId}
             participant={participant}
             tileId={id}
@@ -687,7 +743,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
             compact={Boolean(focused && focused !== id)}
             deafened={deafened}
             onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}
-          />;
+          /></React.Fragment>;
         })}
       </section>
     </section>
@@ -720,7 +776,8 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       <button className={audioSettingsOpen ? "active" : ""} onClick={() => setAudioSettingsOpen((current) => !current)} title="Configurações de áudio"><Settings2/><span>Áudio</span></button>
       <button className={localState.camera ? "active" : ""} onClick={() => void call.toggleCamera(roomId)}>{localState.camera ? <Video/> : <VideoOff/>}<span>Câmera</span></button>
       <div className="share-control">
-        <button className={localState.screenShare ? "active" : ""} onClick={() => void showScreenPicker()}><MonitorUp/><span>{localState.screenShare ? "Parar transmissão" : "Compartilhar"}</span></button>
+        <button className={localPreviews.screen ? "active" : ""} onClick={() => void showScreenPicker()}><MonitorUp/><span>{localPreviews.screen ? "Parar transmissão" : "Compartilhar"}</span></button>
+        {localPreviews.screen && <button className={localPreviews.screen2 ? "active" : ""} onClick={() => void showScreenPicker(true)} title={localPreviews.screen2 ? "Parar a segunda tela" : "Transmitir outro monitor ao mesmo tempo (sem áudio, até 4 Mbps)"}><MonitorUp/><span>{localPreviews.screen2 ? "Parar 2ª tela" : "+ 2ª tela"}</span></button>}
         <select
           value={screenAudioEnabled ? "audio" : "silent"}
           onChange={(event) => setScreenAudioEnabled(event.target.value === "audio")}

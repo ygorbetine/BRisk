@@ -79,6 +79,7 @@ export function parsePeerState(value: unknown): PeerStateMessage | null {
     && typeof state.screenShare === "boolean"
     && (state.cameraStreamId === undefined || typeof state.cameraStreamId === "string")
     && (state.screenStreamId === undefined || typeof state.screenStreamId === "string")
+    && (state.secondScreenStreamId === undefined || typeof state.secondScreenStreamId === "string")
     && (state.screenAudio === undefined || typeof state.screenAudio === "boolean");
   return valid ? value as PeerStateMessage : null;
 }

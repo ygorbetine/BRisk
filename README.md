@@ -1,4 +1,4 @@
-﻿# BRisk — transmissão de tela e chamadas
+# BRisk — transmissão de tela e chamadas
 
 **BRisk** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo BRisk sem que a voz do Discord vaze para o stream.
 

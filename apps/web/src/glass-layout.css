@@ -85,3 +85,7 @@ body {
 .global-error::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #e95555; }
 .desktop-recovery-notice { top: auto !important; bottom: 96px; }
 .members-resync-note { padding: 8px 12px; margin: 6px 4px; border-radius: 12px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: #d9d0ee; font-size: 12px; }
+
+.global-error { background: linear-gradient(135deg, rgba(120, 28, 52, .62), rgba(60, 14, 48, .72)); border-color: rgba(255, 120, 140, .45); }
+.desktop-recovery-notice { background: linear-gradient(135deg, rgba(72, 22, 52, .72), rgba(34, 12, 48, .8)) !important; }
+.invite-notice, .members-resync-note { background: linear-gradient(135deg, rgba(72, 22, 52, .55), rgba(34, 12, 48, .65)); border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(14px); }

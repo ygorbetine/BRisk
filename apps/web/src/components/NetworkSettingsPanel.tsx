@@ -6,6 +6,7 @@ import {
   saveNetworkSettings,
   type NetworkPreference,
 } from "../services/network/settings";
+import { loadCallTransportMode, saveCallTransportMode } from "../services/call/transport-mode";
 import "./network-settings.css";
 
 const PREFERENCE_OPTIONS: Array<{
@@ -30,6 +31,7 @@ export function NetworkSettingsPanel() {
   const [interfaces, setInterfaces] = useState<BriksDesktopNetworkInterface[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [callMode, setCallMode] = useState(loadCallTransportMode);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult>();
   const vpnInterfaces = useMemo(() => interfaces.filter((item) => item.provider !== "unknown"), [interfaces]);
@@ -95,6 +97,19 @@ export function NetworkSettingsPanel() {
       {error && <div className="settings-device-error">{error}</div>}
     </section>
 
+    <section className="network-section call-mode-section">
+      <header><Network/><span><strong>Modo da chamada</strong><small>Automático usa conexão direta e passa para o servidor (SFU) em salas grandes ou rede ruim. Todos da sala precisam usar o mesmo modo.</small></span></header>
+      <div className="call-mode-options" role="radiogroup" aria-label="Modo da chamada">
+        {([["auto", "Automático"], ["mesh", "Sempre P2P"], ["sfu", "Sempre SFU"]] as const).map(([value, label]) => <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={callMode === value}
+          className={callMode === value ? "active" : ""}
+          onClick={() => { setCallMode(value); saveCallTransportMode(value); }}
+        >{label}</button>)}
+      </div>
+    </section>
     <section className="network-settings-section">
       <header><Activity/><span><strong>Teste de conexão</strong><small>Verifica se a sua rede permite chamadas diretas e se o relay (TURN) responde.</small></span></header>
       <button type="button" className="settings-secondary-button" disabled={testing} onClick={() => void testConnection()}>

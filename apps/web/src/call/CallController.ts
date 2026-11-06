@@ -1,3 +1,4 @@
+import { loadCallTransportMode } from "../services/call/transport-mode";
 import {
   isMeshCallTransport,
   MESH_HARD_MAX_PARTICIPANTS,
@@ -140,7 +141,7 @@ export class CallController {
     const rendezvousId = options.rendezvousId ?? roomId;
     const lifecycle = this.session.begin(roomId, localPeerId, rendezvousId);
     try {
-    this.transportPreference = options.transportPreference ?? "auto";
+    this.transportPreference = options.transportPreference ?? loadCallTransportMode();
     this.transportReady = false;
     this.expectedParticipantCount = 1;
     this.media.reset();

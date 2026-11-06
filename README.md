@@ -1,4 +1,4 @@
-# BRisk — transmissão de tela e chamadas
+﻿# BRisk — transmissão de tela e chamadas
 
 **BRisk** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo BRisk sem que a voz do Discord vaze para o stream.
 
@@ -32,7 +32,7 @@ Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase
 
 **Risk** é um aplicativo desktop de comunicação P2P com chamadas de voz e vídeo, compartilhamento de tela, chat, grupos e transferência de arquivos usando WebRTC.
 
-> **Versão atual: Alpha 0.2.1**
+> **Versão atual: Alpha 0.3.0**
 >
 > O projeto ainda está em fase Alpha. Recursos, protocolo e persistência podem mudar entre versões.
 

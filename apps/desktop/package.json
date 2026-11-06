@@ -1,8 +1,8 @@
-{
+﻿{
   "name": "@risk/desktop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
-  "description": "Comunicação P2P com áudio, vídeo, tela e chat via WebRTC",
+  "description": "ComunicaÃ§Ã£o P2P com Ã¡udio, vÃ­deo, tela e chat via WebRTC",
   "homepage": "https://github.com/xxsamboladiones/Risk-P2P",
   "author": {
     "name": "BRisk",

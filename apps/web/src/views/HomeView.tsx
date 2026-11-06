@@ -12,7 +12,6 @@ import {
   Settings2,
   Shield,
   ShieldCheck,
-  Sparkles,
   Trash2,
   UserMinus,
   UserPlus,
@@ -38,6 +37,7 @@ import { MessageComposer } from "../components/MessageComposer";
 import { Modal } from "../components/Modal";
 import { P2PInvitePanel } from "../components/P2PInvitePanel";
 import { ProfileAvatar } from "../components/ProfileAvatar";
+import { BriksMark } from "../components/BriksMark";
 import { ProfileEditor } from "../components/ProfileEditor";
 import { FriendsView } from "./FriendsView";
 import { GroupView } from "./GroupView";
@@ -787,7 +787,7 @@ export function HomeView() {
   return <>
     <main className="social-shell">
       <aside className="space-rail">
-        <button className={!selectedCommunity ? "space active" : "space"} onClick={() => { setSelectedCommunity(null); setActiveFriend(null); }} title="Amigos"><Sparkles/></button>
+        <button className={!selectedCommunity ? "space active" : "space"} onClick={() => { setSelectedCommunity(null); setActiveFriend(null); }} title="Amigos"><BriksMark size={30}/></button>
         <div className="rail-separator"/>
         {communities.map((group) => <button key={group.id} className={selectedCommunity?.id === group.id ? "space active" : "space"} onClick={() => { setActiveFriend(null); setSelectedCommunity(group); }} title={group.name}><ProfileAvatar displayName={group.name} avatar={group.avatar} className="group-space-avatar"/></button>)}
         <button className="space add" onClick={() => setModal("group")} title="Criar grupo"><Plus/></button>
@@ -803,7 +803,7 @@ export function HomeView() {
           </div>)}
           <div className="nav-section"><span>SALAS DE VOZ</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
           {channels.filter((item) => item.kind === "voice").map((channel) => <div className="channel-item" key={channel.id}>
-            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId && <small>{Object.keys(callParticipants).length + 1}</small>}</button>
+            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
             {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear sala de voz" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar sala de voz" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
           </div>)}
           {(() => {

@@ -27,3 +27,9 @@
 
 /* Se o Google Fonts não carregar (app empacotado), "Manrope" não pode cair no serifado padrão. */
 @font-face{font-family:'Manrope';font-weight:100 900;font-style:normal;src:local('DM Sans'),local('Segoe UI'),local('Arial')}
+
+/* Layout 0.7.0: marca na barra de grupos e atividade nas salas de voz */
+.space-rail .space:first-child{background:linear-gradient(145deg,rgba(176,31,207,.35),rgba(91,108,249,.28));box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.space-rail .space:first-child.active{background:linear-gradient(145deg,#b01fcf,#6d5cf6)}
+.channel.voice .voice-live{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:#75df8c;font-size:11px;font-weight:700}
+.channel.voice .voice-live i{width:7px;height:7px;border-radius:50%;background:#75df8c;box-shadow:0 0 8px #75df8c}

@@ -106,6 +106,8 @@ export function HomeView() {
   const [attachmentProgress, setAttachmentProgress] = useState<Record<string, ChatAttachmentProgress | undefined>>({});
   const [modal, setModal] = useState<SocialModal>(null);
   const [accountNick, setAccountNick] = useState<string>();
+  const [resyncing, setResyncing] = useState(false);
+  const [resyncNote, setResyncNote] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [deleting, setDeleting] = useState(false);
   const [channelAction, setChannelAction] = useState<ChannelActionTarget>(null);
@@ -152,6 +154,17 @@ export function HomeView() {
     window.addEventListener("briks:group-removed", removed);
     return () => window.removeEventListener("briks:group-removed", removed);
   }, [callContext?.groupId, roomId, selectedCommunity?.id]);
+
+  async function reloadMembers(): Promise<void> {
+    const groupId = selectedLocalGroup?.groupId;
+    if (!groupId || resyncing) return;
+    setResyncing(true);
+    setResyncNote("Recarregando…");
+    try { setResyncNote(await backgroundChats.resyncMembership(groupId)); }
+    catch { setResyncNote("Não foi possível recarregar a lista agora."); }
+    finally { setResyncing(false); }
+    window.setTimeout(() => setResyncNote(""), 12000);
+  }
 
   useEffect(() => {
     if (!currentUser) return;
@@ -814,7 +827,7 @@ export function HomeView() {
               </div>;
             };
             return <>
-              <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span><div className="nav-title-actions"><button title="Recarregar lista de membros" aria-label="Recarregar lista de membros" onClick={() => window.dispatchEvent(new Event("briks:group-resync"))}><RefreshCw size={15}/></button>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div></div>
+              <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span><div className="nav-title-actions"><button title="Recarregar lista de membros" aria-label="Recarregar lista de membros" disabled={resyncing} className={resyncing ? "spinning" : ""} onClick={() => void reloadMembers()}><RefreshCw size={15}/></button>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div></div>{resyncNote && <p className="members-resync-note" role="status">{resyncNote}</p>}
               {memberGroups.flatMap((group) => {
                 const expanded = expandedMemberGroups.has(group.key) || group.duplicates.some((copy) => copy.peerId === localIdentityPeerId);
                 const removable = removableDuplicates(group.duplicates);

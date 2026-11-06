@@ -17,3 +17,7 @@
 .account-keys small{color:#8b7a9d}
 .account-key-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;background:#2f174566;font-size:12px;color:#d6c8e6}
 .account-key-row button{padding:5px 10px;border-radius:8px;background:#e9555520;color:#ff8585}
+
+.nav-section button.spinning svg{animation:members-spin 1s linear infinite}
+@keyframes members-spin{to{transform:rotate(360deg)}}
+.members-resync-note{margin:0 9px 8px;padding:8px 10px;border-radius:10px;background:#8b5cf61a;color:#d6c8e6;font-size:12px;line-height:1.4}

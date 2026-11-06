@@ -1,4 +1,5 @@
 import { ChatController, type ChatConnectionOptions, type ChatConnectionStatus } from "../../chat";
+import { describeMembershipResync } from "./membership-report";
 import { getOrCreateLocalIdentity, groupRendezvousId, type LocalGroup } from "../offline/social-storage";
 
 const MAX_BACKGROUND_CHANNELS = 8;
@@ -204,6 +205,17 @@ export class BackgroundChatManager {
     } else {
       this.resetRetry();
     }
+  }
+
+  /** Pede/reenvia a lista de membros do grupo e devolve uma frase explicando o resultado. */
+  async resyncMembership(groupId: string): Promise<string> {
+    const controller = this.membershipSessions.get(groupId);
+    if (!controller) return "A sessão deste grupo ainda não está conectada. Aguarde alguns segundos e tente de novo.";
+    const before = await controller.getMembershipReport();
+    window.dispatchEvent(new Event("briks:group-resync"));
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    const after = await controller.getMembershipReport();
+    return describeMembershipResync(before, after);
   }
 
   async disconnect(): Promise<void> {

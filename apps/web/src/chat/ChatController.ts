@@ -59,6 +59,18 @@ const missingSignaling = (): SignalingProvider => {
   throw new Error("ChatController precisa receber um adapter de signaling no composition root.");
 };
 
+export type MembershipReport = {
+  status: ChatConnectionStatus;
+  openPeers: number;
+  authorizedOnline: boolean;
+  localIsAuthorized: boolean;
+  received: number;
+  accepted: number;
+  rejected: number;
+  lastAcceptedAt?: number;
+  members: number;
+};
+
 export class ChatController {
   private signaling?: SignalingProvider;
   private transport?: MeshWebRTCTransport;
@@ -96,6 +108,7 @@ export class ChatController {
   private displayName = "Participante";
   private identity?: LocalIdentity;
   private status: ChatConnectionStatus = "disconnected";
+  private readonly membershipStats = { received: 0, accepted: 0, rejected: 0, lastAcceptedAt: undefined as number | undefined };
   private readonly dataChannelPeers = new Set<string>();
   private readonly openDataPeers = new Set<string>();
   private readonly revocationOnlyPeers = new Set<string>();
@@ -651,8 +664,11 @@ export class ChatController {
     if (!this.identity) return;
     if (envelope.type === "chat.members.snapshot") {
       if (!this.groupId) return;
+      this.membershipStats.received += 1;
       const accepted = await this.groups.acceptMembership(this.groupId, this.identity, remotePeerId, envelope);
-      if (!accepted) return;
+      if (!accepted) { this.membershipStats.rejected += 1; return; }
+      this.membershipStats.accepted += 1;
+      this.membershipStats.lastAcceptedAt = Date.now();
       this.installGroupPeers(accepted.merged.members ?? [], accepted.merged.removedMembers ?? [], accepted.merged.revocations ?? []);
       await this.connectPresentTrustedPeers();
       if (accepted.shouldReply) await this.sendGroupMembership(remotePeerId);
@@ -765,6 +781,24 @@ export class ChatController {
     if (!this.signaling || !this.peerId) return;
     const present = this.signaling.getDiagnostics().presencePeers;
     await Promise.all(present.filter((peerId) => this.isTrustedRemote(peerId)).map((peerId) => this.connectTrustedPeer(peerId, this.peerId)));
+  }
+
+  /** Estado da sincronização de membros, para o botão "Recarregar lista" explicar o que aconteceu. */
+  async getMembershipReport(): Promise<MembershipReport> {
+    const group = this.groupId ? (await loadLocalGroups()).find((item) => item.groupId === this.groupId) : undefined;
+    const authorized = new Set([group?.ownerPeerId, ...(group?.administratorPeerIds ?? [])].filter((id): id is string => Boolean(id)));
+    const openPeerIds = [...this.openDataPeers];
+    return {
+      status: this.status,
+      openPeers: openPeerIds.length,
+      authorizedOnline: openPeerIds.some((peerId) => authorized.has(peerId)),
+      localIsAuthorized: Boolean(this.identity && authorized.has(this.identity.peerId)),
+      received: this.membershipStats.received,
+      accepted: this.membershipStats.accepted,
+      rejected: this.membershipStats.rejected,
+      lastAcceptedAt: this.membershipStats.lastAcceptedAt,
+      members: group?.members.length ?? 0,
+    };
   }
 
   /** Pede a lista de membros a um peer (quem é dono/admin responde com o snapshot assinado). */

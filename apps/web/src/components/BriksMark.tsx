@@ -1,4 +1,4 @@
-/** Marca do Briks: "B" branco sobre degradê magenta/violeta, com ponto de transmissão ao vivo. */
+/** Marca do Briks: um "B" montado com tijolos brancos sobre degradê magenta/violeta. */
 export function BriksMark({ size = 24 }: { size?: number }) {
   return (
     <svg className="briks-mark" width={size} height={size} viewBox="0 0 256 256" aria-hidden="true" focusable="false">
@@ -10,12 +10,34 @@ export function BriksMark({ size = 24 }: { size?: number }) {
         </linearGradient>
       </defs>
       <rect width="256" height="256" rx="58" fill="url(#briks-mark-gradient)" />
-      <path
-        fill="#fff"
-        fillRule="evenodd"
-        d="M92 64h60c26 0 42 14 42 36 0 14-8 24-20 29 16 4 26 16 26 32 0 24-18 39-46 39H92zM120 88v34h28c12 0 19-6 19-17s-7-17-19-17zM120 146v36h32c13 0 21-7 21-18s-8-18-21-18z"
-      />
-      <circle cx="206" cy="58" r="11" fill="#ffd6ff" />
+      <rect x="63.8" y="30.8" width="40.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="107.8" y="30.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="30.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="63.8" y="52.8" width="18.5" height="18.5" rx="3.5" fill="#ffe3fb"/>
+      <rect x="85.8" y="52.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="151.8" y="52.8" width="18.5" height="18.5" rx="3.5" fill="#ffe3fb"/>
+      <rect x="173.8" y="52.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="63.8" y="74.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="74.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="63.8" y="96.8" width="18.5" height="18.5" rx="3.5" fill="#f6e9ff"/>
+      <rect x="85.8" y="96.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="129.8" y="96.8" width="40.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="63.8" y="118.8" width="40.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="107.8" y="118.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="118.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="63.8" y="140.8" width="18.5" height="18.5" rx="3.5" fill="#ffe3fb"/>
+      <rect x="85.8" y="140.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="151.8" y="140.8" width="18.5" height="18.5" rx="3.5" fill="#ffe3fb"/>
+      <rect x="173.8" y="140.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="63.8" y="162.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="162.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="63.8" y="184.8" width="18.5" height="18.5" rx="3.5" fill="#f6e9ff"/>
+      <rect x="85.8" y="184.8" width="18.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="184.8" width="18.5" height="18.5" rx="3.5" fill="#f6e9ff"/>
+      <rect x="173.8" y="184.8" width="18.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="63.8" y="206.8" width="40.5" height="18.5" rx="3.5" fill="#ffffff"/>
+      <rect x="107.8" y="206.8" width="40.5" height="18.5" rx="3.5" fill="#ecd6ff"/>
+      <rect x="151.8" y="206.8" width="18.5" height="18.5" rx="3.5" fill="#ffffff"/>
     </svg>
   );
 }

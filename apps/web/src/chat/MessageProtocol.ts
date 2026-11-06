@@ -91,6 +91,13 @@ export type IdentityProofWireMessage = {
   signature: string;
 };
 
+export type MembersRequestWireMessage = {
+  version: 2;
+  type: "chat.members.request";
+  channelId: string;
+  requestId: string;
+};
+
 export type HistoryRequestWireMessage = {
   version: 2;
   type: "chat.history.request";
@@ -182,6 +189,7 @@ export type ChatWireEnvelope =
   | IdentityChallengeWireMessage
   | IdentityProofWireMessage
   | HistoryRequestWireMessage
+  | MembersRequestWireMessage
   | HistoryChunkWireMessage
   | HistoryCompleteWireMessage
   | GroupMembersWireMessage
@@ -235,6 +243,9 @@ export function parseChatWireEnvelope(raw: string, channelId?: string): ChatWire
 
   if (message.version !== 2 || !validWireId(message.requestId)) return null;
   const requestId = message.requestId as string;
+  if (message.type === "chat.members.request") {
+    return { version: 2, type: "chat.members.request", channelId: channelId!, requestId };
+  }
   if (message.type === "chat.history.request") {
     if (!Array.isArray(message.knownIds) || message.knownIds.length > MAX_HISTORY_IDS || !message.knownIds.every(validWireId)) return null;
     if (message.knownEventIds !== undefined && (!Array.isArray(message.knownEventIds) || message.knownEventIds.length > MAX_HISTORY_IDS || !message.knownEventIds.every(validWireId))) return null;

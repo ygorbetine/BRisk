@@ -20,6 +20,7 @@ import {
   Video,
   VideoOff,
   PhoneOff,
+  RefreshCw,
 } from "lucide-react";
 import {
   privateConversationId,
@@ -798,7 +799,7 @@ export function HomeView() {
               </div>;
             };
             return <>
-              <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div>
+              <div className="nav-section"><span>MEMBROS — {memberGroups.length}{identityCount !== memberGroups.length ? ` · ${identityCount} identidades` : ""}</span><div className="nav-title-actions"><button title="Recarregar lista de membros" aria-label="Recarregar lista de membros" onClick={() => window.dispatchEvent(new Event("briks:group-resync"))}><RefreshCw size={15}/></button>{canEditSelectedGroup && <button onClick={() => setModal("inviteMember")}><UserPlus size={15}/></button>}</div></div>
               {memberGroups.flatMap((group) => {
                 const expanded = expandedMemberGroups.has(group.key) || group.duplicates.some((copy) => copy.peerId === localIdentityPeerId);
                 const removable = removableDuplicates(group.duplicates);

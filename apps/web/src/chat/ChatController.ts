@@ -9,6 +9,7 @@ import {
   canonicalChatEvent,
   type GroupRevocationWireMessage,
   type HistoryRequestWireMessage,
+  type MembersRequestWireMessage,
   type SignedChatEventWireMessage,
 } from "./MessageProtocol";
 import { HistoryService } from "./HistoryService";
@@ -224,6 +225,9 @@ export class ChatController {
         const refresh = () => { if (this.sessionToken === sessionToken) void this.refreshGroupMembership(true); };
         window.addEventListener("briks:social-updated", refresh);
         this.unsubscribers.push(() => window.removeEventListener("briks:social-updated", refresh));
+        const resync = () => { if (this.sessionToken === sessionToken) void this.resyncGroupMembership(); };
+        window.addEventListener("briks:group-resync", resync);
+        this.unsubscribers.push(() => window.removeEventListener("briks:group-resync", resync));
       }
 
       await signaling.connect(rendezvousId, localPeerId, namespace);
@@ -529,6 +533,7 @@ export class ChatController {
       await this.sendProfileUpdate(remotePeerId);
       if (!this.isSessionPeerActive(sessionToken, remotePeerId)) return;
       await this.sendGroupMembership(remotePeerId);
+      this.requestGroupMembership(remotePeerId);
       if (this.membershipOnly) return;
       if (!this.isSessionPeerActive(sessionToken, remotePeerId)) return;
       await this.flushOutbox(remotePeerId);
@@ -657,6 +662,10 @@ export class ChatController {
       await this.groups.acceptProfile(remotePeerId, envelope);
       return;
     }
+    if (envelope.type === "chat.members.request") {
+      await this.sendGroupMembership(remotePeerId);
+      return;
+    }
     if (envelope.type === "chat.history.request") {
       await this.sendGroupMembership(remotePeerId);
       await this.respondHistory(remotePeerId, envelope);
@@ -756,6 +765,21 @@ export class ChatController {
     if (!this.signaling || !this.peerId) return;
     const present = this.signaling.getDiagnostics().presencePeers;
     await Promise.all(present.filter((peerId) => this.isTrustedRemote(peerId)).map((peerId) => this.connectTrustedPeer(peerId, this.peerId)));
+  }
+
+  /** Pede a lista de membros a um peer (quem é dono/admin responde com o snapshot assinado). */
+  private requestGroupMembership(remotePeerId: string): void {
+    const channelId = this.channelId;
+    const transport = this.transport;
+    if (!this.groupId || !channelId || !transport || !this.openDataPeers.has(remotePeerId)) return;
+    const message: MembersRequestWireMessage = { version: 2, type: "chat.members.request", channelId, requestId: crypto.randomUUID() };
+    transport.sendData(JSON.stringify(message), remotePeerId);
+  }
+
+  /** Reenvia a lista (se for dono/admin) e pede a lista a todos os peers conectados. */
+  private async resyncGroupMembership(): Promise<void> {
+    await this.refreshGroupMembership(true).catch(() => undefined);
+    for (const peerId of [...this.openDataPeers]) this.requestGroupMembership(peerId);
   }
 
   private async sendGroupMembership(remotePeerId: string): Promise<void> {

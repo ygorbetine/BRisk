@@ -799,10 +799,26 @@ export class CallController {
   }
 
   /** Em chamadas de grupo só quem está na lista de membros é admitido; avisa quando alguém fica de fora. */
+  private lastMembershipResyncAt = 0;
+  private unknownRetryTimer?: ReturnType<typeof setTimeout>;
+
   private reportUnknownPeers(count: number): void {
     const store = useCallStore.getState();
     const current = store.error;
     if (count > 0 && this.mediaAuthenticationRequired) {
+      // Reenvio automático: enquanto houver gente não reconhecida, pede/reenvia a lista de membros (no máximo a cada 5 s).
+      const now = Date.now();
+      if (typeof window !== "undefined" && now - this.lastMembershipResyncAt > 5000) {
+        this.lastMembershipResyncAt = now;
+        window.dispatchEvent(new Event("briks:group-resync"));
+      }
+      if (!this.unknownRetryTimer) {
+        const lifecycle = this.lifecycleId;
+        this.unknownRetryTimer = setTimeout(() => {
+          this.unknownRetryTimer = undefined;
+          if (this.isActive(lifecycle)) void this.connectPresentAdmittedCallPeers(lifecycle).catch(() => undefined);
+        }, 5500);
+      }
       if (!current) {
         store.setError(`${UNKNOWN_PEERS_ERROR_PREFIX} (${count}). Quem entrou precisa ser convidado pelo ícone + de Membros para que todos se vejam.`);
       }

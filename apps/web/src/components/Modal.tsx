@@ -4,12 +4,17 @@ export function Modal({ title, children, onClose }: { title: string; children: R
   const titleId = useId();
   const dialog = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // O pai costuma passar um onClose novo a cada renderização. Se ele fosse dependência do
+  // efeito, cada re-render da tela devolveria o foco ao botão de origem e tiraria o cursor do campo.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const first = dialog.current?.querySelector<HTMLElement>("button,input,select,textarea,[tabindex]:not([tabindex='-1'])");
+    const first = dialog.current?.querySelector<HTMLElement>("input:not(:disabled),select:not(:disabled),textarea:not(:disabled)")
+      ?? dialog.current?.querySelector<HTMLElement>("button,[tabindex]:not([tabindex='-1'])");
     first?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }
       if (event.key !== "Tab" || !dialog.current) return;
       const focusable = [...dialog.current.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex='-1'])")];
       if (!focusable.length) return;
@@ -19,7 +24,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
     };
     document.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("keydown", onKeyDown); previousFocus.current?.focus(); };
-  }, [onClose]);
+  }, []);
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <section ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
       <header className="modal-header">

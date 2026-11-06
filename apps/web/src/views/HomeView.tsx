@@ -119,12 +119,14 @@ export function HomeView() {
   const [chatStatus, setChatStatus] = useState<ChatConnectionStatus>("disconnected");
   const [unreadChannels, setUnreadChannels] = useState<Record<string, number>>({});
   const [activeVoiceRooms, setActiveVoiceRooms] = useState<VoiceActivity[]>([]);
+  const [onlinePeers, setOnlinePeers] = useState<ReadonlySet<string>>(new Set());
   const [messageSearch, setMessageSearch] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
   useEffect(() => backgroundChats.onUnread((items) => setUnreadChannels(Object.fromEntries(items))), []);
   useEffect(() => voiceActivities.onChange(setActiveVoiceRooms), []);
+  useEffect(() => voiceActivities.onOnlineChange(setOnlinePeers), []);
 
   useEffect(() => {
     const reportCapacity = (event: Event) => {
@@ -822,7 +824,7 @@ export function HomeView() {
               const fingerprint = `${member.publicKey.x ?? member.peerId}`.slice(0, 6);
               return <div className={extra?.copy ? "member-row member-copy" : "member-row"} key={member.peerId}>
                 <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setModal("manageMember"); }}>
-                  <ProfileAvatar displayName={member.displayName} avatar={member.avatar}/>
+                  <span className={onlinePeers.has(member.peerId) ? "presence-wrap online" : "presence-wrap"} title={onlinePeers.has(member.peerId) ? "Online" : "Offline"}><ProfileAvatar displayName={member.displayName} avatar={member.avatar}/><i className="presence-dot"/></span>
                   <span>{member.displayName}{memberNicks.get(member.peerId) && <small className="member-nick"> @{memberNicks.get(member.peerId)}</small>}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
                   {member.peerId === localIdentityPeerId && <em className="member-self" title="Esta é a sua identidade neste computador">Você</em>}
                   {owner ? <em title="Proprietário"><ShieldCheck size={14}/> Dono</em> : administrator ? <em title="Administrador"><Shield size={14}/> Admin</em> : null}
@@ -912,6 +914,7 @@ export function HomeView() {
           pending={pending}
           communities={communities}
           activeVoiceRooms={activeVoiceRooms}
+          onlinePeers={onlinePeers}
           roomId={roomId}
           onAddFriend={() => setModal("friend")}
           onAcceptFriend={(request) => void api.acceptFriend(token, request.requestId).then(loadSocial).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao aceitar"))}

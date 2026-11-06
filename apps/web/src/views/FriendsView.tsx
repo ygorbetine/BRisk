@@ -7,6 +7,7 @@ export type FriendsViewProps = {
   pending: PendingFriend[];
   communities: Community[];
   activeVoiceRooms: VoiceActivity[];
+  onlinePeers?: ReadonlySet<string>;
   roomId: string | null;
   onAddFriend: () => void;
   onAcceptFriend: (request: PendingFriend) => void;
@@ -26,8 +27,8 @@ export function FriendsView(props: FriendsViewProps) {
         <button onClick={() => props.onAcceptFriend(request)}>Aceitar</button>
       </div>)}
       {props.friends.map((friend) => <div className="friend-row" key={friend.id}>
-        <ProfileAvatar displayName={friend.displayName} avatar={friend.avatar}/>
-        <div><strong>{friend.displayName}</strong><small>{friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks"}</small></div>
+        <span className={props.onlinePeers?.has(friend.id) ? "presence-wrap online" : "presence-wrap"}><ProfileAvatar displayName={friend.displayName} avatar={friend.avatar}/><i className="presence-dot"/></span>
+        <div><strong>{friend.displayName}</strong><small>{props.onlinePeers?.has(friend.id) ? "Online agora" : friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks"}</small></div>
         <div className="friend-actions">
           <button disabled={!friend.local} title={friend.local ? "Abrir chat privado P2P" : "Chat P2P requer amizade por identidade local"} onClick={() => props.onOpenFriend(friend)}><MessageCircle size={18}/></button>
           <button className="danger-icon" title="Desfazer amizade" aria-label={`Desfazer amizade com ${friend.displayName}`} onClick={() => props.onRemoveFriend(friend)}><UserMinus size={18}/></button>

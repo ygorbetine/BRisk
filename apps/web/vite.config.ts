@@ -141,6 +141,8 @@ export default defineConfig(({ command, mode }) => {
       ...(command === "serve" ? { "import.meta.env.VITE_API_URL": JSON.stringify(devApiUrl) } : {}),
     },
     server: { port: 5173 },
+    // Os testes não dependem do .env local (SFU/TURN configurados na máquina de quem desenvolve).
+    ...({ test: { env: { VITE_LIVEKIT_URL: "", VITE_LIVEKIT_TOKEN_URL: "" } } } as object),
     build: {
       // O worklet de áudio por processo precisa ser um arquivo real: a CSP bloqueia worklets data: URI.
       assetsInlineLimit: (file) => (file.includes("process-pcm-worklet") ? false : undefined),

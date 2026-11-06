@@ -1,0 +1,19 @@
+.theme-panel { display: grid; gap: 16px; padding: 4px 2px 24px; }
+.theme-panel h2 { margin: 0; }
+.theme-hint { margin: 0; color: var(--muted, #b9b4d6); font-size: 13px; }
+.theme-presets { display: flex; flex-wrap: wrap; gap: 10px; }
+.theme-preset { display: grid; gap: 6px; justify-items: center; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--glass-border, rgba(255,255,255,.14)); background: var(--glass-bg, rgba(255,255,255,.06)); color: inherit; cursor: pointer; font-size: 12px; }
+.theme-preset:hover { border-color: var(--briks-c3, #8b5cf6); }
+.theme-swatch { width: 56px; height: 36px; border-radius: 10px; display: block; }
+.theme-editor { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.triangle-picker { border-radius: 16px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); cursor: crosshair; outline: none; }
+.triangle-picker:focus-visible { box-shadow: 0 0 0 2px var(--briks-c3, #8b5cf6); }
+.theme-slots { display: grid; gap: 8px; min-width: 240px; flex: 1; }
+.theme-slot { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: inherit; cursor: pointer; text-align: left; }
+.theme-slot.active { border-color: var(--briks-c3, #8b5cf6); background: rgba(255,255,255,.1); }
+.theme-slot code { margin-left: auto; opacity: .8; }
+.theme-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; flex: none; }
+.theme-hex { display: grid; gap: 4px; font-size: 12px; }
+.theme-hex input { padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: rgba(0,0,0,.25); color: inherit; font-family: ui-monospace, monospace; }
+.theme-reset { padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.18); background: transparent; color: inherit; cursor: pointer; }
+.theme-preview { padding: 22px; border-radius: 16px; text-align: center; font-weight: 600; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.45); }

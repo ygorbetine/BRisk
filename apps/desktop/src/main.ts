@@ -17,6 +17,7 @@ import {
 import { ScreenCaptureController } from "./screen-capture.js";
 import { createApplicationTray, isTrayAvailable } from "./tray.js";
 import { createMainWindow } from "./window.js";
+import { startAutoUpdate } from "./updater.js";
 
 /**
  * O pacote foi renomeado (@risk/desktop -> @briks/desktop), e a pasta de dados do Electron segue o nome.
@@ -137,6 +138,7 @@ if (hasSingleInstanceLock) {
     });
     openMainWindow();
     app.on("activate", showMainWindow);
+    startAutoUpdate(() => BrowserWindow.getAllWindows()[0], () => { isQuitting = true; });
   }).catch((error) => {
     console.error("Falha ao iniciar o Briks", error);
     dialog.showErrorBox("Briks não conseguiu iniciar", error instanceof Error ? error.message : String(error));

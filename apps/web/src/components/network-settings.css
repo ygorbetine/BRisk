@@ -1,22 +1,22 @@
 .settings-tabs{display:flex;gap:6px;margin-bottom:18px;padding:4px;border:1px solid #ffffff10;border-radius:12px;background:#0f0316}
 .settings-tabs button{flex:1;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:#8d97a6;font-size:12px}
-.settings-tabs button.active{background:#1a212c;color:#dfffb9;box-shadow:inset 0 0 0 1px #8b5cf633}
+.settings-tabs button.active{background:#1a212c;color:#dfffb9;box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--briks-c3) 20%, transparent)}
 .network-settings{display:grid;gap:16px}
 .network-settings-section{display:grid;gap:12px;padding:14px;border:1px solid #ffffff10;border-radius:14px;background:#160620}
-.network-settings-section>header{display:flex;align-items:flex-start;gap:10px;color:#8b5cf6}
+.network-settings-section>header{display:flex;align-items:flex-start;gap:10px;color:var(--briks-c3)}
 .network-settings-section>header svg{width:19px;height:19px;margin-top:1px}
 .network-settings-section>header span{display:grid;gap:3px;color:#edf1f7}
 .network-settings-section>header small{color:#a592b8;font-size:11px;font-weight:400;line-height:1.4}
 .network-preference-list{display:grid;gap:8px}
 .network-preference-list label{display:grid;grid-template-columns:20px 1fr;gap:10px;padding:11px;border:1px solid #ffffff0d;border-radius:11px;background:#0f0316;cursor:pointer}
-.network-preference-list label.active{border-color:#8b5cf655;background:#8b5cf60b}
-.network-preference-list input{width:16px;height:16px;margin:2px 0 0;accent-color:#8b5cf6}
+.network-preference-list label.active{border-color:color-mix(in srgb, var(--briks-c3) 33.3%, transparent);background:color-mix(in srgb, var(--briks-c3) 4.3%, transparent)}
+.network-preference-list input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--briks-c3)}
 .network-preference-list span{display:grid;gap:3px}
 .network-preference-list strong{color:#e8edf4;font-size:13px}
 .network-preference-list small{color:#a592b8;font-size:11px;line-height:1.4}
 .vpn-interface-list{display:grid;gap:8px}
 .vpn-interface-list article{display:grid;grid-template-columns:34px minmax(90px,1fr) auto auto;align-items:center;gap:9px;padding:10px;border:1px solid #ffffff0d;border-radius:11px;background:#0f0316}
-.vpn-interface-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#8b5cf612;color:#8b5cf6}
+.vpn-interface-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:color-mix(in srgb, var(--briks-c3) 7.1%, transparent);color:var(--briks-c3)}
 .vpn-interface-icon svg{width:17px;height:17px}
 .vpn-interface-list article>span:nth-child(2){display:grid;min-width:0}
 .vpn-interface-list article strong{color:#e8edf4;font-size:12px}
@@ -26,3 +26,8 @@
 .vpn-interface-empty{padding:14px;border:1px dashed #ffffff16;border-radius:10px;color:#a592b8;font-size:11px;text-align:center}
 .network-settings-section>.settings-secondary-button{display:flex;align-items:center;justify-content:center;gap:8px;margin:0}
 @media (max-width:600px){.settings-tabs{overflow-x:auto}.settings-tabs button{min-width:105px}.vpn-interface-list article{grid-template-columns:34px 1fr}.vpn-interface-list code,.vpn-interface-list em{grid-column:2}}
+.connection-test-result{display:grid;gap:5px;padding:12px;border-radius:12px;border:1px solid #ffffff1a;background:rgba(255,255,255,.05)}
+.connection-test-result small{color:#a592b8;font-size:11px}
+.connection-test-result.level-boa{border-color:#68dd8b55}.connection-test-result.level-boa strong{color:#68dd8b}
+.connection-test-result.level-limitada{border-color:#e2c55f55}.connection-test-result.level-limitada strong{color:#e2c55f}
+.connection-test-result.level-ruim{border-color:#ff858555}.connection-test-result.level-ruim strong{color:#ff8585}

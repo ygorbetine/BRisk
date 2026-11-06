@@ -4,13 +4,13 @@
 .account-muted strong{color:#e8dcf5}
 .account-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:12px;background:#0f0316}
 .account-tabs button{padding:9px;border-radius:9px;background:transparent;color:#a592b8;font-weight:600}
-.account-tabs button.active{background:linear-gradient(135deg,#8b5cf6,#b01fcf);color:#fff}
-.account-nick{display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:12px;background:#0f0316;border:1px solid #2f1745;color:#b01fcf}
+.account-tabs button.active{background:linear-gradient(135deg,var(--briks-c3),var(--briks-c1));color:#fff}
+.account-nick{display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:12px;background:#0f0316;border:1px solid #2f1745;color:var(--briks-c1)}
 .account-nick{transition:border-color .15s,box-shadow .15s}
-.account-nick:focus-within{border-color:#b01fcf;box-shadow:0 0 0 3px #b01fcf33}
+.account-nick:focus-within{border-color:var(--briks-c1);box-shadow:0 0 0 3px color-mix(in srgb, var(--briks-c1) 20%, transparent)}
 .account-nick input,.account-nick input:focus,.account-nick input:focus-visible{flex:1;min-width:0;padding:13px 0;border:0;outline:0;border-radius:0;background:none;box-shadow:none;color:#fff}
 .account-badge{display:flex;align-items:center;gap:8px;font:700 22px Manrope;color:#fff}
-.account-badge svg{color:#b01fcf}
+.account-badge svg{color:var(--briks-c1)}
 .account-error,.account-notice{display:flex;align-items:center;gap:6px;margin:0;font-size:13px;line-height:1.4}
 .account-error{color:#ff8585}
 .account-notice{color:#75df8c}
@@ -22,15 +22,15 @@
 
 .nav-section button.spinning svg{animation:members-spin 1s linear infinite}
 @keyframes members-spin{to{transform:rotate(360deg)}}
-.members-resync-note{margin:0 9px 8px;padding:8px 10px;border-radius:10px;background:#8b5cf61a;color:#d6c8e6;font-size:12px;line-height:1.4}
-.member-nick{color:#b01fcf;font-weight:600}
+.members-resync-note{margin:0 9px 8px;padding:8px 10px;border-radius:10px;background:color-mix(in srgb, var(--briks-c3) 10.2%, transparent);color:#d6c8e6;font-size:12px;line-height:1.4}
+.member-nick{color:var(--briks-c1);font-weight:600}
 
 /* Se o Google Fonts não carregar (app empacotado), "Manrope" não pode cair no serifado padrão. */
 @font-face{font-family:'Manrope';font-weight:100 900;font-style:normal;src:local('DM Sans'),local('Segoe UI'),local('Arial')}
 
 /* Layout 0.7.0: marca na barra de grupos e atividade nas salas de voz */
-.space-rail .space:first-child{background:linear-gradient(145deg,rgba(176,31,207,.35),rgba(91,108,249,.28));box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
-.space-rail .space:first-child.active{background:linear-gradient(145deg,#b01fcf,#6d5cf6)}
+.space-rail .space:first-child{background:linear-gradient(145deg,color-mix(in srgb, var(--briks-c1) 35%, transparent),color-mix(in srgb, var(--briks-c2) 28%, transparent));box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.space-rail .space:first-child.active{background:linear-gradient(145deg,var(--briks-c1),var(--briks-c2))}
 .channel.voice .voice-live{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:#75df8c;font-size:11px;font-weight:700}
 .channel.voice .voice-live i{width:7px;height:7px;border-radius:50%;background:#75df8c;box-shadow:0 0 8px #75df8c}
 
@@ -41,3 +41,9 @@
 .nick-invite-ok{margin:0;color:#75df8c;font-size:12px}
 .nick-invite-error{margin:0;color:#ff8585;font-size:12px}
 .chat-message-heading .message-nick{color:#b58be0;font-size:11px;font-weight:600;margin-left:-2px}
+
+/* Presença: bolinha verde no avatar de quem está com o Briks aberto */
+.presence-wrap{position:relative;display:inline-grid;flex:none}
+.presence-wrap .presence-dot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;background:#5b4a6e;border:2px solid #1a0a26;box-sizing:border-box}
+.presence-wrap.online .presence-dot{background:#75df8c;box-shadow:0 0 8px #75df8c}
+.presence-wrap:not(.online){opacity:.78}

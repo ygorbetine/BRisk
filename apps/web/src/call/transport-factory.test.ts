@@ -18,3 +18,16 @@ describe("provedor de conexão SFU", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("cabeçalhos do provedor SFU", () => {
+  it("envia a chave pública do Supabase quando configurada", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ token: "jwt", url: "wss://sfu" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createSfuConnectionProvider("https://t.example/token", undefined, "anon-public")({ roomId: "r", localPeerId: "p", accessToken: "backend-jwt" });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers.apikey).toBe("anon-public");
+    expect(headers.authorization).toBe("Bearer anon-public");
+    vi.unstubAllGlobals();
+  });
+});

@@ -1,6 +1,6 @@
 {
   "name": "@briks/desktop",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
   "homepage": "https://github.com/ygorbetine/BRisk",
@@ -29,6 +29,12 @@
   },
   "build": {
     "appId": "com.briks.calls",
+    "publish": {
+      "provider": "github",
+      "owner": "ygorbetine",
+      "repo": "BRisk",
+      "releaseType": "release"
+    },
     "productName": "Briks",
     "directories": {
       "output": "release",
@@ -46,6 +52,7 @@
       "dist/protocol.js",
       "dist/screen-capture.js",
       "dist/tray.js",
+      "dist/updater.js",
       "dist/window.js"
     ],
     "extraResources": [
@@ -95,5 +102,8 @@
       "maintainer": "Briks <ygorbetine@users.noreply.github.com>",
       "artifactName": "Briks-${version}-${arch}.${ext}"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

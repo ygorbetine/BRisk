@@ -12,13 +12,15 @@ import { LiveKitTransport, type SfuConnectionProvider } from "@briks/rtc/sfu";
 
 const sfuTokenUrl = (import.meta.env?.VITE_LIVEKIT_TOKEN_URL as string | undefined)?.trim();
 const sfuServerUrl = (import.meta.env?.VITE_LIVEKIT_URL as string | undefined)?.trim();
+const supabaseAnonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
 
 /** Pede ao serviço de tokens a URL e o token do SFU; o segredo da API fica no servidor. */
-export function createSfuConnectionProvider(tokenUrl: string, serverUrl?: string): SfuConnectionProvider {
+export function createSfuConnectionProvider(tokenUrl: string, serverUrl?: string, publicKey = supabaseAnonKey): SfuConnectionProvider {
   return async ({ roomId, localPeerId, accessToken }) => {
     const response = await fetch(tokenUrl, {
       method: "POST",
-      headers: { "content-type": "application/json", ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}) },
+      // Funções do Supabase exigem a chave pública (anon). Sem ela, usa o token do backend local.
+      headers: { "content-type": "application/json", ...(publicKey ? { apikey: publicKey, authorization: `Bearer ${publicKey}` } : accessToken ? { authorization: `Bearer ${accessToken}` } : {}) },
       body: JSON.stringify({ room: roomId, identity: localPeerId }),
     });
     if (!response.ok) throw new Error(`Serviço de tokens do SFU respondeu ${response.status}.`);

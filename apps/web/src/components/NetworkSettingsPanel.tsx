@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Network, RefreshCw, ShieldCheck, Wifi } from "lucide-react";
+import { Activity, Network, RefreshCw, ShieldCheck, Wifi } from "lucide-react";
+import { runConnectionTest, type ConnectionTestResult } from "../services/rtc/connection-test";
 import {
   loadNetworkSettings,
   saveNetworkSettings,
@@ -29,6 +30,8 @@ export function NetworkSettingsPanel() {
   const [interfaces, setInterfaces] = useState<BriksDesktopNetworkInterface[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ConnectionTestResult>();
   const vpnInterfaces = useMemo(() => interfaces.filter((item) => item.provider !== "unknown"), [interfaces]);
 
   async function refresh(): Promise<void> {
@@ -49,6 +52,14 @@ export function NetworkSettingsPanel() {
   }
 
   useEffect(() => { void refresh(); }, []);
+
+  async function testConnection(): Promise<void> {
+    setTesting(true);
+    setTestResult(undefined);
+    try { setTestResult(await runConnectionTest()); }
+    catch { setTestResult({ kinds: [], turnConfigured: false, level: "ruim", summary: "Não foi possível testar a conexão.", tips: [] }); }
+    finally { setTesting(false); }
+  }
 
   function select(next: NetworkPreference): void {
     setPreference(next);
@@ -82,6 +93,18 @@ export function NetworkSettingsPanel() {
         <RefreshCw size={16}/>{loading ? "Atualizando…" : "Atualizar detecção"}
       </button>
       {error && <div className="settings-device-error">{error}</div>}
+    </section>
+
+    <section className="network-settings-section">
+      <header><Activity/><span><strong>Teste de conexão</strong><small>Verifica se a sua rede permite chamadas diretas e se o relay (TURN) responde.</small></span></header>
+      <button type="button" className="settings-secondary-button" disabled={testing} onClick={() => void testConnection()}>
+        <Activity size={16}/>{testing ? "Testando (até 8 s)…" : "Testar minha conexão"}
+      </button>
+      {testResult && <div className={`connection-test-result level-${testResult.level}`} role="status">
+        <strong>{testResult.level === "boa" ? "Boa" : testResult.level === "limitada" ? "Limitada" : "Ruim"} · {testResult.summary}</strong>
+        {testResult.tips.map((tip) => <small key={tip}>{tip}</small>)}
+        <small>Caminhos detectados: {testResult.kinds.length ? testResult.kinds.map((kind) => kind === "srflx" ? "direto (STUN)" : kind === "relay" ? "relay (TURN)" : "rede local").join(", ") : "nenhum"}</small>
+      </div>}
     </section>
 
     <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o Briks ainda pode usar conexão direta, STUN ou TURN.</div>

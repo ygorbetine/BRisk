@@ -1,4 +1,6 @@
-# Plano: identidade ligada ao @nick (versão futura)
+# Plano: identidade ligada ao @nick
+
+> Status: **0.5.0 entregou contas, @nick e registro de chaves** (ver `ativar-nick.md`). Grupos por @nick vêm a seguir.
 
 Objetivo: trocar a "id invisível" (chave gerada por instalação) por um **@nick único** por pessoa,
 que sobrevive a reinstalação e troca de computador. Acaba com as cópias do mesmo nome, com a perda

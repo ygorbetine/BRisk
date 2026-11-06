@@ -16,6 +16,7 @@ import {
   Trash2,
   UserMinus,
   UserPlus,
+  AtSign,
   Users,
   Video,
   VideoOff,
@@ -61,10 +62,12 @@ import {
   type PublicPeerIdentity,
 } from "../services/offline/social-storage";
 import { useCallStore } from "../store";
+import { AccountPanel } from "../components/AccountPanel";
+import { loadAccountState } from "../services/account/account-service";
 import { callOwnsTextConversation } from "../application/chat-routing";
 import { playCallSound } from "../services/audio/call-sounds";
 
-type SocialModal = "friend" | "group" | "groupProfile" | "channel" | "inviteMember" | "manageMember" | "joinGroup" | "settings" | "profile" | null;
+type SocialModal = "account" | "friend" | "group" | "groupProfile" | "channel" | "inviteMember" | "manageMember" | "joinGroup" | "settings" | "profile" | null;
 type DeleteTarget = { kind: "friend"; friend: Friend } | { kind: "group"; group: Community } | null;
 type ChannelActionTarget = { mode: "edit" | "delete"; channel: Channel } | null;
 
@@ -102,6 +105,7 @@ export function HomeView() {
   const [attachments, setAttachments] = useState<ChatAttachmentRecord[]>([]);
   const [attachmentProgress, setAttachmentProgress] = useState<Record<string, ChatAttachmentProgress | undefined>>({});
   const [modal, setModal] = useState<SocialModal>(null);
+  const [accountNick, setAccountNick] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [deleting, setDeleting] = useState(false);
   const [channelAction, setChannelAction] = useState<ChannelActionTarget>(null);
@@ -148,6 +152,17 @@ export function HomeView() {
     window.addEventListener("briks:group-removed", removed);
     return () => window.removeEventListener("briks:group-removed", removed);
   }, [callContext?.groupId, roomId, selectedCommunity?.id]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let alive = true;
+    // Se já houver conta, mostra o @nick e registra esta instalação nele (idempotente).
+    void getOrCreateLocalIdentity(currentUser.displayName)
+      .then((identity) => loadAccountState({ peerId: identity.peerId, publicKey: identity.publicKey }))
+      .then((account) => { if (alive) setAccountNick(account.nick); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [currentUser?.displayName]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -840,7 +855,8 @@ export function HomeView() {
         </section>}
         <div className="account-bar">
           <button className="account-profile" onClick={() => setModal("profile")} title="Editar perfil"><ProfileAvatar displayName={currentUser?.displayName ?? "Eu"} avatar={currentUser?.avatar}/></button>
-          <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>Disponível</small></button>
+          <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>{accountNick ? `@${accountNick}` : "Disponível"}</small></button>
+          <button onClick={() => setModal("account")} title={accountNick ? `Conta @${accountNick}` : "Conta e @nick"}><AtSign/></button>
           <button onClick={() => setModal("settings")} title="Voz e vídeo"><Settings2/></button>
           <button onClick={() => void logout()} title="Sair"><LogOut/></button>
         </div>
@@ -899,6 +915,7 @@ export function HomeView() {
       </section>
 
       {modal === "friend" && <Modal title="Adicionar amigo" onClose={() => setModal(null)}>{currentUser ? <P2PInvitePanel type="friend" token={token} displayName={currentUser.displayName} onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
+      {modal === "account" && <Modal title="Conta e @nick" onClose={() => setModal(null)}><AccountPanel onNickChanged={setAccountNick}/></Modal>}
       {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView/></Modal>}
       {modal === "profile" && currentUser && <Modal title="Editar perfil" onClose={() => setModal(null)}><ProfileEditor profile={{ displayName: currentUser.displayName, avatar: currentUser.avatar }} onSaved={profileSaved}/></Modal>}
       {modal === "groupProfile" && selectedLocalGroup && <Modal title="Personalizar grupo" onClose={() => setModal(null)}><GroupEditor group={selectedLocalGroup} onSaved={groupSaved}/></Modal>}

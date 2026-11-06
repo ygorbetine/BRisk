@@ -772,6 +772,7 @@ export function HomeView() {
     connected={chatStatus === "ready"}
     localPeerId={activeConversationChat.localPeerId() ?? localIdentityPeerId}
     typingUsers={typingUsers}
+    nicks={memberNicks}
     loadBlob={(record) => activeConversationChat.attachmentBlob(record)}
     onDownload={(record) => attachmentAction((item) => activeConversationChat.downloadAttachment(item), record)}
     onRequest={(record) => attachmentAction((item) => activeConversationChat.requestAttachment(item), record)}

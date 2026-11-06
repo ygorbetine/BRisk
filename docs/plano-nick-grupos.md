@@ -68,3 +68,7 @@ Ninguém além de dono/admin altera a lista. Quem não registrou @nick continua 
 - A inscrição automática exige que a instalação nova já tenha o grupo localmente (aparece na presença do grupo).
   Computador totalmente novo ainda entra pelo código de convite até a Fase 3.
 - Sem teste com várias máquinas reais: cada fase termina com roteiro de teste para os amigos.
+
+## Decisões revistas (0.7.4)
+- **Transferência de posse (2b): NÃO implementada.** A posse está amarrada ao `peerId` do dono em ~100 pontos (manifesto, concessões de admin, certificados de remoção). Trocar isso sem teste em duas máquinas pode abrir brecha de segurança ou derrubar todos os admins. As chaves privadas são não exportáveis de propósito, então "mover a identidade" também não existe. Mitigação atual: o admin de reserva (Fase 2) mantém o grupo gerido se o dono ganhar outro computador.
+- **Endurecer `register_key`: a correção planejada não resolve.** Assinar `(conta, peerId)` com a chave prova posse da chave, não do `peerId`; o `peerId` é um UUID aleatório, então um atacante assinaria com a própria chave e ainda registraria o `peerId` da vítima. A solução real é derivar o `peerId` da chave pública (mudança de protocolo, quebra identidades existentes). Risco atual: só negação de serviço do vínculo @nick.

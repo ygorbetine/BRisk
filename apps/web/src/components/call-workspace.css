@@ -101,3 +101,6 @@ html.briks-native-stream-fullscreen #root{position:fixed!important;inset:0!impor
 .call-workspace .share-control select:disabled{opacity:.55;cursor:not-allowed}
 select option{background:#1a0a26;color:#f1e9fb}
 select option:checked{background:#6d3fc4;color:#fff}
+
+/* Layout 0.7.0: barra de controles flutuante em formato de pílula */
+.room.call-workspace>footer{justify-self:center;width:fit-content;max-width:calc(100% - 24px);margin:0 auto 14px;padding:8px 16px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(26,10,38,.78);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 14px 40px rgba(0,0,0,.45)}

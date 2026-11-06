@@ -27,6 +27,7 @@ export function ConversationTimeline({
   onDelete,
   onReaction,
   onPin,
+  nicks,
 }: {
   messages: ChatMessage[];
   attachments: ChatAttachmentRecord[];
@@ -34,6 +35,8 @@ export function ConversationTimeline({
   connected: boolean;
   localPeerId?: string;
   typingUsers?: string[];
+  /** @nick verificado por peerId, mostrado ao lado do autor. */
+  nicks?: ReadonlyMap<string, string>;
   loadBlob(record: ChatAttachmentRecord): Promise<Blob>;
   onDownload(record: ChatAttachmentRecord): Promise<void>;
   onRequest(record: ChatAttachmentRecord): Promise<void>;
@@ -88,7 +91,7 @@ export function ConversationTimeline({
       ? <article id={`chat-message-${item.message.id}`} className={`chat-message ${item.message.deletedAt ? "is-deleted" : ""}`} key={`message:${item.message.id}`}>
           <div className="avatar">{item.message.author[0]}</div>
           <div className="chat-message-body">
-            <div className="chat-message-heading"><strong>{item.message.author}</strong><time>{new Date(item.message.createdAt).toLocaleString()}</time>{item.message.editedAt && !item.message.deletedAt && <small>(editada)</small>}{item.message.pinnedAt && <Pin size={12}/>}</div>
+            <div className="chat-message-heading"><strong>{item.message.author}</strong>{item.message.authorPeerId && nicks?.get(item.message.authorPeerId) && <small className="message-nick">@{nicks.get(item.message.authorPeerId)}</small>}<time>{new Date(item.message.createdAt).toLocaleString()}</time>{item.message.editedAt && !item.message.deletedAt && <small>(editada)</small>}{item.message.pinnedAt && <Pin size={12}/>}</div>
             {item.message.replyToId && <div className="message-reply-reference"><Reply size={13}/>{replyLabel(messageById.get(item.message.replyToId))}</div>}
             {editingId === item.message.id ? <div className="message-inline-edit">
               <input value={editValue} maxLength={4000} autoFocus onChange={(event) => setEditValue(event.target.value)} onKeyDown={(event) => {

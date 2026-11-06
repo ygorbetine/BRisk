@@ -51,12 +51,12 @@ html.risk-native-stream-fullscreen #root{position:fixed!important;inset:0!import
   .call-workspace>.call-view{min-width:0;min-height:0;overflow:hidden}
   .call-workspace .stage,
   .call-workspace .stage.stage-focused,
-  .call-workspace .stage:has(.tile:focus-within){grid-template-columns:repeat(var(--call-portrait-columns,1),minmax(0,1fr))!important;grid-template-rows:repeat(var(--call-portrait-rows,1),minmax(0,1fr))!important;grid-auto-rows:minmax(0,1fr)!important;align-content:stretch;gap:10px;padding:10px;overflow:hidden}
+  .call-workspace .stage.stage-focused{grid-template-columns:repeat(var(--call-portrait-columns,1),minmax(0,1fr))!important;grid-template-rows:repeat(var(--call-portrait-rows,1),minmax(0,1fr))!important;grid-auto-rows:minmax(0,1fr)!important;align-content:stretch;gap:10px;padding:10px;overflow:hidden}
   .call-workspace .stage .tile:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
   .call-workspace .stage.stage-focused .tile.focused:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
   .call-workspace .stage.stage-focused .tile.thumbnail:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
-  .call-workspace .stage:has(.tile:focus-within) .tile:focus-within:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
-  .call-workspace .stage:has(.tile:focus-within) .tile:not(:focus-within):not(:fullscreen):not([data-risk-native-fullscreen="true"]){grid-column:auto!important;grid-row:auto!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;aspect-ratio:auto}
+  .call-workspace .stage.stage-focused .tile.focused:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
+  .call-workspace .stage.stage-focused .tile:not(.focused):not(:fullscreen):not([data-risk-native-fullscreen="true"]){grid-column:auto!important;grid-row:auto!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;aspect-ratio:auto}
   .call-workspace .stage .tile video{position:absolute;inset:0}
   .call-workspace .stage .tile .video-off{height:100%;min-height:0}
   .call-workspace .stage .video-off .profile-avatar.call-profile-avatar{width:clamp(72px,10vh,112px);height:clamp(72px,10vh,112px);font-size:clamp(20px,3vh,32px)}
@@ -75,12 +75,12 @@ html.risk-native-stream-fullscreen #root{position:fixed!important;inset:0!import
   .call-workspace>.call-view{min-width:0;min-height:0;overflow:hidden}
   .call-workspace .stage,
   .call-workspace .stage.stage-focused,
-  .call-workspace .stage:has(.tile:focus-within){grid-template-columns:repeat(var(--call-compact-columns,1),minmax(0,1fr))!important;grid-template-rows:repeat(var(--call-compact-rows,1),minmax(0,1fr))!important;grid-auto-rows:minmax(0,1fr)!important;align-content:stretch;gap:10px;padding:10px;overflow:hidden}
+  .call-workspace .stage.stage-focused{grid-template-columns:repeat(var(--call-compact-columns,1),minmax(0,1fr))!important;grid-template-rows:repeat(var(--call-compact-rows,1),minmax(0,1fr))!important;grid-auto-rows:minmax(0,1fr)!important;align-content:stretch;gap:10px;padding:10px;overflow:hidden}
   .call-workspace .stage .tile:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
   .call-workspace .stage.stage-focused .tile.focused:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
   .call-workspace .stage.stage-focused .tile.thumbnail:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
-  .call-workspace .stage:has(.tile:focus-within) .tile:focus-within:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
-  .call-workspace .stage:has(.tile:focus-within) .tile:not(:focus-within):not(:fullscreen):not([data-risk-native-fullscreen="true"]){grid-column:auto!important;grid-row:auto!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;aspect-ratio:auto}
+  .call-workspace .stage.stage-focused .tile.focused:not(:fullscreen):not([data-risk-native-fullscreen="true"]),
+  .call-workspace .stage.stage-focused .tile:not(.focused):not(:fullscreen):not([data-risk-native-fullscreen="true"]){grid-column:auto!important;grid-row:auto!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;aspect-ratio:auto}
   .call-workspace .stage .tile video{position:absolute;inset:0}
   .call-workspace .stage .tile .video-off{height:100%;min-height:0}
   .call-workspace footer{min-height:72px;padding:8px 12px;gap:8px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}

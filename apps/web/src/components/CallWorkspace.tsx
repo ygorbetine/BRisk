@@ -99,6 +99,27 @@ function useVoiceActivity(stream: MediaStream | null | undefined, enabled: boole
   return enabled && speaking;
 }
 
+/**
+ * Depois de um clique que começou no painel de volume, bloqueia o click/dblclick seguinte.
+ * Sem isso, soltar o mouse fora do painel (arrastando o slider) faz o clique ir para o bloco
+ * da transmissão e maximizar/focar a tela.
+ */
+function shieldClicksFromPanel(): void {
+  const block = (event: Event) => { event.stopPropagation(); event.preventDefault(); };
+  window.addEventListener("click", block, true);
+  window.addEventListener("dblclick", block, true);
+  const release = () => {
+    window.removeEventListener("pointerup", release, true);
+    window.removeEventListener("pointercancel", release, true);
+    window.setTimeout(() => {
+      window.removeEventListener("click", block, true);
+      window.removeEventListener("dblclick", block, true);
+    }, 400);
+  };
+  window.addEventListener("pointerup", release, true);
+  window.addEventListener("pointercancel", release, true);
+}
+
 function VolumeControl({ label, value, onChange }: { label: string; value: number; onChange(value: number): void }) {
   return <label className="volume-control" title={`${label}: ${value}%`}>
     {value === 0 ? <VolumeX size={15}/> : <Volume2 size={15}/>}<span>{label}</span>
@@ -192,7 +213,7 @@ function VideoTile({
       <button className={source === "camera" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("camera"); }}><Video size={14}/> Câmera</button>
       <button className={source === "screen" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("screen"); }}><MonitorUp size={14}/> Tela</button>
     </div>}
-    {(userHasAudio || screenHasAudio) && !compact && <div className="volume-panel" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+    {(userHasAudio || screenHasAudio) && !compact && <div className="volume-panel" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => { event.stopPropagation(); shieldClicksFromPanel(); }}>
       {userHasAudio && <VolumeControl label="Usuário" value={userVolume} onChange={setUserVolume}/>} 
       {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={setScreenVolume}/>} 
     </div>}

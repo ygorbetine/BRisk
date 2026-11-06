@@ -62,6 +62,7 @@ const AUTH_CHALLENGE_TIMEOUT_MS = 8_000;
 const AUTH_CONNECTION_WATCHDOG_MS = 20_000;
 const AUTHENTICATED_DATA_CHANNEL_RECOVERY_DELAY_MS = 500;
 const MAX_AUTH_CHALLENGES_PER_CONNECTION = 3;
+const UNKNOWN_PEERS_ERROR_PREFIX = "Há pessoas na chamada que não são membros reconhecidos deste grupo";
 const MESH_CAPACITY_ERROR = `A sala atingiu o limite seguro de ${MESH_HARD_MAX_PARTICIPANTS} participantes no Mesh. Configure um transporte SFU para ampliar a chamada.`;
 const missingSignaling = (): SignalingProvider => {
   throw new Error("CallController precisa receber um adapter de signaling no composition root.");
@@ -566,9 +567,10 @@ export class CallController {
     const transport = this.transport;
     const localPeerId = this.peerId;
     if (!signaling || !transport || !localPeerId || !this.transportReady || !this.isActive(lifecycle)) return;
-    const remotePeerIds = signaling.getDiagnostics().presencePeers
-      .filter((remotePeerId) => remotePeerId !== localPeerId
-        && this.isAdmittedCallPeer(remotePeerId)
+    const present = signaling.getDiagnostics().presencePeers.filter((remotePeerId) => remotePeerId !== localPeerId);
+    this.reportUnknownPeers(present.filter((remotePeerId) => !this.isAdmittedCallPeer(remotePeerId)).length);
+    const remotePeerIds = present
+      .filter((remotePeerId) => this.isAdmittedCallPeer(remotePeerId)
         && this.enforceMeshCapacity(remotePeerId));
     const store = useCallStore.getState();
     await Promise.all(remotePeerIds.map(async (remotePeerId) => {
@@ -794,6 +796,19 @@ export class CallController {
       payload: { displayName: this.displayName, avatar: this.avatar },
     };
     this.transport?.sendData(JSON.stringify(message), targetPeerId);
+  }
+
+  /** Em chamadas de grupo só quem está na lista de membros é admitido; avisa quando alguém fica de fora. */
+  private reportUnknownPeers(count: number): void {
+    const store = useCallStore.getState();
+    const current = store.error;
+    if (count > 0 && this.mediaAuthenticationRequired) {
+      if (!current) {
+        store.setError(`${UNKNOWN_PEERS_ERROR_PREFIX} (${count}). Quem entrou precisa ser convidado pelo ícone + de Membros para que todos se vejam.`);
+      }
+    } else if (current?.startsWith(UNKNOWN_PEERS_ERROR_PREFIX)) {
+      store.setError(null);
+    }
   }
 
   private isAdmittedCallPeer(remotePeerId: string): boolean {

@@ -1,5 +1,8 @@
 import type { CallTransportPreference } from "@briks/rtc";
 
+/** Padrão: SFU. Se o servidor não estiver configurado, a seleção cai para P2P sozinha. */
+export const DEFAULT_TRANSPORT_MODE: CallTransportPreference = "sfu";
+
 const STORAGE_KEY = "briks.call-transport-mode.v1";
 
 export function normalizeTransportMode(value: unknown): CallTransportPreference {
@@ -8,9 +11,10 @@ export function normalizeTransportMode(value: unknown): CallTransportPreference 
 
 export function loadCallTransportMode(): CallTransportPreference {
   try {
-    return normalizeTransportMode(localStorage.getItem(STORAGE_KEY));
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === null ? DEFAULT_TRANSPORT_MODE : normalizeTransportMode(stored);
   } catch {
-    return "auto";
+    return DEFAULT_TRANSPORT_MODE;
   }
 }
 

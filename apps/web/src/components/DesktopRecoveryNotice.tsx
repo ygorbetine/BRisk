@@ -10,6 +10,12 @@ export function DesktopRecoveryNotice() {
     setStatus(next);
   }), [application]);
 
+  useEffect(() => {
+    if (status?.state !== "recovered") return undefined;
+    const timer = window.setTimeout(() => setStatus(undefined), 6000);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
   if (!status) return null;
   return <button
     className={`desktop-recovery-notice ${status.state}`}

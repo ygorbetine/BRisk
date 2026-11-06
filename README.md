@@ -32,7 +32,7 @@ Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase
 
 **Briks** é um aplicativo desktop de comunicação P2P com chamadas de voz e vídeo, compartilhamento de tela, chat, grupos e transferência de arquivos usando WebRTC.
 
-> **Versão atual: Alpha 0.9.1**
+> **Versão atual: Alpha 0.9.2**
 >
 > O projeto ainda está em fase Alpha. Recursos, protocolo e persistência podem mudar entre versões.
 

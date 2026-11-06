@@ -39,3 +39,14 @@ body {
 .member-menu-trigger > span:nth-child(2) { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-menu-trigger .member-nick, .member-menu-trigger .member-fingerprint { display: block; overflow: hidden; text-overflow: ellipsis; }
 .member-menu-trigger > em { flex: 0 0 auto; margin-left: 4px; }
+
+.desktop-recovery-notice { background: rgba(26, 10, 38, .78) !important; background-image: none !important; backdrop-filter: blur(18px) saturate(150%); border: 1px solid rgba(255, 255, 255, .16) !important; border-radius: 14px !important; color: #f1ebff !important; font-weight: 500 !important; font-size: 13px; padding: 10px 16px !important; box-shadow: 0 12px 34px rgba(0, 0, 0, .45); }
+.desktop-recovery-notice.recovered { border-color: rgba(74, 222, 128, .55) !important; box-shadow: 0 12px 34px rgba(0, 0, 0, .45), 0 0 18px rgba(74, 222, 128, .18); }
+.desktop-recovery-notice.recovered::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 9px; border-radius: 50%; background: #4ade80; }
+
+.room footer button, .call-workspace footer button { background: rgba(255, 255, 255, .09); background-image: none; border: 1px solid rgba(255, 255, 255, .12); color: #ece6fa; }
+.room footer button:hover, .call-workspace footer button:hover { background: rgba(255, 255, 255, .16); }
+.room footer button.active, .call-workspace footer button.active { background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); border-color: transparent; color: #fff; }
+.room footer button.off, .call-workspace footer button.off { background: rgba(233, 85, 85, .22); border-color: rgba(233, 85, 85, .5); color: #ffb3b3; }
+.room footer button.hangup, .call-workspace footer button.hangup { background: #e95555; border-color: transparent; color: #fff; }
+.call-workspace footer select { background: rgba(255, 255, 255, .08); color: #ece6fa; border: 1px solid rgba(255, 255, 255, .12); }

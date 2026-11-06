@@ -19,3 +19,12 @@
 .screen-quality .sq-meter.good{border-color:rgba(93,200,132,.45)}
 .screen-quality .sq-meter.degraded{border-color:rgba(240,190,70,.55)}
 .screen-quality .sq-meter.poor{border-color:rgba(233,85,85,.6)}
+
+/* Acabamento do painel */
+.screen-quality header strong{white-space:nowrap;font-size:15px}
+.screen-quality label{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);align-items:center}
+.screen-quality label>span{line-height:1.25}
+.screen-quality select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:30px;background:rgba(0,0,0,.28) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23d9c8f0' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center}
+.screen-quality select:focus,.screen-quality input:focus{outline:2px solid rgba(176,31,207,.6);outline-offset:1px}
+.screen-quality{width:min(360px,calc(100vw - 36px))}
+.screen-quality .sq-hint{line-height:1.35}

@@ -1,5 +1,6 @@
 import http from "node:http";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
@@ -7,6 +8,9 @@ import react from "@vitejs/plugin-react";
 const envDir = fileURLToPath(new URL("../../", import.meta.url));
 const devBackendBridgeFile = fileURLToPath(new URL("../../.briks/dev-backend.json", import.meta.url));
 const DEV_API_PREFIX = "/__briks-api";
+const buildVersion = (() => {
+  try { return String(JSON.parse(readFileSync(fileURLToPath(new URL("../desktop/package.json", import.meta.url)), "utf8")).version); } catch { return "dev"; }
+})();
 const webVersion = process.env.npm_package_version?.trim() || "0.2.1";
 
 type DevBackendBridge = {
@@ -138,6 +142,7 @@ export default defineConfig(({ command, mode }) => {
     // deliberadamente outra API em desenvolvimento, use BRIKS_DEV_API_URL.
     define: {
       "import.meta.env.VITE_BRIKS_APP_VERSION": JSON.stringify(webVersion),
+      "import.meta.env.VITE_BRIKS_BUILD_VERSION": JSON.stringify(buildVersion),
       ...(command === "serve" ? { "import.meta.env.VITE_API_URL": JSON.stringify(devApiUrl) } : {}),
     },
     server: { port: 5173 },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Hash,
   Headphones,
@@ -499,6 +499,17 @@ export function HomeView() {
       } : {});
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao conectar o chat"); }
   }
+
+  // O chat conecta sozinho ao abrir um canal de texto ou uma conversa privada (uma tentativa por abertura).
+  const autoChatKey = useRef<string | null>(null);
+  useEffect(() => {
+    const key = activeFriend ? `friend:${activeFriend.id}` : activeChannel?.kind === "text" ? `channel:${activeChannel.id}` : null;
+    if (!key) { autoChatKey.current = null; return; }
+    if (chatStatus !== "disconnected" || autoChatKey.current === key) return;
+    autoChatKey.current = key;
+    void connectChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFriend?.id, activeChannel?.id, activeChannel?.kind, chatStatus, currentUser?.id]);
 
   async function disconnectPrivateChat() {
     if (!privateChannelId) return;

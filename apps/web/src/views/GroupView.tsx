@@ -35,10 +35,9 @@ export function GroupView(props: GroupViewProps) {
         : props.chatStatus === "incompatible"
           ? "Versão incompatível"
           : "Conectar chat";
-  const connecting = props.chatStatus === "connecting" || props.chatStatus === "connected" || props.chatStatus === "ready";
 
   return <>
-    <header className="content-header"><Hash/><strong>{props.channel.name}</strong><span>{props.community.name}</span><input className="message-search" value={props.messageSearch} onChange={(event) => props.onSearch(event.target.value)} placeholder="Buscar"/><button className={`chat-connect ${props.chatStatus}`} disabled={connecting} onClick={props.onConnect}>{connectionLabel}</button></header>
+    <header className="content-header"><Hash/><strong>{props.channel.name}</strong><span>{props.community.name}</span><input className="message-search" value={props.messageSearch} onChange={(event) => props.onSearch(event.target.value)} placeholder="Buscar"/>{props.chatStatus === "error" || props.chatStatus === "disconnected" ? <button className={`chat-connect ${props.chatStatus}`} onClick={props.onConnect}>{props.chatStatus === "error" ? "Tentar de novo" : "Reconectar"}</button> : <span className={`chat-connect ${props.chatStatus}`}>{connectionLabel}</span>}</header>
     <div className="messages">
       {props.hasOlderMessages && <button className="load-older-messages" disabled={props.loadingOlderMessages} onClick={props.onLoadOlder}>{props.loadingOlderMessages ? "Carregando…" : "Carregar mensagens anteriores"}</button>}
       {props.timeline}

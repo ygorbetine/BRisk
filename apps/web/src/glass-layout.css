@@ -50,3 +50,18 @@ body {
 .room footer button.off, .call-workspace footer button.off { background: rgba(233, 85, 85, .22); border-color: rgba(233, 85, 85, .5); color: #ffb3b3; }
 .room footer button.hangup, .call-workspace footer button.hangup { background: #e95555; border-color: transparent; color: #fff; }
 .call-workspace footer select { background: rgba(255, 255, 255, .08); color: #ece6fa; border: 1px solid rgba(255, 255, 255, .12); }
+
+.share-control { background: rgba(255, 255, 255, .09); border: 1px solid rgba(255, 255, 255, .12); border-radius: 999px; }
+.share-control > button, .share-control > button:hover { background: transparent !important; }
+.share-control > button:hover { background: rgba(255, 255, 255, .1) !important; }
+.share-control > select, .call-workspace footer .share-control > select { background: transparent; color: #ece6fa; border: 0; border-left: 1px solid rgba(255, 255, 255, .14); border-radius: 0; }
+.share-control > select:hover, .share-control > select:focus { background: rgba(255, 255, 255, .1); }
+.share-control > select option { background: #1a0a26; color: #ece6fa; }
+
+.share-control, .share-control > select, .share-control > button { border-radius: 0 !important; }
+.share-control { border-radius: 14px !important; }
+.share-control > select { appearance: none; -webkit-appearance: none; text-align: center; }
+.about-panel { display: grid; gap: 8px; padding: 4px 2px 24px; max-width: 520px; }
+.about-panel h2, .about-panel p { margin: 0; }
+.about-version { font-size: 18px; }
+.about-panel a { color: var(--briks-c3); }

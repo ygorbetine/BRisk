@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_LIVEKIT_URL?: string;
   readonly VITE_LIVEKIT_TOKEN_URL?: string;
   readonly VITE_BRIKS_APP_VERSION?: string;
+  readonly VITE_BRIKS_BUILD_VERSION?: string;
 }
 
 interface ImportMeta {

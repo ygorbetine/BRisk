@@ -14,7 +14,7 @@ describe("WebScreenShareProvider restrictOwnAudio", () => {
   it("envia restrictOwnAudio na chamada inicial de getDisplayMedia", async () => {
     const getDisplayMedia = vi.fn(async () => fakeStream());
     vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
-    vi.stubGlobal("__riskMediaCaptureOptions", { restrictOwnAudio: true });
+    vi.stubGlobal("__briksMediaCaptureOptions", { restrictOwnAudio: true });
 
     await new WebScreenShareProvider().startScreenShare();
 
@@ -27,7 +27,7 @@ describe("WebScreenShareProvider restrictOwnAudio", () => {
   it("mantém loopback padrão quando a exclusão está desativada", async () => {
     const getDisplayMedia = vi.fn(async () => fakeStream());
     vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
-    vi.stubGlobal("__riskMediaCaptureOptions", { restrictOwnAudio: false });
+    vi.stubGlobal("__briksMediaCaptureOptions", { restrictOwnAudio: false });
 
     await new WebScreenShareProvider().startScreenShare();
 

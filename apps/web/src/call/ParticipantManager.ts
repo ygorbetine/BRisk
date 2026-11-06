@@ -1,4 +1,4 @@
-import type { PeerState } from "@risk/protocol";
+import type { PeerState } from "@briks/protocol";
 import { useCallStore, type Participant } from "../store";
 import { validAvatarDataUrl } from "../services/offline/profile";
 

@@ -1511,7 +1511,7 @@ mod tests {
 
     #[test]
     fn validates_account_fields() {
-        assert!(validate_display_name("Risk User").is_ok());
+        assert!(validate_display_name("Briks User").is_ok());
         assert!(validate_display_name(" ").is_err());
         assert!(validate_password("senha-segura").is_ok());
         assert!(validate_password("curta").is_err());
@@ -1519,7 +1519,7 @@ mod tests {
 
     #[test]
     fn refresh_token_hash_is_deterministic_and_not_plaintext() {
-        let token = "risk-refresh-token";
+        let token = "briks-refresh-token";
         let first = token_hash(token);
         assert_eq!(first, token_hash(token));
         assert_ne!(first, token);
@@ -1529,7 +1529,7 @@ mod tests {
     #[test]
     fn validates_production_turn_configuration() {
         let config = turn_config_from_values(
-            "TURN.RISK.EXAMPLE",
+            "TURN.BRIKS.EXAMPLE",
             Some("3478"),
             Some("5349"),
             Some("443"),
@@ -1540,7 +1540,7 @@ mod tests {
             Some("30"),
         )
         .unwrap();
-        assert_eq!(config.host, "turn.risk.example");
+        assert_eq!(config.host, "turn.briks.example");
         assert_eq!(config.tls_port, Some(5349));
         assert_eq!(config.tls_alt_port, Some(443));
         assert!(turn_config_from_values(
@@ -1572,7 +1572,7 @@ mod tests {
     #[test]
     fn emits_temporary_credentials_for_udp_tcp_and_tls() {
         let config = turn_config_from_values(
-            "turn.risk.example",
+            "turn.briks.example",
             Some("3478"),
             Some("5349"),
             Some("443"),
@@ -1595,19 +1595,19 @@ mod tests {
         assert!(response
             .urls
             .iter()
-            .any(|url| url == "turn:turn.risk.example:3478?transport=udp"));
+            .any(|url| url == "turn:turn.briks.example:3478?transport=udp"));
         assert!(response
             .urls
             .iter()
-            .any(|url| url == "turn:turn.risk.example:3478?transport=tcp"));
+            .any(|url| url == "turn:turn.briks.example:3478?transport=tcp"));
         assert!(response
             .urls
             .iter()
-            .any(|url| url == "turns:turn.risk.example:5349?transport=tcp"));
+            .any(|url| url == "turns:turn.briks.example:5349?transport=tcp"));
         assert!(response
             .urls
             .iter()
-            .any(|url| url == "turns:turn.risk.example:443?transport=tcp"));
+            .any(|url| url == "turns:turn.briks.example:443?transport=tcp"));
 
         let mut mac = Hmac::<Sha1>::new_from_slice(config.secret.as_bytes()).unwrap();
         mac.update(response.username.as_bytes());

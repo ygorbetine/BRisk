@@ -1,5 +1,5 @@
-import { MeshWebRTCTransport } from "@risk/rtc";
-import { api, resetApiRuntimeConfig } from "../infrastructure/risk-gateway";
+import { MeshWebRTCTransport } from "@briks/rtc";
+import { api, resetApiRuntimeConfig } from "../infrastructure/briks-gateway";
 import { CallController } from "../call";
 import { ChatController } from "../chat";
 import { BackgroundChatManager } from "../services/chat/background-manager";
@@ -10,7 +10,7 @@ import { SupabaseSignalingProvider } from "../services/supabase/signaling";
 import { VoiceActivityDirectory } from "../services/supabase/voice-activity";
 import { loadRtcNetworkContext } from "../services/network/runtime";
 import { InviteApplicationService } from "./InviteApplicationService";
-import { RiskApplication } from "./RiskApplication";
+import { BriksApplication } from "./BriksApplication";
 import { SessionService } from "./SessionService";
 
 const createSignaling = () => new SupabaseSignalingProvider();
@@ -38,8 +38,8 @@ const resilientDesktopInviteDependencies: InviteDependencies = {
   clearTimer: (timer) => clearTimeout(timer),
 };
 
-export function createRiskApplication(): RiskApplication {
-  return new RiskApplication({
+export function createBriksApplication(): BriksApplication {
+  return new BriksApplication({
     gateway: api,
     call: new CallController(createSignaling, api),
     chat: createChat(),
@@ -60,4 +60,4 @@ export function createRiskApplication(): RiskApplication {
   });
 }
 
-export const riskApplication = createRiskApplication();
+export const briksApplication = createBriksApplication();

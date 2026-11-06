@@ -1,4 +1,4 @@
-import { MeshWebRTCTransport } from "@risk/rtc";
+import { MeshWebRTCTransport } from "@briks/rtc";
 import {
   ChatAttachmentService,
   type AttachmentRuntimeState,
@@ -222,8 +222,8 @@ export class ChatController {
       this.bindSignaling(signaling, localPeerId);
       if (this.groupId && typeof window !== "undefined") {
         const refresh = () => { if (this.sessionToken === sessionToken) void this.refreshGroupMembership(true); };
-        window.addEventListener("risk:social-updated", refresh);
-        this.unsubscribers.push(() => window.removeEventListener("risk:social-updated", refresh));
+        window.addEventListener("briks:social-updated", refresh);
+        this.unsubscribers.push(() => window.removeEventListener("briks:social-updated", refresh));
       }
 
       await signaling.connect(rendezvousId, localPeerId, namespace);

@@ -63,14 +63,14 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     if (!options.isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
   window.webContents.on("render-process-gone", (_event, details) => {
-    console.error("Renderer do BRisk encerrou inesperadamente", details);
+    console.error("Renderer do Briks encerrou inesperadamente", details);
     if (rendererRecoveryAttempted || window.isDestroyed() || options.isQuitting()) return;
     rendererRecoveryAttempted = true;
     setTimeout(() => { if (!window.isDestroyed()) void window.loadURL(options.pageUrl); }, 500);
   });
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (!isMainFrame || errorCode === -3 || rendererRecoveryAttempted || window.isDestroyed() || options.isQuitting()) return;
-    console.error("Falha ao carregar renderer do BRisk", { errorCode, errorDescription, validatedUrl });
+    console.error("Falha ao carregar renderer do Briks", { errorCode, errorDescription, validatedUrl });
     rendererRecoveryAttempted = true;
     setTimeout(() => { if (!window.isDestroyed()) void window.loadURL(options.pageUrl); }, 500);
   });
@@ -82,7 +82,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     if (!reportingPackagedOrigin) window.show();
   });
   void window.loadURL(options.pageUrl).catch((error) => {
-    console.error("Falha ao carregar a interface do BRisk", error);
+    console.error("Falha ao carregar a interface do Briks", error);
     if (!reportingPackagedOrigin) window.show();
     else app.exit(1);
   });
@@ -111,19 +111,19 @@ async function reportPackagedRenderer(window: BrowserWindow, reportFile: string)
           backendHealth = response.ok;
         } catch {}
         try {
-          const marker = "risk-packaged-smoke";
+          const marker = "briks-packaged-smoke";
           localStorage.setItem(marker, "ok");
           storageWritable = localStorage.getItem(marker) === "ok";
           localStorage.removeItem(marker);
         } catch {}
         try {
           indexedDbWritable = await new Promise((resolve) => {
-            const request = indexedDB.open("risk-packaged-smoke", 1);
+            const request = indexedDB.open("briks-packaged-smoke", 1);
             request.onupgradeneeded = () => request.result.createObjectStore("health");
             request.onerror = () => resolve(false);
             request.onsuccess = () => {
               request.result.close();
-              const deletion = indexedDB.deleteDatabase("risk-packaged-smoke");
+              const deletion = indexedDB.deleteDatabase("briks-packaged-smoke");
               deletion.onerror = () => resolve(false);
               deletion.onsuccess = () => resolve(true);
             };

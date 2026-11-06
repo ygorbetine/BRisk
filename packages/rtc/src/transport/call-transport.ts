@@ -1,4 +1,4 @@
-import type { IceCandidatePayload } from "@risk/protocol";
+import type { IceCandidatePayload } from "@briks/protocol";
 import type { NetworkInterfaceDescriptor, SelectedConnectionPath } from "../connection-path";
 import type { VideoPublicationOptions } from "../video-encoding";
 import type { RtcNetworkPreference } from "./network-policy";

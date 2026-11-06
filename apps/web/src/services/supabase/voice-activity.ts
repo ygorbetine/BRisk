@@ -91,7 +91,7 @@ export class VoiceActivityDirectory {
     const client = this.client;
     if (!client || this.subscriptions.has(group.groupId)) return;
     const rendezvousId = groupRendezvousId(group, "activity", group.groupId);
-    const channelName = `risk:activity:${(await hashId(rendezvousId)).slice(0, 32)}`;
+    const channelName = `briks:activity:${(await hashId(rendezvousId)).slice(0, 32)}`;
     const channel = client.channel(channelName, { config: { presence: { key: this.localPeerId ?? crypto.randomUUID() } } });
     let settle = false;
     let resolveSubscribed!: () => void;
@@ -166,6 +166,6 @@ function parsePresence(value: unknown): VoicePresence | null {
 }
 
 async function hashId(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`risk-activity-v1:${value}`));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`briks-activity-v1:${value}`));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

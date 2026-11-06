@@ -15,7 +15,7 @@ import type {
   CurrentUser,
   Friend,
   PendingFriend,
-  RiskGateway,
+  BriksGateway,
 } from "../application/contracts";
 
 export type {
@@ -32,8 +32,8 @@ const configuredApiUrl = import.meta.env.VITE_API_URL?.trim().replace(/\/$/, "")
 const STATIC_API_URL = configuredApiUrl || (import.meta.env.DEV ? "http://localhost:8080" : "");
 const LEGACY_SERVER_ENABLED = import.meta.env.VITE_ENABLE_LEGACY_SERVER === "true";
 const TURN_CREDENTIALS_URL = import.meta.env.VITE_TURN_CREDENTIALS_URL?.trim();
-const LOCAL_TOKEN_PREFIX = "risk-local:";
-const DESKTOP_TOKEN_HEADER = "x-risk-desktop-token";
+const LOCAL_TOKEN_PREFIX = "briks-local:";
+const DESKTOP_TOKEN_HEADER = "x-briks-desktop-token";
 let refreshInFlight: Promise<string | null> | undefined;
 let runtimeConfig: Promise<ApiRuntimeConfig | null> | undefined;
 let turnCredentialClient: TemporaryTurnCredentialClient | null | undefined;
@@ -86,7 +86,7 @@ async function requireApiConfig(): Promise<ApiRuntimeConfig> {
   const config = await resolveApiConfig();
   if (!config) {
     throw new ApiRequestError(
-      "A API do Risk não está configurada neste ambiente. O modo P2P local do navegador continua disponível.",
+      "A API do Briks não está configurada neste ambiente. O modo P2P local do navegador continua disponível.",
       0,
     );
   }
@@ -289,7 +289,7 @@ function configuredTurnCredentialClient(): TemporaryTurnCredentialClient | null 
 
 function apiOnly<T>(operation: () => Promise<T>): Promise<T> {
   if (!isApiConfigured() || isLocalSessionToken(sessionStorage.getItem("accessToken"))) {
-    return Promise.reject(new ApiRequestError("Este recurso exige o backend do Risk neste ambiente.", 0));
+    return Promise.reject(new ApiRequestError("Este recurso exige o backend do Briks neste ambiente.", 0));
   }
   return operation();
 }
@@ -319,4 +319,4 @@ export const api = {
   sendMessage: (token: string, channelId: string, content: string) => apiOnly(() => request<ChatMessage>(`/channels/${channelId}/messages`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ content }) })),
   createRoom: (token: string, name: string) => apiOnly(() => request<{ id: string }>("/rooms", { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ name }) })),
   turnCredentials,
-} satisfies RiskGateway;
+} satisfies BriksGateway;

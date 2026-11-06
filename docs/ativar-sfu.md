@@ -1,6 +1,6 @@
 # Ativar o SFU (guia passo a passo)
 
-O BRisk funciona sem isto (malha P2P, até 8 pessoas). O SFU melhora a qualidade com muita gente
+O Briks funciona sem isto (malha P2P, até 8 pessoas). O SFU melhora a qualidade com muita gente
 ou várias transmissões ao mesmo tempo. Você precisa de **um servidor LiveKit** e do **serviço de tokens**.
 
 ## Opção A — LiveKit Cloud (mais fácil, tem plano grátis com limites; confira os atuais)

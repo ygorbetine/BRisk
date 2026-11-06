@@ -1,17 +1,17 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { RiskApplication } from "./RiskApplication";
+import type { BriksApplication } from "./BriksApplication";
 
-const Context = createContext<RiskApplication | null>(null);
+const Context = createContext<BriksApplication | null>(null);
 
-export function RiskApplicationProvider({ application, children }: {
-  application: RiskApplication;
+export function BriksApplicationProvider({ application, children }: {
+  application: BriksApplication;
   children: ReactNode;
 }) {
   return <Context.Provider value={application}>{children}</Context.Provider>;
 }
 
-export function useRiskApplication(): RiskApplication {
+export function useBriksApplication(): BriksApplication {
   const application = useContext(Context);
-  if (!application) throw new Error("RiskApplicationProvider não foi configurado.");
+  if (!application) throw new Error("BriksApplicationProvider não foi configurado.");
   return application;
 }

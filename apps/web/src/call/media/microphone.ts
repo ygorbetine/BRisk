@@ -16,7 +16,7 @@ export async function createMicrophoneSession(settings: VoiceVideoSettings): Pro
     throw new Error("Nenhum microfone foi disponibilizado pelo navegador.");
   }
 
-  console.info("Risk microphone capture", {
+  console.info("Briks microphone capture", {
     requestedDeviceId: settings.microphoneDeviceId || "default",
     deviceId: inputTrack.getSettings().deviceId ?? "unknown",
     label: inputTrack.label || "unknown",

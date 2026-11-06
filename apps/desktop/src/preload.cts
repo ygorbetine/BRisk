@@ -48,16 +48,16 @@ function closestFromEventTarget(target: EventTarget | null, selector: string): H
 function clearFullscreenZoomStyles(tile: HTMLElement | null): void {
   activeFullscreenZoom = 1;
   if (!tile) return;
-  tile.style.removeProperty("--risk-fullscreen-zoom");
-  tile.style.removeProperty("--risk-fullscreen-origin-x");
-  tile.style.removeProperty("--risk-fullscreen-origin-y");
+  tile.style.removeProperty("--briks-fullscreen-zoom");
+  tile.style.removeProperty("--briks-fullscreen-origin-x");
+  tile.style.removeProperty("--briks-fullscreen-origin-y");
 }
 
 function setFullscreenZoom(tile: HTMLElement, zoom: number, originX: number, originY: number): void {
   activeFullscreenZoom = zoom;
-  tile.style.setProperty("--risk-fullscreen-zoom", zoom.toFixed(3));
-  tile.style.setProperty("--risk-fullscreen-origin-x", `${originX.toFixed(2)}%`);
-  tile.style.setProperty("--risk-fullscreen-origin-y", `${originY.toFixed(2)}%`);
+  tile.style.setProperty("--briks-fullscreen-zoom", zoom.toFixed(3));
+  tile.style.setProperty("--briks-fullscreen-origin-x", `${originX.toFixed(2)}%`);
+  tile.style.setProperty("--briks-fullscreen-origin-y", `${originY.toFixed(2)}%`);
 }
 
 function adjustFullscreenZoom(event: WheelEvent): void {
@@ -83,10 +83,10 @@ function adjustFullscreenZoom(event: WheelEvent): void {
 
 function cleanupFullscreenDom(): void {
   clearFullscreenZoomStyles(activeFullscreenTile);
-  activeFullscreenTile?.removeAttribute("data-risk-native-fullscreen");
-  activeFullscreenWorkspace?.removeAttribute("data-risk-native-fullscreen-active");
-  document.documentElement.classList.remove("risk-native-stream-fullscreen");
-  document.body.classList.remove("risk-native-stream-fullscreen");
+  activeFullscreenTile?.removeAttribute("data-briks-native-fullscreen");
+  activeFullscreenWorkspace?.removeAttribute("data-briks-native-fullscreen-active");
+  document.documentElement.classList.remove("briks-native-stream-fullscreen");
+  document.body.classList.remove("briks-native-stream-fullscreen");
   activeFullscreenTile = null;
   activeFullscreenWorkspace = null;
 }
@@ -119,10 +119,10 @@ async function performEnterNativeStreamFullscreen(tile: HTMLElement): Promise<vo
   activeFullscreenTile = tile;
   activeFullscreenWorkspace = workspace;
   setFullscreenZoom(tile, 1, 50, 50);
-  tile.setAttribute("data-risk-native-fullscreen", "true");
-  workspace.setAttribute("data-risk-native-fullscreen-active", "true");
-  document.documentElement.classList.add("risk-native-stream-fullscreen");
-  document.body.classList.add("risk-native-stream-fullscreen");
+  tile.setAttribute("data-briks-native-fullscreen", "true");
+  workspace.setAttribute("data-briks-native-fullscreen-active", "true");
+  document.documentElement.classList.add("briks-native-stream-fullscreen");
+  document.body.classList.add("briks-native-stream-fullscreen");
 
   try {
     await ipcRenderer.invoke("window:fullscreen", true);
@@ -133,7 +133,7 @@ async function performEnterNativeStreamFullscreen(tile: HTMLElement): Promise<vo
       await tile.requestFullscreen();
     } catch {
       htmlFullscreenFallback = false;
-      console.warn("Risk não conseguiu entrar em tela cheia.", error);
+      console.warn("Briks não conseguiu entrar em tela cheia.", error);
     }
   }
 }

@@ -1,4 +1,4 @@
-export const RISK_SYNC_PROTOCOL_VERSION = 3 as const;
+export const BRIKS_SYNC_PROTOCOL_VERSION = 3 as const;
 
 export type SyncEntityKind = "message" | "attachment" | "message-tombstone" | "reaction" | "group-members";
 
@@ -26,7 +26,7 @@ export type SyncCheckpoint = {
 };
 
 export type SyncHelloMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.hello";
   requestId: string;
   fromPeerId: string;
@@ -35,7 +35,7 @@ export type SyncHelloMessage = {
 };
 
 export type SyncManifestMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.manifest";
   requestId: string;
   channelId: string;
@@ -47,7 +47,7 @@ export type SyncManifestMessage = {
 };
 
 export type SyncNeedMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.need";
   requestId: string;
   channelId: string;
@@ -60,7 +60,7 @@ export type SyncItem = {
 };
 
 export type SyncItemsMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.items";
   requestId: string;
   channelId: string;
@@ -68,7 +68,7 @@ export type SyncItemsMessage = {
 };
 
 export type SyncCheckpointMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.checkpoint";
   requestId: string;
   channelId: string;
@@ -79,7 +79,7 @@ export type SyncCheckpointMessage = {
 };
 
 export type SyncCompleteMessage = {
-  version: typeof RISK_SYNC_PROTOCOL_VERSION;
+  version: typeof BRIKS_SYNC_PROTOCOL_VERSION;
   type: "sync.complete";
   requestId: string;
   channelId: string;
@@ -104,7 +104,7 @@ export const MAX_SYNC_ITEMS_PER_MESSAGE = 1;
 export function isSyncWireMessage(value: unknown): value is SyncWireMessage {
   if (!value || typeof value !== "object") return false;
   const candidate = value as { version?: unknown; type?: unknown; channelId?: unknown };
-  if (candidate.version !== RISK_SYNC_PROTOCOL_VERSION || typeof candidate.type !== "string") return false;
+  if (candidate.version !== BRIKS_SYNC_PROTOCOL_VERSION || typeof candidate.type !== "string") return false;
   return candidate.type === "sync.hello"
     || candidate.type === "sync.manifest"
     || candidate.type === "sync.need"

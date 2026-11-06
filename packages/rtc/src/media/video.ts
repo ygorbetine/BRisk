@@ -1,4 +1,4 @@
-import { MediaDeviceError } from "@risk/shared";
+import { MediaDeviceError } from "@briks/shared";
 
 export * from "../video-encoding";
 

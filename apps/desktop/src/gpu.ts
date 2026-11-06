@@ -4,8 +4,8 @@ import { accessSync, constants as fsConstants, existsSync, readFileSync } from "
 export function configurePlatformRuntime(): void {
   if (process.platform === "linux") {
     // pipewire-pulse pode expor o PID do daemon em vez do PID do cliente.
-    process.env["PULSE_PROP_application.name"] = "BRisk";
-    process.env["PULSE_PROP_application.id"] = "com.brisk.calls";
+    process.env["PULSE_PROP_application.name"] = "Briks";
+    process.env["PULSE_PROP_application.id"] = "com.briks.calls";
   }
 
   if (shouldUseLinuxSoftwareRendering()) {
@@ -14,7 +14,7 @@ export function configurePlatformRuntime(): void {
     console.info("[desktop] GPU Linux incompatível ou inacessível; usando renderização por software.");
   }
 
-  if (process.platform === "win32" && process.env.BRISK_DISABLE_GPU_ENCODE !== "1") {
+  if (process.platform === "win32" && process.env.BRIKS_DISABLE_GPU_ENCODE !== "1") {
     // Prefere a codificação/decodificação por hardware (NVENC/AMF/QuickSync via Media Foundation)
     // para não competir com o jogo pela CPU durante a transmissão.
     app.commandLine.appendSwitch("ignore-gpu-blocklist");
@@ -26,8 +26,8 @@ export function configurePlatformRuntime(): void {
 }
 
 export function shouldUseLinuxSoftwareRendering(): boolean {
-  if (process.platform !== "linux" || process.env.RISK_FORCE_GPU === "1") return false;
-  if (process.env.RISK_DISABLE_GPU === "1") return true;
+  if (process.platform !== "linux" || process.env.BRIKS_FORCE_GPU === "1") return false;
+  if (process.env.BRIKS_DISABLE_GPU === "1") return true;
 
   const gbmDrivers = [
     "/usr/lib/gbm/dri_gbm.so",

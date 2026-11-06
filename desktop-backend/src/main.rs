@@ -33,7 +33,7 @@ use uuid::Uuid;
 pub(crate) const MAX_ATTACHMENT_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-const LOCAL_TOKEN_HEADER: &str = "x-risk-desktop-token";
+const LOCAL_TOKEN_HEADER: &str = "x-briks-desktop-token";
 const ACCESS_TOKEN_TTL_SECONDS: i64 = 12 * 60 * 60;
 const EMBEDDED_MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
@@ -194,20 +194,20 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "risk_desktop_backend=info,tower_http=warn".into()),
+                .unwrap_or_else(|_| "briks_desktop_backend=info,tower_http=warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();
 
-    let local_token = env::var("RISK_LOCAL_TOKEN")
-        .context("RISK_LOCAL_TOKEN precisa ser fornecido pelo Electron")?;
+    let local_token = env::var("BRIKS_LOCAL_TOKEN")
+        .context("BRIKS_LOCAL_TOKEN precisa ser fornecido pelo Electron")?;
     if local_token.len() < 32 {
-        anyhow::bail!("RISK_LOCAL_TOKEN precisa ter pelo menos 32 caracteres");
+        anyhow::bail!("BRIKS_LOCAL_TOKEN precisa ter pelo menos 32 caracteres");
     }
 
-    let data_dir = env::var_os("RISK_DATA_DIR")
+    let data_dir = env::var_os("BRIKS_DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("risk-data"));
+        .unwrap_or_else(|| PathBuf::from("briks-data"));
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("não foi possível criar {}", data_dir.display()))?;
     p2p::attachments::cleanup_stale_transfers().await;
@@ -260,7 +260,7 @@ async fn main() -> anyhow::Result<()> {
             local_token_guard,
         ));
 
-    let web_origin = env::var("RISK_WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
+    let web_origin = env::var("BRIKS_WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
     let app = Router::new()
         .route("/health", get(health))
         .merge(protected)
@@ -281,11 +281,11 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let bind = env::var("RISK_BACKEND_BIND").unwrap_or_else(|_| "127.0.0.1:0".into());
+    let bind = env::var("BRIKS_BACKEND_BIND").unwrap_or_else(|_| "127.0.0.1:0".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let address = listener.local_addr()?;
     println!(
-        "RISK_BACKEND_READY {}",
+        "BRIKS_BACKEND_READY {}",
         serde_json::to_string(&json!({ "url": format!("http://{}", address) }))?
     );
     use std::io::Write;
@@ -965,7 +965,7 @@ mod tests {
     fn validates_password_and_display_names() {
         assert!(validate_password("senha-segura").is_ok());
         assert!(validate_password("curta").is_err());
-        assert!(validate_name("Risk User", 80, "nome inválido").is_ok());
+        assert!(validate_name("Briks User", 80, "nome inválido").is_ok());
         assert!(validate_name(" ", 80, "nome inválido").is_err());
     }
 

@@ -27,7 +27,7 @@ const DEFAULT_CAMERA_BITRATE = 1_500_000;
 /**
  * Transporte SFU baseado em LiveKit. Cada participante publica uma vez e o
  * servidor distribui; o upload deixa de crescer com o número de espectadores.
- * O `peerId` do BRisk é a identidade do participante no LiveKit.
+ * O `peerId` do Briks é a identidade do participante no LiveKit.
  */
 export class LiveKitTransport implements SfuCallTransport {
   readonly kind = "sfu" as const;

@@ -1,4 +1,4 @@
-import type { RiskGateway } from "./contracts";
+import type { BriksGateway } from "./contracts";
 
 /** Coordena restauração e encerramento sem espalhar estado global pela UI. */
 export class SessionService {
@@ -6,7 +6,7 @@ export class SessionService {
   private restoreSuppressed = false;
   private restoreGeneration = 0;
 
-  constructor(private readonly gateway: Pick<RiskGateway, "refresh" | "logout">) {}
+  constructor(private readonly gateway: Pick<BriksGateway, "refresh" | "logout">) {}
 
   get isRestoreSuppressed(): boolean { return this.restoreSuppressed; }
 

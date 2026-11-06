@@ -92,7 +92,7 @@ export class BackgroundChatManager {
       this.unread.set(channelId, (this.unread.get(channelId) ?? 0) + 1);
       this.listener?.(new Map(this.unread));
       if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
-        new Notification("Nova mensagem privada no Risk", { body: `${message.author}: ${message.content.slice(0, 120)}` });
+        new Notification("Nova mensagem privada no Briks", { body: `${message.author}: ${message.content.slice(0, 120)}` });
       }
     });
     this.privateSessions.set(channelId, session);
@@ -183,7 +183,7 @@ export class BackgroundChatManager {
         this.unread.set(channelId, (this.unread.get(channelId) ?? 0) + 1);
         this.listener?.(new Map(this.unread));
         if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
-          new Notification("Nova mensagem no Risk", { body: `${message.author}: ${message.content.slice(0, 120)}` });
+          new Notification("Nova mensagem no Briks", { body: `${message.author}: ${message.content.slice(0, 120)}` });
         }
       });
       try {
@@ -301,7 +301,7 @@ export class BackgroundChatManager {
     this.capacityWarning = warning;
     if (warning) console.warn(warning);
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("risk:background-capacity", {
+      window.dispatchEvent(new CustomEvent("briks:background-capacity", {
         detail: { skippedChannels, skippedGroups, maxChannels: MAX_BACKGROUND_CHANNELS, maxGroups: MAX_BACKGROUND_MEMBERSHIP_GROUPS },
       }));
     }

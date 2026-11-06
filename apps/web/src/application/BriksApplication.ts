@@ -4,10 +4,10 @@ import type { BackgroundChatManager } from "../services/chat/background-manager"
 import type { VoiceActivityDirectory } from "../services/supabase/voice-activity";
 import type { InviteApplicationService } from "./InviteApplicationService";
 import type { SessionService } from "./SessionService";
-import type { RiskGateway } from "./contracts";
+import type { BriksGateway } from "./contracts";
 
-export type RiskApplicationDependencies = {
-  gateway: RiskGateway;
+export type BriksApplicationDependencies = {
+  gateway: BriksGateway;
   call: CallController;
   chat: ChatController;
   callChat: ChatController;
@@ -19,8 +19,8 @@ export type RiskApplicationDependencies = {
 };
 
 /** Única superfície entregue à camada React pelo composition root. */
-export class RiskApplication {
-  readonly gateway: RiskGateway;
+export class BriksApplication {
+  readonly gateway: BriksGateway;
   readonly call: CallController;
   readonly chat: ChatController;
   readonly callChat: ChatController;
@@ -30,7 +30,7 @@ export class RiskApplication {
   readonly invites: InviteApplicationService;
   private readonly resetAdapters: () => void;
 
-  constructor(dependencies: RiskApplicationDependencies) {
+  constructor(dependencies: BriksApplicationDependencies) {
     this.gateway = dependencies.gateway;
     this.call = dependencies.call;
     this.chat = dependencies.chat;

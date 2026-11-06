@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PeerState } from "@risk/protocol";
+import type { PeerState } from "@briks/protocol";
 
 export type Participant = { peerId: string; displayName: string; avatar?: string; state: PeerState; streams?: Record<string, MediaStream>; connection?: RTCPeerConnectionState };
 export type CallContext = {

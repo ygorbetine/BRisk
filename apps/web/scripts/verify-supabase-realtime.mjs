@@ -15,7 +15,7 @@ const clientA = createClient(url, key, options);
 const clientB = createClient(url, key, options);
 const peerA = randomUUID(); const peerB = randomUUID();
 const roomId = createHash("sha256").update(randomUUID()).digest("hex");
-const topic = `risk:room:${roomId.slice(0, 32)}`;
+const topic = `briks:room:${roomId.slice(0, 32)}`;
 const channelA = clientA.channel(topic, { config: { presence: { key: peerA }, broadcast: { self: false, ack: true } } });
 const channelB = clientB.channel(topic, { config: { presence: { key: peerB }, broadcast: { self: false, ack: true } } });
 let presenceA = false; let presenceB = false; let directedOffer = false;

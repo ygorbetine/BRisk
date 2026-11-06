@@ -15,10 +15,10 @@ function response(ttl = 3600, nowMs = NOW): object {
     ttl,
     expiresAt,
     urls: [
-      "turn:turn.risk.test:3478?transport=udp",
-      "turn:turn.risk.test:3478?transport=tcp",
-      "turns:turn.risk.test:5349?transport=tcp",
-      "turns:turn.risk.test:443?transport=tcp",
+      "turn:turn.briks.test:3478?transport=udp",
+      "turn:turn.briks.test:3478?transport=tcp",
+      "turns:turn.briks.test:5349?transport=tcp",
+      "turns:turn.briks.test:443?transport=tcp",
     ],
   };
 }
@@ -34,25 +34,25 @@ describe("credenciais TURN temporárias", () => {
     });
   });
 
-  it("aceita o contrato expandido usado pelo backend do Risk", () => {
+  it("aceita o contrato expandido usado pelo backend do Briks", () => {
     const compact = response() as { username: string; credential: string; ttl: number; expiresAt: number; urls: string[] };
     const parsed = parseTemporaryTurnCredentials({
       ...compact,
       iceServers: [
-        { urls: ["stun:turn.risk.test:3478"] },
+        { urls: ["stun:turn.briks.test:3478"] },
         { urls: compact.urls, username: compact.username, credential: compact.credential },
       ],
     }, NOW);
     expect(parsed.iceServers).toHaveLength(2);
-    expect(parsed.urls).toContain("turns:turn.risk.test:443?transport=tcp");
+    expect(parsed.urls).toContain("turns:turn.briks.test:443?transport=tcp");
   });
 
   it("rejeita endpoint inseguro, credenciais permanentes e TTL excessivo", () => {
-    expect(() => validateTurnCredentialsEndpoint("http://turn.risk.test/credentials")).toThrow(/HTTPS/);
+    expect(() => validateTurnCredentialsEndpoint("http://turn.briks.test/credentials")).toThrow(/HTTPS/);
     expect(() => validateTurnCredentialsEndpoint("http://127.0.0.1:8080/credentials", true)).not.toThrow();
     expect(() => parseTemporaryTurnCredentials({ ...response(), ttl: 0 }, NOW)).toThrow(/ttl/);
     expect(() => parseTemporaryTurnCredentials({ ...response(), ttl: 90_000 }, NOW)).toThrow(/ttl/);
-    expect(() => parseTemporaryTurnCredentials({ ttl: 3600, urls: ["turn:turn.risk.test:3478"] }, NOW)).toThrow(/username/);
+    expect(() => parseTemporaryTurnCredentials({ ttl: 3600, urls: ["turn:turn.briks.test:3478"] }, NOW)).toThrow(/username/);
   });
 
   it("envia bearer somente em memória e reutiliza credenciais ainda válidas", async () => {
@@ -64,7 +64,7 @@ describe("credenciais TURN temporárias", () => {
         headers: { "content-type": "application/json" },
       });
     }) as typeof fetch;
-    const client = new TemporaryTurnCredentialClient("https://auth.risk.test/rtc/credentials", {
+    const client = new TemporaryTurnCredentialClient("https://auth.briks.test/rtc/credentials", {
       fetcher,
       now: () => NOW,
     });
@@ -84,7 +84,7 @@ describe("credenciais TURN temporárias", () => {
       observedInit = init;
       return new Response(JSON.stringify(response()), { status: 200 });
     }) as typeof fetch;
-    const client = new TemporaryTurnCredentialClient("https://auth.risk.test/rtc/credentials", { fetcher, now: () => NOW });
+    const client = new TemporaryTurnCredentialClient("https://auth.briks.test/rtc/credentials", { fetcher, now: () => NOW });
     await client.get();
     expect(new Headers(observedInit?.headers).has("authorization")).toBe(false);
   });
@@ -92,7 +92,7 @@ describe("credenciais TURN temporárias", () => {
   it("renova o cache antes que a credencial expire", async () => {
     let clock = NOW;
     const fetcher = vi.fn(async () => new Response(JSON.stringify(response(3600, clock)), { status: 200 })) as typeof fetch;
-    const client = new TemporaryTurnCredentialClient("https://auth.risk.test/rtc/credentials", {
+    const client = new TemporaryTurnCredentialClient("https://auth.briks.test/rtc/credentials", {
       fetcher,
       now: () => clock,
     });

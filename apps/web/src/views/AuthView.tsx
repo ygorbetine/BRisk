@@ -1,10 +1,10 @@
-import { BriskMark } from "../components/BriskMark";
+import { BriksMark } from "../components/BriksMark";
 import { useState, type FormEvent } from "react";
-import { useRiskApplication } from "../application/ApplicationContext";
+import { useBriksApplication } from "../application/ApplicationContext";
 import { useCallStore } from "../store";
 
 export function AuthView() {
-  const { gateway: api, session } = useRiskApplication();
+  const { gateway: api, session } = useBriksApplication();
   const setSession = useCallStore((state) => state.setSession);
   const [register, setRegister] = useState(false);
   const [error, setError] = useState("");
@@ -24,7 +24,7 @@ export function AuthView() {
   }
 
   return <main className="auth"><section className="auth-card">
-    <div className="brand"><BriskMark size={26}/> BRisk</div>
+    <div className="brand"><BriksMark size={26}/> Briks</div>
     <h1>{register ? "Crie seu espaço" : "Bom ter você de volta"}</h1>
     <p>Conversas que parecem estar na mesma sala.</p>
     <form onSubmit={submit}>

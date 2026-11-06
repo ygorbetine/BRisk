@@ -1,4 +1,4 @@
-import type { PeerConnectionDiagnostics } from "@risk/rtc";
+import type { PeerConnectionDiagnostics } from "@briks/rtc";
 
 export type { PeerConnectionDiagnostics as SendMeterPeer };
 

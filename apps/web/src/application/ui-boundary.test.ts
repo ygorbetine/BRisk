@@ -21,7 +21,7 @@ describe("fronteira React → Application Services", () => {
     ].map((file) => readFile(file, "utf8")));
 
     for (const source of sources) {
-      expect(source).not.toMatch(/from\s+["'][^"']*(?:\/api|\/supabase\/|@risk\/rtc)["']/);
+      expect(source).not.toMatch(/from\s+["'][^"']*(?:\/api|\/supabase\/|@briks\/rtc)["']/);
       expect(source).not.toMatch(/new\s+(?:CallController|ChatController|MeshWebRTCTransport|SupabaseSignalingProvider)\s*\(/);
     }
   });

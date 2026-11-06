@@ -15,7 +15,7 @@ export type LocalChatMessage = {
   reactions?: Record<string, string[]>;
 };
 
-import { OFFLINE_STORES, getFromStore, openRiskDatabase } from "./database";
+import { OFFLINE_STORES, getFromStore, openBriksDatabase } from "./database";
 import { backendRequest, desktopConfig, resetDesktopBackendClient } from "./desktop-backend-client";
 const STORE = OFFLINE_STORES.messages;
 const migratedChannels = new Set<string>();
@@ -74,7 +74,7 @@ export async function loadLocalMessage(channelId: string, messageId: string): Pr
 }
 
 async function loadLegacyMessages(channelId: string, before: string | undefined, beforeId: string | undefined, limit: number): Promise<LocalChatMessage[]> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE, "readonly");
     const index = transaction.objectStore(STORE).index("channelId");
@@ -88,7 +88,7 @@ async function loadLegacyMessages(channelId: string, before: string | undefined,
 }
 
 async function loadAllLegacyMessages(channelId: string): Promise<LocalChatMessage[]> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE, "readonly");
     const request = transaction.objectStore(STORE).index("channelId").getAll(IDBKeyRange.only(channelId));
@@ -100,7 +100,7 @@ async function loadAllLegacyMessages(channelId: string): Promise<LocalChatMessag
 }
 
 async function saveLegacyMessage(message: LocalChatMessage): Promise<void> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE, "readwrite");
     transaction.objectStore(STORE).put(message);

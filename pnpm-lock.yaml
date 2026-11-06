@@ -34,13 +34,13 @@ importers:
 
   apps/web:
     dependencies:
-      '@risk/protocol':
+      '@briks/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@risk/rtc':
+      '@briks/rtc':
         specifier: workspace:*
         version: link:../../packages/rtc
-      '@risk/shared':
+      '@briks/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@sapphi-red/web-noise-suppressor':
@@ -92,10 +92,10 @@ importers:
 
   packages/rtc:
     dependencies:
-      '@risk/protocol':
+      '@briks/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@risk/shared':
+      '@briks/shared':
         specifier: workspace:*
         version: link:../shared
       livekit-client:

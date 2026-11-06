@@ -1,5 +1,5 @@
-import type { IceCandidatePayload, PeerState } from "@risk/protocol";
-import { logger } from "@risk/shared";
+import type { IceCandidatePayload, PeerState } from "@briks/protocol";
+import { logger } from "@briks/shared";
 import {
   classifySelectedConnectionPath,
   type NetworkInterfaceDescriptor,
@@ -253,7 +253,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
 
   sendTransferData(data: ArrayBuffer | ArrayBufferView, targetPeerId?: string): number {
     const payload = exactArrayBuffer(data);
-    if (payload.byteLength > MAX_TRANSFER_FRAME_BYTES) throw new Error("Frame do risk.transfer excede o limite permitido.");
+    if (payload.byteLength > MAX_TRANSFER_FRAME_BYTES) throw new Error("Frame do briks.transfer excede o limite permitido.");
     let sent = 0;
     for (const [peerId, entry] of this.peers) {
       if (targetPeerId && peerId !== targetPeerId) continue;
@@ -447,7 +447,7 @@ export class MeshWebRTCTransport implements MeshCallTransport {
     };
     pc.ondatachannel = ({ channel }) => {
       if (channel.label === TRANSFER_CHANNEL_LABEL) this.bindTransferDataChannel(peerId, entry, channel);
-      else if (channel.label === CONTROL_CHANNEL_LABEL || channel.label === "risk.control") this.bindControlDataChannel(peerId, entry, channel);
+      else if (channel.label === CONTROL_CHANNEL_LABEL || channel.label === "briks.control") this.bindControlDataChannel(peerId, entry, channel);
       else channel.close();
     };
     pc.onnegotiationneeded = () => {

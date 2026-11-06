@@ -15,4 +15,4 @@ const run = () => new Promise((resolve, reject) => {
 });
 
 await Promise.all([run(), run()]);
-console.log("Duas instâncias isoladas do Risk iniciaram e renderizaram corretamente.");
+console.log("Duas instâncias isoladas do Briks iniciaram e renderizaram corretamente.");

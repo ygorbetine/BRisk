@@ -49,7 +49,7 @@ export async function startProcessAudioCapture(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-risk-desktop-token": config.token,
+        "x-briks-desktop-token": config.token,
       },
       body: JSON.stringify(request),
       signal: controller.signal,

@@ -1,16 +1,16 @@
 import { withinP2PClockTolerance } from "../../services/p2p-clock";
 import {
   compatibleCallPeer,
-  LOCAL_RISK_CAPABILITIES,
-  validRiskPeerCapabilities,
-  type RiskPeerCapabilities,
+  LOCAL_BRIKS_CAPABILITIES,
+  validBriksPeerCapabilities,
+  type BriksPeerCapabilities,
 } from "../../services/protocol-compatibility";
 import { validAvatarDataUrl } from "../../services/offline/profile";
 import { publicIdentity, type LocalIdentity, type PublicPeerIdentity } from "../../services/offline/social-storage";
 
 export type CallAuthMessage =
-  | { version: 1; type: "call.auth.challenge"; identityPeerId: string; nonce: string; timestamp: number; capabilities: RiskPeerCapabilities }
-  | { version: 1; type: "call.auth.proof"; identity: PublicPeerIdentity; nonce: string; timestamp: number; capabilities: RiskPeerCapabilities; signature: string };
+  | { version: 1; type: "call.auth.challenge"; identityPeerId: string; nonce: string; timestamp: number; capabilities: BriksPeerCapabilities }
+  | { version: 1; type: "call.auth.proof"; identity: PublicPeerIdentity; nonce: string; timestamp: number; capabilities: BriksPeerCapabilities; signature: string };
 
 export type ParsedCallAuthMessage =
   | { status: "not-auth" }
@@ -32,7 +32,7 @@ export class AuthenticationManager {
       identityPeerId,
       nonce: crypto.randomUUID(),
       timestamp: Date.now(),
-      capabilities: LOCAL_RISK_CAPABILITIES,
+      capabilities: LOCAL_BRIKS_CAPABILITIES,
     };
   }
 
@@ -44,10 +44,10 @@ export class AuthenticationManager {
     if (message.version !== 1 || typeof message.type !== "string" || !message.type.startsWith("call.auth.")) {
       return { status: "not-auth" };
     }
-    if (!validRiskPeerCapabilities(message.capabilities) || !compatibleCallPeer(message.capabilities)) {
+    if (!validBriksPeerCapabilities(message.capabilities) || !compatibleCallPeer(message.capabilities)) {
       return {
         status: "incompatible",
-        remoteVersion: validRiskPeerCapabilities(message.capabilities) ? message.capabilities.appVersion : undefined,
+        remoteVersion: validBriksPeerCapabilities(message.capabilities) ? message.capabilities.appVersion : undefined,
       };
     }
     if (!withinP2PClockTolerance(message.timestamp)) return { status: "expired" };
@@ -71,7 +71,7 @@ export class AuthenticationManager {
       identity: profile,
       nonce,
       timestamp: Date.now(),
-      capabilities: LOCAL_RISK_CAPABILITIES,
+      capabilities: LOCAL_BRIKS_CAPABILITIES,
       signature: bytesToBase64Url(new Uint8Array(signature)),
     };
   }
@@ -81,7 +81,7 @@ export class AuthenticationManager {
     remoteIdentity: PublicPeerIdentity,
     context: CallAuthContext,
     nonce: string,
-    capabilities: RiskPeerCapabilities,
+    capabilities: BriksPeerCapabilities,
     signature: string,
   ): Promise<boolean> {
     if (!sameCallPublicKey(trusted.publicKey, remoteIdentity.publicKey)) return false;
@@ -110,10 +110,10 @@ export class AuthenticationManager {
     context: CallAuthContext,
     nonce: string,
     identity: PublicPeerIdentity,
-    capabilities: RiskPeerCapabilities = LOCAL_RISK_CAPABILITIES,
+    capabilities: BriksPeerCapabilities = LOCAL_BRIKS_CAPABILITIES,
   ): string {
     const peers = [context.localPeerId, context.remotePeerId].sort().join(":");
-    return JSON.stringify({ protocol: "risk-call-auth-v2", roomId: context.roomId, peers, nonce, identity, capabilities });
+    return JSON.stringify({ protocol: "briks-call-auth-v2", roomId: context.roomId, peers, nonce, identity, capabilities });
   }
 }
 

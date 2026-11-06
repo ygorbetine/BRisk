@@ -1,4 +1,4 @@
-import { MediaDeviceError } from "@risk/shared";
+import { MediaDeviceError } from "@briks/shared";
 
 export async function openMicrophone(deviceId?: string): Promise<MediaStreamTrack> {
   try {

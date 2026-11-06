@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { useRiskApplication } from "../application/ApplicationContext";
+import { useBriksApplication } from "../application/ApplicationContext";
 
 export function DesktopRecoveryNotice() {
-  const application = useRiskApplication();
-  const [status, setStatus] = useState<RiskDesktopBackendStatus>();
+  const application = useBriksApplication();
+  const [status, setStatus] = useState<BriksDesktopBackendStatus>();
 
   useEffect(() => window.desktop?.onBackendStatus?.((next) => {
     application.backendChanged();

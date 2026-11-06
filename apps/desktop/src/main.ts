@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, type Tray } from "electron";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DesktopBackendManager } from "./backend.js";
@@ -11,19 +12,40 @@ import {
   PACKAGED_ORIGIN,
   PACKAGED_SCHEME,
   registerPackagedProtocol,
-  registerRiskScheme,
+  registerBriksScheme,
 } from "./protocol.js";
 import { ScreenCaptureController } from "./screen-capture.js";
 import { createApplicationTray, isTrayAvailable } from "./tray.js";
 import { createMainWindow } from "./window.js";
 
+/**
+ * O pacote foi renomeado (@risk/desktop -> @briks/desktop), e a pasta de dados do Electron segue o nome.
+ * Move a pasta antiga para a nova, preservando banco local, identidade e configurações; se não der,
+ * continua usando a pasta antiga em vez de perder dados.
+ */
+function migrateLegacyUserData(): void {
+  try {
+    const appData = app.getPath("appData");
+    const legacy = path.join(appData, "@risk", "desktop");
+    const next = path.join(appData, "@briks", "desktop");
+    if (existsSync(next) || !existsSync(legacy)) return;
+    mkdirSync(path.dirname(next), { recursive: true });
+    renameSync(legacy, next);
+    console.info("[desktop] dados migrados para", next);
+  } catch (error) {
+    console.warn("[desktop] migração de dados falhou; mantendo a pasta antiga.", error);
+    app.setPath("userData", path.join(app.getPath("appData"), "@risk", "desktop"));
+  }
+}
+
+migrateLegacyUserData();
 configurePlatformRuntime();
-registerRiskScheme();
+registerBriksScheme();
 
 const rootDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEVELOPMENT_ORIGINS = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
-const PACKAGED_ORIGIN_REPORT_FILE = process.env.RISK_PACKAGED_ORIGIN_REPORT_FILE?.trim();
-const DEV_BACKEND_BRIDGE_FILE = path.resolve(rootDirectory, "../../../.risk/dev-backend.json");
+const PACKAGED_ORIGIN_REPORT_FILE = process.env.BRIKS_PACKAGED_ORIGIN_REPORT_FILE?.trim();
+const DEV_BACKEND_BRIDGE_FILE = path.resolve(rootDirectory, "../../../.briks/dev-backend.json");
 const APP_ICON_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.resolve(rootDirectory, "../build/icon.png");
@@ -116,8 +138,8 @@ if (hasSingleInstanceLock) {
     openMainWindow();
     app.on("activate", showMainWindow);
   }).catch((error) => {
-    console.error("Falha ao iniciar o BRisk", error);
-    dialog.showErrorBox("BRisk não conseguiu iniciar", error instanceof Error ? error.message : String(error));
+    console.error("Falha ao iniciar o Briks", error);
+    dialog.showErrorBox("Briks não conseguiu iniciar", error instanceof Error ? error.message : String(error));
     void backend.clearDevBridge();
     backend.stop();
     app.quit();

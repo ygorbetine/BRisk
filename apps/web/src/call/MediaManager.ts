@@ -1,5 +1,5 @@
-import { WebScreenShareProvider, type CallTransport, type ScreenShareProvider } from "@risk/rtc";
-import type { PeerState } from "@risk/protocol";
+import { WebScreenShareProvider, type CallTransport, type ScreenShareProvider } from "@briks/rtc";
+import type { PeerState } from "@briks/protocol";
 import { useCallStore } from "../store";
 import { stabilizeMicrophoneGain } from "../services/audio/microphone";
 import { loadVoiceVideoSettings, type VoiceVideoSettings } from "../services/audio/settings";
@@ -149,7 +149,7 @@ export class MediaManager {
     previousInputStream.getTracks().forEach((track) => track.stop());
     previousTrack.stop();
     await previousRnnoise?.stop().catch(() => undefined);
-    console.info("Risk live microphone settings applied", {
+    console.info("Briks live microphone settings applied", {
       deviceId: replacement.inputStream.getAudioTracks()[0]?.getSettings().deviceId ?? "unknown",
       noiseSuppression: settings.noiseSuppression,
       echoCancellation: settings.echoCancellation,
@@ -217,7 +217,7 @@ export class MediaManager {
         this.screen,
         sourceId,
         includeAudio,
-        settings.excludeRiskAudioFromScreenShare,
+        settings.excludeBriksAudioFromScreenShare,
       );
       stream = capture.stream;
       desktopAudio = capture.desktopAudio;
@@ -241,7 +241,7 @@ export class MediaManager {
       }
 
       const screenAudioTrack = stream.getAudioTracks()[0];
-      if (screenAudioTrack && settings.excludeRiskAudioFromScreenShare) {
+      if (screenAudioTrack && settings.excludeBriksAudioFromScreenShare) {
         reportScreenAudioExclusion(screenAudioTrack, desktopAudio, true);
       }
       if (!this.dependencies.isActive(lifecycle)) {
@@ -279,7 +279,7 @@ export class MediaManager {
 
       await this.ensureMicrophoneAfterScreenCapture(transport, lifecycle);
       if (linuxAudioPreparation) {
-        void this.attachLinuxScreenAudio(stream, lifecycle, linuxAudioPreparation, settings.excludeRiskAudioFromScreenShare);
+        void this.attachLinuxScreenAudio(stream, lifecycle, linuxAudioPreparation, settings.excludeBriksAudioFromScreenShare);
       }
     } catch (error) {
       if (linuxAudioPreparation) {
@@ -330,7 +330,7 @@ export class MediaManager {
     stream: MediaStream,
     lifecycle: number,
     preparationPromise: Promise<DesktopScreenAudioPreparation | null>,
-    excludeRisk: boolean,
+    excludeBriks: boolean,
   ): Promise<void> {
     try {
       const preparation = await preparationPromise;
@@ -360,8 +360,8 @@ export class MediaManager {
         return;
       }
 
-      if (excludeRisk && preparation.excludedRisk) {
-        console.info("Risk screen audio exclusion active", {
+      if (excludeBriks && preparation.excludedBriks) {
+        console.info("Briks screen audio exclusion active", {
           mode: "pipewire-node-exclusion",
           source: preparation.sourceName ?? preparation.sourceLabel ?? "unknown",
         });

@@ -13,7 +13,7 @@ describe("SupabaseSignalingProvider reconnect sends", () => {
 
     state.roomId = "room-test";
     state.peerId = "peer-test";
-    state.channelName = "risk:room:test";
+    state.channelName = "briks:room:test";
     state.client = { channel: vi.fn(), removeChannel: vi.fn(async () => undefined) };
     state.status = "reconnecting";
 
@@ -77,7 +77,7 @@ describe("SupabaseSignalingProvider reconnect sends", () => {
     };
     state.roomId = "room-test";
     state.peerId = "peer-test";
-    state.channelName = "risk:room:test";
+    state.channelName = "briks:room:test";
     state.channel = {};
     state.client = {
       removeChannel: vi.fn(() => new Promise(() => undefined)),

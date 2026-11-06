@@ -1,14 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Link2, X } from "lucide-react";
-import { useRiskApplication } from "../application/ApplicationContext";
-import { normalizeRiskInviteCode, type InviteType } from "../services/invites/code";
+import { useBriksApplication } from "../application/ApplicationContext";
+import { normalizeBriksInviteCode, type InviteType } from "../services/invites/code";
 import type { IncomingInviteRequest, InviteSnapshot, InviteService } from "../services/invites/service";
 import type { PublicGroupMetadata } from "../services/offline/social-storage";
 
 export function P2PInvitePanel({ type, token, displayName, group, initialMode = "create", onComplete }: {
   type: InviteType; token: string; displayName: string; group?: PublicGroupMetadata; initialMode?: "create" | "join"; onComplete?(): void;
 }) {
-  const { invites } = useRiskApplication();
+  const { invites } = useBriksApplication();
   const [mode, setMode] = useState<"create" | "join">(initialMode);
   const [code, setCode] = useState(""); const [state, setState] = useState<InviteSnapshot>();
   const [request, setRequest] = useState<IncomingInviteRequest>(); const [error, setError] = useState("");
@@ -41,7 +41,7 @@ export function P2PInvitePanel({ type, token, displayName, group, initialMode = 
     // O InviteService persiste o novo vínculo antes de publicar o estado
     // `accepted`. Notificamos o restante da aplicação somente depois disso para
     // que sidebar, chat e chamada recarreguem imediatamente a nova membership.
-    window.dispatchEvent(new Event("risk:social-updated"));
+    window.dispatchEvent(new Event("briks:social-updated"));
     onComplete?.();
   }, [state?.code, state?.status, state?.type, onComplete]);
 
@@ -138,7 +138,7 @@ export function P2PInvitePanel({ type, token, displayName, group, initialMode = 
       <button disabled={busy || active} className={mode === "join" ? "active" : ""} onClick={() => setMode("join")}>Usar código</button>
     </div>
     {!state && mode === "create" && <div className="invite-start"><Link2/><p>{type === "friend" ? "Crie um código temporário para outra pessoa adicionar você." : group ? `Crie um código temporário para entrar em ${group.name}.` : "Selecione primeiro o grupo que receberá o novo membro."}</p><button disabled={!canCreate || busy} onClick={() => void create()}>{busy ? "Preparando…" : "Criar convite P2P"}</button></div>}
-    {!state && mode === "join" && <form className="invite-code-form" onSubmit={(event) => void join(event)}><label>Código de convite</label><input disabled={busy} value={code} onChange={(event) => setCode(event.target.value)} onBlur={() => setCode((current) => normalizeRiskInviteCode(current))} placeholder="risk-____-____-____-____" autoComplete="off" maxLength={256}/><button disabled={busy}>{busy ? "Conectando…" : "Conectar por WebRTC"}</button></form>}
+    {!state && mode === "join" && <form className="invite-code-form" onSubmit={(event) => void join(event)}><label>Código de convite</label><input disabled={busy} value={code} onChange={(event) => setCode(event.target.value)} onBlur={() => setCode((current) => normalizeBriksInviteCode(current))} placeholder="briks-____-____-____-____" autoComplete="off" maxLength={256}/><button disabled={busy}>{busy ? "Conectando…" : "Conectar por WebRTC"}</button></form>}
     {state && <div className={`invite-progress ${state.status}`}>
       {state.role === "creator" && <><small>Compartilhe somente este código</small><strong className="invite-code">{state.code}</strong><button className="copy-code" disabled={busy} onClick={() => void copy()}>{copied ? <Check/> : <Clipboard/>}{copied ? "Código copiado!" : "Copiar código"}</button><span>Expira em {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span></>}
       <p>{state.message}</p>

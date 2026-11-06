@@ -1,10 +1,10 @@
-export const RISK_APP_VERSION = import.meta.env.VITE_RISK_APP_VERSION ?? "0.2.1";
-export const RISK_NEGOTIATION_PROTOCOL_VERSION = 2;
-export const RISK_CALL_PROTOCOL_VERSION = 2;
-export const RISK_CHAT_PROTOCOL_VERSION = 2;
-export const RISK_GROUP_MANIFEST_VERSION = 2;
+export const BRIKS_APP_VERSION = import.meta.env.VITE_BRIKS_APP_VERSION ?? "0.2.1";
+export const BRIKS_NEGOTIATION_PROTOCOL_VERSION = 2;
+export const BRIKS_CALL_PROTOCOL_VERSION = 2;
+export const BRIKS_CHAT_PROTOCOL_VERSION = 2;
+export const BRIKS_GROUP_MANIFEST_VERSION = 2;
 
-export const RISK_CAPABILITIES = [
+export const BRIKS_CAPABILITIES = [
   "files-v2",
   "screen-audio",
   "rnnoise",
@@ -19,9 +19,9 @@ export const RISK_CAPABILITIES = [
   "markdown-safe-links-v1",
 ] as const;
 
-export type RiskCapability = typeof RISK_CAPABILITIES[number];
+export type BriksCapability = typeof BRIKS_CAPABILITIES[number];
 
-export type RiskPeerCapabilities = {
+export type BriksPeerCapabilities = {
   appVersion: string;
   callProtocolVersion: number;
   chatProtocolVersion: number;
@@ -32,28 +32,28 @@ export type RiskPeerCapabilities = {
   capabilities?: string[];
 };
 
-export const LOCAL_RISK_CAPABILITIES: RiskPeerCapabilities = {
-  appVersion: RISK_APP_VERSION,
-  callProtocolVersion: RISK_CALL_PROTOCOL_VERSION,
-  chatProtocolVersion: RISK_CHAT_PROTOCOL_VERSION,
-  groupManifestVersion: RISK_GROUP_MANIFEST_VERSION,
-  protocol: RISK_NEGOTIATION_PROTOCOL_VERSION,
-  client: RISK_APP_VERSION,
-  capabilities: [...RISK_CAPABILITIES],
+export const LOCAL_BRIKS_CAPABILITIES: BriksPeerCapabilities = {
+  appVersion: BRIKS_APP_VERSION,
+  callProtocolVersion: BRIKS_CALL_PROTOCOL_VERSION,
+  chatProtocolVersion: BRIKS_CHAT_PROTOCOL_VERSION,
+  groupManifestVersion: BRIKS_GROUP_MANIFEST_VERSION,
+  protocol: BRIKS_NEGOTIATION_PROTOCOL_VERSION,
+  client: BRIKS_APP_VERSION,
+  capabilities: [...BRIKS_CAPABILITIES],
 };
 
 export function compatibleAppVersion(version: string | undefined): boolean {
   if (!version) return false;
-  const local = RISK_APP_VERSION.split(".");
+  const local = BRIKS_APP_VERSION.split(".");
   const remote = version.split(".");
   // Funcionalidades são negociadas abaixo. A versão do app só bloqueia uma
-  // geração principal diferente, permitindo, por exemplo, Risk 0.3 <-> 0.4.
-  return validSemver(version) && validSemver(RISK_APP_VERSION) && local[0] === remote[0];
+  // geração principal diferente, permitindo, por exemplo, Briks 0.3 <-> 0.4.
+  return validSemver(version) && validSemver(BRIKS_APP_VERSION) && local[0] === remote[0];
 }
 
-export function validRiskPeerCapabilities(value: unknown): value is RiskPeerCapabilities {
+export function validBriksPeerCapabilities(value: unknown): value is BriksPeerCapabilities {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<RiskPeerCapabilities>;
+  const item = value as Partial<BriksPeerCapabilities>;
   return typeof item.appVersion === "string"
     && validSemver(item.appVersion)
     && Number.isSafeInteger(item.callProtocolVersion)
@@ -68,29 +68,29 @@ export function validRiskPeerCapabilities(value: unknown): value is RiskPeerCapa
     ));
 }
 
-export function compatibleCallPeer(capabilities: RiskPeerCapabilities): boolean {
+export function compatibleCallPeer(capabilities: BriksPeerCapabilities): boolean {
   return compatibleAppVersion(capabilities.appVersion)
-    && capabilities.callProtocolVersion === RISK_CALL_PROTOCOL_VERSION
-    && capabilities.groupManifestVersion === RISK_GROUP_MANIFEST_VERSION;
+    && capabilities.callProtocolVersion === BRIKS_CALL_PROTOCOL_VERSION
+    && capabilities.groupManifestVersion === BRIKS_GROUP_MANIFEST_VERSION;
 }
 
-export function compatibleChatPeer(capabilities: RiskPeerCapabilities): boolean {
+export function compatibleChatPeer(capabilities: BriksPeerCapabilities): boolean {
   return compatibleAppVersion(capabilities.appVersion)
-    && capabilities.chatProtocolVersion === RISK_CHAT_PROTOCOL_VERSION
-    && capabilities.groupManifestVersion === RISK_GROUP_MANIFEST_VERSION;
+    && capabilities.chatProtocolVersion === BRIKS_CHAT_PROTOCOL_VERSION
+    && capabilities.groupManifestVersion === BRIKS_GROUP_MANIFEST_VERSION;
 }
 
 export function incompatiblePeerMessage(remoteVersion?: string): string {
-  return `Este peer usa Risk ${remoteVersion || "anterior"}, incompatível com ${RISK_APP_VERSION}. Atualize o Risk nos dois dispositivos.`;
+  return `Este peer usa Briks ${remoteVersion || "anterior"}, incompatível com ${BRIKS_APP_VERSION}. Atualize o Briks nos dois dispositivos.`;
 }
 
-export function peerSupportsCapability(capabilities: RiskPeerCapabilities | undefined, capability: RiskCapability): boolean {
+export function peerSupportsCapability(capabilities: BriksPeerCapabilities | undefined, capability: BriksCapability): boolean {
   return capabilities?.capabilities?.includes(capability) === true;
 }
 
-export function negotiateCapabilities(remote: RiskPeerCapabilities): RiskCapability[] {
+export function negotiateCapabilities(remote: BriksPeerCapabilities): BriksCapability[] {
   const supported = new Set(remote.capabilities ?? []);
-  return RISK_CAPABILITIES.filter((capability) => supported.has(capability));
+  return BRIKS_CAPABILITIES.filter((capability) => supported.has(capability));
 }
 
 function validSemver(version: string): boolean {

@@ -3,8 +3,8 @@ import {
   MAX_ATTACHMENT_CONTROL_WIRE_BYTES,
   type AttachmentManifest,
   type AttachmentTransferProgress,
-} from "@risk/protocol/attachments";
-import type { MeshWebRTCTransport } from "@risk/rtc";
+} from "@briks/protocol/attachments";
+import type { MeshWebRTCTransport } from "@briks/rtc";
 import { AttachmentService, type AttachmentStorage } from "./attachment-service";
 import type { StoredAttachmentRecord } from "./indexeddb-storage";
 

@@ -6,7 +6,7 @@ const settings: VoiceVideoSettings = {
   microphoneDeviceId: "usb-mic-123",
   noiseSuppression: "standard",
   echoCancellation: true,
-  excludeRiskAudioFromScreenShare: true,
+  excludeBriksAudioFromScreenShare: true,
 };
 
 const fakeStream = {} as MediaStream;

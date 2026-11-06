@@ -1,4 +1,4 @@
-import { MeshWebRTCTransport, type TransportEvents } from "@risk/rtc";
+import { MeshWebRTCTransport, type TransportEvents } from "@briks/rtc";
 import { SupabaseSignalingProvider } from "../supabase/signaling";
 import type { SignalingProvider } from "../signaling/types";
 import {
@@ -14,11 +14,11 @@ import {
 } from "../offline/social-storage";
 import {
   deriveInviteRendezvousId,
-  generateRiskInviteCode,
+  generateBriksInviteCode,
   InviteAttemptLimiter,
-  normalizeRiskInviteCode,
+  normalizeBriksInviteCode,
   type InviteType,
-  validateRiskInviteCode,
+  validateBriksInviteCode,
 } from "./code";
 import {
   createSignedInviteMessage,
@@ -147,7 +147,7 @@ export class InviteService {
       throw new Error("Selecione um grupo para criar o convite.");
     }
     this.group = group;
-    return this.start(type, "creator", generateRiskInviteCode(), ttlMs);
+    return this.start(type, "creator", generateBriksInviteCode(), ttlMs);
   }
 
   async joinInvite(
@@ -158,8 +158,8 @@ export class InviteService {
     if (!sharedAttemptLimiter.consume()) {
       throw new Error("Muitas tentativas. Aguarde um minuto antes de tentar novamente.");
     }
-    const code = normalizeRiskInviteCode(input);
-    if (!validateRiskInviteCode(code)) throw new Error("Digite um código Risk válido.");
+    const code = normalizeBriksInviteCode(input);
+    if (!validateBriksInviteCode(code)) throw new Error("Digite um código Briks válido.");
     await this.cancel(false);
     this.cleaned = false;
     return this.start(type, "joiner", code, ttlMs);
@@ -651,7 +651,7 @@ export class InviteService {
     await new Promise((resolve) => setTimeout(resolve, FINAL_ACK_GRACE_MS));
     await this.cleanup();
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new Event("briks:social-updated"));
     }
   }
 

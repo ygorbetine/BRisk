@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TransportEvents } from "@risk/rtc";
+import type { TransportEvents } from "@briks/rtc";
 import { InMemorySignalingHub, InMemorySignalingProvider } from "../signaling/in-memory";
 import { createGroupAdministratorGrant, loadLocalGroups, mergeLocalGroupManifest, type LocalGroup, type LocalIdentity } from "../offline/social-storage";
 import { FriendInviteService, GroupInviteService, type InviteDependencies, type InviteTransport } from "./service";

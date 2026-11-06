@@ -1,4 +1,4 @@
-import type { ScreenShareProvider } from "@risk/rtc";
+import type { ScreenShareProvider } from "@briks/rtc";
 import {
   isWindowsDesktop,
   processAudioRequestForSource,
@@ -12,7 +12,7 @@ export type DesktopScreenAudioPreparation = {
   mode: "display" | "pipewire" | "process" | "unavailable";
   sourceName?: string;
   sourceLabel?: string;
-  excludedRisk: boolean;
+  excludedBriks: boolean;
   reason?: string;
 };
 
@@ -26,12 +26,12 @@ export async function startScreenCapture(
   provider: ScreenShareProvider,
   sourceId: string | undefined,
   includeAudio: boolean,
-  excludeRisk: boolean,
+  excludeBriks: boolean,
 ): Promise<ScreenCaptureStart> {
   const linuxDesktop = Boolean(window.desktop && /Linux/i.test(navigator.userAgent));
   if (linuxDesktop && includeAudio) {
     // O vídeo não espera o PipeWire; o áudio pode ser publicado depois.
-    const linuxAudioPreparation = prepareDesktopScreenAudio(excludeRisk).catch((error) => {
+    const linuxAudioPreparation = prepareDesktopScreenAudio(excludeBriks).catch((error) => {
       console.warn("Não foi possível preparar o áudio PipeWire da tela.", error);
       return null;
     });
@@ -49,7 +49,7 @@ export async function startScreenCapture(
   }
 
   if (isWindowsDesktop()) {
-    // Áudio por processo: janela = só aquele app; tela = tudo menos Discord e BRisk.
+    // Áudio por processo: janela = só aquele app; tela = tudo menos Discord e Briks.
     const chosenId = sourceId ?? await window.desktop?.chooseScreenSource();
     if (!chosenId) throw new DOMException("Compartilhamento cancelado.", "NotAllowedError");
     const request = processAudioRequestForSource(chosenId);
@@ -61,7 +61,7 @@ export async function startScreenCapture(
         stream.addTrack(processAudio.track);
         return {
           stream,
-          desktopAudio: { mode: "process", excludedRisk: true, sourceName: request?.mode },
+          desktopAudio: { mode: "process", excludedBriks: true, sourceName: request?.mode },
         };
       } catch (error) {
         await stopActiveProcessAudio();
@@ -70,11 +70,11 @@ export async function startScreenCapture(
     }
     // Nunca cair no loopback do sistema: ele carregaria a voz do Discord para a transmissão.
     // Se o áudio por processo falhar, a transmissão segue só com vídeo.
-    console.warn("BRisk: áudio por processo indisponível; transmitindo sem áudio para não vazar o Discord.");
+    console.warn("Briks: áudio por processo indisponível; transmitindo sem áudio para não vazar o Discord.");
     return { stream: await provider.startScreenShare(chosenId, false), desktopAudio: null };
   }
 
-  const desktopAudio = await prepareDesktopScreenAudio(excludeRisk).catch((error) => {
+  const desktopAudio = await prepareDesktopScreenAudio(excludeBriks).catch((error) => {
     console.warn("Não foi possível consultar o backend de áudio de tela; usando captura padrão.", error);
     return null;
   });
@@ -90,47 +90,47 @@ export async function startScreenCapture(
 export function reportScreenAudioExclusion(
   track: MediaStreamTrack,
   preparation: DesktopScreenAudioPreparation | null,
-  excludeRisk: boolean,
+  excludeBriks: boolean,
 ): void {
-  if (!excludeRisk) return;
+  if (!excludeBriks) return;
   if (preparation?.mode === "process") {
-    console.info("BRisk screen audio isolated by process", { scope: preparation.sourceName });
+    console.info("Briks screen audio isolated by process", { scope: preparation.sourceName });
     return;
   }
-  if (preparation?.mode === "pipewire" && preparation.excludedRisk) {
-    console.info("Risk screen audio exclusion active", {
+  if (preparation?.mode === "pipewire" && preparation.excludedBriks) {
+    console.info("Briks screen audio exclusion active", {
       mode: "pipewire-node-exclusion",
       source: preparation.sourceName ?? preparation.sourceLabel ?? "unknown",
     });
     return;
   }
   const settings = track.getSettings() as DisplayAudioSettings;
-  const nativeRiskExclusion = settings.deviceId === "loopbackWithoutChrome";
-  const browserRiskExclusion = settings.restrictOwnAudio === true;
-  if (nativeRiskExclusion || browserRiskExclusion) {
-    console.info("Risk screen audio exclusion active", {
+  const nativeBriksExclusion = settings.deviceId === "loopbackWithoutChrome";
+  const browserBriksExclusion = settings.restrictOwnAudio === true;
+  if (nativeBriksExclusion || browserBriksExclusion) {
+    console.info("Briks screen audio exclusion active", {
       deviceId: settings.deviceId ?? "unknown",
       restrictOwnAudio: settings.restrictOwnAudio ?? false,
-      mode: nativeRiskExclusion ? "native-process-loopback" : "restrictOwnAudio",
+      mode: nativeBriksExclusion ? "native-process-loopback" : "restrictOwnAudio",
     });
   } else {
-    console.warn("A captura de tela não confirmou a exclusão do áudio do Risk.", {
+    console.warn("A captura de tela não confirmou a exclusão do áudio do Briks.", {
       deviceId: settings.deviceId ?? "unknown",
       restrictOwnAudio: settings.restrictOwnAudio ?? false,
     });
   }
 }
 
-export async function prepareDesktopScreenAudio(excludeRisk: boolean): Promise<DesktopScreenAudioPreparation | null> {
+export async function prepareDesktopScreenAudio(excludeBriks: boolean): Promise<DesktopScreenAudioPreparation | null> {
   if (!window.desktop?.getBackendConfig) return null;
   const config = await window.desktop.getBackendConfig();
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/screen-audio/prepare`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-risk-desktop-token": config.token,
+      "x-briks-desktop-token": config.token,
     },
-    body: JSON.stringify({ excludeRisk }),
+    body: JSON.stringify({ excludeBriks }),
   });
   if (!response.ok) throw new Error(`Falha ao preparar áudio de tela (HTTP ${response.status}).`);
   return response.json() as Promise<DesktopScreenAudioPreparation>;
@@ -151,7 +151,7 @@ export async function stopDesktopScreenAudio(): Promise<void> {
     const config = await window.desktop.getBackendConfig();
     await fetch(`${config.baseUrl.replace(/\/$/, "")}/screen-audio/stop`, {
       method: "POST",
-      headers: { "x-risk-desktop-token": config.token },
+      headers: { "x-briks-desktop-token": config.token },
     });
   } catch {
     // O sidecar também encerra pw-loopback no shutdown; cleanup best-effort.

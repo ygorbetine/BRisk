@@ -1,7 +1,7 @@
 import { P2P_CLOCK_SKEW_TOLERANCE_MS } from "../services/p2p-clock";
 import {
-  validRiskPeerCapabilities,
-  type RiskPeerCapabilities,
+  validBriksPeerCapabilities,
+  type BriksPeerCapabilities,
 } from "../services/protocol-compatibility";
 import type { LocalChatMessage } from "../services/offline/chat-storage";
 import { validAvatarDataUrl } from "../services/offline/profile";
@@ -76,7 +76,7 @@ export type IdentityChallengeWireMessage = {
   fromPeerId: string;
   nonce: string;
   timestamp: number;
-  capabilities: RiskPeerCapabilities;
+  capabilities: BriksPeerCapabilities;
 };
 
 export type IdentityProofWireMessage = {
@@ -87,7 +87,7 @@ export type IdentityProofWireMessage = {
   toPeerId: string;
   nonce: string;
   timestamp: number;
-  capabilities: RiskPeerCapabilities;
+  capabilities: BriksPeerCapabilities;
   signature: string;
 };
 
@@ -307,7 +307,7 @@ function validOptionalEventCursor(timestamp: unknown, id: unknown): boolean {
 export async function privateConversationId(peerA: string, peerB: string): Promise<string> {
   if (!validWireId(peerA) || !validWireId(peerB) || peerA === peerB) throw new Error("Peers inválidos para conversa privada.");
   const pair = [peerA, peerB].sort().join(":");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`risk-dm-v1:${pair}`));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`briks-dm-v1:${pair}`));
   return `dm-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -518,7 +518,7 @@ function parseTypingMessage(message: Record<string, unknown>, channelId?: string
 }
 
 function parseIdentityChallenge(message: Record<string, unknown>, channelId?: string): IdentityChallengeWireMessage | null {
-  if (!validWireId(message.fromPeerId) || !validWireId(message.nonce) || !freshTimestamp(message.timestamp) || !validRiskPeerCapabilities(message.capabilities)) return null;
+  if (!validWireId(message.fromPeerId) || !validWireId(message.nonce) || !freshTimestamp(message.timestamp) || !validBriksPeerCapabilities(message.capabilities)) return null;
   return {
     version: 2,
     type: "chat.identity.challenge",
@@ -531,7 +531,7 @@ function parseIdentityChallenge(message: Record<string, unknown>, channelId?: st
 }
 
 function parseIdentityProof(message: Record<string, unknown>, channelId?: string): IdentityProofWireMessage | null {
-  if (!validWireId(message.fromPeerId) || !validWireId(message.toPeerId) || !validWireId(message.nonce) || !freshTimestamp(message.timestamp) || !validRiskPeerCapabilities(message.capabilities)) return null;
+  if (!validWireId(message.fromPeerId) || !validWireId(message.toPeerId) || !validWireId(message.nonce) || !freshTimestamp(message.timestamp) || !validBriksPeerCapabilities(message.capabilities)) return null;
   if (typeof message.signature !== "string" || !/^[A-Za-z0-9_-]{16,256}$/.test(message.signature)) return null;
   return {
     version: 2,

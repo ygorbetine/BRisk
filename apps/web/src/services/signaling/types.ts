@@ -1,4 +1,4 @@
-import type { PeerState } from "@risk/protocol";
+import type { PeerState } from "@briks/protocol";
 
 export type SignalingStatus = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
 export type SignalingNamespace = "room" | "chat" | "friend" | "group";

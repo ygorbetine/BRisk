@@ -1,4 +1,4 @@
-import { BriskMark } from "./BriskMark";
+import { BriksMark } from "./BriksMark";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import type { ChatMessage } from "../application/contracts";
-import { useRiskApplication } from "../application/ApplicationContext";
+import { useBriksApplication } from "../application/ApplicationContext";
 import type { CallController, CallDiagnostics } from "../call";
 import type {
   ChatAttachmentProgress,
@@ -306,11 +306,11 @@ function ScreenSourcePicker({
   onChoose,
   onClose,
 }: {
-  sources: RiskDesktopSource[];
+  sources: BriksDesktopSource[];
   loading: boolean;
   includeAudio: boolean;
   onAudioChange(includeAudio: boolean): void;
-  onChoose(source: RiskDesktopSource): void;
+  onChoose(source: BriksDesktopSource): void;
   onClose(): void;
 }) {
   return <div className="screen-picker-backdrop" onMouseDown={onClose}>
@@ -339,7 +339,7 @@ function ScreenSourcePicker({
 }
 
 export function CallWorkspace({ call, chat, onMinimize }: { call: CallController; chat: ChatController; onMinimize(): void }) {
-  const { gateway: api } = useRiskApplication();
+  const { gateway: api } = useBriksApplication();
   const token = useCallStore((state) => state.token)!;
   const roomId = useCallStore((state) => state.roomId)!;
   const callContext = useCallStore((state) => state.callContext);
@@ -363,7 +363,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const [screenAudioEnabled, setScreenAudioEnabled] = useState(initialScreenAudio);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
-  const [screenSources, setScreenSources] = useState<RiskDesktopSource[]>([]);
+  const [screenSources, setScreenSources] = useState<BriksDesktopSource[]>([]);
   const [screenSourcesLoading, setScreenSourcesLoading] = useState(false);
   const [networkQuality, setNetworkQuality] = useState("Boa");
   const [deafened, setDeafened] = useState(false);
@@ -548,7 +548,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     }
   }
 
-  async function chooseScreen(source: RiskDesktopSource): Promise<void> {
+  async function chooseScreen(source: BriksDesktopSource): Promise<void> {
     setSourcePickerOpen(false);
     try {
       await call.toggleScreen(roomId, source.id, screenAudioEnabled, qualityProfile);
@@ -620,14 +620,14 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
 
   return <main className="room call-workspace">
     <header>
-      <div className="brand"><BriskMark size={26}/> BRisk</div>
+      <div className="brand"><BriksMark size={26}/> Briks</div>
       <div><strong>{context?.voiceChannelName ?? "Sala ao vivo"}</strong><span>{context?.groupName ? `${context.groupName} · ` : ""}{roomId}</span></div>
       <div className="call-header-actions">
         <button className="minimize-call" onClick={() => {
           setAudioSettingsOpen(false);
           setSourcePickerOpen(false);
           onMinimize();
-        }} title="Voltar para o BRisk"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
+        }} title="Voltar para o Briks"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
         <div className="call-view-tabs">
           <button className={view === "call" ? "active" : ""} onClick={() => setView("call")}><Video size={16}/><span>Chamada</span></button>
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")} disabled={!context?.textChannelId}><MessageCircle size={16}/><span>Chat</span></button>

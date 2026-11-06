@@ -1,4 +1,4 @@
-# SFU do BRisk (LiveKit)
+# SFU do Briks (LiveKit)
 
 O SFU recebe cada transmissão uma vez e a distribui, então o upload de quem transmite
 não cresce com o número de espectadores e várias pessoas podem transmitir ao mesmo tempo.
@@ -9,5 +9,5 @@ não cresce com o número de espectadores e várias pessoas podem transmitir ao 
    `supabase secrets set LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=... LIVEKIT_URL=wss://...`.
 3. No `.env` do app: `VITE_LIVEKIT_URL` e `VITE_LIVEKIT_TOKEN_URL`.
 
-Sem essas variáveis o BRisk usa só a malha P2P. Com elas, chamadas com mais de 4 pessoas
+Sem essas variáveis o Briks usa só a malha P2P. Com elas, chamadas com mais de 4 pessoas
 (ou rede degradada) passam a usar o SFU automaticamente.

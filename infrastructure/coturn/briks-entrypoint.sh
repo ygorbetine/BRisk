@@ -5,7 +5,7 @@ require_value() {
   variable_name="$1"
   eval "variable_value=\${$variable_name:-}"
   if [ -z "$variable_value" ]; then
-    echo "[risk-coturn] $variable_name não foi definido" >&2
+    echo "[briks-coturn] $variable_name não foi definido" >&2
     exit 1
   fi
 }
@@ -15,7 +15,7 @@ require_number() {
   eval "variable_value=\${$variable_name:-}"
   case "$variable_value" in
     ''|*[!0-9]*)
-      echo "[risk-coturn] $variable_name precisa ser um inteiro não negativo" >&2
+      echo "[briks-coturn] $variable_name precisa ser um inteiro não negativo" >&2
       exit 1
       ;;
   esac
@@ -30,25 +30,25 @@ require_number TURN_BPS_CAPACITY
 
 case "$TURN_REALM" in
   *[!A-Za-z0-9.-]*|.*|*..*|*.)
-    echo "[risk-coturn] TURN_REALM precisa ser um hostname DNS" >&2
+    echo "[briks-coturn] TURN_REALM precisa ser um hostname DNS" >&2
     exit 1
     ;;
 esac
 case "$TURN_EXTERNAL_IP" in
   *[!0-9A-Fa-f:./]*)
-    echo "[risk-coturn] TURN_EXTERNAL_IP precisa conter IP_PUBLICO ou IP_PUBLICO/IP_PRIVADO" >&2
+    echo "[briks-coturn] TURN_EXTERNAL_IP precisa conter IP_PUBLICO ou IP_PUBLICO/IP_PRIVADO" >&2
     exit 1
     ;;
 esac
 
 turn_secret="$(tr -d '\r\n' < /run/secrets/turn_secret)"
 if [ "${#turn_secret}" -lt 32 ]; then
-  echo "[risk-coturn] o secret TURN precisa ter pelo menos 32 caracteres" >&2
+  echo "[briks-coturn] o secret TURN precisa ter pelo menos 32 caracteres" >&2
   exit 1
 fi
 case "$turn_secret" in
   *[!A-Za-z0-9_-]*)
-    echo "[risk-coturn] o secret TURN deve usar somente A-Z, a-z, 0-9, _ ou -" >&2
+    echo "[briks-coturn] o secret TURN deve usar somente A-Z, a-z, 0-9, _ ou -" >&2
     exit 1
     ;;
 esac

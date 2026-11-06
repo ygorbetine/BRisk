@@ -21,15 +21,15 @@ use tokio::{
 use super::super::AppState;
 
 #[cfg(target_os = "linux")]
-const MIX_SINK_NAME: &str = "risk.screen-share.mix";
+const MIX_SINK_NAME: &str = "briks.screen-share.mix";
 #[cfg(target_os = "linux")]
-const MIX_SOURCE_NAME: &str = "risk.screen-share.source";
+const MIX_SOURCE_NAME: &str = "briks.screen-share.source";
 #[cfg(target_os = "linux")]
-const MIX_SOURCE_LABEL: &str = "Risk Screen Share Audio";
+const MIX_SOURCE_LABEL: &str = "Briks Screen Share Audio";
 #[cfg(target_os = "linux")]
-const MIX_SINK_LABEL: &str = "Risk Screen Share Mix";
+const MIX_SINK_LABEL: &str = "Briks Screen Share Mix";
 #[cfg(target_os = "linux")]
-const RISK_APPLICATION_ID: &str = "com.risk.calls";
+const BRIKS_APPLICATION_ID: &str = "com.briks.calls";
 #[cfg(target_os = "linux")]
 const RECONCILE_INTERVAL: Duration = Duration::from_millis(750);
 #[cfg(target_os = "linux")]
@@ -38,11 +38,11 @@ const MIX_NODE_WAIT_ATTEMPTS: usize = 80;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PrepareInput {
-    #[serde(default = "default_exclude_risk")]
-    exclude_risk: bool,
+    #[serde(default = "default_exclude_briks")]
+    exclude_briks: bool,
 }
 
-fn default_exclude_risk() -> bool {
+fn default_exclude_briks() -> bool {
     true
 }
 
@@ -52,7 +52,7 @@ struct PrepareResponse {
     mode: &'static str,
     source_name: Option<&'static str>,
     source_label: Option<&'static str>,
-    excluded_risk: bool,
+    excluded_briks: bool,
     reason: Option<String>,
 }
 
@@ -80,24 +80,24 @@ pub fn router() -> Router<AppState> {
 async fn prepare(Json(input): Json<PrepareInput>) -> Json<PrepareResponse> {
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = input.exclude_risk;
+        let _ = input.exclude_briks;
         Json(PrepareResponse {
             mode: "display",
             source_name: None,
             source_label: None,
-            excluded_risk: false,
+            excluded_briks: false,
             reason: None,
         })
     }
 
     #[cfg(target_os = "linux")]
     {
-        match start_pipewire(input.exclude_risk).await {
+        match start_pipewire(input.exclude_briks).await {
             Ok(()) => Json(PrepareResponse {
                 mode: "pipewire",
                 source_name: Some(MIX_SOURCE_NAME),
                 source_label: Some(MIX_SOURCE_LABEL),
-                excluded_risk: input.exclude_risk,
+                excluded_briks: input.exclude_briks,
                 reason: None,
             }),
             Err(error) => {
@@ -106,7 +106,7 @@ async fn prepare(Json(input): Json<PrepareInput>) -> Json<PrepareResponse> {
                     mode: "unavailable",
                     source_name: None,
                     source_label: None,
-                    excluded_risk: false,
+                    excluded_briks: false,
                     reason: Some(error.to_string()),
                 })
             }
@@ -121,7 +121,7 @@ async fn stop() -> Json<Value> {
 }
 
 #[cfg(target_os = "linux")]
-async fn start_pipewire(exclude_risk: bool) -> anyhow::Result<()> {
+async fn start_pipewire(exclude_briks: bool) -> anyhow::Result<()> {
     stop_pipewire().await;
     for command in ["pw-loopback", "pw-dump", "pw-link"] {
         ensure_command(command).await?;
@@ -145,7 +145,7 @@ async fn start_pipewire(exclude_risk: bool) -> anyhow::Result<()> {
 
     let mut command = Command::new("pw-loopback");
     command
-        .arg("--name=risk-screen-share-loopback")
+        .arg("--name=briks-screen-share-loopback")
         .arg("--channels=2")
         .arg(format!("--capture-props={capture_props}"))
         .arg(format!("--playback-props={playback_props}"))
@@ -182,8 +182,8 @@ async fn start_pipewire(exclude_risk: bool) -> anyhow::Result<()> {
         return Err(error);
     }
 
-    let risk_root_pid = parent_pid(std::process::id()).unwrap_or(std::process::id());
-    if let Err(error) = reconcile_links(exclude_risk, risk_root_pid).await {
+    let briks_root_pid = parent_pid(std::process::id()).unwrap_or(std::process::id());
+    if let Err(error) = reconcile_links(exclude_briks, briks_root_pid).await {
         let _ = child.start_kill();
         let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
         return Err(error);
@@ -194,7 +194,7 @@ async fn start_pipewire(exclude_risk: bool) -> anyhow::Result<()> {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            if let Err(error) = reconcile_links(exclude_risk, risk_root_pid).await {
+            if let Err(error) = reconcile_links(exclude_briks, briks_root_pid).await {
                 tracing::debug!(error = %error, "PipeWire screen audio link reconciliation failed");
             }
         }
@@ -205,8 +205,8 @@ async fn start_pipewire(exclude_risk: bool) -> anyhow::Result<()> {
         reconcile_task,
     });
     tracing::info!(
-        exclude_risk,
-        risk_root_pid,
+        exclude_briks,
+        briks_root_pid,
         source = MIX_SOURCE_NAME,
         "PipeWire screen audio active"
     );
@@ -257,11 +257,11 @@ async fn wait_for_mix_nodes(
             let detail = stderr_summary(stderr_lines).await;
             if detail.is_empty() {
                 anyhow::bail!(
-                    "pw-loopback encerrou antes de publicar os nós virtuais do Risk ({status})"
+                    "pw-loopback encerrou antes de publicar os nós virtuais do Briks ({status})"
                 );
             }
             anyhow::bail!(
-                "pw-loopback encerrou antes de publicar os nós virtuais do Risk ({status}): {detail}"
+                "pw-loopback encerrou antes de publicar os nós virtuais do Briks ({status}): {detail}"
             );
         }
 
@@ -279,11 +279,11 @@ async fn wait_for_mix_nodes(
     let detail = stderr_summary(stderr_lines).await;
     if detail.is_empty() {
         anyhow::bail!(
-            "PipeWire não publicou os nós/portas virtuais do Risk dentro do tempo esperado ({readiness})"
+            "PipeWire não publicou os nós/portas virtuais do Briks dentro do tempo esperado ({readiness})"
         );
     }
     anyhow::bail!(
-        "PipeWire não publicou os nós/portas virtuais do Risk dentro do tempo esperado ({readiness}). pw-loopback: {detail}"
+        "PipeWire não publicou os nós/portas virtuais do Briks dentro do tempo esperado ({readiness}). pw-loopback: {detail}"
     )
 }
 
@@ -345,7 +345,7 @@ async fn read_graph() -> anyhow::Result<Vec<PwObject>> {
 }
 
 #[cfg(target_os = "linux")]
-async fn reconcile_links(exclude_risk: bool, risk_root_pid: u32) -> anyhow::Result<()> {
+async fn reconcile_links(exclude_briks: bool, briks_root_pid: u32) -> anyhow::Result<()> {
     let graph = read_graph().await?;
     let nodes: HashMap<u32, &PwObject> = graph
         .iter()
@@ -355,7 +355,7 @@ async fn reconcile_links(exclude_risk: bool, risk_root_pid: u32) -> anyhow::Resu
     let sink_id = nodes
         .iter()
         .find_map(|(id, object)| is_mix_sink(object).then_some(*id))
-        .ok_or_else(|| anyhow::anyhow!("sink virtual do Risk não está no grafo PipeWire"))?;
+        .ok_or_else(|| anyhow::anyhow!("sink virtual do Briks não está no grafo PipeWire"))?;
 
     let sink_ports: Vec<&PwObject> = graph
         .iter()
@@ -364,7 +364,7 @@ async fn reconcile_links(exclude_risk: bool, risk_root_pid: u32) -> anyhow::Resu
         .filter(|object| object.prop_str("port.direction") == Some("in"))
         .collect();
     if sink_ports.is_empty() {
-        anyhow::bail!("sink virtual do Risk não publicou portas de entrada");
+        anyhow::bail!("sink virtual do Briks não publicou portas de entrada");
     }
 
     let mut playback_ports: HashMap<u32, Vec<&PwObject>> = HashMap::new();
@@ -383,8 +383,8 @@ async fn reconcile_links(exclude_risk: bool, risk_root_pid: u32) -> anyhow::Resu
         if !is_playback_stream(node) || node_id == sink_id {
             continue;
         }
-        if exclude_risk && is_risk_node(node, risk_root_pid) {
-            tracing::trace!(node_id, name = ?node_name(node), "excluding Risk playback node from screen audio");
+        if exclude_briks && is_briks_node(node, briks_root_pid) {
+            tracing::trace!(node_id, name = ?node_name(node), "excluding Briks playback node from screen audio");
             continue;
         }
         playback_ports.entry(node_id).or_default().push(object);
@@ -413,7 +413,7 @@ async fn reconcile_links(exclude_risk: bool, risk_root_pid: u32) -> anyhow::Resu
                         tracing::trace!(
                             output_id,
                             input_id,
-                            "linked PipeWire playback into Risk screen mix"
+                            "linked PipeWire playback into Briks screen mix"
                         );
                     }
                 }
@@ -523,13 +523,13 @@ fn is_playback_stream(object: &PwObject) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn is_risk_node(object: &PwObject, risk_root_pid: u32) -> bool {
-    if object.prop_str("application.id") == Some(RISK_APPLICATION_ID) {
+fn is_briks_node(object: &PwObject, briks_root_pid: u32) -> bool {
+    if object.prop_str("application.id") == Some(BRIKS_APPLICATION_ID) {
         return true;
     }
     let application_name = object.prop_str("application.name").unwrap_or("").trim();
-    if application_name.eq_ignore_ascii_case("risk")
-        || application_name.to_ascii_lowercase().starts_with("risk ")
+    if application_name.eq_ignore_ascii_case("briks")
+        || application_name.to_ascii_lowercase().starts_with("briks ")
     {
         return true;
     }
@@ -538,7 +538,7 @@ fn is_risk_node(object: &PwObject, risk_root_pid: u32) -> bool {
     }
     for key in ["application.process.id", "pipewire.sec.pid"] {
         if let Some(pid) = object.prop_u32(key) {
-            if is_descendant_or_self(pid, risk_root_pid) {
+            if is_descendant_or_self(pid, briks_root_pid) {
                 return true;
             }
         }
@@ -638,12 +638,12 @@ mod tests {
     #[test]
     fn detects_virtual_nodes_with_wireplumber_suffixes() {
         assert!(is_mix_sink(&node(serde_json::json!({
-            "node.name": "risk.screen-share.mix.2",
+            "node.name": "briks.screen-share.mix.2",
             "node.description": MIX_SINK_LABEL,
             "media.class": "Audio/Sink"
         }))));
         assert!(is_mix_source(&node(serde_json::json!({
-            "node.name": "risk.screen-share.source-3",
+            "node.name": "briks.screen-share.source-3",
             "node.description": MIX_SOURCE_LABEL,
             "media.class": "Audio/Source"
         }))));
@@ -672,11 +672,11 @@ mod tests {
     }
 
     #[test]
-    fn excludes_tagged_risk_application() {
+    fn excludes_tagged_briks_application() {
         let object = node(serde_json::json!({
             "media.class": "Stream/Output/Audio",
-            "application.id": RISK_APPLICATION_ID,
+            "application.id": BRIKS_APPLICATION_ID,
         }));
-        assert!(is_risk_node(&object, u32::MAX));
+        assert!(is_briks_node(&object, u32::MAX));
     }
 }

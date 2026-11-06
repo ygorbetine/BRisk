@@ -1,6 +1,6 @@
-# Checkpoints — BRisk (fork de Risk-P2P para transmissão de tela)
+# Checkpoints — Briks (fork de Risk-P2P para transmissão de tela)
 
-Nota: o código ainda usa "Risk" em identificadores internos (veja o CP6). O nome visível ao usuário já é BRisk.
+Nota: o código ainda usa "Briks" em identificadores internos (veja o CP6). O nome visível ao usuário já é Briks.
 
 Legenda: `[x]` feito · `[ ]` pendente · `[~]` feito, não verificado
 
@@ -10,12 +10,12 @@ Licença: o projeto base é AGPL-3.0. Software derivado distribuído (ou ofereci
 
 ## CP0 — Ambiente
 
-- [x] Clonar `xxsamboladiones/Risk-P2P` em `A:\BRiskCall\Risk-P2P`
+- [x] Clonar `xxsamboladiones/Risk-P2P` em `A:\BriksCall\Risk-P2P`
 - [x] `pnpm install` na raiz (pnpm 10.15 via corepack; Node 22)
 - [~] Toolchain: Node e pnpm ok; **Rust (cargo) não instalado**, necessário para o `desktop-backend`
 - [x] `pnpm typecheck` e `pnpm test` passando (web 176, rtc 69, desktop 13, protocol 7)
 - [x] `pnpm dev` abre o app Electron (Rust instalado; backend compilado)
-- [x] Supabase: organização BRiskGroup, projeto `brisk` (plano Free); URL e chave pública no `.env` local (fora do git)
+- [x] Supabase: organização BriksGroup, projeto `briks` (plano Free); URL e chave pública no `.env` local (fora do git)
 
 **Pronto quando:** o app abre e os testes originais passam.
 
@@ -40,7 +40,7 @@ Referência: captura do RASTRO (fundo ameixa escuro, barra de título magenta, a
 
 ## CP2 — Áudio só da janela (Windows)
 
-Hoje: `loopbackWithoutChrome` captura o áudio do sistema inteiro, exceto o do Risk (`apps/desktop/src/screen-capture.ts:109`).
+Hoje: `loopbackWithoutChrome` captura o áudio do sistema inteiro, exceto o do Briks (`apps/desktop/src/screen-capture.ts:109`).
 
 Meta: ao compartilhar uma janela, enviar só o áudio daquele aplicativo.
 
@@ -48,7 +48,7 @@ Meta: ao compartilhar uma janela, enviar só o áudio daquele aplicativo.
 - [x] Captura por processo com WASAPI *process loopback* (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, incluir árvore de processos) no `desktop-backend` (Rust)
 - [x] Endpoint no sidecar (ex.: `/screen-audio/prepare` com PID) e streaming do PCM até o renderer
 - [x] Renderer: criar a faixa de áudio (AudioWorklet ou `MediaStreamTrackGenerator`) e anexá-la ao stream da tela (`apps/web/src/call/media/screen-share.ts`)
-- [x] Tela inteira: mixa as capturas por processo, exceto Discord e BRisk
+- [x] Tela inteira: mixa as capturas por processo, exceto Discord e Briks
 - [x] Fallback quando o Windows for anterior ao 10 2004 ou a captura falhar
 - [x] Encerrar a captura ao parar o compartilhamento ou fechar a janela
 - [~] Testes: unitários do mapeamento fonte → PID (ok); endpoint testado com áudio real (pico 0.17). Falta teste manual dentro do Electron com jogo/player e Discord
@@ -61,16 +61,16 @@ Limitação conhecida: navegadores agrupam o áudio de todas as abas sob o mesmo
 
 ## CP2b — Conviver com o Discord (requisito)
 
-Objetivo: estar em call no Discord enquanto o Risk transmite, sem um atrapalhar o outro.
+Objetivo: estar em call no Discord enquanto o Briks transmite, sem um atrapalhar o outro.
 
-- [x] Tela inteira: capturas por processo, sem Discord e BRisk (em vez do modo *excluir*, que aceita um PID só) (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) para tudo menos Discord e Risk, de modo que a voz do Discord nunca entra na transmissão
+- [x] Tela inteira: capturas por processo, sem Discord e Briks (em vez do modo *excluir*, que aceita um PID só) (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) para tudo menos Discord e Briks, de modo que a voz do Discord nunca entra na transmissão
 - [x] Janela: modo **incluir** só o processo da janela (CP2)
-- [x] Microfone desligado por padrão no BRisk: o Discord continua dono do microfone e da voz
+- [x] Microfone desligado por padrão no Briks: o Discord continua dono do microfone e da voz
 - [x] Não mexer no dispositivo padrão de áudio nem usar modo exclusivo do WASAPI
-- [ ] Sem eco: o espectador não ouve a própria voz de volta; confirmar que o áudio do Risk não vaza para o Discord
-- [ ] Teste manual: call no Discord + jogo + transmissão no Risk, conferindo que a voz do Discord não aparece no stream
+- [ ] Sem eco: o espectador não ouve a própria voz de volta; confirmar que o áudio do Briks não vaza para o Discord
+- [ ] Teste manual: call no Discord + jogo + transmissão no Briks, conferindo que a voz do Discord não aparece no stream
 
-**Pronto quando:** o espectador ouve só o app/jogo, e quem está no Discord não percebe o Risk.
+**Pronto quando:** o espectador ouve só o app/jogo, e quem está no Discord não percebe o Briks.
 
 ---
 
@@ -110,7 +110,7 @@ Código:
 
 ## CP5 — Foco em transmissão de tela (enxugar)
 
-- [x] Decisão: manter chat, grupos e arquivos (você pediu para manter a organização do Risk); nada removido. Decidir o que sai: chat, grupos, amizades, transferência de arquivos, persistência SQLite
+- [x] Decisão: manter chat, grupos e arquivos (você pediu para manter a organização do Briks); nada removido. Decidir o que sai: chat, grupos, amizades, transferência de arquivos, persistência SQLite
 - [ ] Remover o que sobrar do escopo, em commits pequenos
 - [ ] Entrada simples: criar sala → copiar link → transmitir
 - [ ] Presets de qualidade (até 1080p/60) mantidos e testados
@@ -158,12 +158,12 @@ Com 10 pessoas e vários transmissores, a malha exige até 9 envios por transmis
 
 ## CP6 — Entrega
 
-- [x] Nome do produto: **BRisk** (interface, título da janela, bandeja, `productName`, `appId` `com.brisk.calls`, nome do instalador)
-- [ ] Renomear os identificadores internos de Risk para BRisk (pacotes `@risk/*`, `RISK_*`, `risk-desktop-token`, esquema de protocolo, diretório de dados). Só depois de o app rodar, porque mexe no protocolo e nos dados locais
+- [x] Nome do produto: **Briks** (interface, título da janela, bandeja, `productName`, `appId` `com.briks.calls`, nome do instalador)
+- [ ] Renomear os identificadores internos de Briks para Briks (pacotes `@briks/*`, `BRIKS_*`, `briks-desktop-token`, esquema de protocolo, diretório de dados). Só depois de o app rodar, porque mexe no protocolo e nos dados locais
 - [x] Atualizar `README.md`, `docs/` e `infrastructure/coturn/README.md` com o nome novo
-- [x] Ícone e logo próprios do BRisk (marca "B" em degradê magenta/violeta: `apps/web/src/assets/brisk-mark.svg`, `icon.png`/`icon.ico` do desktop, favicon)
+- [x] Ícone e logo próprios do Briks (marca "B" em degradê magenta/violeta: `apps/web/src/assets/briks-mark.svg`, `icon.png`/`icon.ico` do desktop, favicon)
 - [x] Revisar o `THIRD_PARTY_NOTICES.md` e manter a licença AGPL
-- [x] `pnpm package:win` gera o instalador (`BRisk Setup 0.2.1.exe`, ~100 MB, sem assinatura de código)
+- [x] `pnpm package:win` gera o instalador (`Briks Setup 0.2.1.exe`, ~100 MB, sem assinatura de código)
 - [ ] Teste de ponta a ponta entre duas máquinas
 - [ ] Criar seu próprio repositório (fork) e subir o trabalho
 
@@ -181,3 +181,10 @@ Com o SFU, o TURN do CP4 continua necessário para clientes atrás de firewall r
 ## Futuro — Identidade por @nick
 
 - [ ] Ver `docs/plano-nick.md` (contas no Supabase, nick único, religar a chave nova ao mesmo nick). Substitui a ideia de exportar/importar identidade, que não é possível: a chave privada é não exportável de propósito.
+
+
+## Renomeação para Briks (v0.4.0)
+
+- [x] Nome do produto e todos os identificadores internos, inclusive o backend (crate `briks-desktop-backend`, `BRIKS_*`, `x-briks-desktop-token`, pacotes `@briks/*`).
+- [x] Pasta de dados migrada de `@risk/desktop` para `@briks/desktop` na primeira abertura (com fallback para a pasta antiga).
+- Mantidos com o nome antigo, de propósito, porque ficam guardados no disco do usuário e mudar apagaria dados: o esquema interno `risk://` (origem do IndexedDB e da identidade), o IndexedDB `risk-offline`, `risk.sqlite3`, as chaves de configuração `risk.*`/`brisk.screenQualitySettings` e o prefixo de rendezvous. Créditos ao Risk-P2P preservados.

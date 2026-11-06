@@ -35,7 +35,7 @@ export async function purgeLocalChannelData(channelId: string): Promise<void> {
   await backendRequest(config, "channels", channelId, { method: "POST" });
   for (const attachmentId of orphanedAttachmentIds) {
     const headers = new Headers();
-    if (config.token) headers.set("x-risk-desktop-token", config.token);
+    if (config.token) headers.set("x-briks-desktop-token", config.token);
     const response = await fetch(`${config.baseUrl}/p2p/attachments/content/${encodeURIComponent(attachmentId)}/discard`, {
       method: "POST",
       headers,

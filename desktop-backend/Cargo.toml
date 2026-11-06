@@ -1,5 +1,5 @@
 [package]
-name = "risk-desktop-backend"
+name = "briks-desktop-backend"
 version = "0.2.1"
 edition = "2021"
 

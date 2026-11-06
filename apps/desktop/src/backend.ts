@@ -62,11 +62,11 @@ export class DesktopBackendManager {
   }
 
   private executableName(): string {
-    return process.platform === "win32" ? "risk-desktop-backend.exe" : "risk-desktop-backend";
+    return process.platform === "win32" ? "briks-desktop-backend.exe" : "briks-desktop-backend";
   }
 
   private executablePath(): string {
-    const override = process.env.RISK_BACKEND_BIN?.trim();
+    const override = process.env.BRIKS_BACKEND_BIN?.trim();
     if (override) return path.resolve(override);
     if (app.isPackaged) return path.join(process.resourcesPath, "backend", this.executableName());
     return path.resolve(this.rootDirectory, "../../../desktop-backend/target/debug", this.executableName());
@@ -102,16 +102,16 @@ export class DesktopBackendManager {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
-        RISK_DATA_DIR: app.getPath("userData"),
-        RISK_LOCAL_TOKEN: token,
-        RISK_WEB_ORIGIN: webOrigin,
-        RISK_BACKEND_BIND: "127.0.0.1:0",
-        RUST_LOG: process.env.RUST_LOG ?? "risk_desktop_backend=info,tower_http=warn",
+        BRIKS_DATA_DIR: app.getPath("userData"),
+        BRIKS_LOCAL_TOKEN: token,
+        BRIKS_WEB_ORIGIN: webOrigin,
+        BRIKS_BACKEND_BIND: "127.0.0.1:0",
+        RUST_LOG: process.env.RUST_LOG ?? "briks_desktop_backend=info,tower_http=warn",
       },
     });
     this.process = child;
     child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => console.error(`[risk-backend] ${chunk.trimEnd()}`));
+    child.stderr?.on("data", (chunk: string) => console.error(`[briks-backend] ${chunk.trimEnd()}`));
 
     const baseUrl = await this.waitUntilReady(child);
     try {
@@ -165,9 +165,9 @@ export class DesktopBackendManager {
         while (newline >= 0) {
           const line = stdoutBuffer.slice(0, newline).trim();
           stdoutBuffer = stdoutBuffer.slice(newline + 1);
-          if (line.startsWith("RISK_BACKEND_READY ")) {
+          if (line.startsWith("BRIKS_BACKEND_READY ")) {
             try {
-              const payload = JSON.parse(line.slice("RISK_BACKEND_READY ".length)) as { url?: unknown };
+              const payload = JSON.parse(line.slice("BRIKS_BACKEND_READY ".length)) as { url?: unknown };
               if (typeof payload.url !== "string" || !payload.url.startsWith("http://127.0.0.1:")) {
                 throw new Error("URL de readiness inválida.");
               }
@@ -184,7 +184,7 @@ export class DesktopBackendManager {
               }
             }
           } else if (line) {
-            console.log(`[risk-backend] ${line}`);
+            console.log(`[briks-backend] ${line}`);
           }
           newline = stdoutBuffer.indexOf("\n");
         }

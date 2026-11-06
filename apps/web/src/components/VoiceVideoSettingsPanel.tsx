@@ -73,8 +73,8 @@ export function VoiceVideoSettingsPanel() {
       const detail = (event as CustomEvent<VoiceVideoSettings>).detail;
       if (detail) setSettings(detail);
     };
-    window.addEventListener("risk:voice-video-settings", onSettingsChanged);
-    return () => window.removeEventListener("risk:voice-video-settings", onSettingsChanged);
+    window.addEventListener("briks:voice-video-settings", onSettingsChanged);
+    return () => window.removeEventListener("briks:voice-video-settings", onSettingsChanged);
   }, []);
 
   const selectedMicrophoneMissing = useMemo(() => {
@@ -100,7 +100,7 @@ export function VoiceVideoSettingsPanel() {
         {selectedMicrophoneMissing && <option value={settings.microphoneDeviceId}>Microfone salvo — indisponível</option>}
         {microphones.map((microphone) => <option key={microphone.deviceId} value={microphone.deviceId}>{microphone.label}</option>)}
       </select>
-      <small>Escolha o dispositivo de entrada usado nas chamadas. Funciona no Windows e Linux. Se o dispositivo salvo estiver desconectado, o BRisk usa o microfone padrão como fallback.</small>
+      <small>Escolha o dispositivo de entrada usado nas chamadas. Funciona no Windows e Linux. Se o dispositivo salvo estiver desconectado, o Briks usa o microfone padrão como fallback.</small>
     </label>
 
     <button
@@ -138,14 +138,14 @@ export function VoiceVideoSettingsPanel() {
     <label className="settings-toggle">
       <input
         type="checkbox"
-        checked={settings.excludeRiskAudioFromScreenShare}
-        onChange={(event) => update({ excludeRiskAudioFromScreenShare: event.target.checked })}
+        checked={settings.excludeBriksAudioFromScreenShare}
+        onChange={(event) => update({ excludeBriksAudioFromScreenShare: event.target.checked })}
       />
-      <span><strong>Excluir áudio do BRisk da transmissão</strong><small>Ao compartilhar a tela, tenta capturar o PC sem retransmitir as vozes reproduzidas pelo próprio BRisk.</small></span>
+      <span><strong>Excluir áudio do Briks da transmissão</strong><small>Ao compartilhar a tela, tenta capturar o PC sem retransmitir as vozes reproduzidas pelo próprio Briks.</small></span>
     </label>
 
     <div className="settings-note">
-      Configurações salvas automaticamente. Mudanças de microfone e anti-noise entram em vigor na próxima entrada em uma sala de voz; durante uma chamada, use o painel Áudio para aplicá-las sem desconectar. A exclusão do áudio do BRisk vale no próximo compartilhamento de tela.
+      Configurações salvas automaticamente. Mudanças de microfone e anti-noise entram em vigor na próxima entrada em uma sala de voz; durante uma chamada, use o painel Áudio para aplicá-las sem desconectar. A exclusão do áudio do Briks vale no próximo compartilhamento de tela.
       <span className="settings-autosave" key={savedAt}>Salvo automaticamente</span>
     </div>
   </div>;

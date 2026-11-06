@@ -7,7 +7,7 @@ import {
 import type { InviteType } from "../services/invites/code";
 import { getOrCreateLocalIdentity, type PublicGroupMetadata } from "../services/offline/social-storage";
 import { resolveStaticIceConfiguration } from "../services/rtc/ice";
-import type { RiskGateway } from "./contracts";
+import type { BriksGateway } from "./contracts";
 
 export type CreateInviteServiceOptions = {
   type: InviteType;
@@ -19,7 +19,7 @@ export type CreateInviteServiceOptions = {
 /** Caso de uso que esconde da UI como identidade, ICE e transporte são obtidos. */
 export class InviteApplicationService {
   constructor(
-    private readonly gateway: Pick<RiskGateway, "turnCredentials">,
+    private readonly gateway: Pick<BriksGateway, "turnCredentials">,
     private readonly desktopDependencies: InviteDependencies,
     private readonly isDesktop: () => boolean,
   ) {}

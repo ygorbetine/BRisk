@@ -1,7 +1,7 @@
 services:
   coturn:
     image: coturn/coturn:4.17.0-alpine@sha256:8f80ed9d6867319340ca612b9d005aaea2444755aa4ce3dd79ddfb5f31f6e1b5
-    container_name: risk-coturn
+    container_name: briks-coturn
     restart: unless-stopped
     network_mode: host
     # A fase de inicialização precisa ler a chave 0600/root e abrir a porta 443.
@@ -24,14 +24,14 @@ services:
       - /var/lib/coturn:rw,noexec,nosuid,size=16m
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
-      - ./risk-entrypoint.sh:/etc/coturn/risk-entrypoint.sh:ro
+      - ./briks-entrypoint.sh:/etc/coturn/briks-entrypoint.sh:ro
       - ${TURN_CERT_FILE:?Defina TURN_CERT_FILE}:/etc/coturn/tls/fullchain.pem:ro
       - ${TURN_KEY_FILE:?Defina TURN_KEY_FILE}:/etc/coturn/tls/privkey.pem:ro
     secrets:
       - turn_secret
     entrypoint:
       - /bin/sh
-      - /etc/coturn/risk-entrypoint.sh
+      - /etc/coturn/briks-entrypoint.sh
     stop_grace_period: 30s
     logging:
       driver: json-file

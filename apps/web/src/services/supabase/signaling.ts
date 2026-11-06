@@ -1,5 +1,5 @@
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
-import type { PeerState } from "@risk/protocol";
+import type { PeerState } from "@briks/protocol";
 import { getSupabaseRealtimeClient } from "./client";
 import {
   P2P_CLOCK_SKEW_WARNING_MS,
@@ -35,7 +35,7 @@ type RateWindow = { startedAt: number; count: number };
 type ConnectionWaiter = { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 const DEBUG = import.meta.env.VITE_DEBUG_SIGNALING === "true";
-const CLIENT_VERSION = import.meta.env.VITE_RISK_APP_VERSION ?? "0.2.1";
+const CLIENT_VERSION = import.meta.env.VITE_BRIKS_APP_VERSION ?? "0.2.1";
 const PRESENCE_LEAVE_GRACE_MS = 10_000;
 const SESSION_TIMESTAMP_TOLERANCE_MS = 1_500;
 const SIGNALING_RECONNECT_SEND_TIMEOUT_MS = 20_000;
@@ -81,7 +81,7 @@ export class SupabaseSignalingProvider implements SignalingProvider {
     this.client = getSupabaseRealtimeClient();
     this.roomId = await secureRoomId(`${namespace}:${roomId}`);
     this.peerId = peerId;
-    this.channelName = `risk:${namespace}:${this.roomId.slice(0, 32)}`;
+    this.channelName = `briks:${namespace}:${this.roomId.slice(0, 32)}`;
     this.channel = this.client.channel(this.channelName, {
       config: { presence: { key: peerId }, broadcast: { self: false, ack: true } },
     });

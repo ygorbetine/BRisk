@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const release = !process.argv.includes("--debug");
 const profile = release ? "release" : "debug";
-const executableName = process.platform === "win32" ? "risk-desktop-backend.exe" : "risk-desktop-backend";
+const executableName = process.platform === "win32" ? "briks-desktop-backend.exe" : "briks-desktop-backend";
 const manifestPath = path.join(root, "desktop-backend", "Cargo.toml");
 const source = path.join(root, "desktop-backend", "target", profile, executableName);
 const destinationDir = path.join(root, "apps", "desktop", "resources", "backend");

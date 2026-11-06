@@ -4,27 +4,27 @@ export type VoiceVideoSettings = {
   microphoneDeviceId: string;
   noiseSuppression: NoiseSuppressionMode;
   echoCancellation: boolean;
-  excludeRiskAudioFromScreenShare: boolean;
+  excludeBriksAudioFromScreenShare: boolean;
 };
 
-type RiskMediaCaptureOptions = {
+type BriksMediaCaptureOptions = {
   restrictOwnAudio: boolean;
 };
 
 const STORAGE_KEY = "risk.voice-video-settings.v1";
-export const VOICE_VIDEO_SETTINGS_EVENT = "risk:voice-video-settings";
+export const VOICE_VIDEO_SETTINGS_EVENT = "briks:voice-video-settings";
 const MAX_DEVICE_ID_LENGTH = 512;
 
 export const DEFAULT_VOICE_VIDEO_SETTINGS: VoiceVideoSettings = {
   microphoneDeviceId: "",
   noiseSuppression: "standard",
   echoCancellation: true,
-  excludeRiskAudioFromScreenShare: true,
+  excludeBriksAudioFromScreenShare: true,
 };
 
 function syncMediaCaptureOptions(settings: VoiceVideoSettings): void {
-  (globalThis as typeof globalThis & { __riskMediaCaptureOptions?: RiskMediaCaptureOptions }).__riskMediaCaptureOptions = {
-    restrictOwnAudio: settings.excludeRiskAudioFromScreenShare,
+  (globalThis as typeof globalThis & { __briksMediaCaptureOptions?: BriksMediaCaptureOptions }).__briksMediaCaptureOptions = {
+    restrictOwnAudio: settings.excludeBriksAudioFromScreenShare,
   };
 }
 
@@ -48,7 +48,7 @@ export function loadVoiceVideoSettings(): VoiceVideoSettings {
       microphoneDeviceId: normalizeMicrophoneDeviceId(value.microphoneDeviceId),
       noiseSuppression,
       echoCancellation: value.echoCancellation !== false,
-      excludeRiskAudioFromScreenShare: value.excludeRiskAudioFromScreenShare !== false,
+      excludeBriksAudioFromScreenShare: value.excludeBriksAudioFromScreenShare !== false,
     };
     syncMediaCaptureOptions(settings);
     return settings;

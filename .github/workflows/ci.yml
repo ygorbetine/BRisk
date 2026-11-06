@@ -26,10 +26,10 @@ jobs:
         run: pnpm build:backend:desktop
       - name: Validate Electron bundle with sidecar
         run: |
-          pnpm --filter @risk/desktop exec tsc
-          pnpm --filter @risk/desktop exec electron-builder --dir
+          pnpm --filter @briks/desktop exec tsc
+          pnpm --filter @briks/desktop exec electron-builder --dir
       - name: Smoke-test packaged renderer origin
-        run: xvfb-run -a pnpm verify:packaged-two-instances apps/desktop/release/linux-unpacked/risk
+        run: xvfb-run -a pnpm verify:packaged-two-instances apps/desktop/release/linux-unpacked/briks
 
   rust:
     runs-on: ubuntu-latest
@@ -76,5 +76,5 @@ jobs:
         run: |
           pnpm build:backend:desktop
           pnpm build:web
-          pnpm --filter @risk/desktop exec tsc
-          pnpm --filter @risk/desktop exec electron-builder --win dir
+          pnpm --filter @briks/desktop exec tsc
+          pnpm --filter @briks/desktop exec electron-builder --win dir

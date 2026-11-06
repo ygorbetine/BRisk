@@ -1,4 +1,4 @@
-export const RISK_ATTACHMENT_PROTOCOL_VERSION = 1 as const;
+export const BRIKS_ATTACHMENT_PROTOCOL_VERSION = 1 as const;
 
 export const DEFAULT_ATTACHMENT_CHUNK_SIZE = 256 * 1024;
 export const MAX_ATTACHMENT_CHUNK_SIZE = 256 * 1024;
@@ -7,7 +7,7 @@ export const MAX_ATTACHMENT_MIME_LENGTH = 127;
 export const MAX_ATTACHMENT_CHUNKS = 1_000_000;
 export const MAX_ATTACHMENT_CONTROL_WIRE_BYTES = 64 * 1024;
 
-export type RiskCapability =
+export type BriksCapability =
   | "file-transfer-v1"
   | "attachment-sync-v1"
   | "transfer-resume-v1"
@@ -16,7 +16,7 @@ export type RiskCapability =
 export type PeerCapabilitiesMessage = {
   type: "peer.capabilities";
   protocolVersion: number;
-  capabilities: RiskCapability[];
+  capabilities: BriksCapability[];
 };
 
 export type AttachmentKind = "image" | "video" | "audio" | "document" | "archive" | "executable" | "other";
@@ -30,7 +30,7 @@ export type AttachmentMetadata = {
 };
 
 export type AttachmentManifest = {
-  protocolVersion: typeof RISK_ATTACHMENT_PROTOCOL_VERSION;
+  protocolVersion: typeof BRIKS_ATTACHMENT_PROTOCOL_VERSION;
   id: string;
   messageId?: string;
   channelId?: string;
@@ -163,7 +163,7 @@ export function validateAttachmentManifest(manifest: unknown): string[] {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return ["invalid_manifest"];
   const value = manifest as Partial<AttachmentManifest>;
   const errors: string[] = [];
-  if (value.protocolVersion !== RISK_ATTACHMENT_PROTOCOL_VERSION) errors.push("unsupported_protocol_version");
+  if (value.protocolVersion !== BRIKS_ATTACHMENT_PROTOCOL_VERSION) errors.push("unsupported_protocol_version");
   if (typeof value.id !== "string" || !/^[a-f0-9]{64}$/i.test(value.id)) errors.push("missing_attachment_id");
   if (typeof value.senderPeerId !== "string" || !validWireIdentifier(value.senderPeerId)) errors.push("missing_sender_peer_id");
   if (typeof value.filename !== "string" || !value.filename || value.filename.length > MAX_ATTACHMENT_FILENAME_LENGTH) errors.push("invalid_filename");
@@ -198,10 +198,10 @@ export function isFileControlMessage(value: unknown): value is FileControlMessag
     || (typeof message.reason === "string" && message.reason.length <= 500);
   switch (message.type) {
     case "peer.capabilities":
-      return message.protocolVersion === RISK_ATTACHMENT_PROTOCOL_VERSION
+      return message.protocolVersion === BRIKS_ATTACHMENT_PROTOCOL_VERSION
         && Array.isArray(message.capabilities)
-        && message.capabilities.length <= RISK_CAPABILITIES.size
-        && message.capabilities.every((capability) => RISK_CAPABILITIES.has(capability as RiskCapability));
+        && message.capabilities.length <= BRIKS_CAPABILITIES.size
+        && message.capabilities.every((capability) => BRIKS_CAPABILITIES.has(capability as BriksCapability));
     case "file.offer":
     case "file.manifest":
       return validTransfer() && validateAttachmentManifest(message.manifest).length === 0;
@@ -237,7 +237,7 @@ export function isFileControlMessage(value: unknown): value is FileControlMessag
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const ATTACHMENT_KINDS = new Set<AttachmentKind>(["image", "video", "audio", "document", "archive", "executable", "other"]);
-const RISK_CAPABILITIES = new Set<RiskCapability>(["file-transfer-v1", "attachment-sync-v1", "transfer-resume-v1", "multi-source-v1"]);
+const BRIKS_CAPABILITIES = new Set<BriksCapability>(["file-transfer-v1", "attachment-sync-v1", "transfer-resume-v1", "multi-source-v1"]);
 
 function validWireIdentifier(value: string): boolean {
   return value.length >= 8 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);

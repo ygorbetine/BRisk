@@ -8,7 +8,7 @@ type PendingDisplaySelection = {
   source?: CapturableSource;
 };
 
-const WINDOWS_LOOPBACK_WITHOUT_RISK = "loopbackWithoutChrome";
+const WINDOWS_LOOPBACK_WITHOUT_BRIKS = "loopbackWithoutChrome";
 
 export class ScreenCaptureController {
   private pendingSelection: PendingDisplaySelection | undefined;
@@ -106,9 +106,9 @@ export class ScreenCaptureController {
           return;
         }
 
-        const audioDevice = process.platform === "win32" ? WINDOWS_LOOPBACK_WITHOUT_RISK : "loopback";
+        const audioDevice = process.platform === "win32" ? WINDOWS_LOOPBACK_WITHOUT_BRIKS : "loopback";
         if (request.audioRequested) {
-          console.info(`[risk-screen-audio] Electron ${process.versions.electron}; device=${audioDevice}; source=${selected.name}`);
+          console.info(`[briks-screen-audio] Electron ${process.versions.electron}; device=${audioDevice}; source=${selected.name}`);
         }
         callback({
           video: selected,

@@ -3,7 +3,7 @@
 //! O renderer recebe PCM `f32le`, 48 kHz, estéreo, em um corpo HTTP em streaming.
 //! - `window`: só o áudio da árvore de processos dona da janela escolhida.
 //! - `screen`: o áudio de tudo o que está tocando, exceto os processos excluídos
-//!   (Discord e o próprio BRisk por padrão), mixando uma captura por processo.
+//!   (Discord e o próprio Briks por padrão), mixando uma captura por processo.
 
 use axum::{
     body::Body,
@@ -116,7 +116,7 @@ mod windows_impl {
 
         let thread_stop = stop.clone();
         let spawned = thread::Builder::new()
-            .name("brisk-process-audio".into())
+            .name("briks-process-audio".into())
             .spawn(move || mixer_thread(window_pid, excluded, thread_stop, tx, ready_tx));
         if spawned.is_err() {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao iniciar a captura.");
@@ -167,7 +167,7 @@ mod windows_impl {
         let alive = Arc::new(AtomicBool::new(true));
         let (b, s, a) = (buffer.clone(), stop.clone(), alive.clone());
         let _ = thread::Builder::new()
-            .name(format!("brisk-capture-{pid}"))
+            .name(format!("briks-capture-{pid}"))
             .spawn(move || {
                 if let Err(error) = capture_process(pid, b, global_stop, s, ready) {
                     tracing::warn!(pid, %error, "captura de áudio do processo encerrada");

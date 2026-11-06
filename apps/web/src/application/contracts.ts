@@ -28,7 +28,7 @@ export type VoiceActivity = {
   participantCount: number;
 };
 
-export interface RiskGateway {
+export interface BriksGateway {
   register(displayName: string, email: string, password: string): Promise<{ accessToken: string }>;
   login(email: string, password: string): Promise<{ accessToken: string }>;
   refresh(): Promise<{ accessToken: string }>;

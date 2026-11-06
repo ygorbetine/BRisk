@@ -1,13 +1,13 @@
 import {
   DEFAULT_ATTACHMENT_CHUNK_SIZE,
-  RISK_ATTACHMENT_PROTOCOL_VERSION,
+  BRIKS_ATTACHMENT_PROTOCOL_VERSION,
   classifyAttachment,
   sanitizeAttachmentFilename,
   type AttachmentChunkFrame,
   type AttachmentManifest,
   type AttachmentTransferProgress,
   type FileControlMessage,
-} from "@risk/protocol/attachments";
+} from "@briks/protocol/attachments";
 import { sha256BlobHex } from "./streaming-sha256";
 
 export type TransferSendControl = (peerId: string, message: FileControlMessage) => void | Promise<void>;
@@ -93,7 +93,7 @@ export async function createAttachmentManifest(
     : await hashChunks(source, chunkSize, chunkCount);
 
   return {
-    protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+    protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
     id,
     messageId: options.messageId,
     channelId: options.channelId,

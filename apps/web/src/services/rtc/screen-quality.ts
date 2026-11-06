@@ -1,4 +1,4 @@
-import type { VideoPublicationOptions } from "@risk/rtc";
+import type { VideoPublicationOptions } from "@briks/rtc";
 
 export type ScreenQuality = "720p30" | "720p60" | "1080p30" | "1080p60";
 

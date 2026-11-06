@@ -1,4 +1,4 @@
-import type { MeshWebRTCTransport } from "@risk/rtc";
+import type { MeshWebRTCTransport } from "@briks/rtc";
 import {
   AttachmentService as P2PAttachmentService,
   type AttachmentRuntimeState,

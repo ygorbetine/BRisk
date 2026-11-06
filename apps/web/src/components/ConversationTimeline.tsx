@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { classifyAttachment } from "@risk/protocol/attachments";
+import { classifyAttachment } from "@briks/protocol/attachments";
 import { Check, Images, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import type { ChatMessage } from "../application/contracts";
 import type { ChatAttachmentProgress, ChatAttachmentRecord } from "../chat";

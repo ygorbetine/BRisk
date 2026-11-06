@@ -1,17 +1,17 @@
 # Arquitetura e operação
 
-O Risk Desktop usa Electron para a aplicação principal, React no renderer e um sidecar Rust/Axum para persistência local. A direção desejada das dependências é:
+O Briks Desktop usa Electron para a aplicação principal, React no renderer e um sidecar Rust/Axum para persistência local. A direção desejada das dependências é:
 
 ```text
                 Supabase Realtime
                  rendezvous only
                         │ signaling
                         ▼
-┌──────────────────────────── Risk Desktop ────────────────────────────┐
+┌──────────────────────────── Briks Desktop ────────────────────────────┐
 │ React views ──> Application Services ──> RTC contracts              │
 │                         │                    │                        │
 │                         ▼                    └──> outros peers        │
-│                  RiskGateway                         │               │
+│                  BriksGateway                         │               │
 │                         │                      TURN / SFU opcional    │
 │                         ▼                                            │
 │ Electron Main ── bridge seguro ──> Rust local API ──> SQLite/files  │
@@ -22,16 +22,16 @@ O Risk Desktop usa Electron para a aplicação principal, React no renderer e um
 
 `application/runtime.ts` é o composition root do renderer: somente ele escolhe
 os adapters concretos de Supabase, Mesh e gateway HTTP/loopback. O React recebe
-uma única `RiskApplication` por context e depende dos contratos declarados em
+uma única `BriksApplication` por context e depende dos contratos declarados em
 `application/contracts.ts`.
 
 Os primeiros casos de uso extraídos são `SessionService`, que serializa e
 invalida restaurações de sessão, e `InviteApplicationService`, que resolve
 identidade, ICE e transporte de convites sem expor esses detalhes aos
 componentes. Um teste de fronteira impede que views voltem a importar `api`,
-Supabase ou `@risk/rtc`, ou que construam controllers diretamente.
+Supabase ou `@briks/rtc`, ou que construam controllers diretamente.
 
-O gateway concreto vive em `infrastructure/risk-gateway.ts`; `api.ts` permanece
+O gateway concreto vive em `infrastructure/briks-gateway.ts`; `api.ts` permanece
 somente como fachada temporária de compatibilidade. `main.tsx` agora é apenas o
 bootstrap do React. `App.tsx` cuida da sessão e do roteamento de alto nível, as
 telas ficam em `views/` e avisos globais reutilizáveis ficam em `components/`.
@@ -44,18 +44,18 @@ contexto sem devolver infraestrutura para a UI.
 
 Na inicialização:
 
-1. o Electron registra a origem estável e segura `risk://app` para os assets;
-2. gera `RISK_LOCAL_TOKEN` aleatório;
+1. o Electron registra a origem estável e segura `briks://app` para os assets;
+2. gera `BRIKS_LOCAL_TOKEN` aleatório;
 3. inicia o sidecar;
-4. fornece `RISK_DATA_DIR=app.getPath("userData")`;
-5. fornece `RISK_WEB_ORIGIN` e `RISK_BACKEND_BIND=127.0.0.1:0`;
-6. o sidecar abre `risk.sqlite3` e executa migrations;
-7. o sidecar escreve `RISK_BACKEND_READY {"url":"http://127.0.0.1:..."}`;
+4. fornece `BRIKS_DATA_DIR=app.getPath("userData")`;
+5. fornece `BRIKS_WEB_ORIGIN` e `BRIKS_BACKEND_BIND=127.0.0.1:0`;
+6. o sidecar abre `briks.sqlite3` e executa migrations;
+7. o sidecar escreve `BRIKS_BACKEND_READY {"url":"http://127.0.0.1:..."}`;
 8. Electron valida `/health` e só então cria a janela.
 
-O endpoint HTTP do backend é dinâmico e usa uma porta loopback livre. Os assets não abrem servidor HTTP: são servidos pelo protocolo `risk://app`, mantendo a mesma origem entre inicializações e preservando IndexedDB/localStorage.
+O endpoint HTTP do backend é dinâmico e usa uma porta loopback livre. Os assets não abrem servidor HTTP: são servidos pelo protocolo `briks://app`, mantendo a mesma origem entre inicializações e preservando IndexedDB/localStorage.
 
-Toda rota da API local, exceto `/health`, exige `X-Risk-Desktop-Token`. O token é criado novamente a cada execução e entregue ao renderer somente pelo preload/IPC.
+Toda rota da API local, exceto `/health`, exige `X-Briks-Desktop-Token`. O token é criado novamente a cada execução e entregue ao renderer somente pelo preload/IPC.
 
 ## Persistência SQLite
 
@@ -67,7 +67,7 @@ A chave privada da identidade P2P permanece como `CryptoKey` não extraível no 
 
 ## Backend PostgreSQL legado
 
-O diretório `server` continua existindo como backend central PostgreSQL legado/experimental. Ele não faz parte do caminho crítico do Risk Desktop e não é iniciado pelo instalador.
+O diretório `server` continua existindo como backend central PostgreSQL legado/experimental. Ele não faz parte do caminho crítico do Briks Desktop e não é iniciado pelo instalador.
 
 O objetivo do desktop é não exigir PostgreSQL, Docker ou credenciais de banco do usuário final.
 
@@ -78,7 +78,7 @@ Supabase é rendezvous/signaling efêmero:
 - Presence descobre peers;
 - Broadcast transporta offer/answer/ICE e estado efêmero;
 - nenhuma tabela Supabase é necessária para chamadas;
-- SDP, ICE e presença não são persistidos pelo Risk;
+- SDP, ICE e presença não são persistidos pelo Briks;
 - mídia e DataChannel seguem diretamente pelo WebRTC.
 
 A sala é derivada antes de virar tópico Realtime. O provider rejeita mensagens próprias, mensagens destinadas a outro peer, mensagens duplicadas, antigas ou de peers que não estejam presentes no canal.
@@ -175,7 +175,7 @@ Nesta fase Alpha, cada grupo aceita no máximo 48 membros ativos e conserva até
 
 ## Convites P2P
 
-Convites usam códigos temporários `risk-XXXX-XXXX-XXXX-XXXX` e rendezvous derivado por SHA-256.
+Convites usam códigos temporários `briks-XXXX-XXXX-XXXX-XXXX` e rendezvous derivado por SHA-256.
 
 Após conexão WebRTC, as mensagens de convite usam ECDSA P-256 e ACK bilateral:
 
@@ -190,11 +190,11 @@ Após conexão WebRTC, as mensagens de convite usam ECDSA P-256 e ACK bilateral:
 
 O sidecar local não deve possuir `TURN_SECRET` de um relay público. Qualquer segredo permanente distribuído dentro do aplicativo pode ser extraído.
 
-Para redes em que conexão direta/STUN falha, o Risk usa um emissor remoto de
+Para redes em que conexão direta/STUN falha, o Briks usa um emissor remoto de
 credenciais temporárias configurado por `VITE_TURN_CREDENTIALS_URL`:
 
 ```text
-Risk ── HTTPS ──> emissor de credenciais ── TURN_SECRET ──> Coturn
+Briks ── HTTPS ──> emissor de credenciais ── TURN_SECRET ──> Coturn
   │                      │
   │                      └── username com expiração + HMAC-SHA1
   └── recebe somente URLs e credenciais válidas por até uma hora
@@ -222,7 +222,7 @@ O processo desktop usa:
 - preload CommonJS mínimo;
 - navegação externa bloqueada;
 - `window.open` bloqueado;
-- permissões de mídia limitadas à origem Risk;
+- permissões de mídia limitadas à origem Briks;
 - IPC validado por origem;
 - single-instance lock;
 - sidecar iniciado antes da UI ficar disponível.
@@ -246,7 +246,7 @@ O build de produção segue:
 ```text
 cargo build --release --manifest-path desktop-backend/Cargo.toml
         ↓
-apps/desktop/resources/backend/risk-desktop-backend(.exe)
+apps/desktop/resources/backend/briks-desktop-backend(.exe)
         ↓
 pnpm build:web
         ↓

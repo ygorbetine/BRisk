@@ -10,7 +10,7 @@ if (!executableArgument) {
 }
 
 const executable = path.resolve(executableArgument);
-const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "risk-packaged-origin-"));
+const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "briks-packaged-origin-"));
 const reportFile = path.join(temporaryDirectory, "origin.json");
 const userDataDirectory = path.join(temporaryDirectory, "profile");
 const args = [`--user-data-dir=${userDataDirectory}`];
@@ -31,7 +31,7 @@ try {
   const child = spawn(executable, args, {
     env: {
       ...process.env,
-      RISK_PACKAGED_ORIGIN_REPORT_FILE: reportFile,
+      BRIKS_PACKAGED_ORIGIN_REPORT_FILE: reportFile,
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -59,8 +59,8 @@ try {
 
   const report = JSON.parse(await readFile(reportFile, "utf8"));
   if (report.packaged !== true) throw new Error("O executável testado não está sendo reconhecido como empacotado pelo Electron.");
-  if (report.origin !== "risk://app") throw new Error(`Origem inesperada: ${String(report.origin)}.`);
-  if (typeof report.href !== "string" || !report.href.startsWith("risk://app/")) {
+  if (report.origin !== "briks://app") throw new Error(`Origem inesperada: ${String(report.origin)}.`);
+  if (typeof report.href !== "string" || !report.href.startsWith("briks://app/")) {
     throw new Error(`URL empacotada inesperada: ${String(report.href)}.`);
   }
   if (!Number.isInteger(report.rootChildren) || report.rootChildren < 1 || !Number.isInteger(report.rootTextLength) || report.rootTextLength < 1) {

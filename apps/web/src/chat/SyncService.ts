@@ -7,11 +7,11 @@ import {
 } from "./MessageProtocol";
 import {
   compatibleChatPeer,
-  LOCAL_RISK_CAPABILITIES,
-  validRiskPeerCapabilities,
+  LOCAL_BRIKS_CAPABILITIES,
+  validBriksPeerCapabilities,
   peerSupportsCapability,
-  type RiskCapability,
-  type RiskPeerCapabilities,
+  type BriksCapability,
+  type BriksPeerCapabilities,
 } from "../services/protocol-compatibility";
 import type { LocalIdentity } from "../services/offline/social-storage";
 
@@ -32,7 +32,7 @@ export type ChatSyncContext = {
   verify(remotePeerId: string, signature: string, canonical: string): Promise<boolean>;
   presencePeers(): string[];
   onReady(remotePeerId: string): void;
-  onCapabilities?(remotePeerId: string, capabilities: RiskPeerCapabilities): void;
+  onCapabilities?(remotePeerId: string, capabilities: BriksPeerCapabilities): void;
   onRevoked(remotePeerId: string): void;
   onFailure(remotePeerId: string): void;
 };
@@ -42,7 +42,7 @@ export class SyncService {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly startedAt = new Map<string, number>();
   private readonly failedPeers = new Set<string>();
-  private readonly peerCapabilities = new Map<string, RiskPeerCapabilities>();
+  private readonly peerCapabilities = new Map<string, BriksPeerCapabilities>();
 
   constructor(private readonly context: ChatSyncContext) {}
 
@@ -65,8 +65,8 @@ export class SyncService {
   failedPeerIds(): string[] { return [...this.failedPeers]; }
   didFail(remotePeerId: string): boolean { return this.failedPeers.has(remotePeerId); }
   clearFailure(remotePeerId: string): void { this.failedPeers.delete(remotePeerId); }
-  capabilities(remotePeerId: string): RiskPeerCapabilities | undefined { return this.peerCapabilities.get(remotePeerId); }
-  supports(remotePeerId: string, capability: RiskCapability): boolean {
+  capabilities(remotePeerId: string): BriksPeerCapabilities | undefined { return this.peerCapabilities.get(remotePeerId); }
+  supports(remotePeerId: string, capability: BriksCapability): boolean {
     return peerSupportsCapability(this.peerCapabilities.get(remotePeerId), capability);
   }
 
@@ -77,7 +77,7 @@ export class SyncService {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { incompatible: false };
     const message = parsed as Record<string, unknown>;
     if (message.type !== "chat.identity.challenge" && message.type !== "chat.identity.proof") return { incompatible: false };
-    if (!validRiskPeerCapabilities(message.capabilities)) return { incompatible: true };
+    if (!validBriksPeerCapabilities(message.capabilities)) return { incompatible: true };
     return compatibleChatPeer(message.capabilities)
       ? { incompatible: false }
       : { incompatible: true, remoteVersion: message.capabilities.appVersion };
@@ -104,7 +104,7 @@ export class SyncService {
       fromPeerId: identity.peerId,
       nonce,
       timestamp: now,
-      capabilities: LOCAL_RISK_CAPABILITIES,
+      capabilities: LOCAL_BRIKS_CAPABILITIES,
     };
     this.pendingChallenges.set(remotePeerId, nonce);
     this.context.send(remotePeerId, JSON.stringify(challenge));
@@ -124,7 +124,7 @@ export class SyncService {
       toPeerId: remotePeerId,
       nonce: challenge.nonce,
       timestamp: Date.now(),
-      capabilities: LOCAL_RISK_CAPABILITIES,
+      capabilities: LOCAL_BRIKS_CAPABILITIES,
     };
     const signature = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-256" },

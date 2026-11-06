@@ -20,7 +20,7 @@ foreach ($name in $required) {
 }
 
 Write-Host "Gerando AppImage e DEB com frontend + backend Rust local dentro de um container Linux..."
-& docker build --file infrastructure/desktop/Dockerfile.linux --tag risk-p2p-linux-builder:local .
+& docker build --file infrastructure/desktop/Dockerfile.linux --tag briks-p2p-linux-builder:local .
 if ($LASTEXITCODE -ne 0) { throw "Não foi possível preparar a imagem Linux." }
 
 $dockerArgs = @(
@@ -28,17 +28,17 @@ $dockerArgs = @(
   "--env", "VITE_SUPABASE_URL=$($publicEnvironment.VITE_SUPABASE_URL)",
   "--env", "VITE_SUPABASE_ANON_KEY=$($publicEnvironment.VITE_SUPABASE_ANON_KEY)",
   "--volume", "${releasePath}:/project/apps/desktop/release",
-  "--volume", "risk-p2p-electron-cache:/root/.cache/electron",
-  "--volume", "risk-p2p-electron-builder-cache:/root/.cache/electron-builder",
-  "--volume", "risk-p2p-cargo-registry:/root/.cargo/registry",
-  "--volume", "risk-p2p-cargo-git:/root/.cargo/git"
+  "--volume", "briks-p2p-electron-cache:/root/.cache/electron",
+  "--volume", "briks-p2p-electron-builder-cache:/root/.cache/electron-builder",
+  "--volume", "briks-p2p-cargo-registry:/root/.cargo/registry",
+  "--volume", "briks-p2p-cargo-git:/root/.cargo/git"
 )
 foreach ($name in @("VITE_DEBUG_SIGNALING", "VITE_ICE_SERVERS_JSON")) {
   if ($publicEnvironment[$name]) {
     $dockerArgs += @("--env", "$name=$($publicEnvironment[$name])")
   }
 }
-$dockerArgs += "risk-p2p-linux-builder:local"
+$dockerArgs += "briks-p2p-linux-builder:local"
 
 & docker @dockerArgs
 if ($LASTEXITCODE -ne 0) { throw "O empacotamento Linux falhou com código $LASTEXITCODE." }

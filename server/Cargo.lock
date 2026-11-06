@@ -1241,7 +1241,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "risk-server"
+name = "briks-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",

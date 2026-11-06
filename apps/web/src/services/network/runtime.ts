@@ -1,4 +1,4 @@
-import type { NetworkInterfaceDescriptor, RtcNetworkPreference } from "@risk/rtc";
+import type { NetworkInterfaceDescriptor, RtcNetworkPreference } from "@briks/rtc";
 import { loadNetworkSettings } from "./settings";
 
 export type RtcNetworkContext = {

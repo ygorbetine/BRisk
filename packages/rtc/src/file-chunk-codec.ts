@@ -1,6 +1,6 @@
-import type { AttachmentChunkFrame } from "@risk/protocol/attachments";
+import type { AttachmentChunkFrame } from "@briks/protocol/attachments";
 
-const MAGIC = 0x5249534b; // RISK
+const MAGIC = 0x5249534b; // BRIKS
 const VERSION = 1;
 const FIXED_HEADER_BYTES = 16;
 const MAX_METADATA_BYTES = 16 * 1024;

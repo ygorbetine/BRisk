@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InviteDependencies } from "../services/invites/service";
-import type { RiskGateway } from "./contracts";
+import type { BriksGateway } from "./contracts";
 
 const mocks = vi.hoisted(() => ({
   identity: { peerId: "peer-local", displayName: "Sam", publicKey: {}, privateKey: {} },
@@ -27,13 +27,13 @@ import { InviteApplicationService } from "./InviteApplicationService";
 
 beforeEach(() => mocks.constructions.splice(0));
 
-function gateway(turnCredentials: RiskGateway["turnCredentials"]): Pick<RiskGateway, "turnCredentials"> {
+function gateway(turnCredentials: BriksGateway["turnCredentials"]): Pick<BriksGateway, "turnCredentials"> {
   return { turnCredentials };
 }
 
 describe("InviteApplicationService", () => {
   it("no desktop usa ICE estático e as dependências resilientes", async () => {
-    const turnCredentials = vi.fn<RiskGateway["turnCredentials"]>();
+    const turnCredentials = vi.fn<BriksGateway["turnCredentials"]>();
     const dependencies = {} as InviteDependencies;
     const service = new InviteApplicationService(gateway(turnCredentials), dependencies, () => true);
 

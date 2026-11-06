@@ -1,7 +1,7 @@
 import {
   DEFAULT_ATTACHMENT_CHUNK_SIZE,
   MAX_ATTACHMENT_CONTROL_WIRE_BYTES,
-  RISK_ATTACHMENT_PROTOCOL_VERSION,
+  BRIKS_ATTACHMENT_PROTOCOL_VERSION,
   classifyAttachment,
   isFileControlMessage,
   sanitizeAttachmentFilename,
@@ -9,28 +9,28 @@ import {
   type AttachmentManifest,
   type AttachmentTransferProgress,
   type FileControlMessage,
-  type RiskCapability,
-} from "@risk/protocol/attachments";
+  type BriksCapability,
+} from "@briks/protocol/attachments";
 import {
   MAX_SYNC_DESCRIPTORS_PER_PAGE,
   MAX_SYNC_ITEMS_PER_MESSAGE,
   MAX_SYNC_NEED_IDS,
-  RISK_SYNC_PROTOCOL_VERSION,
+  BRIKS_SYNC_PROTOCOL_VERSION,
   isSyncWireMessage,
   syncCheckpointId,
   type SyncCheckpoint,
   type SyncDescriptor,
   type SyncWireMessage,
-} from "@risk/protocol/sync";
-import { MeshWebRTCTransport } from "@risk/rtc";
-import { decodeAttachmentChunkFrame, encodeAttachmentChunkFrame } from "@risk/rtc/file-chunk-codec";
-import { AttachmentTransferReceiver, type AttachmentChunkSink } from "@risk/rtc/file-receiver";
-import { AttachmentTransferSender, sha256Hex, type TransferSource } from "@risk/rtc/file-transfer";
-import { IncrementalSha256 } from "@risk/rtc/streaming-sha256";
+} from "@briks/protocol/sync";
+import { MeshWebRTCTransport } from "@briks/rtc";
+import { decodeAttachmentChunkFrame, encodeAttachmentChunkFrame } from "@briks/rtc/file-chunk-codec";
+import { AttachmentTransferReceiver, type AttachmentChunkSink } from "@briks/rtc/file-receiver";
+import { AttachmentTransferSender, sha256Hex, type TransferSource } from "@briks/rtc/file-transfer";
+import { IncrementalSha256 } from "@briks/rtc/streaming-sha256";
 import { OFFLINE_STORES, getFromStore, putInStore } from "../offline/database";
 import { IndexedDbAttachmentStorage, type StoredAttachmentRecord } from "./indexeddb-storage";
 
-const LOCAL_CAPABILITIES: RiskCapability[] = ["file-transfer-v1", "attachment-sync-v1", "transfer-resume-v1"];
+const LOCAL_CAPABILITIES: BriksCapability[] = ["file-transfer-v1", "attachment-sync-v1", "transfer-resume-v1"];
 const MAX_MANIFEST_CHUNK_HASHES = 512;
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024 * 1024;
 const MAX_AUTOMATIC_DOWNLOAD_BYTES = 25 * 1024 * 1024;
@@ -70,7 +70,7 @@ export class AttachmentService extends EventTarget {
   private readonly receiver: AttachmentTransferReceiver;
   private readonly outgoing = new Map<string, { peerId: string; attachmentId: string }>();
   private readonly sourceByAttachment = new Map<string, TransferSource>();
-  private readonly peerCapabilities = new Map<string, ReadonlySet<RiskCapability>>();
+  private readonly peerCapabilities = new Map<string, ReadonlySet<BriksCapability>>();
   private readonly progressSamples = new Map<string, ProgressSample>();
   private readonly progressUpdates = new Map<string, Promise<void>>();
   private readonly syncRequests = new Map<string, SyncRequestState>();
@@ -90,7 +90,7 @@ export class AttachmentService extends EventTarget {
         const encoded = encodeAttachmentChunkFrame(frame);
         if (this.transport.sendTransferData(encoded, peerId) > 0) return;
         await this.transport.waitForTransferBufferedAmountLow(peerId);
-        if (this.transport.sendTransferData(encoded, peerId) === 0) throw new Error("Canal risk.transfer congestionado ou indisponível.");
+        if (this.transport.sendTransferData(encoded, peerId) === 0) throw new Error("Canal briks.transfer congestionado ou indisponível.");
       },
       {
         getBufferedAmount: (peerId) => this.transport.getTransferBufferedAmount(peerId),
@@ -132,7 +132,7 @@ export class AttachmentService extends EventTarget {
     if (!this.isAuthenticated(peerId)) return;
     await this.sendControl(peerId, {
       type: "peer.capabilities",
-      protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+      protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
       capabilities: LOCAL_CAPABILITIES,
     });
     await this.sendSyncHello(peerId);
@@ -147,8 +147,8 @@ export class AttachmentService extends EventTarget {
       const capabilities = this.peerCapabilities.get(peerId);
       return capabilities?.has("file-transfer-v1") && this.transport.isTransferChannelOpen(peerId);
     });
-    if (peers.length === 0) throw new Error("Nenhum peer autenticado com suporte a arquivos possui o canal risk.transfer aberto.");
-    if (file.size > MAX_FILE_SIZE_BYTES) throw new Error("O arquivo excede o limite de 20 GiB desta versão do Risk.");
+    if (peers.length === 0) throw new Error("Nenhum peer autenticado com suporte a arquivos possui o canal briks.transfer aberto.");
+    if (file.size > MAX_FILE_SIZE_BYTES) throw new Error("O arquivo excede o limite de 20 GiB desta versão do Briks.");
 
     const manifest = await buildManifest(file, this.channelId, this.localPeerId);
     this.sourceByAttachment.set(manifest.id, file);
@@ -292,7 +292,7 @@ export class AttachmentService extends EventTarget {
 
   private async handleFileControl(peerId: string, message: FileControlMessage): Promise<void> {
     if (message.type === "peer.capabilities") {
-      const supported = new Set(message.capabilities.filter((capability): capability is RiskCapability => LOCAL_CAPABILITIES.includes(capability)));
+      const supported = new Set(message.capabilities.filter((capability): capability is BriksCapability => LOCAL_CAPABILITIES.includes(capability)));
       this.peerCapabilities.set(peerId, supported);
       if (supported.has("file-transfer-v1")) this.transport.ensureTransferChannel(peerId);
       return;
@@ -398,7 +398,7 @@ export class AttachmentService extends EventTarget {
   private async sendSyncHello(peerId: string): Promise<void> {
     const checkpoint = await getFromStore<SyncCheckpoint>(OFFLINE_STORES.syncCheckpoints, syncCheckpointId(peerId, this.channelId));
     await this.sendControl(peerId, {
-      version: RISK_SYNC_PROTOCOL_VERSION,
+      version: BRIKS_SYNC_PROTOCOL_VERSION,
       type: "sync.hello",
       requestId: crypto.randomUUID(),
       fromPeerId: this.localPeerId,
@@ -432,7 +432,7 @@ export class AttachmentService extends EventTarget {
     for (let page = 0; page < pages; page += 1) {
       const start = page * MAX_SYNC_DESCRIPTORS_PER_PAGE;
       await this.sendControl(peerId, {
-        version: RISK_SYNC_PROTOCOL_VERSION,
+        version: BRIKS_SYNC_PROTOCOL_VERSION,
         type: "sync.manifest",
         requestId,
         channelId: this.channelId,
@@ -453,7 +453,7 @@ export class AttachmentService extends EventTarget {
       .map((descriptor) => descriptor.id);
     for (let offset = 0; offset < missing.length; offset += MAX_SYNC_NEED_IDS) {
       await this.sendControl(peerId, {
-        version: RISK_SYNC_PROTOCOL_VERSION,
+        version: BRIKS_SYNC_PROTOCOL_VERSION,
         type: "sync.need",
         requestId: message.requestId,
         channelId: this.channelId,
@@ -472,7 +472,7 @@ export class AttachmentService extends EventTarget {
     ));
     for (let offset = 0; offset < available.length; offset += MAX_SYNC_ITEMS_PER_MESSAGE) {
       await this.sendControl(peerId, {
-        version: RISK_SYNC_PROTOCOL_VERSION,
+        version: BRIKS_SYNC_PROTOCOL_VERSION,
         type: "sync.items",
         requestId,
         channelId: this.channelId,
@@ -500,7 +500,7 @@ export class AttachmentService extends EventTarget {
     const timestamp = new Date().toISOString();
     await this.saveCheckpoint(peerId, Date.now(), stateHash, undefined, timestamp);
     await this.sendControl(peerId, {
-      version: RISK_SYNC_PROTOCOL_VERSION,
+      version: BRIKS_SYNC_PROTOCOL_VERSION,
       type: "sync.complete",
       requestId,
       channelId: this.channelId,
@@ -670,7 +670,7 @@ async function buildManifest(file: File, channelId: string, senderPeerId: string
   const contentHash = hasher.digestHex();
   const filename = sanitizeAttachmentFilename(file.name || "attachment");
   return {
-    protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+    protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
     id: contentHash,
     messageId: crypto.randomUUID(),
     channelId,

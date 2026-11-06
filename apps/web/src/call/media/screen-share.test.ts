@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ScreenShareProvider } from "@risk/rtc";
+import type { ScreenShareProvider } from "@briks/rtc";
 import { startScreenCapture } from "./screen-share";
 
 afterEach(() => vi.unstubAllGlobals());

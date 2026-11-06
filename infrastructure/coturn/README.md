@@ -1,4 +1,4 @@
-# TURN de produção do Risk
+# TURN de produção do Briks
 
 Esta configuração oferece quatro rotas para o mesmo relay:
 
@@ -10,7 +10,7 @@ Esta configuração oferece quatro rotas para o mesmo relay:
 O cliente nunca recebe `TURN_SECRET`. O emissor usa esse segredo para criar um
 username com vencimento e uma senha `base64(HMAC-SHA1(secret, username))`, como
 esperado pelo modo REST do Coturn. As credenciais ficam somente em memória no
-Risk e são renovadas antes de vencer.
+Briks e são renovadas antes de vencer.
 
 ## Pré-requisitos
 
@@ -39,9 +39,9 @@ cp .env.production.example .env.production
 Edite `.env.production`, crie o diretório protegido e gere um segredo forte:
 
 ```bash
-sudo install -d -m 700 /etc/risk/secrets
-openssl rand -hex 32 | sudo tee /etc/risk/secrets/turn-secret >/dev/null
-sudo chmod 600 /etc/risk/secrets/turn-secret
+sudo install -d -m 700 /etc/briks/secrets
+openssl rand -hex 32 | sudo tee /etc/briks/secrets/turn-secret >/dev/null
+sudo chmod 600 /etc/briks/secrets/turn-secret
 ```
 
 O mesmo valor precisa ser configurado como `TURN_SECRET` no emissor remoto de
@@ -92,19 +92,19 @@ retorna `Cache-Control: no-store`:
   "ttl": 3600,
   "expiresAt": 1800003600,
   "urls": [
-    "turn:turn.risk.example:3478?transport=udp",
-    "turn:turn.risk.example:3478?transport=tcp",
-    "turns:turn.risk.example:5349?transport=tcp",
-    "turns:turn.risk.example:443?transport=tcp"
+    "turn:turn.briks.example:3478?transport=udp",
+    "turn:turn.briks.example:3478?transport=tcp",
+    "turns:turn.briks.example:5349?transport=tcp",
+    "turns:turn.briks.example:443?transport=tcp"
   ],
   "iceServers": [
-    { "urls": ["stun:turn.risk.example:3478"] },
+    { "urls": ["stun:turn.briks.example:3478"] },
     {
       "urls": [
-        "turn:turn.risk.example:3478?transport=udp",
-        "turn:turn.risk.example:3478?transport=tcp",
-        "turns:turn.risk.example:5349?transport=tcp",
-        "turns:turn.risk.example:443?transport=tcp"
+        "turn:turn.briks.example:3478?transport=udp",
+        "turn:turn.briks.example:3478?transport=tcp",
+        "turns:turn.briks.example:5349?transport=tcp",
+        "turns:turn.briks.example:443?transport=tcp"
       ],
       "username": "1800003600:peer-id",
       "credential": "base64-hmac"
@@ -116,17 +116,17 @@ retorna `Cache-Control: no-store`:
 Configure no emissor:
 
 ```dotenv
-TURN_HOST=turn.risk.example
+TURN_HOST=turn.briks.example
 TURN_PORT=3478
 TURN_TLS_PORT=5349
 TURN_TLS_ALT_PORT=443
 TURN_SECRET=o-mesmo-segredo-do-coturn
 TURN_CREDENTIAL_TTL_SECONDS=3600
 TURN_CREDENTIAL_REQUESTS_PER_MINUTE=30
-WEB_ORIGINS=risk://app
+WEB_ORIGINS=briks://app
 ```
 
-Por padrão, o endpoint exige um JWT Risk. Para o modo P2P local consultar um
+Por padrão, o endpoint exige um JWT Briks. Para o modo P2P local consultar um
 emissor público, defina `TURN_ALLOW_UNAUTHENTICATED_CREDENTIALS=true`. Esse modo
 possui limite local por IP, mas deve ficar atrás de firewall/WAF com rate limit,
 limite de banda do Coturn e monitoramento de abuso.
@@ -139,7 +139,7 @@ internet permite falsificar o IP.
 No build do aplicativo, configure apenas a URL pública:
 
 ```dotenv
-VITE_TURN_CREDENTIALS_URL=https://auth.risk.example/rtc/credentials
+VITE_TURN_CREDENTIALS_URL=https://auth.briks.example/rtc/credentials
 ```
 
 Essa origem é adicionada automaticamente à CSP. Fora do desenvolvimento local,

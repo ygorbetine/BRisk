@@ -1,4 +1,4 @@
-import type { AttachmentChunkFrame, AttachmentManifest } from "@risk/protocol/attachments";
+import type { AttachmentChunkFrame, AttachmentManifest } from "@briks/protocol/attachments";
 import { IndexedDbAttachmentStorage, type StoredAttachmentRecord } from "./indexeddb-storage";
 
 export type DesktopAttachmentBackendConfig = { baseUrl: string; token: string };
@@ -108,7 +108,7 @@ export class DesktopAttachmentStorage extends IndexedDbAttachmentStorage {
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const config = await this.resolveConfig();
     const headers = new Headers(init.headers);
-    headers.set("x-risk-desktop-token", config.token);
+    headers.set("x-briks-desktop-token", config.token);
     const baseUrl = config.baseUrl.replace(/\/$/, "");
     const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
     if (!response.ok) {

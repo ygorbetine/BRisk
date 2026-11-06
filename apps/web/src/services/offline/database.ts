@@ -13,7 +13,7 @@ export const OFFLINE_STORES = {
   chatEvents: "chat-events",
 } as const;
 
-export function openRiskDatabase(): Promise<IDBDatabase> {
+export function openBriksDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, VERSION);
     request.onupgradeneeded = () => {
@@ -60,7 +60,7 @@ export function openRiskDatabase(): Promise<IDBDatabase> {
       database.onversionchange = () => database.close();
       resolve(database);
     };
-    request.onblocked = () => reject(new Error("Atualização do armazenamento local bloqueada por outra janela do Risk."));
+    request.onblocked = () => reject(new Error("Atualização do armazenamento local bloqueada por outra janela do Briks."));
     request.onerror = () => reject(request.error ?? new Error("IndexedDB indisponível."));
   });
 }
@@ -78,7 +78,7 @@ export function getAllByIndex<T>(storeName: string, indexName: string, key: IDBV
 }
 
 export async function getAllPrimaryKeysByIndex(storeName: string, indexName: string, key: IDBValidKey): Promise<IDBValidKey[]> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   try {
     const transaction = database.transaction(storeName, "readonly");
     const done = transactionDone(transaction);
@@ -107,7 +107,7 @@ export function deleteFromStore(storeName: string, key: IDBValidKey): Promise<vo
 }
 
 export async function deleteAllByIndex(storeName: string, indexName: string, key: IDBValidKey): Promise<void> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   try {
     const transaction = database.transaction(storeName, "readwrite");
     const done = transactionDone(transaction);
@@ -143,7 +143,7 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
 }
 
 async function withStore<T>(storeName: string, mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest): Promise<T> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   try {
     const transaction = database.transaction(storeName, mode);
     const done = transactionDone(transaction);

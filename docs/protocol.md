@@ -1,6 +1,6 @@
 # Protocolos P2P e signaling
 
-O Risk separa descoberta/negociação do transporte real. `SignalingProvider` coordena peers; `MeshWebRTCTransport` carrega mídia e DataChannels.
+O Briks separa descoberta/negociação do transporte real. `SignalingProvider` coordena peers; `MeshWebRTCTransport` carrega mídia e DataChannels.
 
 ## Namespaces Realtime
 
@@ -99,7 +99,7 @@ Perfis não passam pelo Supabase. Nome, avatar e prova da identidade atravessam 
 
 ## Chat por DataChannel
 
-Quando existe handler de dados, o peer iniciador cria um DataChannel ordenado chamado `risk.chat`.
+Quando existe handler de dados, o peer iniciador cria um DataChannel ordenado chamado `briks.chat`.
 
 Mensagem wire versão 1:
 
@@ -180,7 +180,7 @@ O conteúdo do chat não passa pelo Supabase. No desktop, a cópia recebida é s
 O código amigável possui o formato:
 
 ```text
-risk-XXXX-XXXX-XXXX-XXXX
+briks-XXXX-XXXX-XXXX-XXXX
 ```
 
 O alfabeto evita caracteres visualmente ambíguos. A normalização aceita variações de caixa/separadores, mas não trunca entrada excedente para transformá-la artificialmente em um código válido.
@@ -188,7 +188,7 @@ O alfabeto evita caracteres visualmente ambíguos. A normalização aceita varia
 O rendezvous é derivado por:
 
 ```text
-SHA-256("risk:" + tipo + ":" + codigo-normalizado)
+SHA-256("briks:" + tipo + ":" + codigo-normalizado)
 ```
 
 Assim, o mesmo código em `friend` e `group` produz rendezvous distintos.

@@ -1,4 +1,4 @@
-import type { PeerState } from "@risk/protocol";
+import type { PeerState } from "@briks/protocol";
 import type {
   AnswerMessage,
   IceCandidateMessage,
@@ -11,7 +11,7 @@ import type {
   SignalingNamespace,
   SignalingStatus,
 } from "./types";
-import { RISK_APP_VERSION } from "../protocol-compatibility";
+import { BRIKS_APP_VERSION } from "../protocol-compatibility";
 
 type TestEnvelope = OfferMessage | AnswerMessage | IceCandidateMessage | PeerStateMessage;
 type Listener<T> = (value: T) => void;
@@ -67,7 +67,7 @@ export class InMemorySignalingProvider implements SignalingProvider {
 
   constructor(
     private readonly hub: InMemorySignalingHub,
-    private readonly clientVersion = RISK_APP_VERSION,
+    private readonly clientVersion = BRIKS_APP_VERSION,
   ) {}
 
   get currentPeerId(): string { return this.peerId ?? ""; }

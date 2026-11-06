@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useRiskApplication } from "../application/ApplicationContext";
+import { useBriksApplication } from "../application/ApplicationContext";
 import {
   ensureLocalGroup,
   getOrCreateLocalIdentity,
@@ -29,7 +29,7 @@ export function GroupInvitePanel({
   preferredGroupChannels?: LocalGroupChannel[];
   onComplete?(): void;
 }) {
-  const { gateway: api } = useRiskApplication();
+  const { gateway: api } = useBriksApplication();
   const [groups, setGroups] = useState<LocalGroup[]>([]);
   const preferredMetadata = useMemo<PublicGroupMetadata | undefined>(() => groups.find((group) => group.groupId === preferredGroupId), [groups, preferredGroupId]);
   const [selectedId, setSelectedId] = useState(preferredGroupId ?? "");
@@ -79,7 +79,7 @@ export function GroupInvitePanel({
               metadata.rendezvousSecret,
             );
             localGroups = await loadLocalGroups();
-            window.dispatchEvent(new Event("risk:social-updated"));
+            window.dispatchEvent(new Event("briks:social-updated"));
           } catch (cause) {
             console.warn("Não foi possível preparar o grupo no armazenamento P2P antes do convite", cause);
           }

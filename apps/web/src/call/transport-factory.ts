@@ -7,8 +7,8 @@ import {
   type CallTransportCreationContext,
   type CallTransportDecision,
   type CallTransportPreference,
-} from "@risk/rtc";
-import { LiveKitTransport, type SfuConnectionProvider } from "@risk/rtc/sfu";
+} from "@briks/rtc";
+import { LiveKitTransport, type SfuConnectionProvider } from "@briks/rtc/sfu";
 
 const sfuTokenUrl = (import.meta.env?.VITE_LIVEKIT_TOKEN_URL as string | undefined)?.trim();
 const sfuServerUrl = (import.meta.env?.VITE_LIVEKIT_URL as string | undefined)?.trim();

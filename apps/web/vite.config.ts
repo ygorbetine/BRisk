@@ -5,8 +5,8 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 const envDir = fileURLToPath(new URL("../../", import.meta.url));
-const devBackendBridgeFile = fileURLToPath(new URL("../../.risk/dev-backend.json", import.meta.url));
-const DEV_API_PREFIX = "/__risk-api";
+const devBackendBridgeFile = fileURLToPath(new URL("../../.briks/dev-backend.json", import.meta.url));
+const DEV_API_PREFIX = "/__briks-api";
 const webVersion = process.env.npm_package_version?.trim() || "0.2.1";
 
 type DevBackendBridge = {
@@ -42,7 +42,7 @@ function sendJson(response: import("node:http").ServerResponse, status: number, 
 
 function devBackendProxy(): Plugin {
   return {
-    name: "risk-dev-backend-proxy",
+    name: "briks-dev-backend-proxy",
     apply: "serve",
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
@@ -77,9 +77,9 @@ function devBackendProxy(): Plugin {
           delete headers.origin;
           delete headers.referer;
           delete headers.cookie;
-          delete headers["x-risk-desktop-token"];
+          delete headers["x-briks-desktop-token"];
           headers.host = target.host;
-          headers["x-risk-desktop-token"] = bridge.token;
+          headers["x-briks-desktop-token"] = bridge.token;
 
           const upstream = http.request(target, {
             method: request.method,
@@ -111,7 +111,7 @@ function devBackendProxy(): Plugin {
 }
 
 export default defineConfig(({ command, mode }) => {
-  const devApiUrl = process.env.RISK_DEV_API_URL?.trim() || DEV_API_PREFIX;
+  const devApiUrl = process.env.BRIKS_DEV_API_URL?.trim() || DEV_API_PREFIX;
   const env = loadEnv(mode, envDir, "VITE_");
   const realtimeSources: string[] = [];
   const turnCredentialSources: string[] = [];
@@ -129,15 +129,15 @@ export default defineConfig(({ command, mode }) => {
     // Em desenvolvimento o Vite injeta CSS em <style>. Um nonce permite esses
     // estilos sem enfraquecer a CSP com style-src 'unsafe-inline'. O runtime do
     // Vite lê o mesmo nonce da meta csp-nonce gerada automaticamente.
-    html: { cspNonce: "risk-vite-style" },
-    plugins: [react(), devBackendProxy(), { name: "risk-csp", transformIndexHtml: (html) => html
-      .replace("__RISK_CONNECT_SRC__", connectSources)
-      .replace("__RISK_STYLE_SRC__", command === "serve" ? "'self' 'nonce-risk-vite-style'" : "'self'") }],
+    html: { cspNonce: "briks-vite-style" },
+    plugins: [react(), devBackendProxy(), { name: "briks-csp", transformIndexHtml: (html) => html
+      .replace("__BRIKS_CONNECT_SRC__", connectSources)
+      .replace("__BRIKS_STYLE_SRC__", command === "serve" ? "'self' 'nonce-briks-vite-style'" : "'self'") }],
     // Durante `vite serve`, o navegador usa o proxy local por padrão mesmo que um
     // .env antigo ainda contenha VITE_API_URL=http://localhost:8080. Para testar
-    // deliberadamente outra API em desenvolvimento, use RISK_DEV_API_URL.
+    // deliberadamente outra API em desenvolvimento, use BRIKS_DEV_API_URL.
     define: {
-      "import.meta.env.VITE_RISK_APP_VERSION": JSON.stringify(webVersion),
+      "import.meta.env.VITE_BRIKS_APP_VERSION": JSON.stringify(webVersion),
       ...(command === "serve" ? { "import.meta.env.VITE_API_URL": JSON.stringify(devApiUrl) } : {}),
     },
     server: { port: 5173 },

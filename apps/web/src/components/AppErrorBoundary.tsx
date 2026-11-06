@@ -1,6 +1,6 @@
 import React from "react";
 import { Copy, RefreshCw, Sparkles } from "lucide-react";
-import { RISK_APP_VERSION } from "../services/protocol-compatibility";
+import { BRIKS_APP_VERSION } from "../services/protocol-compatibility";
 
 type State = { error?: Error; copied: boolean };
 
@@ -21,8 +21,8 @@ export class AppErrorBoundary extends React.Component<React.PropsWithChildren, S
 
   private report(): string {
     return JSON.stringify({
-      app: "BRisk",
-      version: RISK_APP_VERSION,
+      app: "Briks",
+      version: BRIKS_APP_VERSION,
       platform: navigator.platform,
       error: this.state.error?.name ?? "Error",
       message: this.state.error?.message ?? "Falha desconhecida",
@@ -35,11 +35,11 @@ export class AppErrorBoundary extends React.Component<React.PropsWithChildren, S
     return <main className="fatal-recovery" role="alert">
       <div className="fatal-recovery-card">
         <Sparkles/>
-        <h1>O BRisk encontrou um problema na interface</h1>
+        <h1>O Briks encontrou um problema na interface</h1>
         <p>Seus dados locais não foram apagados. Recarregue a janela para tentar recuperar o aplicativo.</p>
         <small>{this.state.error.message || "Falha inesperada do renderer."}</small>
         <div>
-          <button onClick={() => window.location.reload()}><RefreshCw/> Recarregar BRisk</button>
+          <button onClick={() => window.location.reload()}><RefreshCw/> Recarregar Briks</button>
           <button className="secondary" onClick={() => void navigator.clipboard.writeText(this.report()).then(() => this.setState({ copied: true }))}><Copy/> {this.state.copied ? "Relatório copiado" : "Copiar diagnóstico"}</button>
         </div>
       </div>

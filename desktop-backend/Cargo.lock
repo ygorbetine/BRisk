@@ -169,6 +169,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "briks-desktop-backend"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "base64",
+ "chrono",
+ "jsonwebtoken",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "sysinfo",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wasapi",
+ "windows",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1267,34 +1295,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "risk-desktop-backend"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "base64",
- "chrono",
- "jsonwebtoken",
- "rand",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "sysinfo",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wasapi",
- "windows",
 ]
 
 [[package]]

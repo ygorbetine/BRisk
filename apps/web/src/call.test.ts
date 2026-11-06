@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { CallTransportRegistry, type MeshCallTransport } from "@risk/rtc";
-import type { PeerState } from "@risk/protocol";
+import { CallTransportRegistry, type MeshCallTransport } from "@briks/rtc";
+import type { PeerState } from "@briks/protocol";
 import type { LocalGroup } from "./services/offline/social-storage";
 import { InMemorySignalingHub, InMemorySignalingProvider } from "./services/signaling/in-memory";
 import { useCallStore } from "./store";

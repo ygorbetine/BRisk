@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RISK_ATTACHMENT_PROTOCOL_VERSION, type AttachmentManifest } from "@risk/protocol/attachments";
+import { BRIKS_ATTACHMENT_PROTOCOL_VERSION, type AttachmentManifest } from "@briks/protocol/attachments";
 import { AttachmentTransferSender } from "./file-transfer";
 
 describe("AttachmentTransferSender controls", () => {
@@ -18,7 +18,7 @@ describe("AttachmentTransferSender controls", () => {
     );
     const source = new Blob([Uint8Array.from([1, 2])], { type: "application/octet-stream" });
     const manifest: AttachmentManifest = {
-      protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+      protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
       id: "a".repeat(64),
       channelId: "channel_12345678",
       senderPeerId: "peer_12345678",
@@ -55,7 +55,7 @@ describe("AttachmentTransferSender controls", () => {
     );
     const source = new Blob([Uint8Array.from([1, 2])], { type: "application/octet-stream" });
     const manifest: AttachmentManifest = {
-      protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+      protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
       id: "a".repeat(64),
       channelId: "channel_12345678",
       senderPeerId: "peer_12345678",

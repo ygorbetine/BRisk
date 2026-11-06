@@ -13,7 +13,7 @@ export function LocalStoragePanel() {
     });
     return () => { alive = false; };
   }, []);
-  return <section className="local-storage-panel"><h3><HardDrive/> Armazenamento local</h3><p>Mensagens, grupos e anexos permanecem somente neste dispositivo.</p><div><span>Em uso</span><strong>{formatBytes(usage)}</strong></div><div><span>Disponível para o BRisk</span><strong>{formatBytes(quota)}</strong></div></section>;
+  return <section className="local-storage-panel"><h3><HardDrive/> Armazenamento local</h3><p>Mensagens, grupos e anexos permanecem somente neste dispositivo.</p><div><span>Em uso</span><strong>{formatBytes(usage)}</strong></div><div><span>Disponível para o Briks</span><strong>{formatBytes(quota)}</strong></div></section>;
 }
 
 function formatBytes(value?: number): string {

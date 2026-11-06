@@ -1,4 +1,4 @@
-import type { CallTransportPreference } from "@risk/rtc";
+import type { CallTransportPreference } from "@briks/rtc";
 import type {
   GroupRevocationCertificate,
   LocalIdentity,

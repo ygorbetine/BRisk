@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { CallTransport, ScreenShareProvider } from "@risk/rtc";
+import type { CallTransport, ScreenShareProvider } from "@briks/rtc";
 import type { VoiceVideoSettings } from "../services/audio/settings";
 
 type MediaManagerConstructor = typeof import("./MediaManager")["MediaManager"];
@@ -78,7 +78,7 @@ describe("MediaManager", () => {
       microphoneDeviceId: "",
       noiseSuppression: "standard",
       echoCancellation: true,
-      excludeRiskAudioFromScreenShare: true,
+      excludeBriksAudioFromScreenShare: true,
     };
 
     await expect(manager.initializeMicrophone(settings, transport, 1)).resolves.toBe(manager.localStream);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadLocalGroups, type LocalGroup, type LocalIdentity, type PublicPeerIdentity } from "./services/offline/social-storage";
-import type { TransportEvents } from "@risk/rtc";
+import type { TransportEvents } from "@briks/rtc";
 
 const runtime = vi.hoisted(() => ({
   transports: new Map<string, {
@@ -37,7 +37,7 @@ vi.mock("./services/offline/social-storage", async () => {
   };
 });
 
-vi.mock("@risk/rtc", () => ({
+vi.mock("@briks/rtc", () => ({
   MeshWebRTCTransport: class FakeMeshWebRTCTransport {
     private readonly entry: {
       peerId: string;

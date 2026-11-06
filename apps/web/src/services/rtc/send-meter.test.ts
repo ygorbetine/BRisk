@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PeerConnectionDiagnostics } from "@risk/rtc";
+import type { PeerConnectionDiagnostics } from "@briks/rtc";
 import { summarizeSendMeter } from "./send-meter";
 
 const peer = (extra: Partial<PeerConnectionDiagnostics>) => ({ peerId: "p", ...extra }) as PeerConnectionDiagnostics;

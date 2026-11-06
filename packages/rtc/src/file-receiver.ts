@@ -5,7 +5,7 @@ import {
   type AttachmentTransferProgress,
   type FileControlMessage,
   type FileOfferMessage,
-} from "@risk/protocol/attachments";
+} from "@briks/protocol/attachments";
 import { verifyAttachmentChunk, type TransferSendControl } from "./file-transfer";
 
 export interface AttachmentChunkSink {

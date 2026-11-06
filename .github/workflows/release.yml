@@ -30,7 +30,7 @@ jobs:
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-      RISK_REQUIRE_WINDOWS_SIGNING: ${{ matrix.os == 'windows-latest' && 'true' || 'false' }}
+      BRIKS_REQUIRE_WINDOWS_SIGNING: ${{ matrix.os == 'windows-latest' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,13 +50,13 @@ jobs:
       - name: Verify Windows Authenticode signatures
         if: matrix.os == 'windows-latest'
         shell: powershell
-        run: ./scripts/verify-windows-signature.ps1 -Path 'apps/desktop/release/*.exe','apps/desktop/release/win-unpacked/Risk.exe'
+        run: ./scripts/verify-windows-signature.ps1 -Path 'apps/desktop/release/*.exe','apps/desktop/release/win-unpacked/Briks.exe'
       - name: Smoke-test packaged Windows renderer and sidecar
         if: matrix.os == 'windows-latest'
-        run: node scripts/verify-packaged-two-instances.mjs apps/desktop/release/win-unpacked/Risk.exe
+        run: node scripts/verify-packaged-two-instances.mjs apps/desktop/release/win-unpacked/Briks.exe
       - name: Smoke-test packaged Linux renderer and sidecar
         if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run -a node scripts/verify-packaged-two-instances.mjs apps/desktop/release/linux-unpacked/risk
+        run: xvfb-run -a node scripts/verify-packaged-two-instances.mjs apps/desktop/release/linux-unpacked/briks
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@v2
         with:

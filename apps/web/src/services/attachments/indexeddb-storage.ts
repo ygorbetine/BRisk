@@ -1,6 +1,6 @@
-import type { AttachmentChunkFrame, AttachmentManifest, AttachmentTransferProgress } from "@risk/protocol/attachments";
-import type { AttachmentChunkSink } from "@risk/rtc/file-receiver";
-import { sha256Hex } from "@risk/rtc/file-transfer";
+import type { AttachmentChunkFrame, AttachmentManifest, AttachmentTransferProgress } from "@briks/protocol/attachments";
+import type { AttachmentChunkSink } from "@briks/rtc/file-receiver";
+import { sha256Hex } from "@briks/rtc/file-transfer";
 import {
   OFFLINE_STORES,
   deleteAllByIndex,

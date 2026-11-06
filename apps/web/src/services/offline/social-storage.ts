@@ -1,4 +1,4 @@
-import { OFFLINE_STORES, deleteFromStore, getAllFromStore, getFromStore, openRiskDatabase, putInStore } from "./database";
+import { OFFLINE_STORES, deleteFromStore, getAllFromStore, getFromStore, openBriksDatabase, putInStore } from "./database";
 import { validAvatarDataUrl } from "./avatar-validation";
 import { purgeLocalChannelData } from "./data-purge";
 
@@ -116,13 +116,13 @@ export function resetSocialStorageRuntime(): void {
   migrationPromise = undefined;
 }
 
-const DEV_BACKEND_PROXY = "/__risk-api";
+const DEV_BACKEND_PROXY = "/__briks-api";
 const MAX_GROUP_MEMBERS = 48;
 const MAX_GROUP_REVOCATIONS = 48;
 const MAX_GROUP_SYNC_WIRE_BYTES = 60 * 1024;
 
 export async function loadLocalIdentity(): Promise<LocalIdentity | null> {
-  const database = await openRiskDatabase();
+  const database = await openBriksDatabase();
   try {
     const store = database.transaction(OFFLINE_STORES.identity, "readonly").objectStore(OFFLINE_STORES.identity);
     const identity = await request<LocalIdentity | undefined>(store.get("self"));
@@ -315,7 +315,7 @@ export async function addLocalGroupMember(group: PublicGroupMetadata, member: Pu
     membershipVersion: Math.max(group.membershipVersion, base.membershipVersion) + 1,
     ...nextGroupManifestRevision({ ...base, manifestVersion: Math.max(group.manifestVersion, base.manifestVersion) }, owner.peerId),
   });
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
 }
 
 export function upsertGroupMemberIdentity(members: PublicPeerIdentity[], member: PublicPeerIdentity): PublicPeerIdentity[] {
@@ -339,7 +339,7 @@ export async function updateLocalGroupProfile(groupId: string, name: string, ava
   if (group.name === normalizedName && group.avatar === avatar) return group;
   const updated: LocalGroup = { ...group, name: normalizedName, avatar, ...nextGroupManifestRevision(group, identity.peerId) };
   await saveLocalGroup(updated);
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return updated;
 }
 
@@ -366,7 +366,7 @@ export async function setLocalGroupAdministrator(groupId: string, targetPeerId: 
   }));
   const updated = { ...group, administratorPeerIds: [...administrators], administratorGrants, administratorEpoch, ...nextGroupManifestRevision(group, identity.peerId) };
   await saveLocalGroup(updated);
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return updated;
 }
 
@@ -418,7 +418,7 @@ export async function removeLocalGroupMember(groupId: string, targetPeerId: stri
     ...nextGroupManifestRevision(group, identity.peerId),
   };
   await saveLocalGroup(updated);
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return updated;
 }
 
@@ -434,7 +434,7 @@ export async function mergeLocalGroupMembers(groupId: string, incoming: PublicPe
   const identity = await loadLocalIdentity();
   if (identity && !members.some((member) => member.peerId === identity.peerId && samePublicKey(member.publicKey, identity.publicKey))) {
     await deleteLocalGroup(groupId);
-    window.dispatchEvent(new Event("risk:social-updated"));
+    window.dispatchEvent(new Event("briks:social-updated"));
     return merged;
   }
   await saveLocalGroup(merged);
@@ -450,8 +450,8 @@ export async function mergeLocalGroupManifest(incoming: LocalGroup, senderPeerId
   if (identity && !merged.members.some((member) => samePeerIdentity(member, identity))) {
     await deleteLocalGroup(group.groupId);
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("risk:group-removed", { detail: { groupId: group.groupId, groupName: group.name } }));
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new CustomEvent("briks:group-removed", { detail: { groupId: group.groupId, groupName: group.name } }));
+      window.dispatchEvent(new Event("briks:social-updated"));
     }
     return merged;
   }
@@ -460,7 +460,7 @@ export async function mergeLocalGroupManifest(incoming: LocalGroup, senderPeerId
   const remainingChannels = new Set(merged.channels.map((channel) => channel.id));
   await Promise.all(group.channels.filter((channel) => !remainingChannels.has(channel.id))
     .map((channel) => purgeLocalChannelData(channel.id)));
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return merged;
 }
 
@@ -635,7 +635,7 @@ export async function updateKnownPeerProfile(peer: PublicPeerIdentity): Promise<
   const friends = await loadLocalFriends();
   const friend = friends.find((item) => samePeerIdentity(item, peer));
   if (friend) await saveLocalFriend({ ...peer, addedAt: friend.addedAt });
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
 }
 
 /**
@@ -664,7 +664,7 @@ export async function repairLocalIdentityAliases(): Promise<number> {
     await saveLocalGroup(group);
     removedCount += aliases.length;
   }
-  if (removedCount && typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (removedCount && typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return removedCount;
 }
 
@@ -843,13 +843,13 @@ export async function applyGroupRevocationCertificate(certificate: GroupRevocati
     && samePublicKey(identity.publicKey, certificate.targetPublicKey)) {
     await deleteLocalGroup(group.groupId);
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("risk:group-removed", { detail: { groupId: group.groupId, groupName: group.name } }));
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new CustomEvent("briks:group-removed", { detail: { groupId: group.groupId, groupName: group.name } }));
+      window.dispatchEvent(new Event("briks:social-updated"));
     }
     return true;
   }
   await saveLocalGroup(updated);
-  if (typeof window !== "undefined") window.dispatchEvent(new Event("risk:social-updated"));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("briks:social-updated"));
   return true;
 }
 
@@ -1095,7 +1095,7 @@ async function desktopConfig(): Promise<DesktopBackendConfig | null> {
 async function desktopRequest<T>(config: DesktopBackendConfig, path: string, init: RequestInit): Promise<T> {
   const perform = async (accessToken: string | null) => {
     const headers = new Headers({ "content-type": "application/json", ...init.headers });
-    if (config.token) headers.set("x-risk-desktop-token", config.token);
+    if (config.token) headers.set("x-briks-desktop-token", config.token);
     if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
     return fetch(`${config.baseUrl}${path}`, { ...init, headers });
   };
@@ -1103,7 +1103,7 @@ async function desktopRequest<T>(config: DesktopBackendConfig, path: string, ini
   let response = await perform(accessToken);
   if (response.status === 401) {
     const refreshHeaders = new Headers();
-    if (config.token) refreshHeaders.set("x-risk-desktop-token", config.token);
+    if (config.token) refreshHeaders.set("x-briks-desktop-token", config.token);
     const refresh = await fetch(`${config.baseUrl}/auth/refresh`, { method: "POST", headers: refreshHeaders });
     if (refresh.ok) {
       const session = await refresh.json() as { accessToken: string };

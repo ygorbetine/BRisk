@@ -23,7 +23,7 @@ const STALE_TRANSFER_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 const MAX_ATTACHMENT_CHUNKS: u64 = 1_000_000;
 const TRANSFER_METADATA_RESERVATION_BYTES: u64 = 64 * 1024;
 const CONTENT_FILENAME: &str = "content.bin";
-const TRANSFER_PAYLOAD_FILENAME: &str = "payload.risk-part";
+const TRANSFER_PAYLOAD_FILENAME: &str = "payload.briks-part";
 const CHUNK_MAP_FILENAME: &str = "chunks.map";
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -79,7 +79,7 @@ async fn prepare(
             ));
         }
     } else {
-        let quota = env::var("RISK_ATTACHMENT_QUOTA_BYTES")
+        let quota = env::var("BRIKS_ATTACHMENT_QUOTA_BYTES")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_ATTACHMENT_QUOTA_BYTES);
@@ -461,9 +461,9 @@ fn sanitize_filename(value: &str) -> String {
 }
 
 fn attachment_root() -> Result<PathBuf, ApiError> {
-    let data_dir = env::var_os("RISK_DATA_DIR")
+    let data_dir = env::var_os("BRIKS_DATA_DIR")
         .map(PathBuf::from)
-        .ok_or_else(|| ApiError::Bad("RISK_DATA_DIR não configurado".into()))?;
+        .ok_or_else(|| ApiError::Bad("BRIKS_DATA_DIR não configurado".into()))?;
     Ok(data_dir.join("attachments"))
 }
 

@@ -28,7 +28,7 @@ import {
   type ChatConnectionStatus,
 } from "../chat";
 import type { Channel, ChatMessage, Community, CurrentUser, Friend, PendingFriend, VoiceActivity } from "../application/contracts";
-import { useRiskApplication } from "../application/ApplicationContext";
+import { useBriksApplication } from "../application/ApplicationContext";
 import { ConversationTimeline } from "../components/ConversationTimeline";
 import { GroupInvitePanel } from "../components/GroupInvitePanel";
 import { GroupEditor } from "../components/GroupEditor";
@@ -68,7 +68,7 @@ type DeleteTarget = { kind: "friend"; friend: Friend } | { kind: "group"; group:
 type ChannelActionTarget = { mode: "edit" | "delete"; channel: Channel } | null;
 
 export function HomeView() {
-  const { gateway: api, call, chat, callChat, backgroundChats, voiceActivities, session } = useRiskApplication();
+  const { gateway: api, call, chat, callChat, backgroundChats, voiceActivities, session } = useBriksApplication();
   const token = useCallStore((state) => state.token)!;
   const reset = useCallStore((state) => state.reset);
   const setRoom = useCallStore((state) => state.setRoom);
@@ -122,8 +122,8 @@ export function HomeView() {
       if (!detail || (!detail.skippedChannels && !detail.skippedGroups)) return;
       setError(`Sincronização em segundo plano limitada: ${detail.skippedChannels} canais e ${detail.skippedGroups} grupos aguardam uma vaga.`);
     };
-    window.addEventListener("risk:background-capacity", reportCapacity);
-    return () => window.removeEventListener("risk:background-capacity", reportCapacity);
+    window.addEventListener("briks:background-capacity", reportCapacity);
+    return () => window.removeEventListener("briks:background-capacity", reportCapacity);
   }, []);
 
   useEffect(() => {
@@ -144,8 +144,8 @@ export function HomeView() {
         setCallWorkspaceOpen(false);
       }
     };
-    window.addEventListener("risk:group-removed", removed);
-    return () => window.removeEventListener("risk:group-removed", removed);
+    window.addEventListener("briks:group-removed", removed);
+    return () => window.removeEventListener("briks:group-removed", removed);
   }, [callContext?.groupId, roomId, selectedCommunity?.id]);
 
   useEffect(() => {
@@ -205,8 +205,8 @@ export function HomeView() {
 
   useEffect(() => {
     const reload = () => { void loadSocial().catch(() => undefined); };
-    window.addEventListener("risk:social-updated", reload);
-    return () => window.removeEventListener("risk:social-updated", reload);
+    window.addEventListener("briks:social-updated", reload);
+    return () => window.removeEventListener("briks:social-updated", reload);
   }, [token]);
 
   useEffect(() => {
@@ -248,8 +248,8 @@ export function HomeView() {
     }
     void loadMembers().catch(() => { if (alive) { setGroupMembers([]); setSelectedLocalGroup(null); setCanEditSelectedGroup(false); } });
     const reload = () => { void loadMembers().catch(() => undefined); };
-    window.addEventListener("risk:social-updated", reload);
-    return () => { alive = false; window.removeEventListener("risk:social-updated", reload); };
+    window.addEventListener("briks:social-updated", reload);
+    return () => { alive = false; window.removeEventListener("briks:social-updated", reload); };
   }, [selectedCommunity, currentUser?.displayName, currentUser?.avatar]);
 
   useEffect(() => {
@@ -531,7 +531,7 @@ export function HomeView() {
       setChannels((items) => items.map((item) => item.id === next.id ? next : item));
       setActiveChannel((current) => current?.id === next.id ? next : current);
       setChannelAction(null);
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new Event("briks:social-updated"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível renomear o canal.");
     } finally {
@@ -553,7 +553,7 @@ export function HomeView() {
       }
       setChannels(remaining);
       setChannelAction(null);
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new Event("briks:social-updated"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível apagar o canal.");
     } finally {
@@ -598,7 +598,7 @@ export function HomeView() {
       }
       setDeleteTarget(null);
       await loadSocial();
-      window.dispatchEvent(new Event("risk:social-updated"));
+      window.dispatchEvent(new Event("briks:social-updated"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível concluir a remoção.");
     } finally {
@@ -628,7 +628,7 @@ export function HomeView() {
     if (roomId) call.updateProfile(profile.displayName, profile.avatar);
     setModal(null);
     void loadSocial();
-    window.dispatchEvent(new Event("risk:social-updated"));
+    window.dispatchEvent(new Event("briks:social-updated"));
   }
 
   function groupSaved(group: LocalGroup): void {
@@ -755,7 +755,7 @@ export function HomeView() {
       </aside>
 
       <aside className={`navigation ${roomId ? "in-call" : ""}`}>
-        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "BRisk"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
+        <div className="nav-title"><span>{selectedCommunity?.name ?? activeFriend?.displayName ?? "Briks"}</span>{selectedCommunity && <div className="nav-title-actions">{canEditSelectedGroup && <button className="nav-edit" title="Personalizar grupo" aria-label="Personalizar grupo" onClick={() => setModal("groupProfile")}><Pencil size={16}/></button>}<button className="nav-danger" title="Apagar ou sair do grupo" aria-label="Apagar ou sair do grupo" onClick={() => setDeleteTarget({ kind: "group", group: selectedCommunity })}><Trash2 size={16}/></button></div>}</div>
         {selectedCommunity ? <>
           <div className="nav-section"><span>CANAIS DE TEXTO</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
           {channels.filter((item) => item.kind === "text").map((channel) => <div className="channel-item" key={channel.id}>
@@ -823,7 +823,7 @@ export function HomeView() {
         {roomId && <section className="voice-session-panel">
           <button className="voice-session-summary" onClick={() => setCallWorkspaceOpen(true)}>
             <span><i/>Voz conectada</span>
-            <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "BRisk"}</small>
+            <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "Briks"}</small>
           </button>
           <div className="voice-session-actions">
             <button className={localCallState.microphone ? "" : "off"} onClick={() => void call.toggleMicrophone(roomId)} title={localCallState.microphone ? "Desativar microfone" : "Ativar microfone"}>{localCallState.microphone ? <Mic/> : <MicOff/>}</button>
@@ -913,7 +913,7 @@ export function HomeView() {
             setActiveFriend(null);
             setSelectedCommunity(community);
             setModal(null);
-            window.dispatchEvent(new Event("risk:social-updated"));
+            window.dispatchEvent(new Event("briks:social-updated"));
           })
           .catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao criar grupo local"));
       }}><input name="name" minLength={2} maxLength={80} placeholder="Nome do grupo" required/><button>Criar grupo neste dispositivo</button></form></Modal>}
@@ -930,7 +930,7 @@ export function HomeView() {
           setChannels((items) => [...items, channel]);
           setActiveChannel(channel);
           setModal(null);
-          window.dispatchEvent(new Event("risk:social-updated"));
+          window.dispatchEvent(new Event("briks:social-updated"));
         }).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao criar canal"));
       }}><input name="name" minLength={2} maxLength={80} placeholder="Nome do canal" required/><select name="kind"><option value="text">Canal de texto</option><option value="voice">Sala de voz</option></select><button>Criar canal</button></form></Modal>}
       {modal === "inviteMember" && selectedCommunity && <Modal title="Adicionar membro" onClose={() => setModal(null)}>{currentUser ? <GroupInvitePanel token={token} displayName={currentUser.displayName} preferredGroupId={selectedCommunity.id} preferredGroupName={selectedCommunity.name} preferredGroupChannels={channels} initialMode="create" onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}

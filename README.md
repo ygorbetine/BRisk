@@ -1,18 +1,18 @@
-# BRisk — transmissão de tela e chamadas
+# Briks — transmissão de tela e chamadas
 
-**BRisk** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo BRisk sem que a voz do Discord vaze para o stream.
+**Briks** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo Briks sem que a voz do Discord vaze para o stream.
 
 > Derivado do projeto aberto [Risk-P2P](https://github.com/xxsamboladiones/Risk-P2P) (AGPL-3.0). Este fork mantém a licença AGPL-3.0; veja `LICENSE` e `THIRD_PARTY_NOTICES.md`.
 
-## O que o BRisk acrescenta
+## O que o Briks acrescenta
 
-- **Áudio só da janela:** ao transmitir uma janela, o som capturado é o do processo dela (Windows, WASAPI), nunca o do sistema inteiro. Discord e o próprio BRisk são excluídos. Abas do navegador compartilham o som do navegador inteiro (limitação do Windows: o áudio é por processo, não por aba).
+- **Áudio só da janela:** ao transmitir uma janela, o som capturado é o do processo dela (Windows, WASAPI), nunca o do sistema inteiro. Discord e o próprio Briks são excluídos. Abas do navegador compartilham o som do navegador inteiro (limitação do Windows: o áudio é por processo, não por aba).
 - **Qualidade independente:** resolução (720p a 4K), FPS (15 a 60) e bitrate separados. O bitrate é automático por padrão; os níveis Alto, Máximo e Personalizado deixam você "forçar a barra" (até 50 Mbps), com aviso de upload.
 - **Conexão mais estável:** recuperação automática de peers, reinício de ICE ao trocar de rede e pool de candidatos.
 - **Malha P2P até 8 pessoas** e **SFU opcional (LiveKit)** para salas maiores ou várias transmissões com qualidade alta. Veja `infrastructure/livekit/README.md`.
 - **Microfone desligado ao entrar** (o Discord continua dono da voz).
-- **Interface** com a organização do Risk, cores inspiradas no RASTRO e glassmorfismo; lista de membros agrupa o mesmo nome e tem "Limpar duplicados".
-- Aceleração de GPU na codificação ligada por padrão no Windows (`BRISK_DISABLE_GPU_ENCODE=1` desliga).
+- **Interface** com a organização do Briks, cores inspiradas no RASTRO e glassmorfismo; lista de membros agrupa o mesmo nome e tem "Limpar duplicados".
+- Aceleração de GPU na codificação ligada por padrão no Windows (`BRIKS_DISABLE_GPU_ENCODE=1` desliga).
 
 ## Instalar e rodar
 
@@ -26,13 +26,13 @@ Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase
 
 ---
 
-# Documentação herdada do Risk
+# Documentação herdada do projeto original (Risk-P2P)
 
-# Risk — comunicação P2P
+# Briks — comunicação P2P
 
-**Risk** é um aplicativo desktop de comunicação P2P com chamadas de voz e vídeo, compartilhamento de tela, chat, grupos e transferência de arquivos usando WebRTC.
+**Briks** é um aplicativo desktop de comunicação P2P com chamadas de voz e vídeo, compartilhamento de tela, chat, grupos e transferência de arquivos usando WebRTC.
 
-> **Versão atual: Alpha 0.3.3**
+> **Versão atual: Alpha 0.4.0**
 >
 > O projeto ainda está em fase Alpha. Recursos, protocolo e persistência podem mudar entre versões.
 
@@ -64,16 +64,16 @@ Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase
 - controle de ensurdecer durante chamadas.
 - preferência oficial de rota entre seleção automática, internet direta e VPN privada (ZeroTier, Tailscale ou WireGuard).
 
-No Windows, o compartilhamento de tela pode capturar o áudio do sistema usando o caminho nativo do Electron. No Linux existe um caminho experimental via PipeWire para compartilhar áudio do sistema sem retransmitir o próprio áudio reproduzido pelo Risk; quando esse caminho não está disponível, o compartilhamento continua somente com vídeo.
+No Windows, o compartilhamento de tela pode capturar o áudio do sistema usando o caminho nativo do Electron. No Linux existe um caminho experimental via PipeWire para compartilhar áudio do sistema sem retransmitir o próprio áudio reproduzido pelo Briks; quando esse caminho não está disponível, o compartilhamento continua somente com vídeo.
 
-Em máquinas virtuais Linux conhecidas (VMware, VirtualBox, QEMU/KVM, Hyper-V e Parallels), o Risk ativa automaticamente renderização por software para evitar falhas do Chromium quando a aceleração 3D não está disponível. É possível forçar esse comportamento com `RISK_DISABLE_GPU=1` ou manter a GPU com `RISK_FORCE_GPU=1`.
+Em máquinas virtuais Linux conhecidas (VMware, VirtualBox, QEMU/KVM, Hyper-V e Parallels), o Briks ativa automaticamente renderização por software para evitar falhas do Chromium quando a aceleração 3D não está disponível. É possível forçar esse comportamento com `BRIKS_DISABLE_GPU=1` ou manter a GPU com `BRIKS_FORCE_GPU=1`.
 
-## Como o Risk funciona
+## Como o Briks funciona
 
 O desktop é entregue como **um único aplicativo**, mas internamente possui dois processos:
 
 ```text
-Risk Desktop
+Briks Desktop
 │
 ├── Electron + React
 │   ├── interface
@@ -81,7 +81,7 @@ Risk Desktop
 │   ├── signaling
 │   └── WebRTC
 │
-└── risk-desktop-backend
+└── briks-desktop-backend
     ├── Rust + Axum
     └── SQLite local
 
@@ -95,7 +95,7 @@ O desktop **não exige PostgreSQL, Docker ou um servidor social instalado pelo u
 O arquivo SQLite é salvo como:
 
 ```text
-risk.sqlite3
+briks.sqlite3
 ```
 
 O banco não é gravado dentro de `resources`, `app.asar` ou da pasta de instalação.
@@ -108,12 +108,12 @@ O Supabase Realtime é usado apenas para coordenação temporária entre peers:
 - Broadcast transporta offer, answer, ICE e estado efêmero;
 - nenhuma tabela Supabase é necessária para chamadas;
 - mídia, mensagens e arquivos trafegam pelo WebRTC;
-- SDP, ICE e histórico de chamadas não são persistidos pelo Risk.
+- SDP, ICE e histórico de chamadas não são persistidos pelo Briks.
 
 Convites P2P usam códigos temporários no formato:
 
 ```text
-risk-XXXX-XXXX-XXXX-XXXX
+briks-XXXX-XXXX-XXXX-XXXX
 ```
 
 A identidade P2P usa ECDSA P-256. A chave privada local é mantida como `CryptoKey` não extraível e não é enviada ao Supabase ou a outros peers.
@@ -131,7 +131,7 @@ O protocolo inclui:
 - previews de mídia;
 - armazenamento local de anexos.
 
-O desktop aplica por padrão uma quota total de 50 GiB para anexos e remove transferências temporárias abandonadas há mais de sete dias. A quota pode ser ajustada com `RISK_ATTACHMENT_QUOTA_BYTES`.
+O desktop aplica por padrão uma quota total de 50 GiB para anexos e remove transferências temporárias abandonadas há mais de sete dias. A quota pode ser ajustada com `BRIKS_ATTACHMENT_QUOTA_BYTES`.
 
 ## Chamadas
 
@@ -149,7 +149,7 @@ diagnóstico e binding de signaling possuem módulos próprios em `src/call/`.
 
 No renderer, `application/runtime.ts` é o único composition root. As views
 recebem gateway, chamadas, chats, convites e sessão através de
-`RiskApplicationProvider`, sem importar diretamente Supabase, Mesh ou o adapter
+`BriksApplicationProvider`, sem importar diretamente Supabase, Mesh ou o adapter
 HTTP do backend local.
 
 A interface de chamada suporta:
@@ -157,7 +157,7 @@ A interface de chamada suporta:
 - microfone;
 - câmera;
 - compartilhamento de tela;
-- seleção de janela/tela dentro do próprio Risk Desktop;
+- seleção de janela/tela dentro do próprio Briks Desktop;
 - 720p/30 FPS;
 - 720p/60 FPS;
 - 1080p/30 FPS;
@@ -193,16 +193,16 @@ infrastructure     Coturn, Docker e infraestrutura auxiliar
 Quando o Electron inicia:
 
 1. gera um token local aleatório por execução;
-2. inicia `risk-desktop-backend` como processo filho;
+2. inicia `briks-desktop-backend` como processo filho;
 3. fornece o diretório de dados e configurações locais;
 4. o backend abre/cria o SQLite e executa migrations;
 5. escolhe uma porta loopback livre;
 6. o Electron valida `/health`;
-7. registra e carrega a origem persistente `risk://app`;
-8. a janela do Risk é aberta.
+7. registra e carrega a origem persistente `briks://app`;
+8. a janela do Briks é aberta.
 
-A API local escuta apenas em `127.0.0.1` e, exceto por `/health`, exige `X-Risk-Desktop-Token`.
-Os arquivos da interface empacotada são servidos pelo protocolo seguro `risk://app`; não existe uma segunda porta HTTP para os assets.
+A API local escuta apenas em `127.0.0.1` e, exceto por `/health`, exige `X-Briks-Desktop-Token`.
+Os arquivos da interface empacotada são servidos pelo protocolo seguro `briks://app`; não existe uma segunda porta HTTP para os assets.
 
 ## Configuração
 
@@ -213,11 +213,11 @@ VITE_SUPABASE_URL=https://seu-projeto.supabase.co
 VITE_SUPABASE_ANON_KEY=sua-chave-publica
 VITE_DEBUG_SIGNALING=false
 VITE_ENABLE_LEGACY_SERVER=false
-# VITE_TURN_CREDENTIALS_URL=https://auth.risk.example/rtc/credentials
+# VITE_TURN_CREDENTIALS_URL=https://auth.briks.example/rtc/credentials
 ```
 
 `VITE_TURN_CREDENTIALS_URL` contém somente a URL HTTPS de um emissor remoto. O
-Risk busca credenciais TURN temporárias, valida o contrato, mantém o resultado
+Briks busca credenciais TURN temporárias, valida o contrato, mantém o resultado
 apenas em memória e renova antes do vencimento. A origem do endpoint é incluída
 automaticamente na CSP do aplicativo.
 
@@ -230,7 +230,7 @@ VITE_ICE_SERVERS_JSON=[{"urls":["stun:stun.example.com:3478"]}]
 Nunca coloque `service_role`, senha de banco, `JWT_SECRET`, `TURN_SECRET` ou uma
 credencial TURN permanente no frontend.
 
-Se a lista ICE contiver apenas `stun:`, o Risk opera em **STUN direto**. Isso funciona em muitas redes domésticas, mas não garante conexão entre CGNAT, NAT simétrico ou firewalls restritivos. A tela de diagnóstico identifica explicitamente `Somente STUN`; TURN só aparece como disponível quando uma URL `turn:`/`turns:` foi realmente entregue ao app.
+Se a lista ICE contiver apenas `stun:`, o Briks opera em **STUN direto**. Isso funciona em muitas redes domésticas, mas não garante conexão entre CGNAT, NAT simétrico ou firewalls restritivos. A tela de diagnóstico identifica explicitamente `Somente STUN`; TURN só aparece como disponível quando uma URL `turn:`/`turns:` foi realmente entregue ao app.
 
 A implantação Coturn de produção, incluindo UDP/TCP `3478`, TLS `5349`, TLS
 sobre `443`, firewall, certificados e emissor temporário, está documentada em
@@ -312,7 +312,7 @@ O desktop mantém:
 - preload mínimo;
 - novas janelas bloqueadas;
 - navegação externa bloqueada;
-- permissões de mídia limitadas à origem local do Risk;
+- permissões de mídia limitadas à origem local do Briks;
 - IPC validado pela origem;
 - token efêmero para a API local;
 - single-instance lock.
@@ -374,4 +374,4 @@ Consulte também:
 
 ---
 
-Risk está em desenvolvimento ativo. Bugs e mudanças incompatíveis ainda podem ocorrer durante a fase Alpha.
+Briks está em desenvolvimento ativo. Bugs e mudanças incompatíveis ainda podem ocorrer durante a fase Alpha.

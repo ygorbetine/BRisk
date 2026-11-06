@@ -1,17 +1,17 @@
 {
-  "name": "@risk/desktop",
-  "version": "0.3.3",
+  "name": "@briks/desktop",
+  "version": "0.4.0",
   "private": true,
-  "description": "ComunicaÃ§Ã£o P2P com Ã¡udio, vÃ­deo, tela e chat via WebRTC",
-  "homepage": "https://github.com/xxsamboladiones/Risk-P2P",
+  "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
+  "homepage": "https://github.com/ygorbetine/BRisk",
   "author": {
-    "name": "BRisk",
-    "email": "xxsamboladiones@users.noreply.github.com"
+    "name": "Briks",
+    "email": "ygorbetine@users.noreply.github.com"
   },
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/prepare-desktop-backend.mjs --debug && concurrently -k \"pnpm --filter @risk/web dev\" \"wait-on http://localhost:5173 && tsc && electron .\"",
+    "dev": "node ../../scripts/prepare-desktop-backend.mjs --debug && concurrently -k \"pnpm --filter @briks/web dev\" \"wait-on http://localhost:5173 && tsc && electron .\"",
     "build": "tsc && electron-builder",
     "build:win": "tsc && electron-builder --win nsis",
     "build:linux": "tsc && electron-builder --linux AppImage deb",
@@ -28,8 +28,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.brisk.calls",
-    "productName": "BRisk",
+    "appId": "com.briks.calls",
+    "productName": "Briks",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -60,8 +60,8 @@
         "from": "resources/backend",
         "to": "backend",
         "filter": [
-          "risk-desktop-backend",
-          "risk-desktop-backend.exe"
+          "briks-desktop-backend",
+          "briks-desktop-backend.exe"
         ]
       },
       {
@@ -85,15 +85,15 @@
       "icon": "build/icon.ico"
     },
     "linux": {
-      "executableName": "risk",
+      "executableName": "briks",
       "target": [
         "AppImage",
         "deb"
       ],
       "icon": "build/icon.png",
       "category": "Network",
-      "maintainer": "Risk P2P <xxsamboladiones@users.noreply.github.com>",
-      "artifactName": "BRisk-${version}-${arch}.${ext}"
+      "maintainer": "Briks <ygorbetine@users.noreply.github.com>",
+      "artifactName": "Briks-${version}-${arch}.${ext}"
     }
   }
 }

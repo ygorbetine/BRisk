@@ -90,7 +90,7 @@ export async function createRnnoiseMicrophone(inputStream: MediaStream): Promise
     outputTrack.contentHint = "speech";
 
     const outputSettings = outputTrack.getSettings();
-    console.info("Risk RNNoise microphone", {
+    console.info("Briks RNNoise microphone", {
       sampleRate: context.sampleRate,
       channelCount: outputSettings.channelCount ?? 1,
       contextState: context.state,

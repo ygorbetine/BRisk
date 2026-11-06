@@ -7,7 +7,7 @@ import {
   type CallTransportRegistry,
   type PeerConnectionDiagnostics,
   type RtcNetworkPreference,
-} from "@risk/rtc";
+} from "@briks/rtc";
 import type { SignalingDiagnostics } from "../services/signaling/types";
 import type { PublicPeerIdentity } from "../services/offline/social-storage";
 

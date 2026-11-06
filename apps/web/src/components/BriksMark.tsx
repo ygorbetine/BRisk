@@ -1,15 +1,15 @@
-/** Marca do BRisk: "B" branco sobre degradê magenta/violeta, com ponto de transmissão ao vivo. */
-export function BriskMark({ size = 24 }: { size?: number }) {
+/** Marca do Briks: "B" branco sobre degradê magenta/violeta, com ponto de transmissão ao vivo. */
+export function BriksMark({ size = 24 }: { size?: number }) {
   return (
-    <svg className="brisk-mark" width={size} height={size} viewBox="0 0 256 256" aria-hidden="true" focusable="false">
+    <svg className="briks-mark" width={size} height={size} viewBox="0 0 256 256" aria-hidden="true" focusable="false">
       <defs>
-        <linearGradient id="brisk-mark-gradient" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="briks-mark-gradient" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#c026d3" />
           <stop offset="0.55" stopColor="#7c4dff" />
           <stop offset="1" stopColor="#5b6cf9" />
         </linearGradient>
       </defs>
-      <rect width="256" height="256" rx="58" fill="url(#brisk-mark-gradient)" />
+      <rect width="256" height="256" rx="58" fill="url(#briks-mark-gradient)" />
       <path
         fill="#fff"
         fillRule="evenodd"

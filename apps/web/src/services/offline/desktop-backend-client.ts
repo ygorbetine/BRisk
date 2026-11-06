@@ -1,6 +1,6 @@
 export type DesktopBackendConfig = { baseUrl: string; token?: string };
 
-const DEV_BACKEND_PROXY = "/__risk-api";
+const DEV_BACKEND_PROXY = "/__briks-api";
 let configPromise: Promise<DesktopBackendConfig | null> | undefined;
 
 export function resetDesktopBackendClient(): void {
@@ -33,7 +33,7 @@ export async function backendRequest<T>(
 ): Promise<T> {
   const perform = async (accessToken: string | null) => {
     const headers = new Headers({ "content-type": "application/json", ...init.headers });
-    if (config.token) headers.set("x-risk-desktop-token", config.token);
+    if (config.token) headers.set("x-briks-desktop-token", config.token);
     if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
     return fetch(`${config.baseUrl}/p2p/${resource}/${encodeURIComponent(channelId)}${query}`, { ...init, headers });
   };
@@ -41,7 +41,7 @@ export async function backendRequest<T>(
   let response = await perform(accessToken);
   if (response.status === 401) {
     const refreshHeaders = new Headers();
-    if (config.token) refreshHeaders.set("x-risk-desktop-token", config.token);
+    if (config.token) refreshHeaders.set("x-briks-desktop-token", config.token);
     const refresh = await fetch(`${config.baseUrl}/auth/refresh`, { method: "POST", headers: refreshHeaders });
     if (refresh.ok) {
       const session = await refresh.json() as { accessToken: string };

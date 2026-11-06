@@ -8,10 +8,10 @@ import {
   type PeerConnectionDiagnostics,
   type RtcNetworkPreference,
   type TransportEvents,
-} from "@risk/rtc";
-import type { PeerState } from "@risk/protocol";
+} from "@briks/rtc";
+import type { PeerState } from "@briks/protocol";
 import { useCallStore } from "../store";
-import type { RiskGateway } from "../application/contracts";
+import type { BriksGateway } from "../application/contracts";
 import { loadVoiceVideoSettings, type VoiceVideoSettings } from "../services/audio/settings";
 import {
   CallPresenceSoundState,
@@ -67,7 +67,7 @@ const MESH_CAPACITY_ERROR = `A sala atingiu o limite seguro de ${MESH_HARD_MAX_P
 const missingSignaling = (): SignalingProvider => {
   throw new Error("CallController precisa receber um adapter de signaling no composition root.");
 };
-const missingProfileGateway: Pick<RiskGateway, "me"> = {
+const missingProfileGateway: Pick<BriksGateway, "me"> = {
   me: async () => { throw new Error("CallController precisa receber o gateway de perfil no composition root."); },
 };
 
@@ -126,7 +126,7 @@ export class CallController {
 
   constructor(
     private readonly createSignaling: () => SignalingProvider = missingSignaling,
-    private readonly profileGateway: Pick<RiskGateway, "me"> = missingProfileGateway,
+    private readonly profileGateway: Pick<BriksGateway, "me"> = missingProfileGateway,
     private readonly transportRegistry: CallTransportRegistry = defaultCallTransportRegistry,
   ) {}
 
@@ -248,8 +248,8 @@ export class CallController {
     this.bindSignaling(signaling, localPeerId);
     if (this.groupId && typeof window !== "undefined") {
       const refreshSecurity = () => { void this.refreshGroupSecurity(); };
-      window.addEventListener("risk:social-updated", refreshSecurity);
-      this.signalingUnsubscribers.push(() => window.removeEventListener("risk:social-updated", refreshSecurity));
+      window.addEventListener("briks:social-updated", refreshSecurity);
+      this.signalingUnsubscribers.push(() => window.removeEventListener("briks:social-updated", refreshSecurity));
     }
     if (typeof window !== "undefined") {
       // Troca de rede (Wi-Fi, VPN, volta da internet): reinicia o ICE sem esperar a queda.

@@ -1,3 +1,3 @@
 // Fachada temporária para consumidores antigos. A implementação do gateway
 // HTTP/loopback pertence à camada de infraestrutura.
-export * from "./infrastructure/risk-gateway";
+export * from "./infrastructure/briks-gateway";

@@ -14,14 +14,14 @@ type DesktopScreenBridge = {
 
 type DisplayAudioConstraints = MediaTrackConstraints & { restrictOwnAudio?: boolean };
 type DisplayAudioSettings = MediaTrackSettings & { restrictOwnAudio?: boolean };
-type RiskMediaCaptureOptions = { restrictOwnAudio?: boolean };
+type BriksMediaCaptureOptions = { restrictOwnAudio?: boolean };
 
 function desktopScreenBridge(): DesktopScreenBridge | undefined {
   return (globalThis as typeof globalThis & { desktop?: DesktopScreenBridge }).desktop;
 }
 
-function riskMediaCaptureOptions(): RiskMediaCaptureOptions | undefined {
-  return (globalThis as typeof globalThis & { __riskMediaCaptureOptions?: RiskMediaCaptureOptions }).__riskMediaCaptureOptions;
+function briksMediaCaptureOptions(): BriksMediaCaptureOptions | undefined {
+  return (globalThis as typeof globalThis & { __briksMediaCaptureOptions?: BriksMediaCaptureOptions }).__briksMediaCaptureOptions;
 }
 
 export class WebScreenShareProvider implements ScreenShareProvider {
@@ -49,7 +49,7 @@ export class WebScreenShareProvider implements ScreenShareProvider {
       await desktop.selectScreenSource(selectedSourceId);
     }
 
-    const restrictOwnAudio = riskMediaCaptureOptions()?.restrictOwnAudio === true;
+    const restrictOwnAudio = briksMediaCaptureOptions()?.restrictOwnAudio === true;
     const audio: boolean | DisplayAudioConstraints = includeAudio
       ? restrictOwnAudio ? { restrictOwnAudio: true } : true
       : false;
@@ -59,12 +59,12 @@ export class WebScreenShareProvider implements ScreenShareProvider {
       const audioTrack = this.stream.getAudioTracks()[0];
       if (audioTrack) {
         const settings = audioTrack.getSettings() as DisplayAudioSettings;
-        console.info("Risk screen audio capture", {
+        console.info("Briks screen audio capture", {
           deviceId: settings.deviceId ?? "unknown",
           restrictOwnAudio: settings.restrictOwnAudio ?? "unknown",
         });
         if (desktop && settings.deviceId === "loopback") {
-          console.warn("A captura ainda está usando loopback completo; o áudio do Risk pode retornar na transmissão.");
+          console.warn("A captura ainda está usando loopback completo; o áudio do Briks pode retornar na transmissão.");
         }
       }
     }

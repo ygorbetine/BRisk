@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  RISK_ATTACHMENT_PROTOCOL_VERSION,
+  BRIKS_ATTACHMENT_PROTOCOL_VERSION,
   classifyAttachment,
   inferAttachmentMimeType,
   isFileControlMessage,
@@ -11,7 +11,7 @@ import {
 
 function manifest(overrides: Partial<AttachmentManifest> = {}): AttachmentManifest {
   return {
-    protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+    protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
     id: "a".repeat(64),
     senderPeerId: "peer_12345678",
     filename: "arquivo.zip",

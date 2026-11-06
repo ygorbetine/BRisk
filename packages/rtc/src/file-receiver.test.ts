@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  RISK_ATTACHMENT_PROTOCOL_VERSION,
+  BRIKS_ATTACHMENT_PROTOCOL_VERSION,
   type AttachmentChunkFrame,
   type AttachmentManifest,
   type FileControlMessage,
-} from "@risk/protocol/attachments";
+} from "@briks/protocol/attachments";
 import { AttachmentTransferReceiver, type AttachmentChunkSink } from "./file-receiver";
 import { sha256Hex } from "./file-transfer";
 
 function manifest(): AttachmentManifest {
   return {
-    protocolVersion: RISK_ATTACHMENT_PROTOCOL_VERSION,
+    protocolVersion: BRIKS_ATTACHMENT_PROTOCOL_VERSION,
     id: "a".repeat(64),
     channelId: "channel_12345678",
     senderPeerId: "peer_12345678",

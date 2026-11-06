@@ -17,7 +17,7 @@ const PREFERENCE_OPTIONS: Array<{
   { value: "private-vpn", title: "VPN privada quando disponível", description: "Prioriza ZeroTier, Tailscale ou WireGuard e usa a internet como fallback." },
 ];
 
-function providerLabel(provider: RiskDesktopNetworkInterface["provider"]): string {
+function providerLabel(provider: BriksDesktopNetworkInterface["provider"]): string {
   if (provider === "zerotier") return "ZeroTier";
   if (provider === "tailscale") return "Tailscale";
   if (provider === "wireguard") return "WireGuard";
@@ -26,7 +26,7 @@ function providerLabel(provider: RiskDesktopNetworkInterface["provider"]): strin
 
 export function NetworkSettingsPanel() {
   const [preference, setPreference] = useState<NetworkPreference>(() => loadNetworkSettings().preference);
-  const [interfaces, setInterfaces] = useState<RiskDesktopNetworkInterface[]>([]);
+  const [interfaces, setInterfaces] = useState<BriksDesktopNetworkInterface[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const vpnInterfaces = useMemo(() => interfaces.filter((item) => item.provider !== "unknown"), [interfaces]);
@@ -84,6 +84,6 @@ export function NetworkSettingsPanel() {
       {error && <div className="settings-device-error">{error}</div>}
     </section>
 
-    <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o BRisk ainda pode usar conexão direta, STUN ou TURN.</div>
+    <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o Briks ainda pode usar conexão direta, STUN ou TURN.</div>
   </div>;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
-import { useRiskApplication } from "./application/ApplicationContext";
+import { useBriksApplication } from "./application/ApplicationContext";
 import { preloadCallSounds } from "./services/audio/call-sounds";
 import { useCallStore } from "./store";
 import { AuthView } from "./views/AuthView";
@@ -8,7 +8,7 @@ import { CallView } from "./views/CallView";
 import { HomeView } from "./views/HomeView";
 
 export function App() {
-  const { session } = useRiskApplication();
+  const { session } = useBriksApplication();
   const token = useCallStore((state) => state.token);
   const room = useCallStore((state) => state.roomId);
   const callWorkspaceOpen = useCallStore((state) => state.callWorkspaceOpen);
@@ -31,7 +31,7 @@ export function App() {
     return <main className="auth"><div className="session-loading"><Sparkles/><span>Restaurando sua sessão…</span></div></main>;
   }
   if (!token) return <AuthView/>;
-  return <div className="risk-application">
+  return <div className="briks-application">
     <HomeView/>
     {room && <div className={`call-layer ${callWorkspaceOpen ? "open" : "background"}`} aria-hidden={!callWorkspaceOpen}><CallView/></div>}
   </div>;

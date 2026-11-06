@@ -7,7 +7,7 @@ export const PACKAGED_HOST = "app";
 export const PACKAGED_ORIGIN = `${PACKAGED_SCHEME}://${PACKAGED_HOST}`;
 export const PACKAGED_ENTRY_URL = `${PACKAGED_ORIGIN}/index.html`;
 
-export function registerRiskScheme(): void {
+export function registerBriksScheme(): void {
   // Uma origem estável preserva IndexedDB/localStorage e a identidade ECDSA.
   protocol.registerSchemesAsPrivileged([
     {
@@ -40,7 +40,7 @@ export async function registerPackagedProtocol(webRoot: string): Promise<void> {
 
       return await net.fetch(pathToFileURL(filePath).toString());
     } catch (error) {
-      console.warn("Falha ao servir recurso do bundle Risk", { url: request.url, error });
+      console.warn("Falha ao servir recurso do bundle Briks", { url: request.url, error });
       return new Response("Not found", { status: 404 });
     }
   });

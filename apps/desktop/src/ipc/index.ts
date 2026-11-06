@@ -27,7 +27,7 @@ export function registerDesktopIpc(
     assertTrusted(event.sender.getURL());
     if (typeof enabled !== "boolean") throw new Error("Estado de tela cheia inválido.");
     const owner = BrowserWindow.fromWebContents(event.sender);
-    if (!owner) throw new Error("Janela do Risk não encontrada.");
+    if (!owner) throw new Error("Janela do Briks não encontrada.");
     owner.setFullScreen(enabled);
     if (enabled) owner.focus();
     return { fullscreen: enabled };

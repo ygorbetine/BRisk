@@ -1,4 +1,4 @@
-import type { RtcNetworkPreference } from "@risk/rtc";
+import type { RtcNetworkPreference } from "@briks/rtc";
 
 export type NetworkPreference = RtcNetworkPreference;
 
@@ -7,7 +7,7 @@ export type NetworkSettings = {
 };
 
 const STORAGE_KEY = "risk.network-settings.v1";
-export const NETWORK_SETTINGS_EVENT = "risk:network-settings";
+export const NETWORK_SETTINGS_EVENT = "briks:network-settings";
 
 export const DEFAULT_NETWORK_SETTINGS: NetworkSettings = {
   preference: "auto",

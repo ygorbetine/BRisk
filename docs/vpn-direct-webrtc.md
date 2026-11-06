@@ -1,11 +1,11 @@
 # WebRTC direto por VPN overlay
 
-O Risk desktop permite que o ICE do WebRTC considere e priorize interfaces
+O Briks desktop permite que o ICE do WebRTC considere e priorize interfaces
 locais, inclusive ZeroTier, Tailscale e WireGuard. Não existe integração com
 conta, API ou SDK da VPN: o usuário conecta a VPN no sistema operacional e o
-Risk trata o adaptador como uma interface de rede normal.
+Briks trata o adaptador como uma interface de rede normal.
 
-O fluxo de signaling e a autenticação de identidade do Risk não mudam. Áudio,
+O fluxo de signaling e a autenticação de identidade do Briks não mudam. Áudio,
 vídeo, compartilhamento de tela, chat e transferência de arquivos continuam no
 mesmo `RTCPeerConnection`, protegidos por WebRTC e pelas verificações de identidade
 existentes.
@@ -87,8 +87,8 @@ sanitizado da chamada.
   um adaptador VPN por si só nunca classifica uma conexão como VPN.
 
 O comportamento de descoberta de candidates depende do Chromium/Electron e da
-configuração do sistema. O Risk usa a API oficial
+configuração do sistema. O Briks usa a API oficial
 `setWebRTCIPHandlingPolicy("default")`, não desabilita mDNS e altera somente a
 prioridade/filtragem de linhas ICE locais conforme a escolha explícita do usuário.
-Se o Chromium mascarar um endereço `host` com um nome mDNS, o Risk mantém esse
+Se o Chromium mascarar um endereço `host` com um nome mDNS, o Briks mantém esse
 candidate inalterado em vez de associá-lo por suposição à interface errada.

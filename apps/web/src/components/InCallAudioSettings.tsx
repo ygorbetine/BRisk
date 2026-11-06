@@ -70,8 +70,8 @@ export function InCallAudioSettings({ call, onClose }: { call: CallController; o
       const detail = (event as CustomEvent<VoiceVideoSettings>).detail;
       if (detail) setSettings(detail);
     };
-    window.addEventListener("risk:voice-video-settings", onSettingsChanged);
-    return () => window.removeEventListener("risk:voice-video-settings", onSettingsChanged);
+    window.addEventListener("briks:voice-video-settings", onSettingsChanged);
+    return () => window.removeEventListener("briks:voice-video-settings", onSettingsChanged);
   }, []);
 
   const selectedMicrophoneMissing = useMemo(() => {

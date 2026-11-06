@@ -5,7 +5,7 @@ const root = process.cwd();
 const config = await readFile(resolve(root, "infrastructure/coturn/turnserver.conf"), "utf8");
 const developmentConfig = await readFile(resolve(root, "infrastructure/coturn/turnserver.dev.conf"), "utf8");
 const compose = await readFile(resolve(root, "infrastructure/coturn/compose.production.yml"), "utf8");
-const entrypoint = await readFile(resolve(root, "infrastructure/coturn/risk-entrypoint.sh"), "utf8");
+const entrypoint = await readFile(resolve(root, "infrastructure/coturn/briks-entrypoint.sh"), "utf8");
 
 function requireLine(contents, line, source) {
   const lines = contents.split(/\r?\n/).map((value) => value.trim());
@@ -31,7 +31,7 @@ for (const value of [
   "coturn/coturn:4.17.0-alpine@sha256:8f80ed9d6867319340ca612b9d005aaea2444755aa4ce3dd79ddfb5f31f6e1b5",
   "network_mode: host",
   "file: ${TURN_SECRET_FILE:?Defina TURN_SECRET_FILE}",
-  "/etc/coturn/risk-entrypoint.sh",
+  "/etc/coturn/briks-entrypoint.sh",
 ]) {
   if (!compose.includes(value)) throw new Error(`compose.production.yml não contém ${value}`);
 }
@@ -43,7 +43,7 @@ if (compose.includes("static-auth-secret") || compose.includes("TURN_SECRET:")) 
   throw new Error("compose.production.yml não pode expor TURN_SECRET em argv ou environment.");
 }
 for (const value of ["static-auth-secret=%s", "/run/secrets/turn_secret", "umask 077", "proc-user=nobody", "proc-group=nogroup"]) {
-  if (!entrypoint.includes(value)) throw new Error(`risk-entrypoint.sh não contém ${value}`);
+  if (!entrypoint.includes(value)) throw new Error(`briks-entrypoint.sh não contém ${value}`);
 }
 if (/^\s*(tls-listening-port|alt-tls-listening-port)\s*=/m.test(developmentConfig)) {
   throw new Error("turnserver.dev.conf não deve exigir TLS.");

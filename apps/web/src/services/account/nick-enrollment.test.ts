@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PublicPeerIdentity } from "../offline/social-storage";
 import type { KeyOwner } from "./account-service";
-import { planNickEnrollments } from "./nick-enrollment";
+import { planAdminPromotions, planNickEnrollments } from "./nick-enrollment";
 
 const key = (seed: string): JsonWebKey => ({ kty: "EC", crv: "P-256", x: `${seed}-x`.padEnd(43, "x"), y: `${seed}-y`.padEnd(43, "y") });
 const member = (peerId: string, seed: string, displayName = peerId): PublicPeerIdentity => ({ peerId, publicKey: key(seed), displayName });
@@ -72,6 +72,51 @@ describe("planNickEnrollments", () => {
       members: [member("veslei-old", "v1")],
       candidatePeerIds: ["veslei-new"],
       owners: new Map([owner("veslei-old", "veslei", "v1"), ["veslei-new", bad]]),
+    });
+    expect(plan).toEqual([]);
+  });
+});
+
+describe("planAdminPromotions", () => {
+  const owners = (rows: Array<[string, string, string]>) => new Map(rows.map(([peerId, nick, seed]) => owner(peerId, nick, seed)));
+
+  it("promove outra instalação do próprio dono (admin de reserva)", () => {
+    const plan = planAdminPromotions({
+      members: [member("dono-pc1-00", "a"), member("dono-pc2-00", "b")],
+      ownerPeerId: "dono-pc1-00",
+      administratorPeerIds: [],
+      owners: owners([["dono-pc1-00", "becine", "a"], ["dono-pc2-00", "becine", "b"]]),
+    });
+    expect(plan).toEqual(["dono-pc2-00"]);
+  });
+
+  it("promove outra instalação de um admin existente", () => {
+    const plan = planAdminPromotions({
+      members: [member("dono-00000", "a"), member("adm-pc1-000", "b"), member("adm-pc2-000", "c")],
+      ownerPeerId: "dono-00000",
+      administratorPeerIds: ["adm-pc1-000"],
+      owners: owners([["dono-00000", "becine", "a"], ["adm-pc1-000", "sticker", "b"], ["adm-pc2-000", "sticker", "c"]]),
+    });
+    expect(plan).toEqual(["adm-pc2-000"]);
+  });
+
+  it("não promove membro comum, removido, sem @nick ou com chave que não bate", () => {
+    const plan = planAdminPromotions({
+      members: [member("dono-00000", "a"), member("comum-0000", "b"), member("fake-00000", "c"), member("sem-nick-00", "d"), member("fora-00000", "e")],
+      ownerPeerId: "dono-00000",
+      administratorPeerIds: [],
+      removedPeerIds: ["fora-00000"],
+      owners: owners([["dono-00000", "becine", "a"], ["comum-0000", "veslei", "b"], ["fake-00000", "becine", "OUTRA"], ["fora-00000", "becine", "e"]]),
+    });
+    expect(plan).toEqual([]);
+  });
+
+  it("não promove ninguém se o @nick do dono não está verificado", () => {
+    const plan = planAdminPromotions({
+      members: [member("dono-pc1-00", "a"), member("dono-pc2-00", "b")],
+      ownerPeerId: "dono-pc1-00",
+      administratorPeerIds: [],
+      owners: owners([["dono-pc1-00", "becine", "CHAVE-DIFERENTE"], ["dono-pc2-00", "becine", "b"]]),
     });
     expect(plan).toEqual([]);
   });

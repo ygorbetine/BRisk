@@ -36,16 +36,25 @@ Ninguém além de dono/admin altera a lista. Quem não registrou @nick continua 
 4. **Visual**: título da tela de conta com a fonte do app e o campo do @nick com uma caixa só.
 5. **Testes**: regra de decisão em função pura (quem entra, quem não entra), agrupamento por @nick.
 
-### Fase 2 (0.6.1) — dono e admin por @nick
-- O dono do grupo passa a ser reconhecido pelo @nick: se o dono trocar de computador, as listas assinadas por
-  qualquer chave ativa dele são aceitas. Hoje isso quebra o grupo (o dono "some").
-- Mesma regra para administradores. Revogar a chave no app encerra a autoridade daquela instalação.
+### Fase 2 (0.6.1) — admin de reserva por @nick (ENTREGUE)
+- O dono promove sozinho, com concessões de admin assinadas por ele, toda instalação **verificada** de um admin
+  ou do próprio dono (mesma chave que o banco registrou para aquele @nick). Se o dono ganhar outro computador,
+  esse computador vira admin e consegue gerir o grupo (convidar, editar canais, reenviar a lista).
+- Não mexe na verificação criptográfica: a autoridade continua sendo a concessão assinada pelo dono.
+- Limite conhecido: admin não troca de dono nem remove outros admins. Se o computador do dono se perder, o
+  grupo continua gerido pelo admin de reserva, mas a posse continua na chave antiga.
 
-### Fase 3 (0.6.2) — convite por @nick
+### Fase 2b (0.6.2) — transferência de posse
+- Recurso novo e assinado: o dono (ainda com a chave) transfere a posse para outro membro, ou para a nova
+  instalação do mesmo @nick. Exige alterar `ownerPeerId` no manifesto, nos certificados de remoção e nas
+  concessões de admin (cerca de 40 pontos do código), com testes de duas máquinas. Por isso não foi misturado
+  com a Fase 2. Sem a transferência feita antes, o dono perdido não é recuperável.
+
+### Fase 3 (0.6.3) — convite por @nick
 - "Adicionar @fulano": busca no Supabase e adiciona direto (sem trocar códigos), para quem já tem conta.
 - Mantém o código atual para quem ainda não tem conta.
 
-### Fase 4 (0.6.3) — limpeza e endurecimento
+### Fase 4 (0.6.4) — limpeza e endurecimento
 - "Limpar duplicados" passa a olhar o @nick (remove cópias antigas do mesmo @nick que o dono escolher).
 - Endurecer `register_key`: hoje quem conhece o `peerId` de outra pessoa (por estar no mesmo grupo) poderia
   registrá-lo antes dela com a chave errada, o que só impediria o vínculo dela (negação de serviço, sem

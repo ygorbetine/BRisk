@@ -6,7 +6,9 @@
 .account-tabs button{padding:9px;border-radius:9px;background:transparent;color:#a592b8;font-weight:600}
 .account-tabs button.active{background:linear-gradient(135deg,#8b5cf6,#b01fcf);color:#fff}
 .account-nick{display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:12px;background:#0f0316;border:1px solid #2f1745;color:#b01fcf}
-.account-nick input{flex:1;padding:13px 0;border:0;background:none;box-shadow:none;color:#fff}
+.account-nick{transition:border-color .15s,box-shadow .15s}
+.account-nick:focus-within{border-color:#b01fcf;box-shadow:0 0 0 3px #b01fcf33}
+.account-nick input,.account-nick input:focus,.account-nick input:focus-visible{flex:1;min-width:0;padding:13px 0;border:0;outline:0;border-radius:0;background:none;box-shadow:none;color:#fff}
 .account-badge{display:flex;align-items:center;gap:8px;font:700 22px Manrope;color:#fff}
 .account-badge svg{color:#b01fcf}
 .account-error,.account-notice{display:flex;align-items:center;gap:6px;margin:0;font-size:13px;line-height:1.4}
@@ -21,3 +23,7 @@
 .nav-section button.spinning svg{animation:members-spin 1s linear infinite}
 @keyframes members-spin{to{transform:rotate(360deg)}}
 .members-resync-note{margin:0 9px 8px;padding:8px 10px;border-radius:10px;background:#8b5cf61a;color:#d6c8e6;font-size:12px;line-height:1.4}
+.member-nick{color:#b01fcf;font-weight:600}
+
+/* Se o Google Fonts não carregar (app empacotado), "Manrope" não pode cair no serifado padrão. */
+@font-face{font-family:'Manrope';font-weight:100 900;font-style:normal;src:local('DM Sans'),local('Segoe UI'),local('Arial')}

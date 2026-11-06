@@ -24,6 +24,8 @@ export type MemberGroup = {
   primary: PublicPeerIdentity;
   /** Outras identidades com o mesmo nome (instalações antigas ou outros dispositivos). */
   duplicates: PublicPeerIdentity[];
+  /** @nick verificado da pessoa (só quando o banco confirma a chave). */
+  nick?: string;
 };
 
 export function normalizeMemberName(name: string): string {
@@ -37,12 +39,14 @@ export function normalizeMemberName(name: string): string {
  */
 export function groupMembersByName(
   members: PublicPeerIdentity[],
-  options: { self?: PublicPeerIdentity; ownerPeerId?: string; administratorPeerIds?: readonly string[] } = {},
+  options: { self?: PublicPeerIdentity; ownerPeerId?: string; administratorPeerIds?: readonly string[]; nicks?: ReadonlyMap<string, string> } = {},
 ): MemberGroup[] {
   const unique = dedupeMembersForDisplay(members, options.self);
   const groups = new Map<string, PublicPeerIdentity[]>();
   for (const member of unique) {
-    const key = normalizeMemberName(member.displayName) || member.peerId;
+    // Mesmo @nick verificado = mesma pessoa, mesmo que o nome de exibição tenha mudado.
+    const nick = options.nicks?.get(member.peerId);
+    const key = nick ? `@${nick}` : normalizeMemberName(member.displayName) || member.peerId;
     groups.set(key, [...(groups.get(key) ?? []), member]);
   }
   const rank = (member: PublicPeerIdentity): number => {
@@ -53,6 +57,7 @@ export function groupMembersByName(
   };
   return [...groups.entries()].map(([key, identities]) => {
     const sorted = [...identities].sort((a, b) => rank(a) - rank(b));
-    return { key, primary: sorted[0]!, duplicates: sorted.slice(1) };
+    const nick = options.nicks?.get(sorted[0]!.peerId);
+    return { key, primary: sorted[0]!, duplicates: sorted.slice(1), ...(nick ? { nick } : {}) };
   });
 }

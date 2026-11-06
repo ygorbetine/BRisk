@@ -45,6 +45,7 @@ import { SettingsView } from "./SettingsView";
 import type { LocalProfile } from "../services/offline/profile";
 import { incompatiblePeerMessage } from "../services/protocol-compatibility";
 import { dedupeMembersForDisplay, groupMembersByName } from "../services/offline/member-display";
+import { resolveVerifiedNicks } from "../services/account/nick-directory";
 import { deleteLocalGroupChannel, renameLocalGroupChannel } from "../services/offline/channel-storage";
 import {
   addLocalGroupChannel,
@@ -108,6 +109,7 @@ export function HomeView() {
   const [accountNick, setAccountNick] = useState<string>();
   const [resyncing, setResyncing] = useState(false);
   const [resyncNote, setResyncNote] = useState("");
+  const [memberNicks, setMemberNicks] = useState<ReadonlyMap<string, string>>(new Map());
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [deleting, setDeleting] = useState(false);
   const [channelAction, setChannelAction] = useState<ChannelActionTarget>(null);
@@ -154,6 +156,14 @@ export function HomeView() {
     window.addEventListener("briks:group-removed", removed);
     return () => window.removeEventListener("briks:group-removed", removed);
   }, [callContext?.groupId, roomId, selectedCommunity?.id]);
+
+  useEffect(() => {
+    let alive = true;
+    void resolveVerifiedNicks(groupMembers)
+      .then((nicks) => { if (alive) setMemberNicks(nicks); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [groupMembers]);
 
   async function reloadMembers(): Promise<void> {
     const groupId = selectedLocalGroup?.groupId;
@@ -801,6 +811,7 @@ export function HomeView() {
               self: groupMembers.find((member) => member.peerId === localIdentityPeerId),
               ownerPeerId: selectedLocalGroup?.ownerPeerId,
               administratorPeerIds: selectedLocalGroup?.administratorPeerIds,
+              nicks: memberNicks,
             });
             const identityCount = memberGroups.reduce((total, group) => total + 1 + group.duplicates.length, 0);
             const renderMember = (member: PublicPeerIdentity, extra?: { count?: number; expanded?: boolean; groupKey?: string; copy?: boolean }) => {
@@ -810,7 +821,7 @@ export function HomeView() {
               return <div className={extra?.copy ? "member-row member-copy" : "member-row"} key={member.peerId}>
                 <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setModal("manageMember"); }}>
                   <ProfileAvatar displayName={member.displayName} avatar={member.avatar}/>
-                  <span>{member.displayName}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
+                  <span>{member.displayName}{memberNicks.get(member.peerId) && <small className="member-nick"> @{memberNicks.get(member.peerId)}</small>}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
                   {member.peerId === localIdentityPeerId && <em className="member-self" title="Esta é a sua identidade neste computador">Você</em>}
                   {owner ? <em title="Proprietário"><ShieldCheck size={14}/> Dono</em> : administrator ? <em title="Administrador"><Shield size={14}/> Admin</em> : null}
                 </button>

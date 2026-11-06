@@ -24,6 +24,7 @@ import {
 } from "../services/protocol-compatibility";
 import type { LocalChatMessage, MessagePageOptions } from "../services/offline/chat-storage";
 import { loadRtcNetworkContext } from "../services/network/runtime";
+import { enrollNickInstallations } from "../services/account/nick-enrollment";
 import {
   applyGroupRevocationCertificate,
   getOrCreateLocalIdentity,
@@ -741,6 +742,7 @@ export class ChatController {
         const channelId = this.channelId;
         const nextRendezvousId = channelId ? groupRendezvousId(group, "chat", channelId) : undefined;
         const rendezvousChanged = Boolean(nextRendezvousId && this.rendezvousId && nextRendezvousId !== this.rendezvousId);
+        if (this.signaling) await enrollNickInstallations(groupId, identity, this.peerId, this.signaling.getDiagnostics().presencePeers).catch(() => undefined);
         this.installGroupPeers(group.members ?? [], group.removedMembers ?? [], group.revocations ?? []);
         await this.connectPresentTrustedPeers();
         if (this.sessionToken !== sessionToken) return;

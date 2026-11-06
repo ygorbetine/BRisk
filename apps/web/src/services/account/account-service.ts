@@ -122,3 +122,22 @@ export async function lookupNick(value: string): Promise<NickProfile | null> {
     .returns<Array<{ peer_id: string; public_key: JsonWebKey }>>();
   return { nick: profile.nick, keys: (keys ?? []).map((row) => ({ peerId: row.peer_id, publicKey: row.public_key })) };
 }
+
+export type KeyOwner = { peerId: string; nick: string; publicKey: JsonWebKey };
+
+/** Pergunta ao banco de quem é cada chave ativa (peerId → @nick + chave). Nunca lança. */
+export async function fetchKeyOwners(peerIds: string[]): Promise<KeyOwner[]> {
+  const supabase = client();
+  if (!supabase || !peerIds.length) return [];
+  try {
+    const { data, error } = await supabase.from("profile_keys").select("peer_id,public_key,profiles(nick)").in("peer_id", peerIds).is("revoked_at", null)
+      .returns<Array<{ peer_id: string; public_key: JsonWebKey; profiles: { nick: string } | { nick: string }[] | null }>>();
+    if (error || !data) return [];
+    return data.flatMap((row) => {
+      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      return profile?.nick ? [{ peerId: row.peer_id, nick: profile.nick, publicKey: row.public_key }] : [];
+    });
+  } catch {
+    return [];
+  }
+}

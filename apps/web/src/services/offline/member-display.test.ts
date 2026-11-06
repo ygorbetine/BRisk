@@ -38,3 +38,21 @@ describe("dedupeMembersForDisplay", () => {
     expect(group!.duplicates.map((member) => member.peerId)).toEqual(["old"]);
   });
 });
+
+describe("groupMembersByName com @nick verificado", () => {
+  it("junta instalações do mesmo @nick mesmo com nomes de exibição diferentes", () => {
+    const a = identity("peer-a", "Veslei", "ka");
+    const b = identity("peer-b", "ves", "kb");
+    const other = identity("peer-c", "Veslei", "kc");
+    const groups = groupMembersByName([a, b, other], { nicks: new Map([["peer-a", "veslei"], ["peer-b", "veslei"]]) });
+    const veslei = groups.find((group) => group.nick === "veslei")!;
+    expect([veslei.primary.peerId, ...veslei.duplicates.map((item) => item.peerId)].sort()).toEqual(["peer-a", "peer-b"]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("sem @nick continua agrupando só pelo nome", () => {
+    const a = identity("peer-a", "Sticker", "ka");
+    const b = identity("peer-b", " sticker ", "kb");
+    expect(groupMembersByName([a, b])).toHaveLength(1);
+  });
+});

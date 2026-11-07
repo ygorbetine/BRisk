@@ -1,22 +1,62 @@
-import { app, dialog, type BrowserWindow } from "electron";
+import { app, dialog, BrowserWindow } from "electron";
 import electronUpdater from "electron-updater";
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+export type UpdateState = {
+  phase: "idle" | "checking" | "downloading" | "ready" | "error";
+  version?: string;
+  percent?: number;
+  message?: string;
+};
+
+let state: UpdateState = { phase: "idle" };
+let beforeInstallHook: () => void = () => undefined;
+let wired = false;
+
+function setState(next: UpdateState): void {
+  state = next;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("updater:state", state);
+  }
+}
+
+export function getUpdateState(): UpdateState {
+  return state;
+}
+
+/** Reinicia o app e instala a versão já baixada. */
+export function installUpdateNow(): boolean {
+  if (state.phase !== "ready") return false;
+  beforeInstallHook();
+  electronUpdater.autoUpdater.quitAndInstall(false, true);
+  return true;
+}
+
 /**
  * Atualização automática pelo GitHub Releases: baixa em segundo plano e, quando pronta,
- * pergunta se quer reiniciar agora. Só roda no app instalado (empacotado) e pode ser
- * desligada com BRIKS_DISABLE_UPDATE=1.
+ * avisa na interface (Sobre e tela principal) e pergunta se quer reiniciar agora. Só roda no app
+ * instalado (empacotado) e pode ser desligada com BRIKS_DISABLE_UPDATE=1.
  */
 export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, beforeInstall: () => void): void {
   if (!app.isPackaged || process.env.BRIKS_DISABLE_UPDATE === "1") return;
   const { autoUpdater } = electronUpdater;
+  beforeInstallHook = beforeInstall;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
+  wired = true;
 
-  autoUpdater.on("error", (error) => console.warn("[updater] falha ao verificar atualização:", error?.message ?? error));
+  autoUpdater.on("checking-for-update", () => { if (state.phase !== "downloading" && state.phase !== "ready") setState({ phase: "checking" }); });
+  autoUpdater.on("update-not-available", () => { if (state.phase !== "ready") setState({ phase: "idle" }); });
+  autoUpdater.on("update-available", (info) => setState({ phase: "downloading", version: info.version, percent: 0 }));
+  autoUpdater.on("download-progress", (progress) => setState({ phase: "downloading", version: state.version, percent: Math.round(progress.percent) }));
+  autoUpdater.on("error", (error) => {
+    console.warn("[updater] falha ao verificar atualização:", error?.message ?? error);
+    if (state.phase !== "ready") setState({ phase: "error", message: error?.message ?? "Falha na atualização." });
+  });
   autoUpdater.on("update-downloaded", (info) => {
+    setState({ phase: "ready", version: info.version, percent: 100 });
     const window = getWindow();
     const options = {
       type: "info" as const,
@@ -28,10 +68,7 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, befo
       detail: "Reinicie para instalar. Se escolher depois, ela é instalada quando você fechar o Briks.",
     };
     void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).then(({ response }) => {
-      if (response === 0) {
-        beforeInstall();
-        autoUpdater.quitAndInstall(false, true);
-      }
+      if (response === 0) installUpdateNow();
     });
   });
 
@@ -42,11 +79,12 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, befo
 
 export type UpdateCheckOutcome = { status: "disabled" | "current" | "available" | "error"; version?: string; message?: string };
 
-/** Verificação manual (botão em Sobre). A baixada continua automática e o aviso de reiniciar aparece ao terminar. */
+/** Verificação manual (botão em Sobre). A baixada continua automática e o estado chega pelo evento updater:state. */
 export async function checkForUpdatesNow(): Promise<UpdateCheckOutcome> {
-  if (!app.isPackaged || process.env.BRIKS_DISABLE_UPDATE === "1") {
+  if (!app.isPackaged || process.env.BRIKS_DISABLE_UPDATE === "1" || !wired) {
     return { status: "disabled", message: "A atualização só funciona no app instalado." };
   }
+  if (state.phase === "ready") return { status: "available", version: state.version };
   try {
     const result = await electronUpdater.autoUpdater.checkForUpdates();
     const latest = result?.updateInfo?.version;

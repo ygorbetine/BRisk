@@ -43,6 +43,8 @@ type BriksDesktopNetworkInterface = {
   provider: "zerotier" | "tailscale" | "wireguard" | "vpn" | "unknown";
 };
 
+type BriksUpdateState = { phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string };
+
 interface Window {
   desktop?: {
     listScreenSources(): Promise<BriksDesktopSource[]>;
@@ -52,6 +54,9 @@ interface Window {
     getBackendConfig(): Promise<BriksDesktopBackendConfig>;
     getNetworkInterfaces(): Promise<BriksDesktopNetworkInterface[]>;
     checkForUpdates?(): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }>;
+    getUpdateState?(): Promise<BriksUpdateState>;
+    installUpdate?(): Promise<boolean>;
+    onUpdateState?(callback: (state: BriksUpdateState) => void): () => void;
     openExternal(url: string): Promise<void>;
     onBackendStatus(callback: (status: BriksDesktopBackendStatus) => void): () => void;
   };

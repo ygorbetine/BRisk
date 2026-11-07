@@ -117,3 +117,32 @@ body {
 .settings-tabs button.active { color: #fff; box-shadow: none; }
 .call-view-tabs button.active { background-image: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); background-color: transparent; color: #fff !important; border-color: transparent; }
 .call-view-tabs button.active span, .call-view-tabs button.active svg { color: #fff; }
+
+/* Aviso de atualização pronta na tela principal */
+.update-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  color: #fff;
+  background: color-mix(in srgb, var(--briks-c1) 28%, rgba(14, 10, 24, 0.82));
+  border: 1px solid color-mix(in srgb, var(--briks-c1) 55%, transparent);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+.update-banner button {
+  border: 0;
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2));
+}
+.update-banner button.update-banner-later { background: rgba(255, 255, 255, 0.12); }

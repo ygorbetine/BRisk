@@ -233,6 +233,13 @@ contextBridge.exposeInMainWorld("desktop", {
   getBackendConfig: (): Promise<DesktopBackendConfig> => ipcRenderer.invoke("backend:config"),
   getNetworkInterfaces: (): Promise<DesktopNetworkInterface[]> => ipcRenderer.invoke("network:interfaces"),
   checkForUpdates: (): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }> => ipcRenderer.invoke("updater:check"),
+  getUpdateState: (): Promise<{ phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string }> => ipcRenderer.invoke("updater:state"),
+  installUpdate: (): Promise<boolean> => ipcRenderer.invoke("updater:install"),
+  onUpdateState: (callback: (state: { phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: { phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string }) => callback(state);
+    ipcRenderer.on("updater:state", listener);
+    return () => ipcRenderer.removeListener("updater:state", listener);
+  },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("shell:open-external", url),
   onBackendStatus: (callback: (status: DesktopBackendStatus) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: DesktopBackendStatus) => callback(status);

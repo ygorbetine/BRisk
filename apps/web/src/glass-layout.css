@@ -103,3 +103,17 @@ body {
 .about-update { padding: 9px 14px; border-radius: 12px; }
 .about-update:disabled { opacity: .6; cursor: default; }
 .about-update-note { font-size: 13px; color: #d9d0ee; }
+
+.modal:has(.settings-tabs) { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+.modal:has(.settings-tabs) .modal-content { overflow-x: hidden; }
+.modal:has(.settings-tabs) .modal-content > * { min-width: 0; max-width: 100%; }
+.modal:has(.settings-tabs) select, .modal:has(.settings-tabs) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { max-width: 100%; }
+.settings-tabs { margin-bottom: 14px; }
+
+.modal:has(.settings-tabs) .modal-content > section, .modal:has(.settings-tabs) .modal-content > div { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.modal:has(.settings-tabs) .modal-content select { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.modal:has(.settings-tabs) .modal-content label, .modal:has(.settings-tabs) .modal-content p, .modal:has(.settings-tabs) .modal-content small { min-width: 0; overflow-wrap: anywhere; }
+.modal:has(.settings-tabs) .modal-content .settings-toggle { min-width: 0; }
+.settings-tabs button.active { color: #fff; box-shadow: none; }
+.call-view-tabs button.active { background-image: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); background-color: transparent; color: #fff !important; border-color: transparent; }
+.call-view-tabs button.active span, .call-view-tabs button.active svg { color: #fff; }

@@ -93,7 +93,7 @@ export class ParticipantManager {
   state(peerId: string, remoteState: PeerState): void {
     const store = useCallStore.getState();
     const participant = store.participants[peerId] ?? placeholderParticipant(peerId);
-    store.upsert({ ...participant, state: reconcileRemoteMediaState(participant.streams, remoteState) });
+    store.upsert({ ...participant, stateReceived: true, state: reconcileRemoteMediaState(participant.streams, remoteState) });
   }
 
   reconnecting(peerId: string, clearStreams = false): void {

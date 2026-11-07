@@ -190,6 +190,8 @@ function VideoTile({
 
   const hasVideo = Boolean(selected?.getVideoTracks().length);
   const canSwitch = participant.state.camera && Boolean(cameraStream && screenStream);
+  // Quem está mutado não deve ser ouvido mesmo que o servidor (SFU) ainda repasse o áudio, p.ex. versões antigas do remetente.
+  const remoteMuted = Boolean(participant.stateReceived) && !participant.state.microphone;
   const userHasAudio = Boolean(microphoneStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const screenHasAudio = Boolean(screenStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const speaking = useVoiceActivity(microphoneStream, participant.state.microphone && userHasAudio);
@@ -208,7 +210,7 @@ function VideoTile({
   >
     <video ref={videoRef} autoPlay playsInline muted className={hasVideo ? source : "hidden-video"}/>
     {!hasVideo && <div className="video-off"><ProfileAvatar displayName={participant.displayName} avatar={participant.avatar} className="call-profile-avatar"/><span>Vídeo desligado</span></div>}
-    {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened ? 0 : userVolume}/>}
+    {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened || remoteMuted ? 0 : userVolume}/>}
     {screenHasAudio && <RemoteAudio stream={screenStream!} volume={deafened ? 0 : screenVolume}/>}
     <FullscreenButton target={articleRef}/>
     {canSwitch && <div className="source-switch">

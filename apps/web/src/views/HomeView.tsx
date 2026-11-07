@@ -215,30 +215,37 @@ export function HomeView() {
     return () => { alive = false; };
   }, [activeChannel?.id, callContext?.textChannelId, currentUser, communities, roomId, token]);
 
+  // Os dados locais (amigos e grupos deste computador) aparecem de imediato; o servidor remoto é mesclado quando responder.
+  const remoteSocialRef = useRef<{ social: Awaited<ReturnType<typeof api.friends>>; groups: Awaited<ReturnType<typeof api.communities>> }>({ social: { friends: [], pending: [] }, groups: [] });
+
   async function loadSocial() {
-    const [social, groups, localFriends, localGroups] = await Promise.all([
-      api.friends(token).catch(() => ({ friends: [], pending: [] })),
-      api.communities(token).catch(() => []),
-      loadLocalFriends(),
-      loadLocalGroups(),
+    const [localFriends, localGroups] = await Promise.all([loadLocalFriends(), loadLocalGroups()]);
+    const apply = (social: typeof remoteSocialRef.current.social, groups: typeof remoteSocialRef.current.groups) => {
+      const mergedFriends = social.friends.map((friend) => ({ ...friend }));
+      localFriends.forEach((friend) => {
+        const existing = mergedFriends.find((item) => item.id === friend.peerId);
+        if (existing) Object.assign(existing, { local: true, displayName: friend.displayName, avatar: friend.avatar });
+        else mergedFriends.push({ id: friend.peerId, displayName: friend.displayName, avatar: friend.avatar, local: true });
+      });
+      const mergedGroups = groups.map((group) => ({ ...group }));
+      localGroups.forEach((group) => {
+        const existing = mergedGroups.find((item) => item.id === group.groupId);
+        if (existing) Object.assign(existing, { local: true, name: group.name, avatar: group.avatar });
+        else mergedGroups.push({ id: group.groupId, name: group.name, avatar: group.avatar, local: true });
+      });
+      setFriends(mergedFriends);
+      setPending(social.pending);
+      setCommunities(mergedGroups);
+      setSelectedCommunity((current) => current ? mergedGroups.find((item) => item.id === current.id) ?? null : current);
+      setActiveFriend((current) => current ? mergedFriends.find((item) => item.id === current.id) ?? null : current);
+    };
+    apply(remoteSocialRef.current.social, remoteSocialRef.current.groups);
+    const [social, groups] = await Promise.all([
+      api.friends(token).catch(() => remoteSocialRef.current.social),
+      api.communities(token).catch(() => remoteSocialRef.current.groups),
     ]);
-    const mergedFriends = [...social.friends];
-    localFriends.forEach((friend) => {
-      const existing = mergedFriends.find((item) => item.id === friend.peerId);
-      if (existing) Object.assign(existing, { local: true, displayName: friend.displayName, avatar: friend.avatar });
-      else mergedFriends.push({ id: friend.peerId, displayName: friend.displayName, avatar: friend.avatar, local: true });
-    });
-    const mergedGroups = [...groups];
-    localGroups.forEach((group) => {
-      const existing = mergedGroups.find((item) => item.id === group.groupId);
-      if (existing) Object.assign(existing, { local: true, name: group.name, avatar: group.avatar });
-      else mergedGroups.push({ id: group.groupId, name: group.name, avatar: group.avatar, local: true });
-    });
-    setFriends(mergedFriends);
-    setPending(social.pending);
-    setCommunities(mergedGroups);
-    setSelectedCommunity((current) => current ? mergedGroups.find((item) => item.id === current.id) ?? null : current);
-    setActiveFriend((current) => current ? mergedFriends.find((item) => item.id === current.id) ?? null : current);
+    remoteSocialRef.current = { social, groups };
+    apply(social, groups);
   }
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { PeerState } from "@briks/protocol";
 
-export type Participant = { peerId: string; displayName: string; avatar?: string; state: PeerState; streams?: Record<string, MediaStream>; connection?: RTCPeerConnectionState };
+export type Participant = { peerId: string; displayName: string; avatar?: string; state: PeerState; streams?: Record<string, MediaStream>; connection?: RTCPeerConnectionState; /** true depois que o estado (mic/câmera/tela) deste participante chegou ao menos uma vez. */ stateReceived?: boolean };
 export type CallContext = {
   groupId: string;
   groupName: string;

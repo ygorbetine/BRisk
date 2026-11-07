@@ -74,7 +74,7 @@ export class LiveKitTransport implements SfuCallTransport {
   }
 
   async disconnectPeer(peerId: string): Promise<void> {
-    this.streams.delete(peerId);
+    this.dropStreams(peerId);
     this.events.onPeerReset?.(peerId);
   }
 
@@ -91,7 +91,7 @@ export class LiveKitTransport implements SfuCallTransport {
     const room = this.requireRoom();
     if (this.published.has(track)) return;
     this.publishedStreams.set(track, stream);
-    const publication = await room.localParticipant.publishTrack(track, this.publishOptions(track, options));
+    const publication = await room.localParticipant.publishTrack(track, { ...this.publishOptions(track, options), name: stream.id });
     this.published.set(track, publication);
   }
 
@@ -178,11 +178,11 @@ export class LiveKitTransport implements SfuCallTransport {
     room
       .on(RoomEvent.ParticipantConnected, (participant) => this.adoptParticipant(participant))
       .on(RoomEvent.ParticipantDisconnected, (participant) => {
-        this.streams.delete(participant.identity);
+        this.dropStreams(participant.identity);
         this.events.onConnectionState(participant.identity, "closed");
       })
-      .on(RoomEvent.TrackSubscribed, (track, _publication, participant) => this.attach(track, participant))
-      .on(RoomEvent.TrackUnsubscribed, (track, _publication, participant) => this.detach(track, participant))
+      .on(RoomEvent.TrackSubscribed, (track, publication, participant) => this.attach(track, participant, publication.trackName))
+      .on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => this.detach(track, participant, publication.trackName))
       .on(RoomEvent.DataReceived, (payload, participant) => {
         if (participant) this.events.onDataMessage?.(participant.identity, this.decoder.decode(payload));
       })
@@ -198,24 +198,37 @@ export class LiveKitTransport implements SfuCallTransport {
     this.events.onConnectionState(participant.identity, "connected");
     this.events.onDataState?.(participant.identity, "open");
     for (const publication of participant.trackPublications.values()) {
-      if (publication.track) this.attach(publication.track, participant);
+      if (publication.track) this.attach(publication.track, participant, publication.trackName);
     }
   }
 
-  private attach(track: RemoteTrack, participant: RemoteParticipant): void {
-    const peerId = participant.identity;
-    let stream = this.streams.get(peerId);
+  // Cada fluxo publicado (câmera+mic, tela, segunda tela) vira um MediaStream próprio com o mesmo id do emissor,
+  // porque o receptor separa tela e segunda tela pelo id do fluxo anunciado no estado do peer.
+  private streamFor(peerId: string, name: string): MediaStream {
+    const key = `${peerId}|${name}`;
+    let stream = this.streams.get(key);
     if (!stream) {
       stream = new MediaStream();
-      this.streams.set(peerId, stream);
+      if (name) Object.defineProperty(stream, "id", { value: name, configurable: true });
+      this.streams.set(key, stream);
     }
+    return stream;
+  }
+
+  private dropStreams(peerId: string): void {
+    for (const key of [...this.streams.keys()]) if (key.startsWith(`${peerId}|`)) this.streams.delete(key);
+  }
+
+  private attach(track: RemoteTrack, participant: RemoteParticipant, name = ""): void {
+    const peerId = participant.identity;
+    const stream = this.streamFor(peerId, name);
     const mediaTrack = track.mediaStreamTrack;
     if (!stream.getTracks().includes(mediaTrack)) stream.addTrack(mediaTrack);
     this.events.onRemoteStream(peerId, stream);
   }
 
-  private detach(track: RemoteTrack, participant: RemoteParticipant): void {
-    const stream = this.streams.get(participant.identity);
+  private detach(track: RemoteTrack, participant: RemoteParticipant, name = ""): void {
+    const stream = this.streams.get(`${participant.identity}|${name}`);
     if (!stream) return;
     stream.removeTrack(track.mediaStreamTrack);
     this.events.onRemoteStream(participant.identity, stream);

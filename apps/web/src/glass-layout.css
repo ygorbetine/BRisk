@@ -89,3 +89,12 @@ body {
 .global-error { background: linear-gradient(135deg, rgba(120, 28, 52, .62), rgba(60, 14, 48, .72)); border-color: rgba(255, 120, 140, .45); }
 .desktop-recovery-notice { background: linear-gradient(135deg, rgba(72, 22, 52, .72), rgba(34, 12, 48, .8)) !important; }
 .invite-notice, .members-resync-note { background: linear-gradient(135deg, rgba(72, 22, 52, .55), rgba(34, 12, 48, .65)); border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(14px); }
+
+.room.call-workspace { grid-template-rows: 72px minmax(0, 1fr) auto !important; }
+.call-workspace > footer { flex-wrap: wrap !important; justify-content: center; overflow: visible !important; border-radius: 28px !important; height: auto; min-height: 72px; row-gap: 8px; padding: 10px 14px !important; }
+.call-workspace > footer .share-control { flex-wrap: nowrap; }
+@media (max-width: 760px) {
+  .call-workspace > footer > button:not(.hangup) span { display: none; }
+  .call-workspace > footer > button { padding: 12px; }
+  .call-workspace > footer .share-control > select { min-width: 96px; max-width: 120px; }
+}

@@ -1,9 +1,12 @@
 import { BriksMark } from "./BriksMark";
+import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, type CallLayoutMode } from "./call-layout-mode";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
   Copy,
   Hash,
+  LayoutGrid,
+  PanelRight,
   Maximize2,
   MessageCircle,
   Mic,
@@ -389,6 +392,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const peers = Object.values(participants);
   const [view, setView] = useState<ViewMode>("call");
   const [focusedTile, setFocusedTile] = useState<string | null>(null);
+  const [layoutMode, setLayoutMode] = useState<CallLayoutMode>(loadCallLayoutMode);
   const [chatStatus, setChatStatus] = useState<ChatConnectionStatus>("disconnected");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [attachments, setAttachments] = useState<ChatAttachmentRecord[]>([]);
@@ -636,9 +640,25 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     catch (cause) { setError(cause instanceof Error ? cause.message : fallback); }
   }
 
-  const focused = focusedTile && tileIds.includes(focusedTile) ? focusedTile : null;
+  const liveTileIds = [
+    ...(localPreviews.screen ? ["local-screen"] : []),
+    ...(localPreviews.screen2 ? ["local-screen2"] : []),
+    ...peers.flatMap((peer) => [
+      ...(peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId] ? [`peer2-${peer.peerId}`] : []),
+      ...(peer.state.screenShare && peer.state.screenStreamId && peer.streams?.[peer.state.screenStreamId] ? [`peer-${peer.peerId}`] : []),
+    ]),
+  ];
+  const manualFocus = focusedTile && tileIds.includes(focusedTile) ? focusedTile : null;
+  const focused = manualFocus ?? (layoutMode === "focus" ? (liveTileIds[0] ?? null) : null);
+  const weighted = !focused && liveTileIds.length > 0;
+  function chooseLayout(mode: CallLayoutMode): void {
+    setLayoutMode(mode);
+    saveCallLayoutMode(mode);
+    setFocusedTile(null);
+  }
   const responsiveGrid = responsiveCallGrid(tileIds.length);
   const stageStyle = {
+    "--weight-rows": weightedRows(liveTileIds.length, Math.max(0, tileIds.length - liveTileIds.length)),
     "--call-portrait-columns": responsiveGrid.portrait.columns,
     "--call-portrait-rows": responsiveGrid.portrait.rows,
     "--call-compact-columns": responsiveGrid.compactLandscape.columns,
@@ -674,6 +694,10 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           setSourcePickerOpen(false);
           onMinimize();
         }} title="Voltar para o Briks"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
+        {view === "call" && <div className="call-view-tabs layout-tabs" role="group" aria-label="Disposição das telas">
+          <button className={layoutMode === "weight" ? "active" : ""} onClick={() => chooseLayout("weight")} title="Grade: lives grandes e pessoas pequenas"><LayoutGrid size={16}/><span>Grade</span></button>
+          <button className={layoutMode === "focus" ? "active" : ""} onClick={() => chooseLayout("focus")} title="Foco: uma live grande e miniaturas ao lado"><PanelRight size={16}/><span>Foco</span></button>
+        </div>}
         <div className="call-view-tabs">
           <button className={view === "call" ? "active" : ""} onClick={() => setView("call")}><Video size={16}/><span>Chamada</span></button>
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")} disabled={!context?.textChannelId}><MessageCircle size={16}/><span>Chat</span></button>
@@ -689,7 +713,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     {callError && <div className="global-error" onClick={() => setError(null)}>{callError}</div>}
 
     <section className={`call-view ${view === "call" ? "" : "is-hidden"}`}>
-      <section className={`stage ${focused ? "stage-focused" : ""}`} style={stageStyle} onMouseDown={(event) => {
+      <section className={`stage ${focused ? "stage-focused" : ""} ${weighted ? "stage-weighted" : ""}`} style={stageStyle} onMouseDown={(event) => {
         if (event.target === event.currentTarget) setFocusedTile(null);
       }}>
         {!localPreviews.camera && <LocalProfileTile

@@ -146,3 +146,31 @@ body {
   background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2));
 }
 .update-banner button.update-banner-later { background: rgba(255, 255, 255, 0.12); }
+
+/* Grade por peso: cada live ocupa 2x2 células de uma grade de 4 colunas; pessoas ocupam 1x1 */
+@media (orientation: landscape) and (min-height: 761px) and (min-width: 901px) {
+  .call-workspace .stage.stage-weighted {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--weight-rows, 2), minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
+    grid-auto-flow: row dense;
+    align-content: stretch;
+    gap: 10px;
+    padding: 10px;
+    overflow: hidden;
+  }
+  .call-workspace .stage.stage-weighted .tile:not(:fullscreen) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-width: none;
+    max-height: none;
+    justify-self: stretch;
+  }
+  .call-workspace .stage.stage-weighted .tile.screen:not(:fullscreen) { grid-column: span 2; grid-row: span 2; }
+  .call-workspace .stage.stage-weighted .tile video { position: absolute; inset: 0; }
+  .call-workspace .stage.stage-weighted .tile:not(.screen) .volume-panel { display: none; }
+  .call-workspace .stage.stage-weighted .tile .video-off { height: 100%; min-height: 0; }
+}
+.layout-tabs button.active { background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); color: #fff; }

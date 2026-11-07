@@ -101,6 +101,7 @@ export class MediaManager {
       track.enabled = !track.enabled;
       this.microphoneInputStream?.getAudioTracks().forEach((input) => { input.enabled = track.enabled; });
       this.peerState.microphone = track.enabled;
+      await this.dependencies.getTransport()?.setMicrophoneMuted?.(!track.enabled).catch(() => undefined);
       this.notifyState("Não foi possível atualizar o microfone.");
     } catch (error) {
       this.dependencies.reportError(error, "Não foi possível alterar o microfone.");

@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, shell } from "electron";
 import { networkInterfaces } from "node:os";
 import type { DesktopBackendManager } from "../backend.js";
 import { collectNetworkInterfaces } from "../network-interfaces.js";
+import { checkForUpdatesNow } from "../updater.js";
 
 export function registerDesktopIpc(
   backend: DesktopBackendManager,
@@ -21,6 +22,11 @@ export function registerDesktopIpc(
   ipcMain.handle("network:interfaces", async (event) => {
     assertTrusted(event.sender.getURL());
     return collectNetworkInterfaces(networkInterfaces());
+  });
+
+  ipcMain.handle("updater:check", async (event) => {
+    assertTrusted(event.sender.getURL());
+    return checkForUpdatesNow();
   });
 
   ipcMain.handle("window:fullscreen", async (event, enabled: unknown) => {

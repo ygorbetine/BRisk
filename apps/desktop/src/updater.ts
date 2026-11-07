@@ -39,3 +39,20 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, befo
   setTimeout(check, 15_000);
   setInterval(check, CHECK_INTERVAL_MS).unref();
 }
+
+export type UpdateCheckOutcome = { status: "disabled" | "current" | "available" | "error"; version?: string; message?: string };
+
+/** Verificação manual (botão em Sobre). A baixada continua automática e o aviso de reiniciar aparece ao terminar. */
+export async function checkForUpdatesNow(): Promise<UpdateCheckOutcome> {
+  if (!app.isPackaged || process.env.BRIKS_DISABLE_UPDATE === "1") {
+    return { status: "disabled", message: "A atualização só funciona no app instalado." };
+  }
+  try {
+    const result = await electronUpdater.autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version;
+    if (latest && latest !== app.getVersion()) return { status: "available", version: latest };
+    return { status: "current", version: app.getVersion() };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "Falha ao verificar." };
+  }
+}

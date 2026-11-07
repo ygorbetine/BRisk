@@ -57,6 +57,8 @@ export interface CallTransport {
   configurePublishedVideoTrack(track: MediaStreamTrack, options: VideoPublicationOptions): Promise<void>;
   unpublishTrack(track: MediaStreamTrack): Promise<void>;
   replaceTrack(kind: "audio" | "video", track: MediaStreamTrack | null): Promise<void>;
+  /** Silencia/reativa o microfone publicado (SFU avisa o servidor; no mesh basta desabilitar a faixa). */
+  setMicrophoneMuted?(muted: boolean): Promise<void>;
   replacePublishedTrack(previousTrack: MediaStreamTrack, nextTrack: MediaStreamTrack, stream: MediaStream): Promise<void>;
   sendData(data: string, targetPeerId?: string): number;
   requireMediaAuthorization(): void;

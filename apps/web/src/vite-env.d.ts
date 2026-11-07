@@ -51,6 +51,7 @@ interface Window {
     setWindowFullscreen(enabled: boolean): Promise<{ fullscreen: boolean }>;
     getBackendConfig(): Promise<BriksDesktopBackendConfig>;
     getNetworkInterfaces(): Promise<BriksDesktopNetworkInterface[]>;
+    checkForUpdates?(): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }>;
     openExternal(url: string): Promise<void>;
     onBackendStatus(callback: (status: BriksDesktopBackendStatus) => void): () => void;
   };

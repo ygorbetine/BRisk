@@ -119,6 +119,13 @@ export class LiveKitTransport implements SfuCallTransport {
     }
   }
 
+  async setMicrophoneMuted(muted: boolean): Promise<void> {
+    for (const [track, publication] of this.published) {
+      if (track.kind !== "audio" || publication.source !== Track.Source.Microphone) continue;
+      if (muted) await publication.mute(); else await publication.unmute();
+    }
+  }
+
   async replacePublishedTrack(previousTrack: MediaStreamTrack, nextTrack: MediaStreamTrack, _stream: MediaStream): Promise<void> {
     const publication = this.published.get(previousTrack);
     if (!publication?.track) return;

@@ -89,6 +89,7 @@
     ],
     "win": {
       "target": "nsis",
+      "artifactName": "Briks-Setup-${version}.${ext}",
       "icon": "build/icon.ico"
     },
     "linux": {

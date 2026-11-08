@@ -1,4 +1,6 @@
 import { BriksMark } from "./BriksMark";
+import { Modal } from "./Modal";
+import { SettingsView } from "../views/SettingsView";
 import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, bestFitLayout, type CallLayoutMode } from "./call-layout-mode";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
@@ -14,6 +16,7 @@ import {
   MonitorUp,
   PanelLeft,
   PhoneOff,
+  Settings,
   Settings2,
   Sparkles,
   Video,
@@ -407,6 +410,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const [screenAudioEnabled, setScreenAudioEnabled] = useState(initialScreenAudio);
   const [pickingSecond, setPickingSecond] = useState(false);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [screenSources, setScreenSources] = useState<BriksDesktopSource[]>([]);
   const [screenSourcesLoading, setScreenSourcesLoading] = useState(false);
@@ -722,6 +726,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           setSourcePickerOpen(false);
           onMinimize();
         }} title="Voltar para o Briks"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
+        <button className="minimize-call settings-shortcut" onClick={() => setAppSettingsOpen(true)} title="Abrir as configurações do Briks" aria-label="Configurações"><Settings size={17}/><span>Configurações</span></button>
         {view === "call" && <div className="call-view-tabs layout-tabs" role="group" aria-label="Disposição das telas">
           <button className={layoutMode === "weight" ? "active" : ""} onClick={() => chooseLayout("weight")} title="Grade: lives grandes e pessoas pequenas"><LayoutGrid size={16}/><span>Grade</span></button>
           <button className={layoutMode === "focus" ? "active" : ""} onClick={() => chooseLayout("focus")} title="Foco: uma live grande e miniaturas ao lado"><PanelRight size={16}/><span>Foco</span></button>
@@ -855,6 +860,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       }}><PhoneOff/><span>Sair</span></button>
     </footer>
 
+    {appSettingsOpen && <Modal title="Configurações" onClose={() => setAppSettingsOpen(false)}><SettingsView/></Modal>}
     {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>}
     {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} readDiagnostics={() => call.getLiveDiagnostics()} onClose={() => setQualityPanelOpen(false)}/>} 
     {diagnosticsOpen && <section className="network-diagnostics" role="dialog" aria-label="Diagnóstico da conexão">

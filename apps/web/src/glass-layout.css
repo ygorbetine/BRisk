@@ -174,3 +174,76 @@ body {
   .call-workspace .stage.stage-weighted .tile .video-off { height: 100%; min-height: 0; }
 }
 .layout-tabs button.active { background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); color: #fff; }
+
+/* Só lives na tela (1 ou 2): centralizadas, sem esticar até as bordas */
+@media (orientation: landscape) and (min-height: 761px) and (min-width: 901px) {
+  .call-workspace .stage.stage-lives-only {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+    align-content: center;
+    align-items: center;
+  }
+  .call-workspace .stage.stage-lives-only.lives-1 { grid-template-columns: minmax(0, 1280px); justify-content: center; }
+  .call-workspace .stage.stage-lives-only .tile.screen:not(:fullscreen) {
+    grid-column: span 1;
+    grid-row: span 1;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    max-height: 100%;
+    align-self: center;
+  }
+}
+
+/* Informações da transmissão dentro da própria tela, discretas, no canto superior */
+.call-workspace .tile.local.screen .tile-label {
+  top: 10px;
+  bottom: auto;
+  left: 10px;
+  padding: 4px 9px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(10, 6, 18, .62);
+  backdrop-filter: blur(8px);
+  max-width: calc(100% - 20px);
+}
+.call-workspace .tile.local.screen .tile-label em { font-size: 10px; }
+
+/* Volumes: escondidos até passar o mouse; o ícone fixa o painel aberto */
+.call-workspace .tile .volume-panel {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.call-workspace .tile:hover .volume-panel,
+.call-workspace .tile:focus-within .volume-panel,
+.call-workspace .tile .volume-panel.open {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.call-workspace .tile .volume-toggle {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 4;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #ece6fa;
+  background: rgba(10, 6, 18, .55);
+  border: 1px solid rgba(255, 255, 255, .14);
+  backdrop-filter: blur(8px);
+  opacity: .75;
+  transition: opacity .16s ease;
+}
+.call-workspace .tile .volume-toggle:hover { opacity: 1; transform: none; filter: none; }
+.call-workspace .tile .volume-toggle.pinned { background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); opacity: 1; }
+.call-workspace .tile:hover .volume-toggle:not(.pinned),
+.call-workspace .tile:focus-within .volume-toggle:not(.pinned) { opacity: 0; pointer-events: none; }
+.call-workspace .tile.thumbnail .volume-toggle { display: none; }
+.call-workspace .tile .volume-panel.open { bottom: 52px; }

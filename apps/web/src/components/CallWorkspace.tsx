@@ -1,5 +1,5 @@
 import { BriksMark } from "./BriksMark";
-import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, type CallLayoutMode } from "./call-layout-mode";
+import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, bestFitLayout, type CallLayoutMode } from "./call-layout-mode";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
@@ -174,6 +174,7 @@ function VideoTile({
   const [source, setSource] = useState<"camera" | "screen">("camera");
   const [userVolume, setUserVolume] = useState(100);
   const [screenVolume, setScreenVolume] = useState(100);
+  const [volumeOpen, setVolumeOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const articleRef = useRef<HTMLElement>(null);
 
@@ -220,7 +221,8 @@ function VideoTile({
       <button className={source === "camera" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("camera"); }}><Video size={14}/> Câmera</button>
       <button className={source === "screen" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("screen"); }}><MonitorUp size={14}/> Tela</button>
     </div>}
-    {(userHasAudio || screenHasAudio) && !compact && <div className="volume-panel" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => { event.stopPropagation(); shieldClicksFromPanel(); }}>
+    {(userHasAudio || screenHasAudio) && !compact && <button type="button" className={`volume-toggle ${volumeOpen ? "pinned" : ""}`} aria-label={volumeOpen ? "Ocultar volumes" : "Mostrar volumes"} aria-pressed={volumeOpen} title="Volumes" onClick={(event) => { event.stopPropagation(); setVolumeOpen((open) => !open); }} onDoubleClick={(event) => event.stopPropagation()}><Volume2 size={15}/></button>}
+    {(userHasAudio || screenHasAudio) && !compact && <div className={`volume-panel ${volumeOpen ? "open" : ""}`} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => { event.stopPropagation(); shieldClicksFromPanel(); }}>
       {userHasAudio && <VolumeControl label="Usuário" value={userVolume} onChange={setUserVolume}/>} 
       {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={setScreenVolume}/>} 
     </div>}
@@ -392,6 +394,8 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const peers = Object.values(participants);
   const [view, setView] = useState<ViewMode>("call");
   const [focusedTile, setFocusedTile] = useState<string | null>(null);
+  const stageRef = useRef<HTMLElement>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [layoutMode, setLayoutMode] = useState<CallLayoutMode>(loadCallLayoutMode);
   const [chatStatus, setChatStatus] = useState<ChatConnectionStatus>("disconnected");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -555,9 +559,25 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     return () => { alive = false; window.clearInterval(timer); };
   }, [call]);
 
+  const sharingScreen = Boolean(localPreviews.screen || localPreviews.screen2);
+  useEffect(() => {
+    const node = stageRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const style = getComputedStyle(node);
+      const width = node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const height = node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      setStageSize((current) => Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1 ? current : { width, height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [view]);
+
   const tileIds = useMemo(() => {
     const ids: string[] = [];
-    if (!localPreviews.camera) ids.push("local-profile");
+    if (!localPreviews.camera && !sharingScreen) ids.push("local-profile");
     if (localPreviews.camera) ids.push("local-camera");
     if (localPreviews.screen) ids.push("local-screen");
     if (localPreviews.screen2) ids.push("local-screen2");
@@ -566,7 +586,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       if (peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId]) ids.push(`peer2-${peer.peerId}`);
     });
     return ids;
-  }, [localPreviews.camera, localPreviews.screen, localPreviews.screen2, peers]);
+  }, [localPreviews.camera, sharingScreen, localPreviews.screen, localPreviews.screen2, peers]);
 
   useEffect(() => {
     if (focusedTile && !tileIds.includes(focusedTile)) setFocusedTile(null);
@@ -651,13 +671,21 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const manualFocus = focusedTile && tileIds.includes(focusedTile) ? focusedTile : null;
   const focused = manualFocus ?? (layoutMode === "focus" ? (liveTileIds[0] ?? null) : null);
   const weighted = !focused && liveTileIds.length > 0;
+  const livesOnly = weighted && liveTileIds.length <= 2 && tileIds.length === liveTileIds.length;
   function chooseLayout(mode: CallLayoutMode): void {
     setLayoutMode(mode);
     saveCallLayoutMode(mode);
     setFocusedTile(null);
   }
   const responsiveGrid = responsiveCallGrid(tileIds.length);
+  const fit = livesOnly && stageSize.width > 0 && stageSize.height > 0 ? bestFitLayout(liveTileIds.length, stageSize.width, stageSize.height) : null;
   const stageStyle = {
+    ...(fit ? {
+      gridTemplateColumns: `repeat(${fit.columns}, ${Math.floor(fit.tileWidth)}px)`,
+      gridAutoRows: `${Math.floor(fit.tileHeight)}px`,
+      justifyContent: "center",
+      alignContent: "center",
+    } : {}),
     "--weight-rows": weightedRows(liveTileIds.length, Math.max(0, tileIds.length - liveTileIds.length)),
     "--call-portrait-columns": responsiveGrid.portrait.columns,
     "--call-portrait-rows": responsiveGrid.portrait.rows,
@@ -713,10 +741,10 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     {callError && <div className="global-error" onClick={() => setError(null)}>{callError}</div>}
 
     <section className={`call-view ${view === "call" ? "" : "is-hidden"}`}>
-      <section className={`stage ${focused ? "stage-focused" : ""} ${weighted ? "stage-weighted" : ""}`} style={stageStyle} onMouseDown={(event) => {
+      <section ref={stageRef} className={`stage ${focused ? "stage-focused" : ""} ${weighted ? "stage-weighted" : ""} ${livesOnly ? `stage-lives-only lives-${liveTileIds.length}` : ""}`} style={stageStyle} onMouseDown={(event) => {
         if (event.target === event.currentTarget) setFocusedTile(null);
       }}>
-        {!localPreviews.camera && <LocalProfileTile
+        {!localPreviews.camera && !sharingScreen && <LocalProfileTile
           displayName={context?.displayName ?? "Você"}
           avatar={context?.avatar}
           microphone={localState.microphone}

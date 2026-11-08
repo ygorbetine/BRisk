@@ -21,3 +21,23 @@ describe("modo de layout", () => {
     expect(loadCallLayoutMode()).toBe("weight");
   });
 });
+
+import { bestFitLayout } from "./call-layout-mode";
+
+describe("bestFitLayout", () => {
+  it("duas telas em janela larga ficam lado a lado", () => {
+    expect(bestFitLayout(2, 1885, 830).columns).toBe(2);
+  });
+  it("duas telas em janela alta e estreita ficam empilhadas", () => {
+    expect(bestFitLayout(2, 700, 1000).columns).toBe(1);
+  });
+  it("uma tela usa o maior tamanho possível", () => {
+    const fit = bestFitLayout(1, 1000, 400);
+    expect(Math.round(fit.tileHeight)).toBe(400);
+  });
+  it("nunca passa da área", () => {
+    const fit = bestFitLayout(2, 1885, 830);
+    expect(fit.tileWidth * fit.columns + 10 * (fit.columns - 1)).toBeLessThanOrEqual(1885);
+    expect(fit.tileHeight * fit.rows + 10 * (fit.rows - 1)).toBeLessThanOrEqual(830);
+  });
+});

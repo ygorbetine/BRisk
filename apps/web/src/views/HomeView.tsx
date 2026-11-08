@@ -9,6 +9,7 @@ import {
   MicOff,
   Pencil,
   Plus,
+  Settings,
   Settings2,
   Shield,
   ShieldCheck,
@@ -21,6 +22,7 @@ import {
   VideoOff,
   PhoneOff,
   RefreshCw,
+  Bell,
 } from "lucide-react";
 import {
   privateConversationId,
@@ -42,7 +44,8 @@ import { NickInvite } from "../components/NickInvite";
 import { ProfileEditor } from "../components/ProfileEditor";
 import { FriendsView } from "./FriendsView";
 import { GroupView } from "./GroupView";
-import { SettingsView } from "./SettingsView";
+import { SettingsView, type SettingsTab } from "./SettingsView";
+import { useUpdateState } from "../components/useUpdateState";
 import type { LocalProfile } from "../services/offline/profile";
 import { incompatiblePeerMessage } from "../services/protocol-compatibility";
 import { dedupeMembersForDisplay, groupMembersByName } from "../services/offline/member-display";
@@ -84,6 +87,7 @@ export function HomeView() {
   const setCallContext = useCallStore((state) => state.setCallContext);
   const setCallWorkspaceOpen = useCallStore((state) => state.setCallWorkspaceOpen);
   const localCallState = useCallStore((state) => state.localState);
+  const localPreviews = useCallStore((state) => state.localPreviews);
   const callParticipants = useCallStore((state) => state.participants);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
@@ -107,6 +111,9 @@ export function HomeView() {
   const [attachments, setAttachments] = useState<ChatAttachmentRecord[]>([]);
   const [attachmentProgress, setAttachmentProgress] = useState<Record<string, ChatAttachmentProgress | undefined>>({});
   const [modal, setModal] = useState<SocialModal>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("voice");
+  const updateState = useUpdateState();
+  const updateReady = updateState.phase === "ready";
   const [accountNick, setAccountNick] = useState<string>();
   const [resyncing, setResyncing] = useState(false);
   const [resyncNote, setResyncNote] = useState("");
@@ -116,6 +123,12 @@ export function HomeView() {
   const [channelAction, setChannelAction] = useState<ChannelActionTarget>(null);
   const [channelSaving, setChannelSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notices, setNotices] = useState<Array<{ id: number; text: string; at: number }>>([]);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  useEffect(() => {
+    if (!error) return;
+    setNotices((items) => [{ id: Date.now(), text: error, at: Date.now() }, ...items.filter((item) => item.text !== error)].slice(0, 8));
+  }, [error]);
   const [chatStatus, setChatStatus] = useState<ChatConnectionStatus>("disconnected");
   const [unreadChannels, setUnreadChannels] = useState<Record<string, number>>({});
   const [activeVoiceRooms, setActiveVoiceRooms] = useState<VoiceActivity[]>([]);
@@ -458,7 +471,11 @@ export function HomeView() {
       });
       setRoom(channel.voiceRoomId);
       if (localGroup) void voiceActivities.publish(localGroup, channel.id, channel.voiceRoomId, identity.peerId).catch(() => undefined);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível entrar na voz"); }
+    } catch (cause) {
+      // Entrada cancelada (cliquei em sair, troquei de sala ou cliquei duas vezes) não é erro.
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setError(cause instanceof Error ? cause.message : "Não foi possível entrar na voz");
+    }
   }
 
   async function connectChat() {
@@ -876,6 +893,13 @@ export function HomeView() {
           <div className="nav-section"><span>SALAS DE VOZ</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
           {channels.filter((item) => item.kind === "voice").map((channel) => <div className="channel-item" key={channel.id}>
             <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
+            {roomId === channel.voiceRoomId && <ul className="voice-members" aria-label="Quem está na sala">
+              <li><span>{currentUser?.displayName ?? "Você"} <em>você</em></span>{localCallState.screenShare && <b className="voice-member-live"><i/>Ao vivo</b>}</li>
+              {Object.values(callParticipants).map((person) => <li key={person.peerId}>
+                <span>{person.displayName}</span>
+                {person.state.screenShare && <button className="voice-member-watch" onClick={() => setCallWorkspaceOpen(true)} title={`Assistir a transmissão de ${person.displayName}`}><i/>Assistir</button>}
+              </li>)}
+            </ul>}
             {selectedCommunity.local && canEditSelectedGroup && <div className="channel-actions"><button title="Renomear sala de voz" aria-label={`Renomear ${channel.name}`} onClick={() => setChannelAction({ mode: "edit", channel })}><Pencil size={14}/></button><button className="delete" title="Apagar sala de voz" aria-label={`Apagar ${channel.name}`} onClick={() => setChannelAction({ mode: "delete", channel })}><Trash2 size={14}/></button></div>}
           </div>)}
         </> : <>
@@ -888,6 +912,10 @@ export function HomeView() {
             <span><i/>Voz conectada</span>
             <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "Briks"}</small>
           </button>
+          {localCallState.screenShare && <button className="voice-live-card" onClick={() => setCallWorkspaceOpen(true)} title="Abrir a chamada">
+            <LivePreview stream={localPreviews.screen ?? null}/>
+            <span className="voice-live-badge"><i/>Ao vivo</span>
+          </button>}
           <div className="voice-session-actions">
             <button className={localCallState.microphone ? "" : "off"} onClick={() => void call.toggleMicrophone(roomId)} title={localCallState.microphone ? "Desativar microfone" : "Ativar microfone"}>{localCallState.microphone ? <Mic/> : <MicOff/>}</button>
             <button className={localCallState.camera ? "active" : ""} onClick={() => void call.toggleCamera(roomId)} title={localCallState.camera ? "Desativar câmera" : "Ativar câmera"}>{localCallState.camera ? <Video/> : <VideoOff/>}</button>
@@ -903,8 +931,18 @@ export function HomeView() {
         <div className="account-bar">
           <button className="account-profile" onClick={() => setModal("profile")} title="Editar perfil"><ProfileAvatar displayName={currentUser?.displayName ?? "Eu"} avatar={currentUser?.avatar}/></button>
           <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>{accountNick ? `@${accountNick}` : "Disponível"}</small></button>
-          <button onClick={() => setModal("account")} title={accountNick ? `Conta @${accountNick}` : "Conta e @nick"}><AtSign/></button>
-          <button onClick={() => setModal("settings")} title="Voz e vídeo"><Settings2/></button>
+          <button onClick={() => setModal("account")} title={accountNick ? `Perfil e conta · @${accountNick}` : "Perfil e conta"}><AtSign/></button>
+          <span className="notices-wrap">
+            <button className="notices-bell" onClick={() => setNoticesOpen((open) => !open)} title="Avisos" aria-label="Avisos" aria-expanded={noticesOpen}><Bell/>{notices.length + (updateReady ? 1 : 0) > 0 && <i className="update-dot" aria-hidden="true"/>}</button>
+            {noticesOpen && <div className="notices-popover" role="dialog" aria-label="Central de avisos">
+              <strong>Avisos</strong>
+              {updateReady && <div className="notice"><span>Versão {updateState.version ?? ""} pronta para instalar.</span><button onClick={() => void window.desktop?.installUpdate?.()}>Reiniciar e instalar</button></div>}
+              {notices.map((item) => <div className="notice error" key={item.id}><span>{item.text}</span><small>{new Date(item.at).toLocaleTimeString()}</small></div>)}
+              {!updateReady && !notices.length && <p>Nenhum aviso. Tudo certo por aqui.</p>}
+              {notices.length > 0 && <button className="notices-clear" onClick={() => setNotices([])}>Limpar avisos</button>}
+            </div>}
+          </span>
+          <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "about" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{updateReady && <i className="update-dot" aria-hidden="true"/>}</button>
           <button onClick={() => void logout()} title="Sair"><LogOut/></button>
         </div>
       </aside>
@@ -964,9 +1002,13 @@ export function HomeView() {
       {membersPanel && <aside className="members-panel" aria-label="Membros do grupo">{membersPanel}</aside>}
 
       {modal === "friend" && <Modal title="Adicionar amigo" onClose={() => setModal(null)}>{currentUser ? <P2PInvitePanel type="friend" token={token} displayName={currentUser.displayName} onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
-      {modal === "account" && <Modal title="Conta e @nick" onClose={() => setModal(null)}><AccountPanel onNickChanged={setAccountNick}/></Modal>}
-      {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView/></Modal>}
-      {modal === "profile" && currentUser && <Modal title="Editar perfil" onClose={() => setModal(null)}><ProfileEditor profile={{ displayName: currentUser.displayName, avatar: currentUser.avatar }} onSaved={profileSaved}/></Modal>}
+            {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView initialTab={settingsTab}/></Modal>}
+      {(modal === "profile" || modal === "account") && currentUser && <Modal title="Perfil e conta" onClose={() => setModal(null)}>
+        <div className="profile-account">
+          <section><h3>Perfil</h3><ProfileEditor profile={{ displayName: currentUser.displayName, avatar: currentUser.avatar }} onSaved={profileSaved}/></section>
+          <section><h3>Conta e @nick</h3><AccountPanel onNickChanged={setAccountNick}/></section>
+        </div>
+      </Modal>}
       {modal === "groupProfile" && selectedLocalGroup && <Modal title="Personalizar grupo" onClose={() => setModal(null)}><GroupEditor group={selectedLocalGroup} onSaved={groupSaved}/></Modal>}
       {modal === "group" && <Modal title="Criar um grupo" onClose={() => setModal(null)}><form onSubmit={(event) => {
         event.preventDefault();
@@ -1035,4 +1077,15 @@ function upsertAttachment(current: ChatAttachmentRecord[], record: ChatAttachmen
 
 function dedupeAttachments(records: ChatAttachmentRecord[]): ChatAttachmentRecord[] {
   return records.reduce<ChatAttachmentRecord[]>((items, record) => upsertAttachment(items, record), []);
+}
+
+function LivePreview({ stream }: { stream: MediaStream | null }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    video.srcObject = stream;
+    if (stream) void video.play().catch(() => undefined);
+  }, [stream]);
+  return <video ref={ref} muted playsInline aria-hidden="true"/>;
 }

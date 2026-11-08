@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Network, RefreshCw, ShieldCheck, Wifi } from "lucide-react";
+import { Activity, RefreshCw, Wifi } from "lucide-react";
 import { runConnectionTest, type ConnectionTestResult } from "../services/rtc/connection-test";
 import {
   loadNetworkSettings,
@@ -8,6 +8,7 @@ import {
 } from "../services/network/settings";
 import { loadCallTransportMode, saveCallTransportMode } from "../services/call/transport-mode";
 import "./network-settings.css";
+import "./settings-ui.css";
 
 const PREFERENCE_OPTIONS: Array<{
   value: NetworkPreference;
@@ -68,60 +69,81 @@ export function NetworkSettingsPanel() {
     saveNetworkSettings({ preference: next });
   }
 
-  return <div className="network-settings">
-    <section className="network-settings-section">
-      <header><Network/><span><strong>Preferência de conexão</strong><small>A preferência vale para novas chamadas, chats, convites e transferências P2P.</small></span></header>
-      <div className="network-preference-list">
-        {PREFERENCE_OPTIONS.map((option) => <label key={option.value} className={preference === option.value ? "active" : ""}>
-          <input type="radio" name="network-preference" checked={preference === option.value} onChange={() => select(option.value)}/>
-          <span><strong>{option.title}</strong><small>{option.description}</small></span>
-        </label>)}
+const CALL_MODES = [
+  { value: "auto", title: "Automático", description: "Conexão direta; passa para o servidor em sala grande ou rede ruim." },
+  { value: "mesh", title: "Sempre P2P", description: "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio." },
+  { value: "sfu", title: "Sempre SFU", description: "Passa por um servidor. Melhor para salas grandes e redes difíceis." },
+] as const;
+
+const PREFERENCE_SHORT: Record<NetworkPreference, string> = { auto: "Automática", "internet-direct": "Internet direta", "private-vpn": "VPN privada" };
+
+  const [networksOpen, setNetworksOpen] = useState(false);
+  const levelClass = testResult ? (testResult.level === "boa" ? "good" : testResult.level === "limitada" ? "warn" : "bad") : "";
+  const levelText = testResult ? (testResult.level === "boa" ? "Conexão boa" : testResult.level === "limitada" ? "Conexão limitada" : "Conexão com problemas") : "Conexão não testada";
+  const kindsText = testResult
+    ? (testResult.kinds.length ? testResult.kinds.map((kind) => kind === "srflx" ? "direto (STUN)" : kind === "relay" ? "relay (TURN)" : "rede local").join(", ") : "nenhum")
+    : "";
+
+  return <div className="sx-stack network-settings">
+    <section className={`sx-card ${testResult ? levelClass : "accent"}`}>
+      <div className="sx-row">
+        <div>
+          <strong><span className={`sx-dot ${levelClass}`}/>{levelText}</strong>
+          <small>{testResult ? testResult.summary : "Verifica se a sua rede permite chamadas diretas e se o relay (TURN) responde."}</small>
+        </div>
+        <button type="button" className="sx-btn primary" disabled={testing} onClick={() => void testConnection()}>
+          <Activity size={16}/>{testing ? "Testando…" : testResult ? "Testar de novo" : "Testar conexão"}
+        </button>
       </div>
+      {testResult && <>
+        {testResult.tips.map((tip) => <p className="sx-sub" key={tip}>{tip}</p>)}
+        <p className="sx-sub">Caminhos detectados: {kindsText}</p>
+      </>}
     </section>
 
-    <section className="network-settings-section">
-      <header><ShieldCheck/><span><strong>Redes privadas detectadas</strong><small>Os endereços permanecem neste dispositivo e não são publicados no diagnóstico.</small></span></header>
-      <div className="vpn-interface-list">
-        {vpnInterfaces.map((networkInterface) => <article key={`${networkInterface.name}:${networkInterface.address}`}>
-          <span className="vpn-interface-icon"><Wifi/></span>
-          <span><strong>{providerLabel(networkInterface.provider)}</strong><small>{networkInterface.name}</small></span>
-          <code>{networkInterface.address}</code>
-          <em>Detectado ✓</em>
-        </article>)}
-        {!vpnInterfaces.length && !loading && <div className="vpn-interface-empty">Nenhuma interface ZeroTier, Tailscale ou WireGuard foi detectada.</div>}
-        {loading && <div className="vpn-interface-empty">Verificando interfaces de rede…</div>}
-      </div>
-      <button type="button" className="settings-secondary-button" disabled={loading} onClick={() => void refresh()}>
-        <RefreshCw size={16}/>{loading ? "Atualizando…" : "Atualizar detecção"}
-      </button>
-      {error && <div className="settings-device-error">{error}</div>}
-    </section>
-
-    <section className="network-section call-mode-section">
-      <header><Network/><span><strong>Modo da chamada</strong><small>Automático usa conexão direta e passa para o servidor (SFU) em salas grandes ou rede ruim. Todos da sala precisam usar o mesmo modo.</small></span></header>
-      <div className="call-mode-options" role="radiogroup" aria-label="Modo da chamada">
-        {([["auto", "Automático"], ["mesh", "Sempre P2P"], ["sfu", "Sempre SFU"]] as const).map(([value, label]) => <button
-          key={value}
+    <section className="sx-card">
+      <span className="sx-title">Modo da chamada</span>
+      <div className="sx-options cols-3" role="radiogroup" aria-label="Modo da chamada">
+        {CALL_MODES.map((mode) => <button
+          key={mode.value}
           type="button"
           role="radio"
-          aria-checked={callMode === value}
-          className={callMode === value ? "active" : ""}
-          onClick={() => { setCallMode(value); saveCallTransportMode(value); }}
-        >{label}</button>)}
+          aria-checked={callMode === mode.value}
+          className={`sx-option${callMode === mode.value ? " on" : ""}`}
+          onClick={() => { setCallMode(mode.value); saveCallTransportMode(mode.value); }}
+        ><strong>{mode.title}</strong><small>{mode.description}</small></button>)}
       </div>
-    </section>
-    <section className="network-settings-section">
-      <header><Activity/><span><strong>Teste de conexão</strong><small>Verifica se a sua rede permite chamadas diretas e se o relay (TURN) responde.</small></span></header>
-      <button type="button" className="settings-secondary-button" disabled={testing} onClick={() => void testConnection()}>
-        <Activity size={16}/>{testing ? "Testando (até 8 s)…" : "Testar minha conexão"}
-      </button>
-      {testResult && <div className={`connection-test-result level-${testResult.level}`} role="status">
-        <strong>{testResult.level === "boa" ? "Boa" : testResult.level === "limitada" ? "Limitada" : "Ruim"} · {testResult.summary}</strong>
-        {testResult.tips.map((tip) => <small key={tip}>{tip}</small>)}
-        <small>Caminhos detectados: {testResult.kinds.length ? testResult.kinds.map((kind) => kind === "srflx" ? "direto (STUN)" : kind === "relay" ? "relay (TURN)" : "rede local").join(", ") : "nenhum"}</small>
-      </div>}
+      <p className="sx-sub">Todos da sala precisam usar o mesmo modo.</p>
     </section>
 
-    <div className="settings-note">A opção de VPN aumenta a prioridade do caminho privado quando ele funciona nos dois computadores. Se a VPN estiver indisponível, o Briks ainda pode usar conexão direta, STUN ou TURN.</div>
+    <section className="sx-card">
+      <span className="sx-title">Preferência de conexão</span>
+      <div className="sx-seg" role="group" aria-label="Preferência de conexão">
+        {PREFERENCE_OPTIONS.map((option) => <button key={option.value} type="button" aria-pressed={preference === option.value} className={preference === option.value ? "on" : ""} onClick={() => select(option.value)}>{PREFERENCE_SHORT[option.value]}</button>)}
+      </div>
+      <p className="sx-sub">{PREFERENCE_OPTIONS.find((option) => option.value === preference)?.description} Vale para novas chamadas, chats, convites e transferências.</p>
+    </section>
+
+    <section className="sx-card sx-fold">
+      <button type="button" className="sx-fold-head" aria-expanded={networksOpen} onClick={() => setNetworksOpen((open) => !open)}>
+        <span>Redes privadas detectadas <small>{loading ? "verificando…" : vpnInterfaces.length ? `${vpnInterfaces.length} encontrada${vpnInterfaces.length > 1 ? "s" : ""}` : "nenhuma"}</small></span>
+        <span aria-hidden="true">{networksOpen ? "⌃" : "⌄"}</span>
+      </button>
+      {networksOpen && <>
+        <p className="sx-sub">Os endereços ficam neste dispositivo e não entram no diagnóstico.</p>
+        <div className="vpn-interface-list">
+          {vpnInterfaces.map((networkInterface) => <article key={`${networkInterface.name}:${networkInterface.address}`}>
+            <span className="vpn-interface-icon"><Wifi/></span>
+            <span><strong>{providerLabel(networkInterface.provider)}</strong><small>{networkInterface.name}</small></span>
+            <code>{networkInterface.address}</code>
+            <em>Detectado ✓</em>
+          </article>)}
+          {!vpnInterfaces.length && !loading && <div className="vpn-interface-empty">Nenhuma interface ZeroTier, Tailscale ou WireGuard foi detectada.</div>}
+          {loading && <div className="vpn-interface-empty">Verificando interfaces de rede…</div>}
+        </div>
+        <button type="button" className="sx-btn small" disabled={loading} onClick={() => void refresh()}><RefreshCw size={14}/>{loading ? "Atualizando…" : "Atualizar detecção"}</button>
+        {error && <div className="sx-error">{error}</div>}
+      </>}
+    </section>
   </div>;
 }

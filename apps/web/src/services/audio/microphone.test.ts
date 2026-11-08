@@ -7,6 +7,8 @@ const settings: VoiceVideoSettings = {
   noiseSuppression: "standard",
   echoCancellation: true,
   excludeBriksAudioFromScreenShare: true,
+  noiseGateEnabled: false,
+  noiseGateThresholdDb: -45,
 };
 
 const fakeStream = {} as MediaStream;

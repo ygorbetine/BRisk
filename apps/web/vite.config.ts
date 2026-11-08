@@ -155,7 +155,7 @@ export default defineConfig(({ command, mode }) => {
     ...({ test: { env: { VITE_LIVEKIT_URL: "", VITE_LIVEKIT_TOKEN_URL: "" } } } as object),
     build: {
       // O worklet de áudio por processo precisa ser um arquivo real: a CSP bloqueia worklets data: URI.
-      assetsInlineLimit: (file) => (file.includes("process-pcm-worklet") ? false : undefined),
+      assetsInlineLimit: (file) => (file.includes("process-pcm-worklet") || file.includes("noise-gate-worklet") ? false : undefined),
       rollupOptions: {
         output: {
           manualChunks(id) {

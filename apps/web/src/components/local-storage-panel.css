@@ -1,0 +1,10 @@
+.local-storage-panel .storage-total{font-size:28px;font-weight:600;letter-spacing:-.02em;color:#fff;font-variant-numeric:tabular-nums}
+.local-storage-panel .storage-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,.12)}
+.local-storage-panel .storage-bar i{display:block;height:100%}
+.local-storage-panel .storage-legend{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.local-storage-panel .storage-legend li{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid rgba(255,255,255,.08);font-size:13px;color:#e5dcf4}
+.local-storage-panel .storage-legend li:first-child{border-top:0}
+.local-storage-panel .storage-legend strong{font-weight:600;font-variant-numeric:tabular-nums}
+.local-storage-panel .storage-confirm{display:flex;gap:6px;flex:none}
+.local-storage-panel .storage-privacy{justify-items:center;text-align:center;color:#d9c8f0}
+.local-storage-panel .storage-privacy strong{color:#fff;font-size:13px}

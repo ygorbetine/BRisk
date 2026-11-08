@@ -87,8 +87,17 @@ export function ConversationTimeline({
       {gallery.length > 0 && <button type="button" className="open-gallery" onClick={() => setGalleryOpen(true)}><Images size={15}/> Galeria ({gallery.length})</button>}
     </div>}
 
-    {items.map((item) => item.type === "message"
-      ? <article id={`chat-message-${item.message.id}`} className={`chat-message ${item.message.deletedAt ? "is-deleted" : ""}`} key={`message:${item.message.id}`}>
+    {items.map((item, index) => {
+      const previous = items[index - 1];
+      const grouped = item.type === "message" && previous?.type === "message"
+        && previous.message.author === item.message.author
+        && previous.message.authorPeerId === item.message.authorPeerId
+        && !item.message.replyToId
+        && Math.abs(new Date(item.message.createdAt).getTime() - new Date(previous.message.createdAt).getTime()) < 5 * 60_000;
+      const mine = item.type === "message" && Boolean(localPeerId) && item.message.authorPeerId === localPeerId;
+      return { item, grouped, mine };
+    }).map(({ item, grouped, mine }) => item.type === "message"
+      ? <article id={`chat-message-${item.message.id}`} className={`chat-message ${item.message.deletedAt ? "is-deleted" : ""}${mine ? " mine" : ""}${grouped ? " grouped" : ""}`} key={`message:${item.message.id}`}>
           <div className="avatar">{item.message.author[0]}</div>
           <div className="chat-message-body">
             <div className="chat-message-heading"><strong>{item.message.author}</strong>{item.message.authorPeerId && nicks?.get(item.message.authorPeerId) && <small className="message-nick">@{nicks.get(item.message.authorPeerId)}</small>}<time>{new Date(item.message.createdAt).toLocaleString()}</time>{item.message.editedAt && !item.message.deletedAt && <small>(editada)</small>}{item.message.pinnedAt && <Pin size={12}/>}</div>

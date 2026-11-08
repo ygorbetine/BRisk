@@ -1,5 +1,6 @@
 import { openConfiguredMicrophone } from "../../services/audio/microphone";
 import { createRnnoiseMicrophone, type RnnoiseMicrophone } from "../../services/audio/rnnoise";
+import { createNoiseGate } from "../../services/audio/noise-gate";
 import type { VoiceVideoSettings } from "../../services/audio/settings";
 
 export type MicrophoneSession = {
@@ -9,6 +10,23 @@ export type MicrophoneSession = {
 };
 
 export async function createMicrophoneSession(settings: VoiceVideoSettings): Promise<MicrophoneSession> {
+  const base = await createBaseMicrophoneSession(settings);
+  if (!settings.noiseGateEnabled) return base;
+  try {
+    const gate = await createNoiseGate(base.track, settings.noiseGateThresholdDb);
+    const previous = base.rnnoise;
+    return {
+      inputStream: base.inputStream,
+      track: gate.track,
+      rnnoise: { track: gate.track, stop: async () => { await gate.stop(); await previous?.stop().catch(() => undefined); } },
+    };
+  } catch (error) {
+    console.warn("Noise gate indisponível; seguindo sem a porta de ruído.", error);
+    return base;
+  }
+}
+
+async function createBaseMicrophoneSession(settings: VoiceVideoSettings): Promise<MicrophoneSession> {
   const inputStream = await openConfiguredMicrophone(settings);
   const inputTrack = inputStream.getAudioTracks()[0];
   if (!inputTrack) {

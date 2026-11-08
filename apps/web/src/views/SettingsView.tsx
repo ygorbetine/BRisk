@@ -5,8 +5,10 @@ import { AboutPanel } from "../components/AboutPanel";
 import { ThemePanel } from "../components/ThemePanel";
 import { VoiceVideoSettingsPanel } from "../components/VoiceVideoSettingsPanel";
 
-export function SettingsView() {
-  const [tab, setTab] = useState<"voice" | "network" | "theme" | "storage" | "about">("voice");
+export type SettingsTab = "voice" | "network" | "theme" | "storage" | "about";
+
+export function SettingsView({ initialTab = "voice" }: { initialTab?: SettingsTab } = {}) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   return <>
     <nav className="settings-tabs" aria-label="Seções das configurações">
       <button className={tab === "voice" ? "active" : ""} onClick={() => setTab("voice")}>Voz e vídeo</button>

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { filterFriends, type FriendsFilter } from "./friends-filter";
 import { Headphones, MessageCircle, UserMinus, Users } from "lucide-react";
 import type { Community, Friend, PendingFriend, VoiceActivity } from "../application/contracts";
 import { ProfileAvatar } from "../components/ProfileAvatar";
@@ -17,23 +19,37 @@ export type FriendsViewProps = {
 };
 
 export function FriendsView(props: FriendsViewProps) {
+  const [filter, setFilter] = useState<FriendsFilter>("all");
+  const [query, setQuery] = useState("");
+  const shown = filterFriends(props.friends, props.onlinePeers, filter, query);
+  const onlineCount = props.friends.filter((friend) => props.onlinePeers?.has(friend.id)).length;
+  const tabs: Array<{ id: FriendsFilter; label: string; count: number }> = [
+    { id: "online", label: "Online", count: onlineCount },
+    { id: "all", label: "Todos", count: props.friends.length },
+    { id: "pending", label: "Pendentes", count: props.pending.length },
+  ];
   return <>
     <header className="content-header"><Users/><strong>Amigos</strong><button onClick={props.onAddFriend}>Adicionar amigo</button></header>
     <div className="friends-layout"><div>
-      <h3>Seus amigos — {props.friends.length}</h3>
-      {props.pending.map((request) => <div className="friend-row pending" key={request.requestId}>
+      <div className="friends-tabs" role="tablist" aria-label="Filtrar amigos">
+        {tabs.map((tab) => <button key={tab.id} role="tab" aria-selected={filter === tab.id} className={filter === tab.id ? "on" : ""} onClick={() => setFilter(tab.id)}>{tab.label} <small>{tab.count}</small></button>)}
+        {filter !== "pending" && <input className="friends-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar amigo" aria-label="Buscar amigo"/>}
+      </div>
+      {(filter === "pending" || filter === "all") && props.pending.map((request) => <div className="friend-row pending" key={request.requestId}>
         <div className="avatar">{request.displayName[0]}</div>
         <div><strong>{request.displayName}</strong><small>Quer adicionar você</small></div>
         <button onClick={() => props.onAcceptFriend(request)}>Aceitar</button>
       </div>)}
-      {props.friends.map((friend) => <div className="friend-row" key={friend.id}>
+      {shown.map((friend) => <div className="friend-row" key={friend.id}>
         <span className={props.onlinePeers?.has(friend.id) ? "presence-wrap online" : "presence-wrap"}><ProfileAvatar displayName={friend.displayName} avatar={friend.avatar}/><i className="presence-dot"/></span>
-        <div><strong>{friend.displayName}</strong><small>{props.onlinePeers?.has(friend.id) ? "Online agora" : friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks"}</small></div>
+        <div><strong>{friend.displayName}</strong><small>{props.onlinePeers?.has(friend.id) ? "Online agora · pode chamar" : friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks"}</small></div>
         <div className="friend-actions">
           <button disabled={!friend.local} title={friend.local ? "Abrir chat privado P2P" : "Chat P2P requer amizade por identidade local"} onClick={() => props.onOpenFriend(friend)}><MessageCircle size={18}/></button>
           <button className="danger-icon" title="Desfazer amizade" aria-label={`Desfazer amizade com ${friend.displayName}`} onClick={() => props.onRemoveFriend(friend)}><UserMinus size={18}/></button>
         </div>
       </div>)}
+      {filter === "pending" && !props.pending.length && <p className="empty-filter">Nenhum pedido pendente.</p>}
+      {filter === "online" && !shown.length && <p className="empty-filter">Ninguém online agora.</p>}
       {!props.friends.length && !props.pending.length && <div className="empty-social"><Users/><h2>Seu círculo começa aqui</h2><p>Crie um código temporário ou use o código de outra pessoa.</p><button onClick={props.onAddFriend}>Adicionar primeiro amigo</button></div>}
     </div><aside className="activity-panel"><h3>Atividade</h3>
       {props.activeVoiceRooms.length ? <div className="voice-activity-list">{props.activeVoiceRooms.map((activity) => <button

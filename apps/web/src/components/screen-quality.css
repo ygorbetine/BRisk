@@ -45,3 +45,9 @@
 .screen-quality .sq-field + .sq-hint,.screen-quality .sq-custom + .sq-hint{margin-top:-6px}
 .screen-quality .sq-warning{margin:0;font-size:12px;padding:9px 11px;border-radius:10px;background:rgba(233,85,85,.12);border:1px solid rgba(233,85,85,.3);color:#ffb3b3}
 .screen-quality .sq-note{padding-top:10px;border-top:1px solid var(--glass-border-soft)}
+
+/* O painel fica dentro de .room: anula o estilo do cabeçalho da sala (faixa, margens e grade) */
+html .room .screen-quality > header{display:flex;grid-template-columns:none;align-items:center;justify-content:space-between;gap:12px;height:auto;padding:0 2px 2px;background:none;border:0;border-radius:0;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
+html .room .screen-quality > header strong{font-size:16px;font-weight:600;letter-spacing:-.01em;color:#fff}
+html .room .screen-quality > header .icon-button{flex:none;width:30px;height:30px;display:grid;place-items:center;padding:0;border-radius:9px;background:rgba(255,255,255,.07);color:#cfc4e3}
+html .room .screen-quality > header .icon-button:hover{background:rgba(255,255,255,.14);color:#fff;transform:none;filter:none}

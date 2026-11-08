@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { notesFor } from "./release-notes";
 import { useUpdateState } from "./useUpdateState";
+import "./settings-ui.css";
+import "./about-panel.css";
 
 const version = import.meta.env.VITE_BRIKS_BUILD_VERSION ?? "dev";
 
@@ -8,6 +11,7 @@ export function AboutPanel() {
   const [note, setNote] = useState("");
   const update = useUpdateState();
   const canCheck = typeof window.desktop?.checkForUpdates === "function";
+  const notes = notesFor(version);
 
   async function check(): Promise<void> {
     setChecking(true);
@@ -27,17 +31,41 @@ export function AboutPanel() {
     }
   }
 
-  return <section className="about-panel" aria-label="Sobre o Briks">
-    <h2>Briks</h2>
-    <p className="about-version">Versão <strong>{version}</strong></p>
-    <p>Chamadas, chat e compartilhamento de tela ponto a ponto, com grupos assinados e @nick.</p>
-    <p>O app procura atualizações sozinho e avisa quando uma nova versão estiver pronta para instalar.</p>
-    {canCheck && <p><button type="button" className="about-update" disabled={checking} onClick={() => void check()}>{checking ? "Verificando…" : "Verificar atualização agora"}</button></p>}
-    {update.phase === "downloading" && <p role="status" className="about-update-note">Baixando a versão {update.version ?? ""}… {update.percent ?? 0}%</p>}
-    {update.phase === "ready" && <p role="status" className="about-update-note">
-      A versão {update.version} está pronta para instalar. <button type="button" className="about-update" onClick={() => void window.desktop?.installUpdate?.()}>Reiniciar e instalar</button>
-    </p>}
-    {update.phase !== "downloading" && update.phase !== "ready" && note && <p role="status" className="about-update-note">{note}</p>}
-    <p><a href="https://github.com/ygorbetine/BRisk" target="_blank" rel="noreferrer">Código-fonte no GitHub</a> · licença AGPL</p>
+  const ready = update.phase === "ready";
+  const downloading = update.phase === "downloading";
+
+  return <section className="sx-stack about-panel" aria-label="Sobre o Briks">
+    <div className="about-hero">
+      <span className="about-logo" aria-hidden="true">B</span>
+      <div>
+        <strong className="about-name">Briks</strong>
+        <span className="sx-label">Versão {version}</span>
+      </div>
+    </div>
+    <p className="sx-sub">Chamadas, chat e compartilhamento de tela ponto a ponto, com grupos assinados e @nick.</p>
+
+    <div className={`sx-card${ready ? " accent" : ""}`}>
+      {ready ? <>
+        <div><strong className="sx-title">Versão {update.version} pronta para instalar</strong><p className="sx-sub">Baixada em segundo plano. Reinicie para instalar.</p></div>
+        <button type="button" className="sx-btn primary" onClick={() => void window.desktop?.installUpdate?.()}>Reiniciar e instalar</button>
+      </> : downloading ? <>
+        <div><strong className="sx-title">Baixando a versão {update.version ?? ""}</strong><p className="sx-sub">{update.percent ?? 0}% concluído. Você será avisado quando estiver pronta.</p></div>
+        <div className="sx-meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={update.percent ?? 0}><i style={{ width: `${update.percent ?? 0}%` }}/></div>
+      </> : <div className="sx-row">
+        <div><strong className="sx-title">{note || "O Briks procura atualizações sozinho."}</strong>{!note && <small>Quando uma versão nova estiver pronta, você é avisado aqui, na engrenagem e na tela principal.</small>}</div>
+        {canCheck && <button type="button" className="sx-btn" disabled={checking} onClick={() => void check()}>{checking ? "Verificando…" : "Verificar agora"}</button>}
+      </div>}
+    </div>
+
+    {notes && <div className="sx-card">
+      <span className="sx-title">Novidades da {notes.version}</span>
+      <ul className="about-notes">{notes.items.map((item) => <li key={item}>{item}</li>)}</ul>
+    </div>}
+
+    <footer className="about-footer">
+      <span>Feito por Becine Tools</span>
+      <a href="https://github.com/ygorbetine/BRisk" target="_blank" rel="noreferrer">Código-fonte</a>
+      <span>Licença AGPL</span>
+    </footer>
   </section>;
 }

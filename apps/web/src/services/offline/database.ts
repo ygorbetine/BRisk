@@ -153,3 +153,7 @@ async function withStore<T>(storeName: string, mode: IDBTransactionMode, operati
   } finally { database.close(); }
 
 }
+
+export function clearStore(storeName: string): Promise<void> {
+  return withStore<void>(storeName, "readwrite", (store) => store.clear());
+}

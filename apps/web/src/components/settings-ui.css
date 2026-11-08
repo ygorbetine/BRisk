@@ -1,0 +1,66 @@
+/* Peças compartilhadas das abas de configurações */
+.sx-stack{display:grid;gap:12px}
+.sx-card{display:grid;gap:10px;padding:14px;border-radius:14px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.1)}
+.sx-card.accent{background:color-mix(in srgb,var(--briks-c2) 24%,transparent);border-color:color-mix(in srgb,var(--briks-c3) 70%,transparent)}
+.sx-card.good{border-color:rgba(93,200,132,.5)}
+.sx-card.warn{border-color:rgba(240,190,70,.55)}
+.sx-card.bad{border-color:rgba(233,85,85,.6)}
+.sx-title{font-size:13px;font-weight:600;color:#fff}
+.sx-sub{font-size:12px;line-height:1.45;color:#b9aed3;margin:0}
+.sx-label{font-size:12px;color:#b9aed3}
+.sx-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sx-row>div{min-width:0}
+.sx-row strong{display:block;font-size:13px;font-weight:600;color:#fff}
+.sx-row small{display:block;margin-top:2px;font-size:11.5px;line-height:1.4;color:#b9aed3}
+.sx-divider{height:1px;background:rgba(255,255,255,.08);margin:2px 0}
+
+.sx-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:0 14px;border-radius:10px;font-size:12.5px;font-weight:600;color:#ece6fa;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);cursor:pointer;white-space:nowrap;transition:background .15s}
+.sx-btn:hover{background:rgba(255,255,255,.16);transform:none;filter:none}
+.sx-btn:disabled{opacity:.55;cursor:default}
+.sx-btn.primary{background:linear-gradient(135deg,var(--briks-c1),var(--briks-c2));border-color:transparent;color:#fff}
+.sx-btn.danger{background:rgba(233,85,85,.16);border-color:rgba(233,85,85,.45);color:#ffb3b3}
+.sx-btn.danger:hover{background:rgba(233,85,85,.28)}
+.sx-btn.small{min-height:30px;padding:0 10px;font-size:12px}
+.sx-btn:focus-visible,.sx-seg button:focus-visible,.sx-option:focus-visible,.sx-switch input:focus-visible+i{outline:2px solid color-mix(in srgb,var(--briks-c3) 80%,white 10%);outline-offset:2px}
+
+.sx-select{width:100%;margin:0;padding:10px 34px 10px 12px;border-radius:10px;background:rgba(0,0,0,.28) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23d9c8f0' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;border:1px solid rgba(255,255,255,.12);color:#fff;font-size:13px;appearance:none;-webkit-appearance:none;cursor:pointer}
+.sx-select:focus{outline:2px solid color-mix(in srgb,var(--briks-c3) 70%,transparent);outline-offset:1px}
+.sx-input{width:100%;margin:0;padding:9px 12px;border-radius:10px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:13px}
+.sx-input:focus{outline:2px solid color-mix(in srgb,var(--briks-c3) 70%,transparent);outline-offset:1px}
+
+.sx-seg{display:flex;gap:2px;padding:3px;border-radius:12px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.1)}
+.sx-seg button{flex:1 1 0;min-width:0;height:34px;padding:0 6px;border-radius:9px;background:transparent;color:#cfc4e3;font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sx-seg button:hover{background:rgba(255,255,255,.08);transform:none;filter:none}
+.sx-seg button.on{background:linear-gradient(135deg,var(--briks-c1),var(--briks-c2));color:#fff}
+
+.sx-options{display:grid;gap:8px}
+.sx-options.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sx-option{display:grid;gap:3px;text-align:left;padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:#e5dcf4;cursor:pointer;transition:background .15s,border-color .15s}
+.sx-option:hover{background:rgba(255,255,255,.08);transform:none;filter:none}
+.sx-option strong{font-size:13px;font-weight:600;color:#fff}
+.sx-option small{font-size:11.5px;line-height:1.4;color:#b9aed3;font-weight:400}
+.sx-option.on{background:color-mix(in srgb,var(--briks-c2) 34%,transparent);border-color:color-mix(in srgb,var(--briks-c3) 85%,white 10%)}
+.sx-option.on small{color:#e6dcff}
+
+.sx-switch{position:relative;flex:none;width:38px;height:22px;display:inline-block;cursor:pointer}
+.sx-switch input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.sx-switch i{position:absolute;inset:0;border-radius:11px;background:rgba(255,255,255,.2);transition:background .15s;pointer-events:none}
+.sx-switch i:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
+.sx-switch input:checked+i{background:linear-gradient(135deg,var(--briks-c1),var(--briks-c2))}
+.sx-switch input:checked+i:after{transform:translateX(16px)}
+
+.sx-meter{height:10px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}
+.sx-meter i{display:block;height:100%;width:0;border-radius:5px;background:#79e58d;transition:width .08s linear}
+.sx-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;text-align:center;padding:10px 8px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08)}
+.sx-stats small{display:block;font-size:11px;color:#b9aed3}
+.sx-stats strong{font-size:15px;font-weight:600;color:#fff}
+.sx-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:#7f7194}
+.sx-dot.good{background:#79e58d}.sx-dot.warn{background:#f0be46}.sx-dot.bad{background:#e95555}
+.sx-error{padding:9px 11px;border-radius:10px;background:rgba(233,85,85,.12);border:1px solid rgba(233,85,85,.3);color:#ffb3b3;font-size:12px;line-height:1.4}
+.sx-note{margin:0;text-align:center;font-size:11.5px;color:#a592b8}
+.sx-note b{color:var(--briks-c3);font-weight:600}
+.sx-fold{display:grid;gap:10px}
+.sx-fold>button.sx-fold-head{display:flex;align-items:center;justify-content:space-between;width:100%;padding:0;background:none;color:#fff;font-size:13px;font-weight:600;text-align:left}
+.sx-fold>button.sx-fold-head:hover{transform:none;filter:none}
+.sx-fold-head small{font-weight:400;color:#b9aed3;font-size:11.5px}
+@media(max-width:560px){.sx-options.cols-3{grid-template-columns:1fr}}

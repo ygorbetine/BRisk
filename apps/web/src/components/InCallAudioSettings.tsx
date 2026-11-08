@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { CallController } from "../call";
 import {
   loadVoiceVideoSettings,
@@ -7,7 +7,9 @@ import {
   type NoiseSuppressionMode,
   type VoiceVideoSettings,
 } from "../services/audio/settings";
+import { useMicrophoneTest } from "./useMicrophoneTest";
 import "./in-call-audio-settings.css";
+import "./settings-ui.css";
 
 type MicrophoneOption = {
   deviceId: string;
@@ -26,8 +28,10 @@ export function InCallAudioSettings({ call, onClose }: { call: CallController; o
   const [settings, setSettings] = useState<VoiceVideoSettings>(() => loadVoiceVideoSettings());
   const [microphones, setMicrophones] = useState<MicrophoneOption[]>([]);
   const [busy, setBusy] = useState(false);
+  const [gateDb, setGateDb] = useState(settings.noiseGateThresholdDb);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const micTest = useMicrophoneTest(settings.microphoneDeviceId);
 
   async function refreshMicrophones(requestPermission = false) {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -95,63 +99,59 @@ export function InCallAudioSettings({ call, onClose }: { call: CallController; o
     }
   }
 
+  const noiseModes: Array<{ value: NoiseSuppressionMode; text: string }> = [
+    { value: "standard", text: "Padrão" },
+    { value: "rnnoise", text: "RNNoise" },
+    { value: "off", text: "Desligada" },
+  ];
+
   return <section className="in-call-audio-settings" aria-label="Configurações de áudio da chamada">
     <header>
-      <div>
-        <strong>Áudio da chamada</strong>
-        <small>As alterações são aplicadas sem sair da ligação e ficam salvas para as próximas chamadas.</small>
-      </div>
-      <button type="button" onClick={onClose} aria-label="Fechar configurações de áudio"><X size={17}/></button>
+      <strong>Áudio da chamada</strong>
+      <button type="button" onClick={onClose} aria-label="Fechar configurações de áudio"><X size={16}/></button>
     </header>
 
-    <label>
-      <span>Microfone</span>
-      <select
-        value={settings.microphoneDeviceId}
-        disabled={busy}
-        onChange={(event) => { void apply({ microphoneDeviceId: event.target.value }); }}
-      >
+    <div className="sx-card">
+      <div className="sx-row">
+        <span className="sx-title">Entrada</span>
+        <button type="button" className="sx-btn small" disabled={busy || loadingDevices} onClick={() => { void refreshMicrophones(true); }}>{loadingDevices ? "Atualizando…" : "Atualizar lista"}</button>
+      </div>
+      <select className="sx-select" aria-label="Microfone" value={settings.microphoneDeviceId} disabled={busy} onChange={(event) => { void apply({ microphoneDeviceId: event.target.value }); }}>
         <option value="">Padrão do sistema</option>
-        {selectedMicrophoneMissing && <option value={settings.microphoneDeviceId}>Microfone salvo — indisponível</option>}
+        {selectedMicrophoneMissing && <option value={settings.microphoneDeviceId}>Microfone salvo, indisponível</option>}
         {microphones.map((microphone) => <option key={microphone.deviceId} value={microphone.deviceId}>{microphone.label}</option>)}
       </select>
-    </label>
-
-    <button
-      type="button"
-      className="audio-refresh"
-      disabled={busy || loadingDevices}
-      onClick={() => { void refreshMicrophones(true); }}
-    >
-      <RefreshCw size={14}/>{loadingDevices ? "Atualizando…" : "Atualizar microfones"}
-    </button>
-
-    <label>
-      <span>Supressão de ruído</span>
-      <select
-        value={settings.noiseSuppression}
-        disabled={busy}
-        onChange={(event) => { void apply({ noiseSuppression: event.target.value as NoiseSuppressionMode }); }}
-      >
-        <option value="standard">Padrão do WebRTC</option>
-        <option value="rnnoise">RNNoise</option>
-        <option value="off">Desativada</option>
-      </select>
-    </label>
-
-    <label className="audio-toggle">
-      <input
-        type="checkbox"
-        checked={settings.echoCancellation}
-        disabled={busy}
-        onChange={(event) => { void apply({ echoCancellation: event.target.checked }); }}
-      />
-      <span><strong>Cancelamento de eco</strong><small>Também é reaplicado sem desconectar a chamada.</small></span>
-    </label>
-
-    <div className={`audio-apply-status ${busy ? "busy" : ""}`}>
-      {busy ? "Trocando a track de áudio…" : "Configuração atual aplicada e salva"}
+      <div className="sx-row">
+        <div className="sx-meter" style={{ flex: 1 }} role="meter" aria-label="Nível do microfone" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(micTest.level * 100)}><i style={{ width: `${Math.round(micTest.level * 100)}%`, background: micTest.level > 0.85 ? "#e95555" : "#79e58d" }}/></div>
+        <button type="button" className={`sx-btn small${micTest.active ? "" : " primary"}`} onClick={() => (micTest.active ? micTest.stop() : void micTest.start())}>{micTest.active ? "Parar" : "Testar"}</button>
+      </div>
+      {micTest.error && <div className="sx-error">{micTest.error}</div>}
     </div>
-    {error && <div className="audio-apply-error">{error}</div>}
+
+    <div className="sx-card">
+      <span className="sx-title">Supressão de ruído</span>
+      <div className="sx-seg" role="group" aria-label="Supressão de ruído">
+        {noiseModes.map((mode) => <button key={mode.value} type="button" disabled={busy} aria-pressed={settings.noiseSuppression === mode.value} className={settings.noiseSuppression === mode.value ? "on" : ""} onClick={() => { void apply({ noiseSuppression: mode.value }); }}>{mode.text}</button>)}
+      </div>
+    </div>
+
+    <label className="sx-card sx-row">
+      <div><strong>Cancelamento de eco</strong><small>Reaplicado sem desconectar a chamada.</small></div>
+      <span className="sx-switch"><input type="checkbox" checked={settings.echoCancellation} disabled={busy} onChange={(event) => { void apply({ echoCancellation: event.target.checked }); }}/><i/></span>
+    </label>
+
+    <div className="sx-card">
+      <label className="sx-row">
+        <div><strong>Porta de ruído</strong><small>Silencia o microfone abaixo do limite, sem desconectar.</small></div>
+        <span className="sx-switch"><input type="checkbox" checked={settings.noiseGateEnabled} disabled={busy} onChange={(event) => { void apply({ noiseGateEnabled: event.target.checked }); }}/><i/></span>
+      </label>
+      {settings.noiseGateEnabled && <label className="sx-row">
+        <div><strong>Limite</strong><small>{gateDb} dB</small></div>
+        <input type="range" min={-70} max={-20} step={1} value={gateDb} disabled={busy} aria-label="Limite da porta de ruído" onChange={(event) => setGateDb(Number(event.target.value))} onPointerUp={() => { void apply({ noiseGateThresholdDb: gateDb }); }} onKeyUp={() => { void apply({ noiseGateThresholdDb: gateDb }); }}/>
+      </label>}
+    </div>
+
+    <p className={`sx-note${busy ? " busy" : ""}`} role="status">{busy ? "Aplicando…" : <><b>Aplicado e salvo.</b> Vale também para as próximas chamadas.</>}</p>
+    {error && <div className="sx-error">{error}</div>}
   </section>;
 }

@@ -28,6 +28,7 @@ import {
 import type { ChatMessage } from "../application/contracts";
 import { useBriksApplication } from "../application/ApplicationContext";
 import type { CallController, CallDiagnostics } from "../call";
+import { buildTextReport, peerHealth } from "../call/diagnostics-report";
 import type {
   ChatAttachmentProgress,
   ChatAttachmentRecord,
@@ -357,6 +358,11 @@ function ScreenSourcePicker({
   onChoose(source: BriksDesktopSource): void;
   onClose(): void;
 }) {
+  const screens = sources.filter((source) => source.id.startsWith("screen:"));
+  const windows = sources.filter((source) => !source.id.startsWith("screen:"));
+  const [tab, setTab] = useState<"screens" | "windows">("screens");
+  const active = tab === "screens" && screens.length === 0 && windows.length > 0 ? "windows" : tab;
+  const visible = active === "screens" ? screens : windows;
   return <div className="screen-picker-backdrop" onMouseDown={onClose}>
     <section className="screen-picker" onMouseDown={(event) => event.stopPropagation()}>
       <header>
@@ -370,13 +376,17 @@ function ScreenSourcePicker({
         <button className="screen-picker-close" onClick={onClose} aria-label="Fechar"><X/></button>
       </header>
       <p className="screen-picker-note">Janela: só o som dela (sem Discord). Abas do navegador compartilham o som do navegador inteiro.</p>
+      <div className="screen-picker-tabs" role="tablist" aria-label="Tipo de fonte">
+        <button role="tab" aria-selected={active === "screens"} className={active === "screens" ? "on" : ""} onClick={() => setTab("screens")}>Telas <small>{screens.length}</small></button>
+        <button role="tab" aria-selected={active === "windows"} className={active === "windows" ? "on" : ""} onClick={() => setTab("windows")}>Janelas <small>{windows.length}</small></button>
+      </div>
       {loading ? <div className="screen-picker-loading"><Sparkles/><span>Buscando telas e janelas…</span></div> :
         <div className="screen-source-grid">
-          {sources.map((source) => <button key={source.id} className="screen-source" onClick={() => onChoose(source)}>
+          {visible.map((source) => <button key={source.id} className="screen-source" onClick={() => onChoose(source)}>
             <div className="screen-source-preview">{source.thumbnail ? <img src={source.thumbnail} alt=""/> : <MonitorUp/>}</div>
             <span title={source.name}>{source.name}</span>
           </button>)}
-          {!sources.length && <div className="screen-picker-empty">Nenhuma tela ou janela foi encontrada.</div>}
+          {!visible.length && <div className="screen-picker-empty">{active === "screens" ? "Nenhuma tela encontrada." : "Nenhuma janela aberta encontrada."}</div>}
         </div>}
     </section>
   </div>;
@@ -886,14 +896,14 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           : path.label;
         const candidateTypes = [path.localCandidateType, path.remoteCandidateType].filter(Boolean).join(" → ");
         return <article key={peer.peerId}>
-          <strong>{participants[peer.peerId]?.displayName ?? peer.peerId.slice(0, 8)}</strong>
+          <strong><i className={`sx-dot health-${peerHealth(peer).level}`} aria-hidden="true"/>{participants[peer.peerId]?.displayName ?? peer.peerId.slice(0, 8)} <em className="peer-health">{peerHealth(peer).label}</em></strong>
           <span>WebRTC {peer.connectionState} · ICE {peer.iceConnectionState}</span>
           <span>{routeLabel}{path.protocol ? ` · ${path.protocol.toLocaleUpperCase()}` : ""}</span>
           {candidateTypes && <small>Candidates {candidateTypes}{path.provider ? ` · VPN ${path.provider}` : ""}</small>}
           <small>RTT {peer.roundTripTimeMs ?? 0} ms · jitter {peer.jitterMs ?? 0} ms · perdas {peer.packetsLost ?? 0}</small>
         </article>;
       })}
-      <button onClick={() => void navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2))}><Copy/> Copiar relatório sanitizado</button>
+      <button onClick={() => void navigator.clipboard.writeText(buildTextReport(diagnostics, (id) => participants[id]?.displayName ?? "Participante"))}><Copy/> Copiar relatório</button>
     </section>}
     {sourcePickerOpen && <ScreenSourcePicker
       sources={screenSources}

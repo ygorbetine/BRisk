@@ -2,6 +2,7 @@ import { BriksMark } from "../components/BriksMark";
 import { useState, type FormEvent } from "react";
 import { useBriksApplication } from "../application/ApplicationContext";
 import { useCallStore } from "../store";
+import { friendlyAuthError } from "./auth-errors";
 
 export function AuthView() {
   const { gateway: api, session } = useBriksApplication();
@@ -19,7 +20,7 @@ export function AuthView() {
       session.allowRestore();
       setSession(result.accessToken);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Falha na autenticação");
+      setError(friendlyAuthError(cause, register));
     }
   }
 
@@ -31,9 +32,10 @@ export function AuthView() {
       {register && <input name="name" placeholder="Como devemos chamar você?" minLength={2} required/>}
       <input name="email" type="email" placeholder="seu@email.com" required/>
       <input name="password" type="password" minLength={8} placeholder="Senha" required/>
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
       <button>Continuar</button>
     </form>
+    {error && !register && <p className="auth-hint">Primeira vez aqui? Use “Criar uma conta”.</p>}
     <button className="link" onClick={() => { setRegister(!register); setError(""); }}>
       {register ? "Já tenho uma conta" : "Criar uma conta"}
     </button>

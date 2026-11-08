@@ -79,6 +79,8 @@ describe("MediaManager", () => {
       noiseSuppression: "standard",
       echoCancellation: true,
       excludeBriksAudioFromScreenShare: true,
+      noiseGateEnabled: false,
+      noiseGateThresholdDb: -45,
     };
 
     await expect(manager.initializeMicrophone(settings, transport, 1)).resolves.toBe(manager.localStream);

@@ -1,0 +1,8 @@
+.about-panel{max-width:none}
+.about-hero{display:flex;align-items:center;gap:14px}
+.about-logo{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;font-size:24px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--briks-c1),var(--briks-c2))}
+.about-name{display:block;font-size:20px;font-weight:600;color:#fff;letter-spacing:-.01em}
+.about-notes{margin:0;padding-left:18px;display:grid;gap:5px;font-size:12.5px;line-height:1.45;color:#d9d0ee}
+.about-footer{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px;margin-top:4px;font-size:11px;color:#8f84a6}
+.about-footer a{color:#a99bd0;text-decoration:underline;text-underline-offset:2px}
+.about-footer a:hover{color:#fff}

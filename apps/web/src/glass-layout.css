@@ -105,7 +105,7 @@ body {
 .about-update-note { font-size: 13px; color: #d9d0ee; }
 
 /* Tamanho fixo: não muda de uma aba para outra; o conteúdo rola dentro dele. */
-.modal:has(.settings-tabs) { width: min(760px, calc(100vw - 32px)); height: min(640px, calc(100vh - 48px)); height: min(640px, calc(100dvh - 48px)); max-height: none; }
+.modal:has(.settings-tabs) { width: min(760px, calc(100vw - 32px)); height: min(820px, calc(100vh - 48px)); height: min(820px, calc(100dvh - 48px)); max-height: none; }
 .modal:has(.settings-tabs) .modal-content { overflow-x: hidden; }
 .modal:has(.settings-tabs) .modal-content > * { min-width: 0; max-width: 100%; }
 .modal:has(.settings-tabs) select, .modal:has(.settings-tabs) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { max-width: 100%; }
@@ -305,6 +305,7 @@ body {
 .share-control > .share-audio-toggle svg{color:#a592b8}
 .share-control > .share-audio-toggle.on,.share-control > .share-audio-toggle.on svg{color:#8ff0a4}
 .share-control > .share-audio-toggle:disabled{opacity:.55;cursor:not-allowed}
+.share-control > .quality-trigger{display:inline-flex;align-items:center;justify-content:center;text-align:center;max-width:none;min-width:190px;padding:0 22px;overflow:visible;text-overflow:clip;font-size:13px;border:0;border-left:1px solid #ffffff24 !important}
 .account-disconnect{display:inline-flex;align-items:center;gap:8px;justify-self:start;padding:9px 14px;border-radius:10px;background:#e9555520;color:#ff9a9a;font-weight:500}
 .account-disconnect:hover{background:#e95555;color:#fff}
 .profile-account .account-muted{margin:0;color:#a592b8;font-size:12px}

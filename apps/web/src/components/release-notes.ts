@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.0.1",
+    items: [
+      "A barra inferior da chamada ficou mais bem alinhada: o botão de resolução, FPS e bitrate está mais largo, com o mesmo espaço nos dois lados do texto",
+      "A janela de Configurações ficou mais alta",
+    ],
+  },
+  {
     version: "1.0.0",
     items: [
       "Seletor de áudio da transmissão (Windows): escolha só o som de certos apps, como o Spotify, e deixe o resto de fora. A lista mostra os apps com áudio aberto e quais estão tocando",

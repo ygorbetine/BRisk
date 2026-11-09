@@ -8,6 +8,7 @@ import {
   type RemoteTrack,
   type TrackPublishOptions,
 } from "livekit-client";
+import { summarizePeerStats, type OutboundBytesSample } from "../diagnostics/stats";
 import type { VideoPublicationOptions } from "../video-encoding";
 import type {
   CallTransportJoinOptions,
@@ -155,8 +156,54 @@ export class LiveKitTransport implements SfuCallTransport {
     return [...room.remoteParticipants.keys()].map((peerId) => this.diagnostic(peerId, room.state));
   }
 
+  private previousOutbound: OutboundBytesSample | undefined;
+
+  /**
+   * No SFU existe uma única conexão de envio (publisher) para o servidor. Ela fornece
+   * bitrate, latência e perda reais; o bitrate vai só no primeiro participante para a
+   * soma do medidor não multiplicar o upload pelo número de espectadores.
+   */
   async collectDiagnostics(): Promise<PeerConnectionDiagnostics[]> {
-    return this.getDiagnostics();
+    const base = this.getDiagnostics();
+    if (!base.length) return base;
+    try {
+      const reports = await this.room?.engine?.pcManager?.publisher?.getStats();
+      if (!reports) return base;
+      const summary = summarizePeerStats(reports, undefined, []);
+      // Simulcast publica várias camadas de vídeo: soma os bytes de todas.
+      let bytes = 0;
+      let timestamp = 0;
+      let hasVideo = false;
+      reports.forEach((report) => {
+        const item = report as { type?: string; kind?: string; bytesSent?: number; timestamp?: number };
+        if (item.type === "outbound-rtp" && item.kind === "video" && typeof item.bytesSent === "number") {
+          hasVideo = true;
+          bytes += item.bytesSent;
+          timestamp = Math.max(timestamp, Number(item.timestamp) || 0);
+        }
+      });
+      let outboundBitrateKbps: number | undefined;
+      if (hasVideo) {
+        const previous = this.previousOutbound;
+        if (previous && timestamp > previous.timestamp) {
+          outboundBitrateKbps = Math.max(0, Math.round(((bytes - previous.bytes) * 8) / (timestamp - previous.timestamp)));
+        }
+        this.previousOutbound = { bytes, timestamp };
+      } else {
+        this.previousOutbound = undefined;
+        outboundBitrateKbps = 0;
+      }
+      return base.map((item, index) => ({
+        ...item,
+        roundTripTimeMs: summary.roundTripTimeMs,
+        packetsLost: summary.packetsLost,
+        packetLossPercent: summary.packetLossPercent,
+        jitterMs: summary.jitterMs,
+        outboundBitrateKbps: index === 0 ? outboundBitrateKbps : undefined,
+      }));
+    } catch {
+      return base;
+    }
   }
 
   private requireRoom(): Room {

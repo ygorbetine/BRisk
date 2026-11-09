@@ -3,6 +3,14 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.6",
+    items: [
+      "Seletor de tela refeito: escolha a tela ou janela, ajuste o áudio e confirme em Transmitir (duplo clique transmite direto)",
+      "Cabeçalho do seletor corrigido",
+      "Medidor da qualidade da transmissão volta a mostrar envio, latência e perda no modo SFU",
+    ],
+  },
+  {
     version: "0.11.5",
     items: [
       "Sobreposição: a miniatura da transmissão e os demais itens podem ser movidos arrastando de qualquer ponto",

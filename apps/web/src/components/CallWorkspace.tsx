@@ -24,6 +24,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Check,
 } from "lucide-react";
 import type { ChatMessage } from "../application/contracts";
 import { useBriksApplication } from "../application/ApplicationContext";
@@ -364,18 +365,36 @@ function ScreenSourcePicker({
   const [tab, setTab] = useState<"screens" | "windows">("screens");
   const active = tab === "screens" && screens.length === 0 && windows.length > 0 ? "windows" : tab;
   const visible = active === "screens" ? screens : windows;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = visible.find((source) => source.id === selectedId) ?? visible[0];
   return <div className="sp-backdrop" onMouseDown={onClose}>
     <section className="sp" role="dialog" aria-modal="true" aria-label="Compartilhar tela" onMouseDown={(event) => event.stopPropagation()}>
-      <header className="sp-head">
+      <div className="sp-head">
         <span className="sp-head-icon"><MonitorUp size={20}/></span>
-        <div className="sp-head-text"><h2>Compartilhar tela</h2><p>Escolha o que aparece na chamada</p></div>
+        <div className="sp-head-text"><h2>Compartilhar tela</h2><p>Escolha a fonte e confirme</p></div>
         <button className="sp-close" onClick={onClose} aria-label="Fechar"><X size={18}/></button>
-      </header>
+      </div>
       <div className="sp-bar">
         <div className="sp-tabs" role="tablist" aria-label="Tipo de fonte">
           <button role="tab" aria-selected={active === "screens"} className={active === "screens" ? "on" : ""} onClick={() => setTab("screens")}>Telas <small>{screens.length}</small></button>
           <button role="tab" aria-selected={active === "windows"} className={active === "windows" ? "on" : ""} onClick={() => setTab("windows")}>Janelas <small>{windows.length}</small></button>
         </div>
+      </div>
+      {loading ? <div className="sp-state"><Sparkles/><span>Buscando telas e janelas…</span></div> :
+        visible.length === 0 ? <div className="sp-state"><span>{active === "screens" ? "Nenhuma tela encontrada." : "Nenhuma janela aberta encontrada."}</span></div> :
+        <div className="sp-grid">
+          {visible.map((source) => <button
+            key={source.id}
+            className={`sp-card${selected?.id === source.id ? " sel" : ""}`}
+            aria-pressed={selected?.id === source.id}
+            onClick={() => setSelectedId(source.id)}
+            onDoubleClick={() => onChoose(source)}
+          >
+            <span className="sp-thumb">{source.thumbnail ? <img src={source.thumbnail} alt="" draggable={false}/> : <MonitorUp/>}<span className="sp-check" aria-hidden="true"><Check size={14}/></span></span>
+            <span className="sp-name" title={source.name}>{source.name}</span>
+          </button>)}
+        </div>}
+      <div className="sp-actions">
         <button
           className={`sp-audio ${includeAudio ? "on" : ""}`}
           onClick={() => onAudioChange(!includeAudio)}
@@ -383,16 +402,9 @@ function ScreenSourcePicker({
           aria-checked={includeAudio}
           title={includeAudio ? "O áudio será transmitido" : "Só o vídeo será transmitido"}
         >{includeAudio ? <Volume2 size={16}/> : <VolumeX size={16}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span><i aria-hidden="true"/></button>
+        <button className="sp-go" onClick={() => selected && onChoose(selected)} title={selected ? `Transmitir ${selected.name}` : undefined}>{selected ? `Transmitir ${selected.name}` : "Transmitir"}</button>
       </div>
-      {loading ? <div className="sp-state"><Sparkles/><span>Buscando telas e janelas…</span></div> :
-        visible.length === 0 ? <div className="sp-state"><span>{active === "screens" ? "Nenhuma tela encontrada." : "Nenhuma janela aberta encontrada."}</span></div> :
-        <div className="sp-grid">
-          {visible.map((source) => <button key={source.id} className="sp-card" onClick={() => onChoose(source)}>
-            <span className="sp-thumb">{source.thumbnail ? <img src={source.thumbnail} alt=""/> : <MonitorUp/>}<em>Transmitir</em></span>
-            <span className="sp-name" title={source.name}>{source.name}</span>
-          </button>)}
-        </div>}
-      <footer className="sp-foot">Janela: só o som dela, sem o do Discord. Abas do navegador levam o som do navegador inteiro.</footer>
+      <div className="sp-foot">Janela: só o som dela, sem o do Discord. Abas do navegador levam o som do navegador inteiro.</div>
     </section>
   </div>;
 }

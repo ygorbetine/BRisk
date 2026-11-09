@@ -1,4 +1,7 @@
-use axum::{routing::post, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -75,6 +78,15 @@ pub fn router() -> Router<AppState> {
         .route("/screen-audio/prepare", post(prepare))
         .route("/screen-audio/stop", post(stop))
         .route("/screen-audio/process-capture", post(super::process_audio::process_capture))
+        .route("/screen-audio/apps", get(list_apps))
+}
+
+/// Apps com sessão de áudio aberta (Windows). Em outras plataformas, lista vazia.
+async fn list_apps() -> Json<Vec<super::process_audio::AudioApp>> {
+    let apps = tokio::task::spawn_blocking(super::process_audio::list_audio_apps)
+        .await
+        .unwrap_or_default();
+    Json(apps)
 }
 
 async fn prepare(Json(input): Json<PrepareInput>) -> Json<PrepareResponse> {

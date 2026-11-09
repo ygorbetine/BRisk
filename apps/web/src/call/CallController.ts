@@ -314,8 +314,9 @@ export class CallController {
     sourceId?: string,
     includeAudio = true,
     qualityProfile?: ScreenQualityProfile,
+    audioApps?: string[],
   ): Promise<void> {
-    await this.media.toggleScreen(sourceId, includeAudio, qualityProfile);
+    await this.media.toggleScreen(sourceId, includeAudio, qualityProfile, audioApps);
   }
 
   async toggleSecondScreen(_roomId: string, sourceId?: string, qualityProfile?: ScreenQualityProfile): Promise<void> {

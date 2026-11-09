@@ -3,6 +3,14 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.0.0",
+    items: [
+      "Seletor de áudio da transmissão (Windows): escolha só o som de certos apps, como o Spotify, e deixe o resto de fora. A lista mostra os apps com áudio aberto e quais estão tocando",
+      "O Discord e o próprio Briks continuam sempre de fora do áudio da transmissão",
+      "A dica de zoom da transmissão agora fica no canto superior esquerdo, sem cobrir o painel de volume",
+    ],
+  },
+  {
     version: "0.11.13",
     items: [
       "Zoom na transmissão, dentro e fora da tela cheia: roda do mouse ou pinça aproxima, arrastar move a imagem e o selo com a porcentagem volta ao normal",

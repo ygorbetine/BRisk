@@ -7,7 +7,50 @@ import workletUrl from "./process-pcm-worklet.js?url";
 
 export type ProcessAudioRequest =
   | { mode: "window"; hwnd: number }
-  | { mode: "screen"; excludeNames?: string[] };
+  | { mode: "screen"; excludeNames?: string[] }
+  | { mode: "apps"; includeNames: string[] };
+
+/** App com sessão de áudio aberta, devolvido pelo backend. `name` é o executável em minúsculas. */
+export type AudioApp = { name: string; label: string; playing: boolean };
+
+/** Valida a resposta do backend: ignora itens malformados e limita o tamanho dos textos. */
+export function parseAudioApps(value: unknown): AudioApp[] {
+  if (!Array.isArray(value)) return [];
+  const apps: AudioApp[] = [];
+  for (const item of value.slice(0, 64)) {
+    if (!item || typeof item !== "object") continue;
+    const { name, label, playing } = item as Record<string, unknown>;
+    if (typeof name !== "string" || !name.trim() || name.length > 128) continue;
+    apps.push({
+      name: name.trim().toLowerCase(),
+      label: typeof label === "string" && label.trim() ? label.trim().slice(0, 60) : name,
+      playing: playing === true,
+    });
+  }
+  return apps;
+}
+
+/** Lista os apps com sessão de áudio (Windows). Nunca lança: sem backend ou com erro, devolve lista vazia. */
+export async function listAudioApps(): Promise<AudioApp[]> {
+  if (!window.desktop?.getBackendConfig) return [];
+  try {
+    const config = await window.desktop.getBackendConfig();
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/screen-audio/apps`, {
+      headers: { "x-briks-desktop-token": config.token },
+    });
+    if (!response.ok) return [];
+    return parseAudioApps(await response.json());
+  } catch {
+    return [];
+  }
+}
+
+/** Decide o que capturar: apps escolhidos têm prioridade; sem eles, o áudio segue a fonte de vídeo. */
+export function resolveProcessAudioRequest(sourceId: string, audioApps?: string[]): ProcessAudioRequest | null {
+  const names = (audioApps ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean);
+  if (names.length > 0) return { mode: "apps", includeNames: names };
+  return processAudioRequestForSource(sourceId);
+}
 
 export type ProcessAudioCapture = {
   track: MediaStreamTrack;

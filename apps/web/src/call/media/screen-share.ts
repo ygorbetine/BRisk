@@ -1,7 +1,7 @@
 import type { ScreenShareProvider } from "@briks/rtc";
 import {
   isWindowsDesktop,
-  processAudioRequestForSource,
+  resolveProcessAudioRequest,
   startProcessAudioCapture,
   type ProcessAudioCapture,
 } from "./process-audio";
@@ -27,6 +27,7 @@ export async function startScreenCapture(
   sourceId: string | undefined,
   includeAudio: boolean,
   excludeBriks: boolean,
+  audioApps?: string[],
 ): Promise<ScreenCaptureStart> {
   const linuxDesktop = Boolean(window.desktop && /Linux/i.test(navigator.userAgent));
   if (linuxDesktop && includeAudio) {
@@ -52,7 +53,7 @@ export async function startScreenCapture(
     // Áudio por processo: janela = só aquele app; tela = tudo menos Discord e Briks.
     const chosenId = sourceId ?? await window.desktop?.chooseScreenSource();
     if (!chosenId) throw new DOMException("Compartilhamento cancelado.", "NotAllowedError");
-    const request = processAudioRequestForSource(chosenId);
+    const request = resolveProcessAudioRequest(chosenId, audioApps);
     const processAudio = request ? await startProcessAudioCapture(request).catch(() => null) : null;
     if (processAudio) {
       activeProcessAudio = processAudio;

@@ -23,6 +23,52 @@ pub struct CaptureRequest {
     /// Nomes de executáveis extras a excluir no modo `screen`.
     #[serde(default)]
     exclude_names: Vec<String>,
+    /// Modo `apps`: só o áudio destes executáveis (e dos processos filhos), por nome.
+    #[serde(default)]
+    include_names: Vec<String>,
+}
+
+/// Um app com sessão de áudio aberta, para o seletor de áudio da transmissão.
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioApp {
+    /// Nome do executável em minúsculas (ex.: `spotify.exe`). É a chave usada em `include_names`.
+    pub name: String,
+    /// Nome amigável derivado do executável (ex.: `Spotify`).
+    pub label: String,
+    /// `true` se está tocando agora; `false` se a sessão existe, mas está em pausa.
+    pub playing: bool,
+}
+
+/// `spotify.exe` → `Spotify`.
+pub fn friendly_app_label(executable: &str) -> String {
+    let stem = executable
+        .strip_suffix(".exe")
+        .or_else(|| executable.strip_suffix(".EXE"))
+        .unwrap_or(executable);
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Junta sessões de áudio (executável, tocando?) em um item por app, tocando primeiro e depois por nome.
+/// Ignora nomes vazios e os de `skip` (Briks e Discord, que nunca entram na transmissão).
+pub fn group_audio_apps(sessions: Vec<(String, bool)>, skip: &[&str]) -> Vec<AudioApp> {
+    let mut apps: Vec<AudioApp> = Vec::new();
+    for (executable, playing) in sessions {
+        let name = executable.trim().to_lowercase();
+        if name.is_empty() || skip.contains(&name.as_str()) {
+            continue;
+        }
+        match apps.iter_mut().find(|app| app.name == name) {
+            Some(app) => app.playing |= playing,
+            None => apps.push(AudioApp { label: friendly_app_label(&name), name, playing }),
+        }
+    }
+    apps.sort_by(|left, right| right.playing.cmp(&left.playing).then_with(|| left.name.cmp(&right.name)));
+    apps
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
@@ -42,8 +88,13 @@ pub async fn process_capture(Json(_request): Json<CaptureRequest>) -> Response {
 #[cfg(not(windows))]
 pub async fn stop_process_capture() {}
 
+#[cfg(not(windows))]
+pub fn list_audio_apps() -> Vec<AudioApp> {
+    Vec::new()
+}
+
 #[cfg(windows)]
-pub use windows_impl::{process_capture, stop_process_capture};
+pub use windows_impl::{list_audio_apps, process_capture, stop_process_capture};
 
 #[cfg(windows)]
 mod windows_impl {
@@ -99,8 +150,22 @@ mod windows_impl {
                 }
             },
             "screen" => None,
+            "apps" => {
+                if request.include_names.iter().all(|name| name.trim().is_empty()) {
+                    return error_response(StatusCode::BAD_REQUEST, "Escolha ao menos um aplicativo.");
+                }
+                None
+            }
             _ => return error_response(StatusCode::BAD_REQUEST, "Modo de captura inválido."),
         };
+        let included: Option<HashSet<String>> = (request.mode == "apps").then(|| {
+            request
+                .include_names
+                .iter()
+                .map(|name| name.trim().to_lowercase())
+                .filter(|name| !name.is_empty())
+                .collect()
+        });
 
         // Só uma captura por vez.
         let stop = Arc::new(AtomicBool::new(false));
@@ -117,7 +182,7 @@ mod windows_impl {
         let thread_stop = stop.clone();
         let spawned = thread::Builder::new()
             .name("briks-process-audio".into())
-            .spawn(move || mixer_thread(window_pid, excluded, thread_stop, tx, ready_tx));
+            .spawn(move || mixer_thread(window_pid, excluded, included, thread_stop, tx, ready_tx));
         if spawned.is_err() {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao iniciar a captura.");
         }
@@ -253,9 +318,10 @@ mod windows_impl {
         Ok(())
     }
 
-    fn mixer_thread(
+    pub(super) fn mixer_thread(
         window_pid: Option<u32>,
         excluded: HashSet<String>,
+        included: Option<HashSet<String>>,
         stop: Arc<AtomicBool>,
         tx: mpsc::Sender<Result<Bytes, io::Error>>,
         ready: oneshot::Sender<Result<(), String>>,
@@ -300,7 +366,7 @@ mod windows_impl {
             if window_pid.is_none() {
                 if last_reconcile.elapsed() >= RECONCILE_EVERY {
                     last_reconcile = Instant::now();
-                    reconcile_screen_sources(&mut sources, &mut system, &excluded, &stop);
+                    reconcile_screen_sources(&mut sources, &mut system, &excluded, included.as_ref(), &stop);
                 }
                 sources.retain(|source| source.alive.load(Ordering::Relaxed));
             }
@@ -341,6 +407,7 @@ mod windows_impl {
         sources: &mut Vec<Source>,
         system: &mut System,
         excluded: &HashSet<String>,
+        included: Option<&HashSet<String>>,
         global_stop: &Arc<AtomicBool>,
     ) {
         system.refresh_processes(ProcessesToUpdate::All, true);
@@ -380,10 +447,20 @@ mod windows_impl {
             }
             result
         };
+        // Modo `apps`: o processo, ou um ancestral dele, precisa estar na lista escolhida.
+        let is_included = |pid: u32| -> bool {
+            let Some(names) = included else { return true };
+            std::iter::once(pid).chain(ancestors(pid)).any(|id| {
+                system
+                    .process(Pid::from_u32(id))
+                    .map(|process| names.contains(&process.name().to_string_lossy().to_lowercase()))
+                    .unwrap_or(false)
+            })
+        };
 
         let candidates: HashSet<u32> = active_render_pids()
             .into_iter()
-            .filter(|pid| *pid != 0 && !is_excluded(*pid))
+            .filter(|pid| *pid != 0 && !is_excluded(*pid) && is_included(*pid))
             .collect();
         let roots: Vec<u32> = candidates
             .iter()
@@ -421,6 +498,49 @@ mod windows_impl {
         });
     }
 
+    /// Apps com sessão de áudio aberta (tocando ou em pausa), um item por executável.
+    pub fn list_audio_apps() -> Vec<AudioApp> {
+        let _ = wasapi::initialize_mta();
+        let mut system = match System::new() {
+            Ok(system) => system,
+            Err(_) => return Vec::new(),
+        };
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        let own_pid = std::process::id();
+        let mut sessions: Vec<(String, bool)> = Vec::new();
+        let Ok(enumerator) = DeviceEnumerator::new() else { return Vec::new() };
+        let Ok(collection) = enumerator.get_device_collection(&Direction::Render) else {
+            return Vec::new();
+        };
+        for device in &collection {
+            let Ok(device) = device else { continue };
+            let Ok(manager) = device.get_iaudiosessionmanager() else { continue };
+            let Ok(list) = manager.get_audiosessionenumerator() else { continue };
+            let count = list.get_count().unwrap_or(0);
+            for index in 0..count {
+                let Ok(control) = list.get_session(index) else { continue };
+                let state = control.get_state().unwrap_or(SessionState::Expired);
+                if state == SessionState::Expired {
+                    continue;
+                }
+                let Ok(pid) = control.get_process_id() else { continue };
+                if pid == 0 || pid == own_pid {
+                    continue;
+                }
+                let Some(process) = system.process(Pid::from_u32(pid)) else { continue };
+                sessions.push((
+                    process.name().to_string_lossy().to_string(),
+                    state == SessionState::Active,
+                ));
+            }
+        }
+        // Discord e o próprio Briks nunca entram na transmissão, então nem aparecem na lista.
+        group_audio_apps(
+            sessions,
+            &["discord.exe", "discordptb.exe", "discordcanary.exe", "briks.exe", "briks-desktop-backend.exe"],
+        )
+    }
+
     fn active_render_pids() -> Vec<u32> {
         let mut pids = Vec::new();
         let Ok(enumerator) = DeviceEnumerator::new() else { return pids };
@@ -446,5 +566,89 @@ mod windows_impl {
             }
         }
         pids
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotulo_amigavel_vem_do_executavel() {
+        assert_eq!(friendly_app_label("spotify.exe"), "Spotify");
+        assert_eq!(friendly_app_label("chrome.exe"), "Chrome");
+        assert_eq!(friendly_app_label("semextensao"), "Semextensao");
+        assert_eq!(friendly_app_label(""), "");
+    }
+
+    #[test]
+    fn agrupa_por_executavel_tocando_primeiro() {
+        let apps = group_audio_apps(
+            vec![
+                ("Chrome.exe".into(), false),
+                ("spotify.exe".into(), true),
+                ("chrome.exe".into(), true),
+                ("discord.exe".into(), true),
+                ("".into(), true),
+                ("spotify.exe".into(), false),
+            ],
+            &["discord.exe"],
+        );
+        let names: Vec<_> = apps.iter().map(|app| (app.name.as_str(), app.playing)).collect();
+        assert_eq!(names, vec![("chrome.exe", true), ("spotify.exe", true)]);
+    }
+
+    #[test]
+    fn app_em_pausa_continua_na_lista() {
+        let apps = group_audio_apps(vec![("spotify.exe".into(), false)], &[]);
+        assert_eq!(apps, vec![AudioApp { name: "spotify.exe".into(), label: "Spotify".into(), playing: false }]);
+    }
+
+    /// Manual: imprime os apps com sessão de áudio deste PC. `cargo test -- --ignored --nocapture lista_real`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn lista_real_de_apps_com_audio() {
+        let apps = list_audio_apps();
+        for app in &apps {
+            println!("app: {} ({}) tocando={}", app.name, app.label, app.playing);
+        }
+        println!("total: {}", apps.len());
+    }
+
+    /// Manual: captura ~3 s do app em `BRIKS_TEST_APP` (ex.: spotify.exe) e imprime o pico.
+    /// `BRIKS_TEST_APP=spotify.exe cargo test -- --ignored --nocapture captura_real`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn captura_real_do_app() {
+        use std::{collections::HashSet, sync::{atomic::AtomicBool, Arc}, time::{Duration, Instant}};
+        let app = std::env::var("BRIKS_TEST_APP").unwrap_or_else(|_| "spotify.exe".into());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let included: HashSet<String> = [app.to_lowercase()].into_iter().collect();
+        let excluded: HashSet<String> = ["discord.exe".to_string()].into_iter().collect();
+        let thread_stop = stop.clone();
+        let handle = std::thread::spawn(move || {
+            windows_impl::mixer_thread(None, excluded, Some(included), thread_stop, tx, ready_tx)
+        });
+        assert!(ready_rx.blocking_recv().is_ok());
+        let start = Instant::now();
+        let (mut peak, mut bytes) = (0f32, 0usize);
+        while start.elapsed() < Duration::from_secs(3) {
+            if let Some(Ok(chunk)) = rx.blocking_recv() {
+                bytes += chunk.len();
+                for sample in chunk.chunks_exact(4) {
+                    peak = peak.max(f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]).abs());
+                }
+            } else {
+                break;
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        drop(rx);
+        let _ = handle.join();
+        println!("app={app} bytes={bytes} pico={peak:.4}");
     }
 }

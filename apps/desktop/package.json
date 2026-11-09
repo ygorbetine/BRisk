@@ -1,6 +1,6 @@
 {
   "name": "@briks/desktop",
-  "version": "0.11.13",
+  "version": "1.0.0",
   "private": true,
   "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
   "homepage": "https://github.com/ygorbetine/Briks",

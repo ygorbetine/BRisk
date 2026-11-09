@@ -2,6 +2,14 @@ import { BriksMark } from "./BriksMark";
 import { Modal } from "./Modal";
 import { SettingsView } from "../views/SettingsView";
 import { useVideoZoom } from "./video-zoom";
+import { isWindowsDesktop, listAudioApps, type AudioApp } from "../call/media/process-audio";
+import {
+  audioAppsForCapture,
+  loadScreenAudioChoice,
+  saveScreenAudioChoice,
+  toggleAudioApp,
+  type ScreenAudioChoice,
+} from "../services/audio/screen-audio-apps";
 import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, bestFitLayout, type CallLayoutMode } from "./call-layout-mode";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
@@ -352,7 +360,7 @@ function upsertAttachment(current: ChatAttachmentRecord[], record: ChatAttachmen
   return next.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function ScreenSourcePicker({
+export function ScreenSourcePicker({
   sources,
   loading,
   includeAudio,
@@ -364,9 +372,36 @@ function ScreenSourcePicker({
   loading: boolean;
   includeAudio: boolean;
   onAudioChange(includeAudio: boolean): void;
-  onChoose(source: BriksDesktopSource): void;
+  onChoose(source: BriksDesktopSource, audioApps?: string[]): void;
   onClose(): void;
 }) {
+  const windowsAudio = isWindowsDesktop();
+  const [choice, setChoice] = useState(loadScreenAudioChoice);
+  const [audioApps, setAudioApps] = useState<AudioApp[]>([]);
+  const audioMode: "source" | "apps" | "none" = !includeAudio ? "none" : choice.appsMode ? "apps" : "source";
+  useEffect(() => {
+    if (!windowsAudio || audioMode !== "apps") return undefined;
+    let alive = true;
+    const load = async () => {
+      const next = await listAudioApps();
+      if (alive) setAudioApps(next);
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [windowsAudio, audioMode]);
+  const updateChoice = (next: ScreenAudioChoice) => { setChoice(next); saveScreenAudioChoice(next); };
+  const changeMode = (mode: "source" | "apps" | "none") => {
+    if (mode === "none") { onAudioChange(false); return; }
+    onAudioChange(true);
+    updateChoice({ ...choice, appsMode: mode === "apps" });
+  };
+  // Apps marcados que não estão abertos agora continuam na lista, para o Spotify fechado não sumir da escolha.
+  const appRows: AudioApp[] = [
+    ...audioApps,
+    ...choice.names.filter((name) => !audioApps.some((app) => app.name === name)).map((name) => ({ name, label: name.replace(/\.exe$/i, "").replace(/^./, (first) => first.toUpperCase()), playing: false, closed: true })),
+  ];
+  const confirm = (source: BriksDesktopSource) => onChoose(source, audioAppsForCapture(includeAudio, choice));
   const screens = sources.filter((source) => source.id.startsWith("screen:"));
   const windows = sources.filter((source) => !source.id.startsWith("screen:"));
   const [tab, setTab] = useState<"screens" | "windows">("screens");
@@ -395,23 +430,55 @@ function ScreenSourcePicker({
             className={`sp-card${selected?.id === source.id ? " sel" : ""}`}
             aria-pressed={selected?.id === source.id}
             onClick={() => setSelectedId(source.id)}
-            onDoubleClick={() => onChoose(source)}
+            onDoubleClick={() => confirm(source)}
           >
             <span className="sp-thumb">{source.thumbnail ? <img src={source.thumbnail} alt="" draggable={false}/> : <MonitorUp/>}<span className="sp-check" aria-hidden="true"><Check size={14}/></span></span>
             <span className="sp-name" title={source.name}>{source.name}</span>
           </button>)}
         </div>}
+      {windowsAudio && <div className="sp-audio-panel">
+        <div className="sp-audio-row">
+          <strong>Áudio da transmissão</strong>
+          <div className="sp-seg" role="group" aria-label="Origem do áudio">
+            <button className={audioMode === "source" ? "on" : ""} aria-pressed={audioMode === "source"} onClick={() => changeMode("source")}>Da fonte</button>
+            <button className={audioMode === "apps" ? "on" : ""} aria-pressed={audioMode === "apps"} onClick={() => changeMode("apps")}>Escolher apps</button>
+            <button className={audioMode === "none" ? "on" : ""} aria-pressed={audioMode === "none"} onClick={() => changeMode("none")}>Sem áudio</button>
+          </div>
+        </div>
+        {audioMode === "apps" && <>
+          {appRows.length === 0
+            ? <p className="sp-apps-empty">Nenhum app com áudio aberto. Abra o Spotify ou o jogo e ele aparece aqui.</p>
+            : <div className="sp-apps">
+              {appRows.map((app) => {
+                const on = choice.names.includes(app.name);
+                const closed = "closed" in app;
+                return <button
+                  key={app.name}
+                  className={`sp-app${on ? " on" : ""}${app.playing ? " playing" : ""}`}
+                  role="switch"
+                  aria-checked={on}
+                  onClick={() => updateChoice({ ...choice, names: toggleAudioApp(choice.names, app.name) })}
+                >
+                  <span className="sp-app-icon" aria-hidden="true"><Volume2 size={15}/></span>
+                  <span className="sp-app-text"><b title={app.name}>{app.label}</b><small>{closed ? "Fechado agora" : app.playing ? "Tocando agora" : "Em pausa"}</small></span>
+                  <i aria-hidden="true"/>
+                </button>;
+              })}
+            </div>}
+          <p className="sp-apps-note">{choice.names.length === 0 ? "Nenhum app marcado: a transmissão sai sem áudio. " : ""}O Discord nunca entra na transmissão. Para mudar os apps depois, pare e inicie a transmissão.</p>
+        </>}
+      </div>}
       <div className="sp-actions">
-        <button
+        {!windowsAudio && <button
           className={`sp-audio ${includeAudio ? "on" : ""}`}
           onClick={() => onAudioChange(!includeAudio)}
           role="switch"
           aria-checked={includeAudio}
           title={includeAudio ? "O áudio será transmitido" : "Só o vídeo será transmitido"}
-        >{includeAudio ? <Volume2 size={16}/> : <VolumeX size={16}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span><i aria-hidden="true"/></button>
-        <button className="sp-go" onClick={() => selected && onChoose(selected)} title={selected ? `Transmitir ${selected.name}` : undefined}>{selected ? `Transmitir ${selected.name}` : "Transmitir"}</button>
+        >{includeAudio ? <Volume2 size={16}/> : <VolumeX size={16}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span><i aria-hidden="true"/></button>}
+        <button className="sp-go" onClick={() => selected && confirm(selected)} title={selected ? `Transmitir ${selected.name}` : undefined}>{selected ? `Transmitir ${selected.name}` : "Transmitir"}</button>
       </div>
-      <div className="sp-foot">Janela: só o som dela, sem o do Discord. Abas do navegador levam o som do navegador inteiro.</div>
+      <div className="sp-foot">{audioMode === "apps" ? "Só o som dos apps marcados entra na transmissão." : "Janela: só o som dela, sem o do Discord. Abas do navegador levam o som do navegador inteiro."}</div>
     </section>
   </div>;
 }
@@ -655,11 +722,15 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     }
   }
 
-  async function chooseScreen(source: BriksDesktopSource): Promise<void> {
+  async function chooseScreen(source: BriksDesktopSource, audioApps?: string[]): Promise<void> {
     setSourcePickerOpen(false);
     try {
       if (pickingSecond) await call.toggleSecondScreen(roomId, source.id, qualityProfile);
-      else await call.toggleScreen(roomId, source.id, screenAudioEnabled, qualityProfile);
+      else {
+        // Modo "escolher apps" sem nenhum app marcado: a transmissão sai sem áudio.
+        const includeAudio = screenAudioEnabled && audioApps?.length !== 0;
+        await call.toggleScreen(roomId, source.id, includeAudio, qualityProfile, audioApps?.length ? audioApps : undefined);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível iniciar o compartilhamento.");
     }
@@ -936,7 +1007,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       loading={screenSourcesLoading}
       includeAudio={screenAudioEnabled}
       onAudioChange={setScreenAudioEnabled}
-      onChoose={(source) => void chooseScreen(source)}
+      onChoose={(source, audioApps) => void chooseScreen(source, audioApps)}
       onClose={() => setSourcePickerOpen(false)}
     />}
   </main>;

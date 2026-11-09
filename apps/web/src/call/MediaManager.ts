@@ -206,6 +206,7 @@ export class MediaManager {
     sourceId: string | undefined,
     includeAudio: boolean,
     qualityProfile?: ScreenQualityProfile,
+    audioApps?: string[],
   ): Promise<void> {
     if (this.screenStream) {
       await this.stopScreen();
@@ -223,6 +224,7 @@ export class MediaManager {
         sourceId,
         includeAudio,
         settings.excludeBriksAudioFromScreenShare,
+        audioApps,
       );
       stream = capture.stream;
       desktopAudio = capture.desktopAudio;

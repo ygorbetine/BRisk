@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.11",
+    items: [
+      "Barra de edição da sobreposição numa linha só, com botão Ativar/Desativar tudo separado dos itens",
+      "O projeto agora se chama Briks no GitHub; as atualizações passam a apontar direto para o novo endereço",
+    ],
+  },
+  {
     version: "0.11.10",
     items: [
       "O rótulo da sua tela em miniatura ficou pequeno e numa linha só, sem cobrir a imagem quando a tela de um amigo está em destaque",

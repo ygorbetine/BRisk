@@ -23,6 +23,8 @@ import "./screen-quality.css";
 type Props = {
   settings: ScreenQualitySettings;
   viewers: number;
+  /** No SFU o upload não cresce com os espectadores, mas inclui as camadas menores do simulcast. */
+  sfu?: boolean;
   onChange: (settings: ScreenQualitySettings) => void;
   /** Lê o diagnóstico ao vivo para o medidor de envio. */
   readDiagnostics?: () => Promise<{ peerConnections: SendMeterPeer[] }>;
@@ -52,7 +54,7 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
   </div>;
 }
 
-export function ScreenQualityPanel({ settings, viewers, onChange, readDiagnostics, onClose }: Props) {
+export function ScreenQualityPanel({ settings, viewers, sfu = false, onChange, readDiagnostics, onClose }: Props) {
   const [meter, setMeter] = useState<SendMeter | null>(null);
   useEffect(() => {
     if (!readDiagnostics) return;
@@ -63,7 +65,7 @@ export function ScreenQualityPanel({ settings, viewers, onChange, readDiagnostic
     return () => { alive = false; window.clearInterval(timer); };
   }, [readDiagnostics]);
   const bitrate = resolveScreenBitrate(settings);
-  const upload = estimatedUploadBitrate(settings, viewers);
+  const upload = estimatedUploadBitrate(settings, viewers, sfu);
   const forced = settings.bitrateMode !== "auto";
   const update = (patch: Partial<ScreenQualitySettings>) => onChange({ ...settings, ...patch });
 
@@ -84,7 +86,9 @@ export function ScreenQualityPanel({ settings, viewers, onChange, readDiagnostic
         <div><small>Perda</small><strong>{meter?.worstLossPercent !== undefined && meter.peers > 0 ? `${meter.worstLossPercent.toFixed(1).replace(".", ",")}%` : "—"}</strong></div>
       </div>
       <p className="sq-budget">
-        Por espectador <b>{formatMbps(bitrate)}</b> · upload com {Math.max(1, viewers)} {viewers === 1 ? "espectador" : "espectadores"} <b>≈ {formatMbps(upload)}</b>
+        {sfu
+          ? <>Qualidade máxima <b>{formatMbps(bitrate)}</b> · upload total (com camadas menores) <b>≈ {formatMbps(upload)}</b></>
+          : <>Por espectador <b>{formatMbps(bitrate)}</b> · upload com {Math.max(1, viewers)} {viewers === 1 ? "espectador" : "espectadores"} <b>≈ {formatMbps(upload)}</b></>}
       </p>
 
       <div className="sq-presets" role="group" aria-label="Atalhos">

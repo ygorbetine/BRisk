@@ -7,6 +7,7 @@ import {
   type RemoteParticipant,
   type RemoteTrack,
   type TrackPublishOptions,
+  VideoPreset,
 } from "livekit-client";
 import { summarizePeerStats, type OutboundBytesSample } from "../diagnostics/stats";
 import type { VideoPublicationOptions } from "../video-encoding";
@@ -24,6 +25,11 @@ export type SfuConnectionProvider = (options: CallTransportJoinOptions) => Promi
 
 const DEFAULT_SCREEN_BITRATE = 6_000_000;
 const DEFAULT_CAMERA_BITRATE = 1_500_000;
+// Mantêm 30 fps: tela de jogo com 15 fps parece travada, então só a resolução cai.
+export const SCREEN_SIMULCAST_LAYERS = [
+  new VideoPreset(1280, 720, 1_700_000, 30),
+  new VideoPreset(640, 360, 600_000, 30),
+];
 
 /**
  * Transporte SFU baseado em LiveKit. Cada participante publica uma vez e o
@@ -92,6 +98,10 @@ export class LiveKitTransport implements SfuCallTransport {
     const room = this.requireRoom();
     if (this.published.has(track)) return;
     this.publishedStreams.set(track, stream);
+    // Dica de conteúdo para o encoder: "motion" preserva o FPS (jogos); "detail" preserva a nitidez (texto).
+    if (track.kind === "video" && options?.source === "screen" && !track.contentHint) {
+      try { track.contentHint = options.contentHint ?? "motion"; } catch { /* contentHint é opcional */ }
+    }
     const publication = await room.localParticipant.publishTrack(track, { ...this.publishOptions(track, options), name: stream.id });
     this.published.set(track, publication);
   }
@@ -224,7 +234,12 @@ export class LiveKitTransport implements SfuCallTransport {
         maxBitrate: options?.maxBitrate ?? (screen ? DEFAULT_SCREEN_BITRATE : DEFAULT_CAMERA_BITRATE),
         maxFramerate: options?.maxFramerate ?? (screen ? 30 : 30),
       },
-      ...(screen ? { screenShareSimulcastLayers: [] } : {}),
+      // H.264 primeiro: as GPUs codificam em hardware e o FPS do jogo não cai. O LiveKit
+      // mantém um codec de reserva para quem não decodifica H.264.
+      videoCodec: "h264",
+      // Escada de bitrate (ideia do ABR da Netflix): o espectador com rede fraca assina uma
+      // camada menor em vez de todo mundo sofrer com o teto do transmissor.
+      ...(screen ? { screenShareSimulcastLayers: SCREEN_SIMULCAST_LAYERS } : {}),
     };
   }
 

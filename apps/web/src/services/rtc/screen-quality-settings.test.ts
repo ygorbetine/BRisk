@@ -45,7 +45,10 @@ describe("qualidade da transmissão", () => {
 
   it("estima o upload por espectador na malha e fixo no SFU", () => {
     expect(estimatedUploadBitrate(base, 4)).toBe(resolveScreenBitrate(base) * 4);
-    expect(estimatedUploadBitrate(base, 4, true)).toBe(resolveScreenBitrate(base));
+    const main = resolveScreenBitrate(base);
+    const layers = Math.min(1_700_000, main) + Math.min(600_000, main);
+    expect(estimatedUploadBitrate(base, 4, true)).toBe(main + layers);
+    expect(estimatedUploadBitrate(base, 1, true)).toBe(estimatedUploadBitrate(base, 9, true));
   });
 
   it("sanitiza valores inválidos do armazenamento", () => {

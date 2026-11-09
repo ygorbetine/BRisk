@@ -1099,7 +1099,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     {idleRemaining !== null && <div className="idle-warning" role="alert"><span>Você está há muito tempo sem falar. A chamada será encerrada em {formatRemaining(idleRemaining)}.</span><button type="button" onClick={() => { lastActiveRef.current = Date.now(); setIdleRemaining(null); }}>Continuar</button></div>}
     {appSettingsOpen && <Modal title="Configurações" onClose={() => setAppSettingsOpen(false)}><SettingsView/></Modal>}
     {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>}
-    {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} readDiagnostics={() => call.getLiveDiagnostics()} onClose={() => setQualityPanelOpen(false)}/>} 
+    {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} sfu={diagnostics?.transport.active === "sfu"} onChange={setQualitySettings} readDiagnostics={() => call.getLiveDiagnostics()} onClose={() => setQualityPanelOpen(false)}/>} 
     {diagnosticsOpen && <section className="network-diagnostics" role="dialog" aria-label="Diagnóstico da conexão">
       <header><strong>Diagnóstico da conexão</strong><button onClick={() => setDiagnosticsOpen(false)}><X/></button></header>
       <p>Signaling: <b>{diagnostics?.signaling?.status ?? "indisponível"}</b></p>

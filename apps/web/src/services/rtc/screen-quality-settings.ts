@@ -120,9 +120,17 @@ export function buildScreenQualityProfile(settings: ScreenQualitySettings): Scre
   };
 }
 
-/** Upload estimado: um fluxo por espectador (malha) ou um só (SFU). */
+/** Bitrates das camadas menores do simulcast da tela no SFU. Manter igual a SCREEN_SIMULCAST_LAYERS em packages/rtc/src/transport/sfu.ts. */
+export const SFU_SCREEN_LAYER_BITRATES: readonly number[] = [1_700_000, 600_000];
+
+/**
+ * Upload estimado: um fluxo por espectador (malha) ou, no SFU, um fluxo principal
+ * mais as camadas menores do simulcast (cada uma limitada ao bitrate principal).
+ */
 export function estimatedUploadBitrate(settings: ScreenQualitySettings, viewers: number, sfu = false): number {
-  return resolveScreenBitrate(settings) * (sfu ? 1 : Math.max(1, viewers));
+  const main = resolveScreenBitrate(settings);
+  if (!sfu) return main * Math.max(1, viewers);
+  return main + SFU_SCREEN_LAYER_BITRATES.reduce((sum, layer) => sum + Math.min(layer, main), 0);
 }
 
 const STORAGE_KEY = "brisk.screenQualitySettings";

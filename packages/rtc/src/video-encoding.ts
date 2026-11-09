@@ -24,6 +24,8 @@ export type VideoPublicationOptions = {
   targetWidth?: number;
   targetHeight?: number;
   degradationPreference?: RTCDegradationPreference;
+  /** Tipo de conteúdo da tela: "motion" (jogo, padrão) ou "detail" (texto/código). */
+  contentHint?: "motion" | "detail";
   /** O usuário escolheu o bitrate: sem o teto de proteção da malha, até 50 Mbps. */
   forceBitrate?: boolean;
 };

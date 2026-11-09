@@ -7,6 +7,7 @@ import {
   type RemoteParticipant,
   type RemoteTrack,
   type TrackPublishOptions,
+  type VideoCodec,
   VideoPreset,
 } from "livekit-client";
 import { summarizePeerStats, type OutboundBytesSample } from "../diagnostics/stats";
@@ -25,6 +26,8 @@ export type SfuConnectionProvider = (options: CallTransportJoinOptions) => Promi
 
 const DEFAULT_SCREEN_BITRATE = 6_000_000;
 const DEFAULT_CAMERA_BITRATE = 1_500_000;
+const PRIMARY_VIDEO_CODEC: VideoCodec = "h264";
+const FALLBACK_VIDEO_CODEC: VideoCodec = "vp8";
 // Mantêm 30 fps: tela de jogo com 15 fps parece travada, então só a resolução cai.
 export const SCREEN_SIMULCAST_LAYERS = [
   new VideoPreset(1280, 720, 1_700_000, 30),
@@ -102,7 +105,17 @@ export class LiveKitTransport implements SfuCallTransport {
     if (track.kind === "video" && options?.source === "screen" && !track.contentHint) {
       try { track.contentHint = options.contentHint ?? "motion"; } catch { /* contentHint é opcional */ }
     }
-    const publication = await room.localParticipant.publishTrack(track, { ...this.publishOptions(track, options), name: stream.id });
+    const publish = (codec: VideoCodec) =>
+      room.localParticipant.publishTrack(track, { ...this.publishOptions(track, options, codec), name: stream.id });
+    let publication: LocalTrackPublication;
+    try {
+      publication = await publish(PRIMARY_VIDEO_CODEC);
+    } catch (error) {
+      // Servidor ou encoder sem H.264: tenta VP8, que funciona em qualquer lugar, em vez de derrubar a transmissão.
+      if (track.kind !== "video") throw error;
+      console.warn("Falha ao publicar vídeo em H.264; tentando VP8", error);
+      publication = await publish(FALLBACK_VIDEO_CODEC);
+    }
     this.published.set(track, publication);
   }
 
@@ -221,7 +234,7 @@ export class LiveKitTransport implements SfuCallTransport {
     return this.room;
   }
 
-  private publishOptions(track: MediaStreamTrack, options?: VideoPublicationOptions): TrackPublishOptions {
+  private publishOptions(track: MediaStreamTrack, options?: VideoPublicationOptions, codec: VideoCodec = PRIMARY_VIDEO_CODEC): TrackPublishOptions {
     if (track.kind === "audio") {
       return { source: options?.source === "screen" ? Track.Source.ScreenShareAudio : Track.Source.Microphone, dtx: true };
     }
@@ -234,9 +247,9 @@ export class LiveKitTransport implements SfuCallTransport {
         maxBitrate: options?.maxBitrate ?? (screen ? DEFAULT_SCREEN_BITRATE : DEFAULT_CAMERA_BITRATE),
         maxFramerate: options?.maxFramerate ?? (screen ? 30 : 30),
       },
-      // H.264 primeiro: as GPUs codificam em hardware e o FPS do jogo não cai. O LiveKit
-      // mantém um codec de reserva para quem não decodifica H.264.
-      videoCodec: "h264",
+      // H.264: as GPUs codificam em hardware e o FPS do jogo não cai. O codec de reserva do
+      // LiveKit só vale para VP9/AV1/H.265; para H.264 não há reserva, pois todo Chromium decodifica.
+      videoCodec: codec,
       // Escada de bitrate (ideia do ABR da Netflix): o espectador com rede fraca assina uma
       // camada menor em vez de todo mundo sofrer com o teto do transmissor.
       ...(screen ? { screenShareSimulcastLayers: SCREEN_SIMULCAST_LAYERS } : {}),

@@ -43,6 +43,33 @@ describe("LiveKitTransport.publishTrack", () => {
     expect(hinted.contentHint).toBe("detail");
   });
 
+  it("republica em VP8 quando a publicação em H.264 falha", async () => {
+    const { transport, publishTrack } = transportWithSpy();
+    publishTrack.mockRejectedValueOnce(new Error("h264 indisponível"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const track = videoTrack();
+    await transport.publishTrack(track, stream, { source: "screen" });
+    expect(publishTrack).toHaveBeenCalledTimes(2);
+    expect(publishTrack.mock.calls[0]![1].videoCodec).toBe("h264");
+    expect(publishTrack.mock.calls[1]![1].videoCodec).toBe("vp8");
+    // Publicou de fato: uma segunda chamada com a mesma faixa não republica.
+    await transport.publishTrack(track, stream, { source: "screen" });
+    expect(publishTrack).toHaveBeenCalledTimes(2);
+  });
+
+  it("propaga o erro quando o VP8 também falha e não tenta de novo no áudio", async () => {
+    const { transport, publishTrack } = transportWithSpy();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    publishTrack.mockRejectedValue(new Error("sem rede"));
+    await expect(transport.publishTrack(videoTrack(), stream, { source: "screen" })).rejects.toThrow("sem rede");
+    expect(publishTrack).toHaveBeenCalledTimes(2);
+
+    publishTrack.mockClear();
+    const audio = { kind: "audio" } as unknown as MediaStreamTrack;
+    await expect(transport.publishTrack(audio, stream)).rejects.toThrow("sem rede");
+    expect(publishTrack).toHaveBeenCalledTimes(1);
+  });
+
   it("não altera o contentHint da câmera", async () => {
     const { transport } = transportWithSpy();
     const camera = videoTrack();

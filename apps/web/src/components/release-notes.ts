@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.9",
+    items: [
+      "A miniatura Ao vivo da barra lateral mostra qualquer tela compartilhada na sala, dando preferência à que está maximizada",
+      "Atualizações agora têm uma aba própria nas configurações, separada de Sobre",
+    ],
+  },
+  {
     version: "0.11.8",
     items: [
       "Barra de opacidade do modo de edição da sobreposição vai de 0 a 100% com o trilho cheio",

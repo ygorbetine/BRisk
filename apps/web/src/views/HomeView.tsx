@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Hash,
   Headphones,
@@ -66,6 +66,7 @@ import {
   type PublicPeerIdentity,
 } from "../services/offline/social-storage";
 import { useCallStore } from "../store";
+import { pickLivePreview } from "./live-preview-source";
 import { AccountPanel } from "../components/AccountPanel";
 import { loadAccountState, signOutAccount } from "../services/account/account-service";
 import { rememberLogin } from "../services/account/login-hints";
@@ -91,6 +92,8 @@ export function HomeView() {
   useOverlayBridge();
   const localPreviews = useCallStore((state) => state.localPreviews);
   const callParticipants = useCallStore((state) => state.participants);
+  const focusedTile = useCallStore((state) => state.focusedTile);
+  const livePreview = useMemo(() => pickLivePreview({ focusedTile, participants: Object.values(callParticipants), localPreviews, localScreenShare: localCallState.screenShare }), [focusedTile, callParticipants, localPreviews, localCallState.screenShare]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -929,8 +932,8 @@ export function HomeView() {
             <span><i/>Voz conectada</span>
             <small>{callContext?.voiceChannelName ?? "Sala de voz"} / {callContext?.groupName ?? "Briks"}</small>
           </button>
-          {localCallState.screenShare && <button className="voice-live-card" onClick={() => setCallWorkspaceOpen(true)} title="Abrir a chamada">
-            <LivePreview stream={localPreviews.screen ?? null}/>
+          {livePreview && <button className="voice-live-card" onClick={() => setCallWorkspaceOpen(true)} title="Abrir a chamada">
+            <LivePreview stream={livePreview.stream}/>
             <span className="voice-live-badge"><i/>Ao vivo</span>
           </button>}
           <div className="voice-session-actions">
@@ -949,7 +952,7 @@ export function HomeView() {
           <button className="account-profile" onClick={() => setModal("profile")} title="Editar perfil"><ProfileAvatar displayName={currentUser?.displayName ?? "Eu"} avatar={currentUser?.avatar}/></button>
           <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>{accountNick ? `@${accountNick}` : "Disponível"}</small></button>
           <button onClick={() => setModal("account")} title={accountNick ? `Perfil e conta · @${accountNick}` : "Perfil e conta"}><AtSign/></button>
-          <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "about" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{(updateReady || notices.length > 0) && <i className="update-dot" aria-hidden="true"/>}</button>
+          <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "updates" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{(updateReady || notices.length > 0) && <i className="update-dot" aria-hidden="true"/>}</button>
           <button onClick={() => void logout()} title="Sair"><LogOut/></button>
         </div>
       </aside>

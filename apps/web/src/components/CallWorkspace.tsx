@@ -701,6 +701,9 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   ];
   const manualFocus = focusedTile && tileIds.includes(focusedTile) ? focusedTile : null;
   const focused = manualFocus ?? (layoutMode === "focus" ? (liveTileIds[0] ?? null) : null);
+  const publishFocusedTile = useCallStore((state) => state.setFocusedTile);
+  // A miniatura "Ao vivo" da barra lateral usa a tela maximizada aqui; fica guardada ao minimizar a chamada.
+  useEffect(() => { publishFocusedTile(focused); }, [focused, publishFocusedTile]);
   const weighted = !focused && liveTileIds.length > 0;
   const livesOnly = weighted && liveTileIds.length <= 2 && tileIds.length === liveTileIds.length;
   function chooseLayout(mode: CallLayoutMode): void {

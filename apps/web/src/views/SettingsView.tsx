@@ -3,15 +3,18 @@ import { LocalStoragePanel } from "../components/LocalStoragePanel";
 import { NetworkSettingsPanel } from "../components/NetworkSettingsPanel";
 import { OverlaySettingsPanel } from "../components/OverlaySettingsPanel";
 import { AboutPanel } from "../components/AboutPanel";
+import { UpdatesPanel } from "../components/UpdatesPanel";
+import { useUpdateState } from "../components/useUpdateState";
 import { ThemePanel } from "../components/ThemePanel";
 import { VoiceVideoSettingsPanel } from "../components/VoiceVideoSettingsPanel";
 
-export type SettingsTab = "voice" | "network" | "theme" | "storage" | "notices" | "overlay" | "about";
+export type SettingsTab = "voice" | "network" | "theme" | "storage" | "notices" | "overlay" | "updates" | "about";
 
 export type SettingsNotice = { id: number; text: string; at: number };
 
 export function SettingsView({ initialTab = "voice", notices = [], onClearNotices }: { initialTab?: SettingsTab; notices?: SettingsNotice[]; onClearNotices?: () => void } = {}) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
+  const update = useUpdateState();
   return <>
     <nav className="settings-tabs" aria-label="Seções das configurações">
       <button className={tab === "voice" ? "active" : ""} onClick={() => setTab("voice")}>Voz e vídeo</button>
@@ -20,6 +23,7 @@ export function SettingsView({ initialTab = "voice", notices = [], onClearNotice
       <button className={tab === "storage" ? "active" : ""} onClick={() => setTab("storage")}>Armazenamento</button>
       <button className={tab === "overlay" ? "active" : ""} onClick={() => setTab("overlay")}>Sobreposição</button>
       <button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}>Avisos{notices.length > 0 ? ` (${notices.length})` : ""}</button>
+      <button className={tab === "updates" ? "active" : ""} onClick={() => setTab("updates")}>Atualizações{update.phase === "ready" ? " •" : ""}</button>
       <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Sobre</button>
     </nav>
     {tab === "voice" && <VoiceVideoSettingsPanel/>}
@@ -32,6 +36,7 @@ export function SettingsView({ initialTab = "voice", notices = [], onClearNotice
         : <>{notices.map((item) => <div className="sx-card" key={item.id}><span className="sx-title">{item.text}</span><small className="sx-sub">{new Date(item.at).toLocaleTimeString()}</small></div>)}
           <button type="button" className="sx-btn" onClick={onClearNotices}>Limpar avisos</button></>}
     </section>}
+    {tab === "updates" && <UpdatesPanel/>}
     {tab === "about" && <AboutPanel/>}
   </>;
 }

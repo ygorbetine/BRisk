@@ -104,7 +104,8 @@ body {
 .about-update:disabled { opacity: .6; cursor: default; }
 .about-update-note { font-size: 13px; color: #d9d0ee; }
 
-.modal:has(.settings-tabs) { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+/* Tamanho fixo: não muda de uma aba para outra; o conteúdo rola dentro dele. */
+.modal:has(.settings-tabs) { width: min(760px, calc(100vw - 32px)); height: min(640px, calc(100vh - 48px)); height: min(640px, calc(100dvh - 48px)); max-height: none; }
 .modal:has(.settings-tabs) .modal-content { overflow-x: hidden; }
 .modal:has(.settings-tabs) .modal-content > * { min-width: 0; max-width: 100%; }
 .modal:has(.settings-tabs) select, .modal:has(.settings-tabs) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { max-width: 100%; }

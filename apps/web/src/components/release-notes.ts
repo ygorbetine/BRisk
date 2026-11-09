@@ -3,6 +3,12 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.12",
+    items: [
+      "A janela de Configurações tem tamanho fixo e não muda de uma aba para outra",
+    ],
+  },
+  {
     version: "0.11.11",
     items: [
       "Barra de edição da sobreposição numa linha só, com botão Ativar/Desativar tudo separado dos itens",

@@ -5,10 +5,12 @@ import { OverlaySettingsPanel } from "../components/OverlaySettingsPanel";
 import { AboutPanel } from "../components/AboutPanel";
 import { UpdatesPanel } from "../components/UpdatesPanel";
 import { useUpdateState } from "../components/useUpdateState";
+import { FriendNotifyPanel } from "../components/FriendNotifyPanel";
+import { ShortcutsPanel } from "../components/ShortcutsPanel";
 import { ThemePanel } from "../components/ThemePanel";
 import { VoiceVideoSettingsPanel } from "../components/VoiceVideoSettingsPanel";
 
-export type SettingsTab = "voice" | "network" | "theme" | "storage" | "notices" | "overlay" | "updates" | "about";
+export type SettingsTab = "voice" | "network" | "theme" | "storage" | "notices" | "overlay" | "shortcuts" | "friends" | "updates" | "about";
 
 export type SettingsNotice = { id: number; text: string; at: number };
 
@@ -22,6 +24,8 @@ export function SettingsView({ initialTab = "voice", notices = [], onClearNotice
       <button className={tab === "theme" ? "active" : ""} onClick={() => setTab("theme")}>Temas</button>
       <button className={tab === "storage" ? "active" : ""} onClick={() => setTab("storage")}>Armazenamento</button>
       <button className={tab === "overlay" ? "active" : ""} onClick={() => setTab("overlay")}>Sobreposição</button>
+      <button className={tab === "shortcuts" ? "active" : ""} onClick={() => setTab("shortcuts")}>Atalhos</button>
+      <button className={tab === "friends" ? "active" : ""} onClick={() => setTab("friends")}>Notificações</button>
       <button className={tab === "notices" ? "active" : ""} onClick={() => setTab("notices")}>Avisos{notices.length > 0 ? ` (${notices.length})` : ""}</button>
       <button className={tab === "updates" ? "active" : ""} onClick={() => setTab("updates")}>Atualizações{update.phase === "ready" ? " •" : ""}</button>
       <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Sobre</button>
@@ -31,6 +35,8 @@ export function SettingsView({ initialTab = "voice", notices = [], onClearNotice
     {tab === "theme" && <ThemePanel/>}
     {tab === "storage" && <LocalStoragePanel/>}
     {tab === "overlay" && <OverlaySettingsPanel/>}
+    {tab === "shortcuts" && <ShortcutsPanel/>}
+    {tab === "friends" && <FriendNotifyPanel/>}
     {tab === "notices" && <section className="sx-stack" aria-label="Avisos">
       {notices.length === 0 ? <div className="sx-card"><span className="sx-title">Nenhum aviso</span><p className="sx-sub">Erros e avisos do Briks aparecem aqui. Tudo certo por enquanto.</p></div>
         : <>{notices.map((item) => <div className="sx-card" key={item.id}><span className="sx-title">{item.text}</span><small className="sx-sub">{new Date(item.at).toLocaleTimeString()}</small></div>)}

@@ -384,3 +384,80 @@ body {
 /* Título da sala: levemente mais baixo, no mesmo eixo visual da marca e dos botões */
 .call-workspace > header > div:nth-child(2) { align-self: center; padding-top: 4px; line-height: 1.3; }
 .call-workspace > header > div:nth-child(2) strong { display: block; font-size: 15px; }
+
+/* Status personalizado */
+.friend-row small.status-line,.account-bar small.status-line{display:flex;align-items:center;gap:6px;min-width:0;color:#d6c6e6;font-size:12.5px;margin-top:2px;white-space:nowrap}
+.status-line .status-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.status-emoji{font-size:13px;line-height:1;flex:0 0 auto}
+.account-bar small.status-line.mine{color:#c9b8dc;font-size:11.5px;margin-top:0}
+.status-editor{display:grid;gap:10px;padding:14px;border-radius:16px;background:#0e1218;border:1px solid #ffffff0c}
+.status-input{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:8px;background:#0f0316;border:1px solid #2f1745;border-radius:12px;padding:4px 12px 4px 4px}
+.status-input input{margin:0;background:none;border:0;box-shadow:none;padding:10px 4px;min-width:0}
+.status-input em{font-style:normal;font-size:11px;color:#8b7aa0;font-weight:600}
+.status-emoji-btn{width:38px;height:38px;padding:0;border-radius:9px;background:#2f1745;font-size:18px;display:grid;place-items:center}
+.status-chips{display:flex;flex-wrap:wrap;gap:6px}
+.status-chips button{padding:6px 11px;border-radius:999px;background:#ffffff0d;color:#d6c6e6;font-size:12px;font-weight:600}
+.status-editor select{margin:0}
+.status-editor>small{color:#a592b8;line-height:1.45}
+.status-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.status-actions .status-saved{color:#75df8c;font-size:12px;font-weight:700}
+.tile-label .tile-status{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;font-size:12px;opacity:.82;vertical-align:bottom}
+
+/* Rich presence */
+.friend-row small.app-line{color:#b9a7cf;font-size:12px}
+.app-line .app-icon{width:14px;height:14px;flex:0 0 auto;image-rendering:auto}
+.rich-presence-panel{display:grid;gap:10px;padding:14px;border-radius:16px;background:#0e1218;border:1px solid #ffffff0c}
+.rich-presence-panel>small{color:#a592b8;line-height:1.45}
+.rich-toggle{display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer}
+.rich-toggle input{width:18px;height:18px;margin:0;accent-color:#a35cff}
+.rich-current{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:#d6c6e6;font-size:13px}
+.rich-ignore-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.rich-ignore-form input{margin:0}
+.rich-ignored{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:0;padding:0}
+.rich-ignored li{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 10px;border-radius:999px;background:#ffffff0d;color:#d6c6e6;font-size:12px}
+.rich-ignored button{width:20px;height:20px;padding:0;display:grid;place-items:center;border-radius:999px;background:none;color:#a592b8}
+
+/* Atalhos e push-to-talk */
+.shortcut-controls{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.shortcut-key{min-width:150px;padding:8px 12px;border-radius:10px;background:#0f0316;border:1px solid #2f1745;color:#e9dcf7;font-weight:600;font-size:12.5px;font-family:inherit}
+.shortcut-key.recording{border-color:#a35cff;color:#d9b8ff;box-shadow:0 0 0 3px #a35cff33}
+.shortcut-clear{padding:7px 10px;font-size:12px}
+.call-workspace footer button.ptt-talking{box-shadow:0 0 0 2px #75df8c inset}
+
+/* Pedir transmissão */
+.tile .request-stream{position:absolute;top:14px;left:50%;transform:translateX(-50%);white-space:nowrap;z-index:3;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#0d0614cc;border:1px solid #ffffff1f;color:#ece6fa;font-size:12px;font-weight:600;opacity:0;transition:opacity .15s}
+.tile:hover .request-stream,.tile .request-stream:focus-visible{opacity:1}
+.tile .request-stream:hover{transform:translateX(-50%);filter:brightness(1.15)}
+.stream-invite{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:10px;max-width:min(560px,calc(100% - 32px));padding:10px 12px 10px 14px;border-radius:14px;background:#1a0b26f2;border:1px solid #a35cff66;box-shadow:0 12px 32px #0008;color:#ece6fa;font-size:13.5px}
+.stream-invite>span{flex:1;min-width:0}
+.stream-invite button{padding:7px 12px;font-size:12.5px;white-space:nowrap}
+.stream-invite.notice{border-color:#ffffff22;font-size:13px}
+.member-friend-note{display:flex;align-items:center;gap:6px;margin:4px 0 0;color:#c9b8dc;font-size:12.5px;line-height:1.4}
+
+/* Histórico de chamadas */
+.call-history{display:grid;gap:12px;min-width:min(520px,80vw)}
+.call-history-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.call-history-head .secondary{display:flex;align-items:center;gap:6px;padding:7px 11px;font-size:12.5px}
+.call-history-note{color:#a592b8;line-height:1.45}
+.call-history-empty{color:#a592b8;text-align:center;padding:24px 0;margin:0}
+.call-history h4{margin:6px 0 6px;color:#c9b8dc;font-size:12px;letter-spacing:.4px;text-transform:uppercase}
+.call-history ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.call-history li{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:12px;background:#ffffff07;border:1px solid #ffffff0a}
+.call-history-icon{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:#2f1745;color:#d9b8ff;flex:0 0 auto}
+.call-history-main{flex:1;min-width:0;display:grid;gap:2px}
+.call-history-main strong,.call-history-main small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-history-main em{font-style:normal;color:#a592b8;font-weight:500}
+.call-history-main small{color:#a592b8;font-size:12px}
+.call-history-badge{color:#d9b8ff;display:grid;place-items:center}
+.call-history-time{display:grid;justify-items:end;gap:2px;flex:0 0 auto}
+.call-history-time small{color:#a592b8;font-size:11.5px}
+
+/* Microfone: verde ligado, vermelho mudo (barra da chamada e painel "Voz conectada") */
+.call-workspace footer button.mic-on,.room footer button.mic-on{background:rgba(117,223,140,.18);border-color:rgba(117,223,140,.55);color:#9ff0b1}
+.call-workspace footer button.mic-on:hover,.room footer button.mic-on:hover{background:rgba(117,223,140,.28)}
+.call-workspace footer button.mic-off,.room footer button.mic-off{background:rgba(233,85,85,.32);border-color:rgba(233,85,85,.7);color:#ffc2c2}
+.call-workspace footer button.mic-off:hover,.room footer button.mic-off:hover{background:rgba(233,85,85,.45)}
+.voice-session-actions button.mic-on{background:#75df8c22;color:#75df8c}
+.voice-session-actions button.mic-on:hover{background:#75df8c38;color:#9ff0b1}
+.voice-session-actions button.mic-off{background:#e9555538;color:#ff8585}
+.voice-session-actions button.mic-off:hover{background:#e95555;color:#fff}

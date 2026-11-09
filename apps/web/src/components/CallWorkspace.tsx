@@ -11,6 +11,9 @@ import {
   type ScreenAudioChoice,
 } from "../services/audio/screen-audio-apps";
 import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, bestFitLayout, type CallLayoutMode } from "./call-layout-mode";
+import { usePeerStatus } from "../services/profile/peer-status";
+import { useCallShortcuts } from "../services/input/use-call-shortcuts";
+import { loadLocalStatus } from "../services/profile/status-store";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   Activity,
@@ -170,6 +173,7 @@ function VideoTile({
   deafened,
   watching,
   onFocus,
+  onRequestStream,
 }: {
   participant: Participant;
   tileId: string;
@@ -179,6 +183,8 @@ function VideoTile({
   /** Modo Transmissão: só aí a tela compartilhada (vídeo e áudio) é exibida. */
   watching: boolean;
   onFocus(tileId: string): void;
+  /** Pede a esta pessoa que transmita a tela (só aparece quando ela não está transmitindo). */
+  onRequestStream?(): void;
 }) {
   const streams = Object.values(participant.streams ?? {});
   const screenStream = participant.state.screenStreamId ? participant.streams?.[participant.state.screenStreamId] : undefined;
@@ -223,6 +229,7 @@ function VideoTile({
   const remoteMuted = Boolean(participant.stateReceived) && !participant.state.microphone;
   const userHasAudio = Boolean(microphoneStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const screenHasAudio = watching && Boolean(screenStream?.getAudioTracks().some((track) => track.readyState === "live"));
+  const peerStatus = usePeerStatus(participant.peerId);
   const speaking = useVoiceActivity(microphoneStream, participant.state.microphone && userHasAudio);
   const zoom = useVideoZoom(articleRef, source === "screen" && hasVideo && !compact);
 
@@ -244,6 +251,7 @@ function VideoTile({
     {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened || remoteMuted || audio.muted ? 0 : userVolume}/>}
     {screenHasAudio && <RemoteAudio stream={screenStream!} volume={deafened || audio.muted ? 0 : screenVolume}/>}
     <FullscreenButton target={articleRef}/>
+    {onRequestStream && !participant.state.screenShare && !compact && <button type="button" className="request-stream" title={`Pedir para ${participant.displayName} transmitir a tela`} aria-label={`Pedir para ${participant.displayName} transmitir a tela`} onClick={(event) => { event.stopPropagation(); onRequestStream(); }} onDoubleClick={(event) => event.stopPropagation()}><MonitorUp size={14}/> Pedir transmissão</button>}
     {canSwitch && <div className="source-switch">
       <button className={source === "camera" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("camera"); }}><Video size={14}/> Câmera</button>
       <button className={source === "screen" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("screen"); }}><MonitorUp size={14}/> Tela</button>
@@ -253,7 +261,7 @@ function VideoTile({
       {userHasAudio && <VolumeControl label="Usuário" value={userVolume} onChange={(value) => updateAudio({ user: value })}/>} 
       {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={(value) => updateAudio({ screen: value })}/>} 
     </div>}
-    <div className="tile-label"><span>{participant.displayName}</span>{!participant.state.microphone && <MicOff size={15}/>}{audio.muted && <VolumeX size={15} className="muted-person"/>} {watching && participant.state.screenAudio && !compact && <em>ÁUDIO DA TELA</em>}</div>
+    <div className="tile-label"><span>{participant.displayName}</span>{peerStatus && <span className="tile-status" title={[peerStatus.emoji, peerStatus.text].filter(Boolean).join(" ")}>{[peerStatus.emoji, peerStatus.text].filter(Boolean).join(" ")}</span>}{!participant.state.microphone && <MicOff size={15}/>}{audio.muted && <VolumeX size={15} className="muted-person"/>} {watching && participant.state.screenAudio && !compact && <em>ÁUDIO DA TELA</em>}</div>
   </article>;
 }
 
@@ -302,12 +310,13 @@ function LocalProfileTile({ displayName, avatar, microphone, microphoneStream, t
   onFocus(tileId: string): void;
 }) {
   const speaking = useVoiceActivity(microphoneStream, microphone);
+  const localStatus = loadLocalStatus();
   return <article
     className={`tile local online profile-only ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
     onClick={() => onFocus(tileId)}
   >
     <div className="video-off"><ProfileAvatar displayName={displayName} avatar={avatar} className="call-profile-avatar"/></div>
-    <div className="tile-label"><span>Você · {displayName}</span>{!microphone && <MicOff size={15}/>}</div>
+    <div className="tile-label"><span>Você · {displayName}</span>{localStatus && <span className="tile-status">{[localStatus.emoji, localStatus.text].filter(Boolean).join(" ")}</span>}{!microphone && <MicOff size={15}/>}</div>
   </article>;
 }
 
@@ -551,6 +560,38 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const [screenSourcesLoading, setScreenSourcesLoading] = useState(false);
   const [networkQuality, setNetworkQuality] = useState("Boa");
   const [deafened, setDeafened] = useState(false);
+  const [streamInvite, setStreamInvite] = useState<{ peerId: string; name: string } | null>(null);
+  const [requestNotice, setRequestNotice] = useState<string | null>(null);
+  useEffect(() => call.onStreamRequest((peerId) => {
+    const name = useCallStore.getState().participants[peerId]?.displayName ?? "Alguém";
+    setStreamInvite({ peerId, name });
+    if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
+      const notice = new Notification(`${name} pediu para você transmitir`, { body: "Abra o Briks para compartilhar a tela.", tag: `stream-request-${peerId}` });
+      notice.onclick = () => { window.focus(); notice.close(); };
+    }
+  }), [call]);
+  // O convite some sozinho e também quando a pessoa começa a transmitir por outro caminho.
+  useEffect(() => {
+    if (!streamInvite) return undefined;
+    const timer = window.setTimeout(() => setStreamInvite(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [streamInvite]);
+  useEffect(() => { if (localPreviews.screen) setStreamInvite(null); }, [localPreviews.screen]);
+  useEffect(() => {
+    if (!requestNotice) return undefined;
+    const timer = window.setTimeout(() => setRequestNotice(null), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [requestNotice]);
+  function askToStream(participant: Participant): void {
+    const result = call.requestStream(participant.peerId);
+    setRequestNotice(result.sent ? `Pedido enviado para ${participant.displayName}.` : result.waitSeconds > 0 ? `Espere ${result.waitSeconds} s para pedir de novo.` : `Não deu para enviar o pedido para ${participant.displayName}.`);
+  }
+  const shortcuts = useCallShortcuts(Boolean(roomId), {
+    mute: () => void call.toggleMicrophone(roomId),
+    deafen: () => setDeafened((value) => !value),
+    stream: () => void showScreenPicker().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Não foi possível transmitir.")),
+    setMicrophone: (enabled) => void call.setMicrophone(roomId, enabled),
+  });
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<CallDiagnostics | null>(null);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
@@ -996,6 +1037,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
             deafened={deafened}
             watching={streaming}
             onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}
+            onRequestStream={() => askToStream(participant)}
           /></React.Fragment>;
         })}
       </section>
@@ -1023,8 +1065,15 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       />
     </section>
 
+    {streamInvite && <div className="stream-invite" role="alertdialog" aria-label="Pedido de transmissão">
+      <MonitorUp size={18}/>
+      <span><strong>{streamInvite.name}</strong> pediu para você transmitir a tela.</span>
+      <button type="button" onClick={() => { setStreamInvite(null); void showScreenPicker().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Não foi possível transmitir.")); }}>Transmitir</button>
+      <button type="button" className="secondary" onClick={() => setStreamInvite(null)}>Agora não</button>
+    </div>}
+    {requestNotice && !streamInvite && <div className="stream-invite notice" role="status">{requestNotice}</div>}
     <footer>
-      <button className={localState.microphone ? "" : "off"} onClick={() => void call.toggleMicrophone(roomId)}>{localState.microphone ? <Mic/> : <MicOff/>}<span>Microfone</span></button>
+      <button className={`${localState.microphone ? "mic-on" : "off mic-off"}${shortcuts.talking ? " ptt-talking" : ""}`} title={localState.microphone ? "Microfone ligado · clique para mutar" : "Microfone mudo · clique para ligar"} onClick={() => void call.toggleMicrophone(roomId)}>{localState.microphone ? <Mic/> : <MicOff/>}<span>{shortcuts.talking ? "Falando" : "Microfone"}</span></button>
       <button className={deafened ? "off" : ""} onClick={() => setDeafened((value) => !value)} title="Silenciar todo o áudio recebido">{deafened ? <VolumeX/> : <Volume2/>}<span>Ensurdecer</span></button>
       <button className={audioSettingsOpen ? "active" : ""} onClick={() => setAudioSettingsOpen((current) => !current)} title="Configurações de áudio"><Settings2/><span>Áudio</span></button>
       <button className={localState.camera ? "active" : ""} onClick={() => void call.toggleCamera(roomId)}>{localState.camera ? <Video/> : <VideoOff/>}<span>Câmera</span></button>

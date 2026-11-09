@@ -9,6 +9,11 @@ describe("parsePresence", () => {
     const parsed = parsePresence({ peerId: "peer-abc-1", joinedAt: Date.now(), roomId: "room-1", channelId: "chan-1" });
     expect(parsed?.voice).toEqual({ roomId: "room-1", channelId: "chan-1" });
   });
+  it("só aceita transmitindo dentro de uma sala de voz", () => {
+    expect(parsePresence({ peerId: "peer-abc-1", joinedAt: Date.now(), roomId: "r", channelId: "c", streaming: true })?.streaming).toBe(true);
+    expect(parsePresence({ peerId: "peer-abc-1", joinedAt: Date.now(), streaming: true })?.streaming).toBeUndefined();
+    expect(parsePresence({ peerId: "peer-abc-1", joinedAt: Date.now(), roomId: "r", channelId: "c", streaming: "yes" })?.streaming).toBeUndefined();
+  });
   it("recusa peerId vazio/enorme e horário absurdo", () => {
     expect(parsePresence({ peerId: "", joinedAt: Date.now() })).toBeNull();
     expect(parsePresence({ peerId: "x".repeat(200), joinedAt: Date.now() })).toBeNull();

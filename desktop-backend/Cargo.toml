@@ -27,4 +27,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [target."cfg(windows)".dependencies]
 sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
 wasapi = "0.26.0"
-windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
+
+# Binario menor: otimiza por tamanho sem trocar o comportamento de panics.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

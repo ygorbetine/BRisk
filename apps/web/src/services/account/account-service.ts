@@ -155,3 +155,14 @@ export async function fetchKeyOwners(peerIds: string[]): Promise<KeyOwner[]> {
     return [];
   }
 }
+
+/** Conta +1 no contador anônimo do dia (migration 0002). Só com login; nunca lança. */
+export async function recordCallOutcome(transport: "mesh" | "sfu", path: "direct" | "relay" | "unknown", outcome: "connected" | "failed"): Promise<void> {
+  const supabase = client();
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) return;
+    await supabase.rpc("record_call_outcome", { p_transport: transport, p_path: path, p_outcome: outcome });
+  } catch { /* telemetria nunca atrapalha a chamada */ }
+}

@@ -9,7 +9,8 @@
 // de ~122 bits) não entra nela. Uma tabela de membros por sala fecharia essa lacuna no futuro.
 import { AccessToken } from "npm:livekit-server-sdk@2";
 import { authenticate, peerBelongsToUser } from "../_shared/auth.ts";
-import { RateLimiter, clampTtl, clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed, parseAllowedOrigins } from "../_shared/guard.ts";
+import { persistentRateLimit } from "../_shared/rate-limit.ts";
+import { RateLimiter, clampTtl, combineWaits, clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed, parseAllowedOrigins } from "../_shared/guard.ts";
 
 const allowedOrigins = parseAllowedOrigins(Deno.env.get("ALLOWED_ORIGINS"));
 const perUser = new RateLimiter(30, 10 * 60_000);
@@ -24,11 +25,13 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method !== "POST") return json({ message: "Método não permitido." }, 405);
 
-  const ipWait = perIp.check(clientIp(request.headers));
+  // Limite em duas camadas: memória (rápida, por instância) e banco (vale entre instâncias).
+  const ip = clientIp(request.headers);
+  const ipWait = combineWaits(perIp.check(ip), (ip === "desconhecido" ? 0 : await persistentRateLimit("livekit:ip", ip, 90, 600)));
   if (ipWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(ipWait) });
   const user = await authenticate(request);
   if (!user) return json({ message: "Entre na sua conta Briks para usar o servidor de chamadas." }, 401);
-  const userWait = perUser.check(user.id);
+  const userWait = combineWaits(perUser.check(user.id), await persistentRateLimit("livekit:user", user.id, 30, 600));
   if (userWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(userWait) });
 
   const body = await request.json().catch(() => ({})) as { room?: unknown; peerId?: unknown };

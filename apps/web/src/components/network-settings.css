@@ -35,3 +35,8 @@
 .call-mode-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .call-mode-options button { padding: 9px 14px; border-radius: 12px; background: rgba(255,255,255,.08); background-image: none; border: 1px solid rgba(255,255,255,.14); color: #ece6fa; }
 .call-mode-options button.active { background-image: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); border-color: transparent; color: #fff; }
+
+.net-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px}
+.net-metrics span{display:grid;gap:2px;padding:9px 11px;border-radius:10px;background:#ffffff08;border:1px solid #ffffff0d}
+.net-metrics small{color:#a592b8;font-size:11px}
+.net-metrics strong{font-size:14px;color:#ece6fa}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   Hash,
   Headphones,
   LogOut,
@@ -22,6 +23,7 @@ import {
   VideoOff,
   PhoneOff,
   RefreshCw,
+  History,
 } from "lucide-react";
 import {
   privateConversationId,
@@ -41,6 +43,17 @@ import { ProfileAvatar } from "../components/ProfileAvatar";
 import { BriksMark } from "../components/BriksMark";
 import { NickInvite } from "../components/NickInvite";
 import { ProfileEditor } from "../components/ProfileEditor";
+import { StatusEditor } from "../components/StatusEditor";
+import { RichPresencePanel } from "../components/RichPresencePanel";
+import { CallHistoryPanel } from "../components/CallHistoryPanel";
+import { addCallHistoryEntry, CallHistoryRecorder } from "../services/call/call-history";
+import { loadRichSettings, saveRichSettings, type RichApp, type RichPresenceSettings } from "../services/profile/rich-presence";
+import { useRichPresence } from "../services/profile/use-rich-presence";
+import { useFriendNotifications } from "../services/profile/use-friend-notifications";
+import { loadNotifySettings, saveNotifySettings, toggleMuted, watchNotifySettings, type FriendNotifySettings } from "../services/profile/friend-notifications";
+import { setPeerStatuses as setSharedPeerStatuses } from "../services/profile/peer-status";
+import { isStatusActive, type CustomStatus } from "../services/profile/status";
+import { loadLocalStatus, saveLocalStatus } from "../services/profile/status-store";
 import { FriendsView } from "./FriendsView";
 import { GroupView } from "./GroupView";
 import { SettingsView, type SettingsTab } from "./SettingsView";
@@ -61,6 +74,7 @@ import {
   loadLocalGroups,
   publicIdentity,
   removeLocalGroupMember,
+  saveLocalFriend,
   setLocalGroupAdministrator,
   type LocalGroup,
   type PublicPeerIdentity,
@@ -74,7 +88,7 @@ import { callOwnsTextConversation } from "../application/chat-routing";
 import { playCallSound } from "../services/audio/call-sounds";
 import { useOverlayBridge } from "../overlay/useOverlayBridge";
 
-type SocialModal = "account" | "friend" | "group" | "groupProfile" | "channel" | "inviteMember" | "manageMember" | "joinGroup" | "settings" | "profile" | null;
+type SocialModal = "account" | "friend" | "group" | "groupProfile" | "channel" | "inviteMember" | "manageMember" | "joinGroup" | "settings" | "profile" | "history" | null;
 type DeleteTarget = { kind: "friend"; friend: Friend } | { kind: "group"; group: Community } | null;
 type ChannelActionTarget = { mode: "edit" | "delete"; channel: Channel } | null;
 
@@ -108,6 +122,7 @@ export function HomeView() {
   const [selectedMember, setSelectedMember] = useState<PublicPeerIdentity | null>(null);
   const [expandedMemberGroups, setExpandedMemberGroups] = useState<ReadonlySet<string>>(new Set());
   const [memberSaving, setMemberSaving] = useState(false);
+  const [friendNote, setFriendNote] = useState("");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -147,6 +162,43 @@ export function HomeView() {
   useEffect(() => backgroundChats.onUnread((items) => setUnreadChannels(Object.fromEntries(items))), []);
   useEffect(() => voiceActivities.onChange(setActiveVoiceRooms), []);
   useEffect(() => voiceActivities.onOnlineChange(setOnlinePeers), []);
+  const [peerStatuses, setPeerStatuses] = useState<ReadonlyMap<string, CustomStatus>>(new Map());
+  const [localStatus, setLocalStatus] = useState<CustomStatus | null>(() => loadLocalStatus());
+  useEffect(() => voiceActivities.onStatusChange((next) => { setPeerStatuses(next); setSharedPeerStatuses(next); }), []);
+  useEffect(() => { void voiceActivities.setLocalStatus(localStatus); }, [localStatus]);
+  // O status some sozinho quando vence (sem precisar reabrir o app).
+  useEffect(() => {
+    if (!localStatus || localStatus.expiresAt === null) return;
+    const wait = Math.min(Math.max(localStatus.expiresAt - Date.now(), 0) + 500, 2_147_000_000);
+    const timer = window.setTimeout(() => { if (!isStatusActive(localStatus)) { saveLocalStatus(null); setLocalStatus(null); } }, wait);
+    return () => window.clearTimeout(timer);
+  }, [localStatus]);
+  const changeLocalStatus = (status: CustomStatus | null) => { saveLocalStatus(status); setLocalStatus(status); };
+  const [peerApps, setPeerApps] = useState<ReadonlyMap<string, RichApp>>(new Map());
+  const [richSettings, setRichSettings] = useState<RichPresenceSettings>(() => loadRichSettings());
+  useEffect(() => voiceActivities.onAppChange(setPeerApps), []);
+  const { detected: detectedApp } = useRichPresence(richSettings, (app) => void voiceActivities.setLocalApp(app));
+  const changeRichSettings = (next: RichPresenceSettings) => { saveRichSettings(next); setRichSettings(next); };
+  useEffect(() => { void voiceActivities.setLocalStreaming(Boolean(roomId && localCallState.screenShare)); }, [roomId, localCallState.screenShare]);
+  useFriendNotifications(voiceActivities, friends, Boolean(roomId));
+  // Histórico local: acompanha a chamada pelo store e grava ao sair (ou ao fechar o app no meio dela).
+  useEffect(() => {
+    const recorder = new CallHistoryRecorder(addCallHistoryEntry);
+    const snapshot = (state: ReturnType<typeof useCallStore.getState>) => recorder.update({
+      roomId: state.roomId,
+      groupName: state.callContext?.groupName,
+      channelName: state.callContext?.voiceChannelName ?? undefined,
+      participants: Object.values(state.participants).filter((person) => person.peerId !== state.selfPeerId),
+      streaming: state.localState.screenShare,
+    });
+    snapshot(useCallStore.getState());
+    const unsubscribe = useCallStore.subscribe(snapshot);
+    const onUnload = () => recorder.finish();
+    window.addEventListener("beforeunload", onUnload);
+    return () => { unsubscribe(); window.removeEventListener("beforeunload", onUnload); recorder.finish(); };
+  }, []);
+  const [notifySettings, setNotifySettings] = useState<FriendNotifySettings>(() => loadNotifySettings());
+  useEffect(() => watchNotifySettings(setNotifySettings), []);
 
   useEffect(() => {
     const reportCapacity = (event: Event) => {
@@ -843,6 +895,20 @@ export function HomeView() {
     onPin={(message, pinned) => messageAction(() => activeConversationChat.setPinned(message.id, pinned), "Falha ao fixar a mensagem.")}
   />;
 
+  async function addMemberAsFriend(): Promise<void> {
+    const member = selectedMember;
+    if (!member || member.peerId === localIdentityPeerId) return;
+    setMemberSaving(true);
+    setFriendNote("");
+    try {
+      await saveLocalFriend({ ...member, addedAt: Date.now() });
+      await loadSocial();
+      setFriendNote(`${member.displayName} foi adicionado aos seus amigos. Para conversar no privado, a pessoa também precisa adicionar você.`);
+    } catch (cause) {
+      setFriendNote(cause instanceof Error ? cause.message : "Não foi possível adicionar este amigo.");
+    } finally { setMemberSaving(false); }
+  }
+
   const membersPanel = selectedCommunity ? (() => {
             const memberGroups = groupMembersByName(groupMembers, {
               self: groupMembers.find((member) => member.peerId === localIdentityPeerId),
@@ -856,7 +922,7 @@ export function HomeView() {
               const administrator = selectedLocalGroup?.administratorPeerIds?.includes(member.peerId);
               const fingerprint = `${member.publicKey.x ?? member.peerId}`.slice(0, 6);
               return <div className={extra?.copy ? "member-row member-copy" : "member-row"} key={member.peerId}>
-                <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setModal("manageMember"); }}>
+                <button className="mini-user member-menu-trigger" onClick={() => { setSelectedMember(member); setFriendNote(""); setModal("manageMember"); }}>
                   <span className={onlinePeers.has(member.peerId) ? "presence-wrap online" : "presence-wrap"} title={onlinePeers.has(member.peerId) ? "Online" : "Offline"}><ProfileAvatar displayName={member.displayName} avatar={member.avatar}/><i className="presence-dot"/></span>
                   <span>{member.displayName}{memberNicks.get(member.peerId) && <small className="member-nick"> @{memberNicks.get(member.peerId)}</small>}{extra?.copy && <small className="member-fingerprint"> · id {fingerprint}</small>}</span>
                   {member.peerId === localIdentityPeerId && <em className="member-self" title="Esta é a sua identidade neste computador">Você</em>}
@@ -926,6 +992,7 @@ export function HomeView() {
           <button className={!activeFriend ? "channel active" : "channel"} onClick={() => setActiveFriend(null)}><Users/>Amigos</button>
           {activeFriend && <button className="channel active"><MessageCircle/>{activeFriend.displayName}</button>}
           <button className="channel" onClick={() => setModal("friend")}><UserPlus/>Adicionar amigo</button>
+          <button className="channel" onClick={() => setModal("history")}><History/>Histórico de chamadas</button>
         </>}
         {roomId && <section className="voice-session-panel">
           <button className="voice-session-summary" onClick={() => setCallWorkspaceOpen(true)}>
@@ -937,7 +1004,7 @@ export function HomeView() {
             <span className="voice-live-badge"><i/>Ao vivo</span>
           </button>}
           <div className="voice-session-actions">
-            <button className={localCallState.microphone ? "" : "off"} onClick={() => void call.toggleMicrophone(roomId)} title={localCallState.microphone ? "Desativar microfone" : "Ativar microfone"}>{localCallState.microphone ? <Mic/> : <MicOff/>}</button>
+            <button className={localCallState.microphone ? "mic-on" : "off mic-off"} onClick={() => void call.toggleMicrophone(roomId)} title={localCallState.microphone ? "Desativar microfone" : "Ativar microfone"}>{localCallState.microphone ? <Mic/> : <MicOff/>}</button>
             <button className={localCallState.camera ? "active" : ""} onClick={() => void call.toggleCamera(roomId)} title={localCallState.camera ? "Desativar câmera" : "Ativar câmera"}>{localCallState.camera ? <Video/> : <VideoOff/>}</button>
             <button className={callWorkspaceOpen ? "active" : ""} onClick={() => setCallWorkspaceOpen(true)} title="Abrir chamada"><Maximize2/></button>
             <button className="disconnect" onClick={() => {
@@ -950,7 +1017,7 @@ export function HomeView() {
         </section>}
         <div className="account-bar">
           <button className="account-profile" onClick={() => setModal("profile")} title="Editar perfil"><ProfileAvatar displayName={currentUser?.displayName ?? "Eu"} avatar={currentUser?.avatar}/></button>
-          <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>{accountNick ? `@${accountNick}` : "Disponível"}</small></button>
+          <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong>{localStatus ? <small className="status-line mine" title={[localStatus.emoji, localStatus.text].filter(Boolean).join(" ")}>{localStatus.emoji && <span className="status-emoji">{localStatus.emoji}</span>}<span className="status-text">{localStatus.text}</span></small> : <small>{accountNick ? `@${accountNick}` : "Disponível"}</small>}</button>
           <button onClick={() => setModal("account")} title={accountNick ? `Perfil e conta · @${accountNick}` : "Perfil e conta"}><AtSign/></button>
           <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "updates" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{(updateReady || notices.length > 0) && <i className="update-dot" aria-hidden="true"/>}</button>
           <button onClick={() => void logout()} title="Sair"><LogOut/></button>
@@ -982,6 +1049,10 @@ export function HomeView() {
           communities={communities}
           activeVoiceRooms={activeVoiceRooms}
           onlinePeers={onlinePeers}
+          statuses={peerStatuses}
+          apps={peerApps}
+          mutedNotifications={notifySettings.muted}
+          onToggleNotifications={(friend) => saveNotifySettings(toggleMuted(notifySettings, friend.id))}
           roomId={roomId}
           onAddFriend={() => setModal("friend")}
           onAcceptFriend={(request) => void api.acceptFriend(token, request.requestId).then(loadSocial).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao aceitar"))}
@@ -1012,10 +1083,13 @@ export function HomeView() {
       {membersPanel && <aside className="members-panel" aria-label="Membros do grupo">{membersPanel}</aside>}
 
       {modal === "friend" && <Modal title="Adicionar amigo" onClose={() => setModal(null)}>{currentUser ? <P2PInvitePanel type="friend" token={token} displayName={currentUser.displayName} onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
+            {modal === "history" && <Modal title="Histórico de chamadas" onClose={() => setModal(null)}><CallHistoryPanel/></Modal>}
             {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView initialTab={settingsTab} notices={notices} onClearNotices={() => setNotices([])}/></Modal>}
       {(modal === "profile" || modal === "account") && currentUser && <Modal title="Perfil e conta" onClose={() => setModal(null)}>
         <div className="profile-account">
           <section><h3>Perfil</h3><ProfileEditor profile={{ displayName: currentUser.displayName, avatar: currentUser.avatar }} onSaved={profileSaved}/></section>
+          <section><h3>Status</h3><StatusEditor status={localStatus} onChange={changeLocalStatus}/></section>
+          {window.desktop && <section><h3>Programa em uso</h3><RichPresencePanel settings={richSettings} detected={detectedApp} onChange={changeRichSettings}/></section>}
           <section><h3>Conta e @nick</h3><AccountPanel onNickChanged={setAccountNick}/></section>
           <section><h3>Desconectar</h3><p className="account-muted">Sai desta conta e volta à tela inicial. Suas mensagens e amigos continuam salvos neste computador.</p><button type="button" className="account-disconnect" onClick={() => { if (window.confirm("Desconectar desta conta?")) void logout(); }}><LogOut size={15}/> Desconectar conta</button></section>
         </div>
@@ -1059,6 +1133,10 @@ export function HomeView() {
         <div className="member-manager-actions">
           {localIdentityPeerId === selectedLocalGroup.ownerPeerId && selectedMember.peerId !== selectedLocalGroup.ownerPeerId && ((selectedLocalGroup.administratorPeerIds ?? []).includes(selectedMember.peerId) ? <button disabled={memberSaving} onClick={() => void changeMemberRole(false)}><Shield/> Remover administrador</button> : <button disabled={memberSaving} onClick={() => void changeMemberRole(true)}><ShieldCheck/> Tornar administrador</button>)}
           {selectedMember.peerId !== localIdentityPeerId && selectedMember.peerId !== selectedLocalGroup.ownerPeerId && canEditSelectedGroup && (!(selectedLocalGroup.administratorPeerIds ?? []).includes(selectedMember.peerId) || localIdentityPeerId === selectedLocalGroup.ownerPeerId) && <button className="danger-action" disabled={memberSaving} onClick={() => void removeSelectedMember()}><UserMinus/> {memberSaving ? "Removendo…" : "Remover do grupo"}</button>}
+          {selectedMember.peerId !== localIdentityPeerId && (friends.some((friend) => friend.id === selectedMember.peerId)
+            ? <p className="member-friend-note"><Check size={14}/> Já é seu amigo.</p>
+            : <button disabled={memberSaving} onClick={() => void addMemberAsFriend()}><UserPlus/> Adicionar amigo</button>)}
+          {friendNote && <p className="member-friend-note" role="status">{friendNote}</p>}
           {selectedMember.peerId === localIdentityPeerId && <p>Este é o seu perfil no grupo.</p>}
           {selectedMember.peerId === selectedLocalGroup.ownerPeerId && localIdentityPeerId !== selectedLocalGroup.ownerPeerId && <p>O proprietário possui autoridade final sobre o grupo.</p>}
         </div>

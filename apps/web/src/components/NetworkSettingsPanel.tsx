@@ -7,6 +7,8 @@ import {
   type NetworkPreference,
 } from "../services/network/settings";
 import { loadCallTransportMode, saveCallTransportMode } from "../services/call/transport-mode";
+import { useBriksApplication } from "../application/ApplicationContext";
+import { useCallStore } from "../store";
 import "./network-settings.css";
 import "./settings-ui.css";
 
@@ -35,6 +37,8 @@ export function NetworkSettingsPanel() {
   const [callMode, setCallMode] = useState(loadCallTransportMode);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult>();
+  const { gateway } = useBriksApplication();
+  const token = useCallStore((state) => state.token);
   const vpnInterfaces = useMemo(() => interfaces.filter((item) => item.provider !== "unknown"), [interfaces]);
 
   async function refresh(): Promise<void> {
@@ -59,7 +63,11 @@ export function NetworkSettingsPanel() {
   async function testConnection(): Promise<void> {
     setTesting(true);
     setTestResult(undefined);
-    try { setTestResult(await runConnectionTest()); }
+    try {
+      // Usa as credenciais TURN de verdade (temporárias, da conta); sem login, cai no STUN público.
+      const iceServers = token ? await gateway.turnCredentials(token).then((result) => result.iceServers).catch(() => undefined) : undefined;
+      setTestResult(await runConnectionTest({ iceServers }));
+    }
     catch { setTestResult({ kinds: [], turnConfigured: false, level: "ruim", summary: "Não foi possível testar a conexão.", tips: [] }); }
     finally { setTesting(false); }
   }
@@ -89,7 +97,7 @@ const PREFERENCE_SHORT: Record<NetworkPreference, string> = { auto: "Automática
       <div className="sx-row">
         <div>
           <strong><span className={`sx-dot ${levelClass}`}/>{levelText}</strong>
-          <small>{testResult ? testResult.summary : "Verifica se a sua rede permite chamadas diretas e se o relay (TURN) responde."}</small>
+          <small>{testResult ? testResult.summary : "Faça antes de entrar numa chamada: verifica se a rede permite conexão direta, se o relay (TURN) responde e mede atraso e perda. Leva uns 15 segundos."}</small>
         </div>
         <button type="button" className="sx-btn primary" disabled={testing} onClick={() => void testConnection()}>
           <Activity size={16}/>{testing ? "Testando…" : testResult ? "Testar de novo" : "Testar conexão"}
@@ -98,6 +106,13 @@ const PREFERENCE_SHORT: Record<NetworkPreference, string> = { auto: "Automática
       {testResult && <>
         {testResult.tips.map((tip) => <p className="sx-sub" key={tip}>{tip}</p>)}
         <p className="sx-sub">Caminhos detectados: {kindsText}</p>
+        {testResult.metrics && <div className="net-metrics">
+          <span><small>Até o STUN</small><strong>{testResult.metrics.stunMs !== undefined ? `${testResult.metrics.stunMs} ms` : "sem resposta"}</strong></span>
+          <span><small>Ida e volta pelo relay</small><strong>{testResult.metrics.relayRttMs !== undefined ? `${testResult.metrics.relayRttMs} ms` : "—"}</strong></span>
+          <span><small>Variação</small><strong>{testResult.metrics.relayJitterMs !== undefined ? `${testResult.metrics.relayJitterMs} ms` : "—"}</strong></span>
+          <span><small>Perda</small><strong>{testResult.metrics.relayLossPct !== undefined ? `${testResult.metrics.relayLossPct}%` : "—"}</strong></span>
+          <span><small>Precisa de relay</small><strong>{testResult.needsRelay ? "Sim" : "Não"}</strong></span>
+        </div>}
       </>}
     </section>
 

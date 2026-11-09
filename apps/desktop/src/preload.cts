@@ -232,6 +232,7 @@ contextBridge.exposeInMainWorld("desktop", {
   setWindowFullscreen: (enabled: boolean): Promise<{ fullscreen: boolean }> => ipcRenderer.invoke("window:fullscreen", enabled),
   getBackendConfig: (): Promise<DesktopBackendConfig> => ipcRenderer.invoke("backend:config"),
   getNetworkInterfaces: (): Promise<DesktopNetworkInterface[]> => ipcRenderer.invoke("network:interfaces"),
+  showEmojiPanel: (): Promise<boolean> => ipcRenderer.invoke("app:emoji-panel"),
   getAppIcon: (path: string): Promise<string | null> => ipcRenderer.invoke("app:icon", path),
   checkForUpdates: (): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }> => ipcRenderer.invoke("updater:check"),
   getUpdateState: (): Promise<{ phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string }> => ipcRenderer.invoke("updater:state"),
@@ -242,6 +243,12 @@ contextBridge.exposeInMainWorld("desktop", {
     return () => ipcRenderer.removeListener("updater:state", listener);
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("shell:open-external", url),
+  setCallShortcuts: (accelerators: Record<string, string | null>): Promise<{ failed: string[] }> => ipcRenderer.invoke("shortcuts:set", accelerators),
+  onCallShortcut: (callback: (action: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: unknown) => { if (typeof action === "string") callback(action); };
+    ipcRenderer.on("shortcuts:action", listener);
+    return () => ipcRenderer.removeListener("shortcuts:action", listener);
+  },
   overlay: {
     setVisible: (visible: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-visible", visible),
     setEditing: (editing: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-editing", editing),

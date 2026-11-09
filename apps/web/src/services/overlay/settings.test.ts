@@ -4,7 +4,8 @@ import { DEFAULT_OVERLAY_SETTINGS, sanitizeOverlaySettings } from "./settings";
 describe("sanitizeOverlaySettings", () => {
   it("usa os padrões para dados inválidos", () => {
     expect(sanitizeOverlaySettings("lixo")).toEqual(DEFAULT_OVERLAY_SETTINGS);
-    expect(sanitizeOverlaySettings(null).enabled).toBe(true);
+    expect(sanitizeOverlaySettings(null).enabled).toBe(false);
+    expect(Object.values(sanitizeOverlaySettings(null).widgets).every((widget) => !widget.on)).toBe(true);
   });
   it("limita posição, escala e opacidade", () => {
     const result = sanitizeOverlaySettings({ enabled: true, opacity: 5, widgets: { live: { on: false, x: 500, y: -4, scale: 9 } } });

@@ -37,6 +37,14 @@ export function registerDesktopIpc(
     }
   });
 
+  // Abre o teclado de emojis do sistema (Windows 10+) com o campo de texto atual em foco.
+  ipcMain.handle("app:emoji-panel", async (event) => {
+    assertTrusted(event.sender.getURL());
+    if (typeof app.showEmojiPanel !== "function") return false;
+    app.showEmojiPanel();
+    return true;
+  });
+
   ipcMain.handle("updater:check", async (event) => {
     assertTrusted(event.sender.getURL());
     return checkForUpdatesNow();

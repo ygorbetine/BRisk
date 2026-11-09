@@ -54,6 +54,9 @@ interface Window {
     getBackendConfig(): Promise<BriksDesktopBackendConfig>;
     getNetworkInterfaces(): Promise<BriksDesktopNetworkInterface[]>;
     getAppIcon?(path: string): Promise<string | null>;
+    showEmojiPanel?(): Promise<boolean>;
+    setCallShortcuts?(accelerators: Record<string, string | null>): Promise<{ failed: string[] }>;
+    onCallShortcut?(callback: (action: string) => void): () => void;
     checkForUpdates?(): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }>;
     getUpdateState?(): Promise<BriksUpdateState>;
     installUpdate?(): Promise<boolean>;

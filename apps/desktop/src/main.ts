@@ -15,6 +15,7 @@ import {
   registerBriksScheme,
 } from "./protocol.js";
 import { OverlayController } from "./overlay.js";
+import { CallShortcuts } from "./call-shortcuts.js";
 import { ScreenCaptureController } from "./screen-capture.js";
 import { createApplicationTray, isTrayAvailable } from "./tray.js";
 import { createMainWindow } from "./window.js";
@@ -80,6 +81,8 @@ const overlay = new OverlayController({
   isTrustedRendererUrl,
 });
 overlay.register();
+const callShortcuts = new CallShortcuts({ getMainWindow: () => mainWindow, isTrustedRendererUrl });
+callShortcuts.register();
 registerDesktopIpc(backend, isTrustedRendererUrl);
 
 function openMainWindow(): BrowserWindow {
@@ -162,6 +165,7 @@ app.on("before-quit", () => {
   tray = undefined;
   screenCapture.clear();
   overlay.dispose();
+  callShortcuts.clear();
   void backend.clearDevBridge();
   backend.stop();
 });

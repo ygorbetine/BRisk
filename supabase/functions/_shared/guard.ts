@@ -84,3 +84,14 @@ export class RateLimiter {
     return 0;
   }
 }
+
+/** Hash SHA-256 (hex) da chave do limite: o banco nunca vê o id do usuário nem o IP em claro. */
+export async function hashRateKey(scope: string, value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${scope}:${value}`));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Maior espera entre as fontes de limite (memória e banco). */
+export function combineWaits(...waits: number[]): number {
+  return Math.max(0, ...waits.filter((wait) => Number.isFinite(wait)));
+}

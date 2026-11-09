@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateKind, classifyConnection } from "./connection-test";
+import { applyPathMetrics, candidateKind, classifyConnection, summarizeRoundTrips } from "./connection-test";
 
 describe("teste de conexão", () => {
   it("lê o tipo do candidato", () => {
@@ -21,5 +21,31 @@ describe("teste de conexão", () => {
   it("só host é ruim e sem nada também", () => {
     expect(classifyConnection(["host"], false).level).toBe("ruim");
     expect(classifyConnection([], false).level).toBe("ruim");
+  });
+});
+
+describe("medições do teste de rede", () => {
+  it("resume idas e voltas: mediana, variação e perda", () => {
+    expect(summarizeRoundTrips([10, 20, null, 30])).toEqual({ rttMs: 20, jitterMs: 10, lossPct: 25 });
+    expect(summarizeRoundTrips([40, 60])).toEqual({ rttMs: 50, jitterMs: 20, lossPct: 0 });
+    expect(summarizeRoundTrips([])).toBeNull();
+    expect(summarizeRoundTrips([null, null])?.lossPct).toBe(100);
+  });
+  it("perda e latência alta rebaixam o nível", () => {
+    const base = classifyConnection(["host", "srflx", "relay"], true);
+    expect(applyPathMetrics(base, { relayRttMs: 40, relayJitterMs: 5, relayLossPct: 0 }).level).toBe("boa");
+    expect(applyPathMetrics(base, { relayRttMs: 200, relayLossPct: 0 }).level).toBe("limitada");
+    expect(applyPathMetrics(base, { relayRttMs: 40, relayLossPct: 12 }).level).toBe("ruim");
+    expect(applyPathMetrics(base, { relayRttMs: 40, relayLossPct: 4 }).tips.join(" ")).toMatch(/4%/);
+  });
+  it("não sobe um nível que já era ruim", () => {
+    const ruim = classifyConnection(["host"], false);
+    expect(applyPathMetrics(ruim, { relayLossPct: 4 }).level).toBe("ruim");
+  });
+  it("avisa quando a chamada vai precisar do relay", () => {
+    const soRelay = applyPathMetrics(classifyConnection(["host", "relay"], true), {});
+    expect(soRelay.needsRelay).toBe(true);
+    expect(soRelay.tips.join(" ")).toMatch(/passar pelo relay/);
+    expect(applyPathMetrics(classifyConnection(["host", "srflx"], false), {}).needsRelay).toBe(false);
   });
 });

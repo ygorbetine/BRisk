@@ -3,6 +3,8 @@ import type { VoiceActivity } from "../../application/contracts";
 export type { VoiceActivity } from "../../application/contracts";
 import { groupRendezvousId, type LocalGroup } from "../offline/social-storage";
 import { getSupabaseRealtimeClient } from "./client";
+import { isStatusActive, parseRemoteStatus, type CustomStatus } from "../profile/status";
+import { parseRemoteApp, type RichApp } from "../profile/rich-presence";
 
 type VoicePresence = { peerId: string; roomId: string; channelId: string; joinedAt: number };
 
@@ -17,6 +19,12 @@ export class VoiceActivityDirectory {
   private readonly onlineCallbacks = new Set<(online: ReadonlySet<string>) => void>();
   private published?: VoicePresence & { groupId: string };
   private localPeerId?: string;
+  private localStatus: CustomStatus | null = null;
+  private localApp: RichApp | null = null;
+  private localStreaming = false;
+  private readonly streamingCallbacks = new Set<(streaming: ReadonlySet<string>) => void>();
+  private readonly appCallbacks = new Set<(apps: ReadonlyMap<string, RichApp>) => void>();
+  private readonly statusCallbacks = new Set<(statuses: ReadonlyMap<string, CustomStatus>) => void>();
 
   onChange(callback: (activities: VoiceActivity[]) => void): () => void {
     this.callbacks.add(callback);
@@ -29,6 +37,87 @@ export class VoiceActivityDirectory {
     this.onlineCallbacks.add(callback);
     callback(this.onlinePeers());
     return () => this.onlineCallbacks.delete(callback);
+  }
+
+  /** Status personalizado dos amigos online (peerId → status), sem os vencidos. */
+  onStatusChange(callback: (statuses: ReadonlyMap<string, CustomStatus>) => void): () => void {
+    this.statusCallbacks.add(callback);
+    callback(this.peerStatuses());
+    return () => this.statusCallbacks.delete(callback);
+  }
+
+  peerStatuses(): ReadonlyMap<string, CustomStatus> {
+    const result = new Map<string, CustomStatus>();
+    const now = Date.now();
+    for (const subscription of this.subscriptions.values()) {
+      const known = new Set(subscription.group.members.map((member) => member.peerId));
+      for (const entries of Object.values(subscription.channel.presenceState())) {
+        for (const raw of entries) {
+          const presence = parsePresence(raw);
+          if (presence?.status && known.has(presence.peerId) && isStatusActive(presence.status, now)) result.set(presence.peerId, presence.status);
+        }
+      }
+    }
+    return result;
+  }
+
+  /** Programa em uso dos amigos online (peerId -> app), separado do status personalizado. */
+  onAppChange(callback: (apps: ReadonlyMap<string, RichApp>) => void): () => void {
+    this.appCallbacks.add(callback);
+    callback(this.peerApps());
+    return () => this.appCallbacks.delete(callback);
+  }
+
+  peerApps(): ReadonlyMap<string, RichApp> {
+    const result = new Map<string, RichApp>();
+    for (const subscription of this.subscriptions.values()) {
+      const known = new Set(subscription.group.members.map((member) => member.peerId));
+      for (const entries of Object.values(subscription.channel.presenceState())) {
+        for (const raw of entries) {
+          const presence = parsePresence(raw);
+          if (presence?.app && known.has(presence.peerId)) result.set(presence.peerId, presence.app);
+        }
+      }
+    }
+    return result;
+  }
+
+  onStreamingChange(callback: (streaming: ReadonlySet<string>) => void): () => void {
+    this.streamingCallbacks.add(callback);
+    callback(this.peerStreaming());
+    return () => this.streamingCallbacks.delete(callback);
+  }
+
+  /** Amigos online que estão transmitindo a tela agora. */
+  peerStreaming(): ReadonlySet<string> {
+    const result = new Set<string>();
+    for (const subscription of this.subscriptions.values()) {
+      const known = new Set(subscription.group.members.map((member) => member.peerId));
+      for (const entries of Object.values(subscription.channel.presenceState())) {
+        for (const raw of entries) {
+          const presence = parsePresence(raw);
+          if (presence?.streaming && known.has(presence.peerId)) result.add(presence.peerId);
+        }
+      }
+    }
+    return result;
+  }
+
+  async setLocalStreaming(streaming: boolean): Promise<void> {
+    if (this.localStreaming === streaming) return;
+    this.localStreaming = streaming;
+    await Promise.all([...this.subscriptions.entries()].map(([groupId, subscription]) => subscription.channel.track(this.presencePayload(groupId)).catch(() => undefined)));
+  }
+
+  async setLocalApp(app: RichApp | null): Promise<void> {
+    this.localApp = app;
+    await Promise.all([...this.subscriptions.entries()].map(([groupId, subscription]) => subscription.channel.track(this.presencePayload(groupId)).catch(() => undefined)));
+  }
+
+  /** Define (ou limpa) o seu status e republica a presença em todos os grupos observados. */
+  async setLocalStatus(status: CustomStatus | null): Promise<void> {
+    this.localStatus = isStatusActive(status) ? status : null;
+    await Promise.all([...this.subscriptions.entries()].map(([groupId, subscription]) => subscription.channel.track(this.presencePayload(groupId)).catch(() => undefined)));
   }
 
   onlinePeers(): ReadonlySet<string> {
@@ -174,17 +263,30 @@ export class VoiceActivityDirectory {
       const online = this.onlinePeers();
       for (const callback of this.onlineCallbacks) callback(online);
     }
+    if (this.streamingCallbacks.size) {
+      const streaming = this.peerStreaming();
+      for (const callback of this.streamingCallbacks) callback(streaming);
+    }
+    if (this.appCallbacks.size) {
+      const apps = this.peerApps();
+      for (const callback of this.appCallbacks) callback(apps);
+    }
+    if (this.statusCallbacks.size) {
+      const statuses = this.peerStatuses();
+      for (const callback of this.statusCallbacks) callback(statuses);
+    }
   }
 
   /** Presença do grupo: sempre "online"; inclui a sala de voz só quando a transmissão está nesse grupo. */
   private presencePayload(groupId: string): Record<string, unknown> {
     const voice = this.published?.groupId === groupId ? this.published : undefined;
-    if (voice) return { peerId: voice.peerId, roomId: voice.roomId, channelId: voice.channelId, joinedAt: voice.joinedAt };
-    return { peerId: this.localPeerId ?? "", joinedAt: Date.now() };
+    const status = { ...(this.localStatus && isStatusActive(this.localStatus) ? { status: this.localStatus } : {}), ...(this.localApp ? { app: this.localApp } : {}), ...(this.localStreaming && voice ? { streaming: true } : {}) };
+    if (voice) return { peerId: voice.peerId, roomId: voice.roomId, channelId: voice.channelId, joinedAt: voice.joinedAt, ...status };
+    return { peerId: this.localPeerId ?? "", joinedAt: Date.now(), ...status };
   }
 }
 
-export type ParsedPresence = { peerId: string; joinedAt: number; voice?: { roomId: string; channelId: string } };
+export type ParsedPresence = { peerId: string; joinedAt: number; voice?: { roomId: string; channelId: string }; status?: CustomStatus; app?: RichApp; streaming?: boolean };
 
 export function parsePresence(value: unknown): ParsedPresence | null {
   if (!value || typeof value !== "object") return null;
@@ -194,7 +296,9 @@ export function parsePresence(value: unknown): ParsedPresence | null {
   const hasVoice = typeof item.roomId === "string" && item.roomId.length <= 128 && typeof item.channelId === "string" && item.channelId.length <= 128;
   // Só a sala de voz expira (24 h); quem deixa o app aberto continua online.
   if (hasVoice && Math.abs(Date.now() - item.joinedAt) > 86_400_000) return null;
-  return { peerId: item.peerId, joinedAt: item.joinedAt, ...(hasVoice ? { voice: { roomId: item.roomId as string, channelId: item.channelId as string } } : {}) };
+  const status = parseRemoteStatus(item.status);
+  const app = parseRemoteApp(item.app);
+  return { peerId: item.peerId, joinedAt: item.joinedAt, ...(status ? { status } : {}), ...(app ? { app } : {}), ...(hasVoice && item.streaming === true ? { streaming: true } : {}), ...(hasVoice ? { voice: { roomId: item.roomId as string, channelId: item.channelId as string } } : {}) };
 }
 
 async function hashId(value: string): Promise<string> {

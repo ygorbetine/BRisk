@@ -17,6 +17,7 @@ describe("fronteiras do processo Electron", () => {
     };
     expect(manifest.build?.files).toEqual(expect.arrayContaining([
       "dist/backend.js",
+      "dist/call-shortcuts.js",
       "dist/gpu.js",
       "dist/ipc/index.js",
       "dist/permissions.js",

@@ -20,7 +20,8 @@ describe("overlay-model", () => {
   });
 
   it("mostra só o que tem dados fora da edição e tudo que está ligado na edição", () => {
-    const settings = { ...DEFAULT_OVERLAY_SETTINGS, widgets: { ...DEFAULT_OVERLAY_SETTINGS.widgets, voice: { ...DEFAULT_OVERLAY_SETTINGS.widgets.voice, on: true }, mute: { ...DEFAULT_OVERLAY_SETTINGS.widgets.mute, on: true } } };
+    const on = (id: keyof typeof DEFAULT_OVERLAY_SETTINGS.widgets) => ({ ...DEFAULT_OVERLAY_SETTINGS.widgets[id], on: true });
+    const settings = { ...DEFAULT_OVERLAY_SETTINGS, widgets: { live: on("live"), voice: on("voice"), status: on("status"), mute: on("mute") } };
     expect(visibleWidgets(settings, EMPTY_OVERLAY_STATE, false)).toEqual([]);
     expect(visibleWidgets(settings, { ...EMPTY_OVERLAY_STATE, liveId: "a", people: [person("a", true)], micMuted: true, roomName: "Sala" }, false)).toEqual(["live", "voice", "status", "mute"]);
     expect(visibleWidgets(settings, EMPTY_OVERLAY_STATE, true)).toEqual(["live", "voice", "status", "mute"]);

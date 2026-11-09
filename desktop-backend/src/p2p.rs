@@ -1,5 +1,7 @@
 pub(crate) mod attachments;
 mod process_audio;
+mod foreground;
+mod input;
 mod screen_audio;
 
 use super::{bearer, internal, ApiError, AppState};
@@ -176,6 +178,8 @@ pub fn router() -> Router<AppState> {
         .route("/p2p/channels/{channel_id}", post(purge_p2p_channel))
         .merge(attachments::router())
         .merge(screen_audio::router())
+        .merge(foreground::router())
+        .merge(input::router())
 }
 
 async fn list_friends(

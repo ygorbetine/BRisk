@@ -1,6 +1,6 @@
 {
   "name": "@briks/desktop",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
   "homepage": "https://github.com/ygorbetine/Briks",
@@ -36,6 +36,11 @@
       "releaseType": "release"
     },
     "productName": "Briks",
+    "compression": "maximum",
+    "electronLanguages": [
+      "pt-BR",
+      "en-US"
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -44,6 +49,7 @@
       "dist/main.js",
       "dist/preload.cjs",
       "dist/backend.js",
+      "dist/call-shortcuts.js",
       "dist/desktop-lifecycle.js",
       "dist/gpu.js",
       "dist/ipc/index.js",

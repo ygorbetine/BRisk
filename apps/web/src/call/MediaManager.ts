@@ -95,10 +95,16 @@ export class MediaManager {
   }
 
   async toggleMicrophone(): Promise<void> {
+    const track = this.microphone ?? this.local.getAudioTracks()[0];
+    if (track) await this.setMicrophoneEnabled(!track.enabled);
+  }
+
+  /** Liga/desliga o microfone num estado definido (push-to-talk); não faz nada se já estiver assim. */
+  async setMicrophoneEnabled(enabled: boolean): Promise<void> {
     try {
       const track = this.microphone ?? this.local.getAudioTracks()[0];
-      if (!track) return;
-      track.enabled = !track.enabled;
+      if (!track || track.enabled === enabled) return;
+      track.enabled = enabled;
       this.microphoneInputStream?.getAudioTracks().forEach((input) => { input.enabled = track.enabled; });
       this.peerState.microphone = track.enabled;
       await this.dependencies.getTransport()?.setMicrophoneMuted?.(!track.enabled).catch(() => undefined);

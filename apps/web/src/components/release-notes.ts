@@ -3,6 +3,22 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.2.0",
+    items: [
+      "Status personalizado: emoji e texto curto no seu perfil, com prazo para sumir (1 h, 4 h, hoje ou nunca). Aparece na lista de amigos, na sua barra de conta e na chamada",
+      "Programa em uso (opcional, desligado por padrão): mostra aos amigos o jogo ou programa que você está usando, com o ícone, numa linha abaixo do status. Dá para ocultar programas específicos. Só o nome vai, nunca o título da janela",
+      "Avisos quando um amigo fica online ou começa a transmitir, com sino para silenciar cada pessoa. Nada é avisado durante a chamada nem logo ao abrir o app",
+      "Atalhos globais durante a chamada: mutar (Ctrl+Shift+M), ensurdecer (Ctrl+Shift+D) e transmitir, configuráveis em Configurações › Atalhos",
+      "Apertar para falar: escolha uma tecla do teclado ou um botão lateral do mouse; funciona mesmo dentro do jogo, sem bloquear a tecla",
+      "Pedir transmissão: passe o mouse no bloco de alguém na chamada e peça para a pessoa transmitir a tela; ela recebe um convite para aceitar ou não",
+      "Teste de rede mais completo em Configurações › Rede: usa o relay da sua conta e mede atraso, variação e perda, e diz se suas chamadas vão precisar do relay",
+      "Histórico de chamadas, guardado só neste computador: quando, quanto tempo, em qual sala e com quem. Dá para desligar e apagar",
+      "Botão do microfone verde quando ligado e vermelho quando mudo",
+      "A sobreposição em jogos agora vem desligada por padrão, com todos os itens desligados",
+      "Segurança: limite de requisições nos servidores de chamada e contadores anônimos de conexão (só se deu certo e se foi direta ou pelo relay), que podem ser desligados em Configurações › Sobre",
+    ],
+  },
+  {
     version: "1.1.1",
     items: [
       "Ao começar a transmitir a sua tela, a chamada entra sozinha no modo Transmissão. Ao parar, volta para o modo Call se ninguém mais estiver transmitindo",

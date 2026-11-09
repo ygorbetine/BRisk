@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { filterFriends, type FriendsFilter } from "./friends-filter";
-import { Headphones, MessageCircle, UserMinus, Users } from "lucide-react";
+import { Bell, BellOff, Headphones, MessageCircle, UserMinus, Users } from "lucide-react";
 import type { Community, Friend, PendingFriend, VoiceActivity } from "../application/contracts";
 import { ProfileAvatar } from "../components/ProfileAvatar";
+import { formatStatus, type CustomStatus } from "../services/profile/status";
+import type { RichApp } from "../services/profile/rich-presence";
 
 export type FriendsViewProps = {
   friends: Friend[];
@@ -10,6 +12,10 @@ export type FriendsViewProps = {
   communities: Community[];
   activeVoiceRooms: VoiceActivity[];
   onlinePeers?: ReadonlySet<string>;
+  statuses?: ReadonlyMap<string, CustomStatus>;
+  apps?: ReadonlyMap<string, RichApp>;
+  mutedNotifications?: ReadonlyArray<string>;
+  onToggleNotifications?: (friend: Friend) => void;
   roomId: string | null;
   onAddFriend: () => void;
   onAcceptFriend: (request: PendingFriend) => void;
@@ -42,8 +48,9 @@ export function FriendsView(props: FriendsViewProps) {
       </div>)}
       {shown.map((friend) => <div className="friend-row" key={friend.id}>
         <span className={props.onlinePeers?.has(friend.id) ? "presence-wrap online" : "presence-wrap"}><ProfileAvatar displayName={friend.displayName} avatar={friend.avatar}/><i className="presence-dot"/></span>
-        <div><strong>{friend.displayName}</strong><small>{props.onlinePeers?.has(friend.id) ? "Online agora · pode chamar" : friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks"}</small></div>
+        <FriendLines friend={friend} online={Boolean(props.onlinePeers?.has(friend.id))} status={props.statuses?.get(friend.id)} app={props.apps?.get(friend.id)}/>
         <div className="friend-actions">
+          {props.onToggleNotifications && (() => { const muted = props.mutedNotifications?.includes(friend.id) ?? false; return <button className={muted ? "muted-notify" : ""} title={muted ? `Voltar a avisar sobre ${friend.displayName}` : `Silenciar avisos de ${friend.displayName}`} aria-label={muted ? `Voltar a avisar sobre ${friend.displayName}` : `Silenciar avisos de ${friend.displayName}`} aria-pressed={muted} onClick={() => props.onToggleNotifications!(friend)}>{muted ? <BellOff size={18}/> : <Bell size={18}/>}</button>; })()}
           <button disabled={!friend.local} title={friend.local ? "Abrir chat privado P2P" : "Chat P2P requer amizade por identidade local"} onClick={() => props.onOpenFriend(friend)}><MessageCircle size={18}/></button>
           <button className="danger-icon" title="Desfazer amizade" aria-label={`Desfazer amizade com ${friend.displayName}`} onClick={() => props.onRemoveFriend(friend)}><UserMinus size={18}/></button>
         </div>
@@ -61,4 +68,14 @@ export function FriendsView(props: FriendsViewProps) {
       {props.communities.length > 32 && <small>A atividade acompanha os primeiros 32 grupos neste dispositivo.</small>}
     </aside></div>
   </>;
+}
+
+/** Nome + status personalizado + programa em uso: o status e o programa ficam em linhas separadas e um não substitui o outro. */
+function FriendLines({ friend, online, status, app }: { friend: Friend; online: boolean; status?: CustomStatus; app?: RichApp }) {
+  const fallback = online ? "Online agora · pode chamar" : friend.local ? "Amigo P2P neste dispositivo" : "Amigo no Briks";
+  return <div>
+    <strong>{friend.displayName}</strong>
+    {online && status ? <small className="status-line" title={formatStatus(status)}>{status.emoji && <span className="status-emoji">{status.emoji}</span>}<span className="status-text">{status.text}</span></small> : !(online && app) && <small>{fallback}</small>}
+    {online && app && <small className="status-line app-line" title={`Usando ${app.label}`}>{app.icon && <img className="app-icon" src={app.icon} alt="" draggable={false}/>}<span className="status-text">Usando {app.label}</span></small>}
+  </div>;
 }

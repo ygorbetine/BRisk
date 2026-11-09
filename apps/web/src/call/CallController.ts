@@ -57,6 +57,9 @@ import {
   type CallProfileMessage,
 } from "./ParticipantManager";
 import { MediaManager } from "./MediaManager";
+import { parseStreamRequestMessage, streamRequestMessage, StreamRequestLimiter } from "./stream-request";
+import { CallOutcomeTracker, telemetryPath } from "../services/telemetry/call-telemetry";
+import { recordCallOutcome } from "../services/account/account-service";
 import { bindCallSignaling } from "./signaling/call-signaling";
 
 const AUTH_CHALLENGE_TIMEOUT_MS = 8_000;
@@ -93,6 +96,14 @@ export class CallController {
     },
     reportError: (error, fallback) => this.reportError(error, fallback),
   });
+  /** Telemetria anônima: um "conectou"/"falhou" por pessoa por chamada, com o caminho (direto ou relay). */
+  private readonly outcomes = new CallOutcomeTracker((outcome, path) => {
+    const kind = this.transport?.kind;
+    if (kind === "mesh" || kind === "sfu") void recordCallOutcome(kind, path, outcome);
+  });
+  private readonly outgoingStreamRequests = new StreamRequestLimiter();
+  private readonly incomingStreamRequests = new StreamRequestLimiter();
+  private readonly streamRequestListeners = new Set<(peerId: string) => void>();
   private displayName = "Participante";
   private avatar?: string;
   private signalingUnsubscribers: Array<() => void> = [];
@@ -193,6 +204,8 @@ export class CallController {
       onConnectionState: (remotePeerId, connection) => {
         const store = useCallStore.getState();
         this.participants.connection(remotePeerId, connection);
+        if (connection === "connected") this.reportConnected(remotePeerId);
+        if (connection === "failed") this.reportFailedLater(remotePeerId);
         if (connection === "failed") {
           store.setError(this.recovery.failed(remotePeerId));
         } else if (connection === "connected" || connection === "closed") {
@@ -218,6 +231,7 @@ export class CallController {
         useCallStore.getState().setError(`Falha ao negociar mídia com ${remotePeerId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       },
       onDataMessage: (remotePeerId, data) => {
+        if (this.handleStreamRequest(remotePeerId, data)) return;
         if (this.mediaAuthenticationRequired) {
           if (this.handleAuthMessage(remotePeerId, data)) return;
           void this.handleGroupRevocationMessage(remotePeerId, data);
@@ -301,6 +315,10 @@ export class CallController {
     await this.media.toggleMicrophone();
   }
 
+  async setMicrophone(_roomId: string, enabled: boolean): Promise<void> {
+    await this.media.setMicrophoneEnabled(enabled);
+  }
+
   async updateVoiceInput(settings: VoiceVideoSettings): Promise<void> {
     await this.media.updateVoiceInput(settings);
   }
@@ -328,6 +346,53 @@ export class CallController {
   }
 
   async leave(_roomId: string): Promise<void> { await this.cleanup(); }
+
+  private reportConnected(remotePeerId: string): void {
+    if (this.outcomes.hasReported(remotePeerId)) return;
+    const lifecycle = this.lifecycleId;
+    // Espera o par de candidatos estabilizar antes de ler o caminho escolhido.
+    setTimeout(() => {
+      const transport = this.transport;
+      if (!transport || !this.isActive(lifecycle)) return;
+      void transport.collectDiagnostics()
+        .then((peers) => peers.find((peer) => peer.peerId === remotePeerId)?.selectedConnectionPath.kind)
+        .catch(() => undefined)
+        .then((kind) => { if (this.isActive(lifecycle)) this.outcomes.connected(remotePeerId, telemetryPath(kind)); });
+    }, 1_500);
+  }
+
+  /** Falha só conta se a recuperação automática não conectar em 20 s. */
+  private reportFailedLater(remotePeerId: string): void {
+    const lifecycle = this.lifecycleId;
+    setTimeout(() => {
+      if (this.isActive(lifecycle) && !this.outcomes.hasReported(remotePeerId)) this.outcomes.failed(remotePeerId);
+    }, 20_000);
+  }
+
+  /** Pede a um participante que transmita a tela. Devolve os segundos de espera quando ainda não pode pedir de novo. */
+  requestStream(remotePeerId: string): { sent: boolean; waitSeconds: number } {
+    const transport = this.transport;
+    if (!transport || remotePeerId === this.peerId) return { sent: false, waitSeconds: 0 };
+    if (this.mediaAuthenticationRequired && !this.authenticatedPeers.has(remotePeerId)) return { sent: false, waitSeconds: 0 };
+    if (!this.outgoingStreamRequests.take(remotePeerId)) return { sent: false, waitSeconds: this.outgoingStreamRequests.remaining(remotePeerId) };
+    const sent = transport.sendData(JSON.stringify(streamRequestMessage()), remotePeerId) > 0;
+    return { sent, waitSeconds: 0 };
+  }
+
+  onStreamRequest(listener: (remotePeerId: string) => void): () => void {
+    this.streamRequestListeners.add(listener);
+    return () => this.streamRequestListeners.delete(listener);
+  }
+
+  /** Só aceita de quem já foi autenticado na chamada, no máximo um a cada 30 s por pessoa, e ignora se já está transmitindo. */
+  private handleStreamRequest(remotePeerId: string, raw: string): boolean {
+    if (!parseStreamRequestMessage(raw)) return false;
+    if (this.mediaAuthenticationRequired && !this.authenticatedPeers.has(remotePeerId)) return true;
+    if (useCallStore.getState().localState.screenShare) return true;
+    if (!this.incomingStreamRequests.take(remotePeerId)) return true;
+    for (const listener of this.streamRequestListeners) listener(remotePeerId);
+    return true;
+  }
 
   updateProfile(displayName: string, avatar?: string): void {
     const normalized = displayName.trim();
@@ -707,6 +772,9 @@ export class CallController {
 
   private async cleanup(): Promise<void> {
     this.session.end();
+    this.outgoingStreamRequests.clear();
+    this.outcomes.reset();
+    this.incomingStreamRequests.clear();
     const signaling = this.signaling;
     const transport = this.transport;
     const unsubscribers = this.signalingUnsubscribers.splice(0);

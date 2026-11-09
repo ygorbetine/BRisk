@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  RateLimiter, bearerToken, clampTtl, isValidPeerId, isValidRoom, jwtRole, originAllowed, parseAllowedOrigins,
+  RateLimiter, bearerToken, clampTtl, combineWaits, hashRateKey, isValidPeerId, isValidRoom, jwtRole, originAllowed, parseAllowedOrigins,
 } from "../../../../../supabase/functions/_shared/guard";
 
 const jwt = (role: string) => `h.${btoa(JSON.stringify({ role })).replace(/=+$/, "")}.s`;
@@ -41,5 +41,16 @@ describe("validação das Edge Functions", () => {
     expect(limiter.check("u", 20)).toBeGreaterThan(0);
     expect(limiter.check("outro", 20)).toBe(0);
     expect(limiter.check("u", 1500)).toBe(0);
+  });
+  it("guarda no banco só o hash da chave do limite", async () => {
+    const hash = await hashRateKey("turn:user", "123e4567-e89b-42d3-a456-426614174000");
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toContain("123e4567");
+    expect(await hashRateKey("turn:user", "x")).not.toBe(await hashRateKey("livekit:user", "x"));
+  });
+  it("usa a maior espera entre memória e banco", () => {
+    expect(combineWaits(0, 0)).toBe(0);
+    expect(combineWaits(3, 40)).toBe(40);
+    expect(combineWaits(Number.NaN, 5)).toBe(5);
   });
 });

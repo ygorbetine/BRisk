@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { observeVoiceActivity } from "../services/audio/voice-activity";
 import { loadOverlaySettings, watchOverlaySettings } from "../services/overlay/settings";
 import { useCallStore } from "../store";
-import { buildOverlayState, pickScreenStream } from "./overlay-model";
+import { buildOverlayState, pickScreenStream, shownLiveIds } from "./overlay-model";
 
 const FRAME_WIDTH = 480;
 const FRAME_INTERVAL_MS = 100;
@@ -22,7 +22,6 @@ export function useOverlayBridge(): void {
   const [settings, setSettings] = useState(loadOverlaySettings);
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(new Set());
   const [selfSpeaking, setSelfSpeaking] = useState(false);
-  const [preferredLive, setPreferredLive] = useState<string | null>(null);
 
   useEffect(() => watchOverlaySettings(setSettings), []);
 
@@ -33,13 +32,6 @@ export function useOverlayBridge(): void {
     void overlay.setVisible(active).catch(() => undefined);
     return () => { void overlay.setVisible(false).catch(() => undefined); };
   }, [overlay, active]);
-
-  useEffect(() => {
-    if (!overlay) return undefined;
-    return overlay.onCommand((command) => {
-      if (command.type === "select-live") setPreferredLive(command.peerId);
-    });
-  }, [overlay]);
 
   // Quem está falando: um observador por participante com áudio.
   const audioEntries = useMemo(() => Object.values(participants).flatMap((person) => {
@@ -79,8 +71,7 @@ export function useOverlayBridge(): void {
     selfSpeaking,
     participants: Object.values(participants),
     speaking,
-    preferredLive,
-  }), [active, callContext, localState.microphone, localState.screenShare, selfSpeaking, participants, speaking, preferredLive]);
+  }), [active, callContext, localState.microphone, localState.screenShare, selfSpeaking, participants, speaking]);
 
   const stateJson = JSON.stringify(state);
   const lastJson = useRef("");
@@ -91,38 +82,45 @@ export function useOverlayBridge(): void {
   }, [overlay, active, stateJson]);
   useEffect(() => { if (!active) lastJson.current = ""; }, [active]);
 
-  // Quadros da transmissão escolhida (miniatura em JPEG, ~10 por segundo).
-  const liveWidgetOn = settings.widgets.live.on;
-  const liveStream = useMemo(() => {
-    const person = state.liveId ? participants[state.liveId] : undefined;
-    return person ? pickScreenStream(person.streams, person.state) : null;
-  }, [state.liveId, participants]);
+  // Quadros das transmissões exibidas (miniatura em JPEG, ~10 por segundo cada), cada um marcado com o id da pessoa.
+  const shownIds = useMemo(() => shownLiveIds(settings, state.liveIds), [settings, state.liveIds]);
+  const liveStreams = useMemo(() => shownIds.flatMap((peerId) => {
+    const person = participants[peerId];
+    const stream = person ? pickScreenStream(person.streams, person.state) : null;
+    return stream ? [{ peerId, stream }] : [];
+  }), [shownIds, participants]);
+  const liveKey = liveStreams.map((entry) => `${entry.peerId}:${entry.stream.id}`).join("|");
 
   useEffect(() => {
-    if (!overlay || !active || !liveWidgetOn || !liveStream) return undefined;
-    const video = document.createElement("video");
-    video.muted = true;
-    video.playsInline = true;
-    video.srcObject = liveStream;
-    void video.play().catch(() => undefined);
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    let busy = false;
-    const timer = window.setInterval(() => {
-      if (busy || !context || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-      busy = true;
-      canvas.width = FRAME_WIDTH;
-      canvas.height = Math.max(1, Math.round((FRAME_WIDTH * video.videoHeight) / video.videoWidth));
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        if (!blob) { busy = false; return; }
-        void blob.arrayBuffer().then((buffer) => overlay.pushFrame(buffer)).catch(() => undefined).finally(() => { busy = false; });
-      }, "image/jpeg", JPEG_QUALITY);
-    }, FRAME_INTERVAL_MS);
-    return () => {
-      window.clearInterval(timer);
-      video.pause();
-      video.srcObject = null;
-    };
-  }, [overlay, active, liveWidgetOn, liveStream]);
+    if (!overlay || !active || liveStreams.length === 0) return undefined;
+    const stops = liveStreams.map(({ peerId, stream }) => {
+      const video = document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      void video.play().catch(() => undefined);
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      let busy = false;
+      const timer = window.setInterval(() => {
+        if (busy || !context || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+        busy = true;
+        canvas.width = FRAME_WIDTH;
+        canvas.height = Math.max(1, Math.round((FRAME_WIDTH * video.videoHeight) / video.videoWidth));
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) { busy = false; return; }
+          void blob.arrayBuffer().then((buffer) => overlay.pushFrame(buffer, peerId)).catch(() => undefined).finally(() => { busy = false; });
+        }, "image/jpeg", JPEG_QUALITY);
+      }, FRAME_INTERVAL_MS);
+      return () => {
+        window.clearInterval(timer);
+        video.pause();
+        video.srcObject = null;
+      };
+    });
+    return () => stops.forEach((stop) => stop());
+    // liveStreams muda de identidade a cada atualização do store; a chave identifica o que mudou de fato.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlay, active, liveKey]);
 }

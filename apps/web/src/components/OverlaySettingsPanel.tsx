@@ -7,11 +7,15 @@ import {
   type OverlaySettings,
   type OverlayWidgetId,
 } from "../services/overlay/settings";
+import { useCallStore } from "../store";
+import { MAX_OVERLAY_LIVES } from "../services/overlay/settings";
 import "./settings-ui.css";
 
 export function OverlaySettingsPanel() {
   const [settings, setSettings] = useState<OverlaySettings>(loadOverlaySettings);
   const overlay = window.desktop?.overlay;
+  const participants = useCallStore((state) => state.participants);
+  const streamers = Object.values(participants).filter((person) => person.state.screenShare);
   useEffect(() => watchOverlaySettings(setSettings), []);
 
   const update = (next: OverlaySettings) => setSettings(saveOverlaySettings(next));
@@ -37,6 +41,13 @@ export function OverlaySettingsPanel() {
           <div><strong>{widget.label}</strong><small>{widget.hint}</small></div>
           <span className="sx-switch"><input type="checkbox" checked={settings.widgets[widget.id].on} onChange={(event) => toggleWidget(widget.id, event.target.checked)}/><i/></span>
         </label>
+        {widget.id === "live" && settings.widgets.live.on && <div className="sx-sublist">
+          {streamers.length === 0 && <p className="sx-note">Ninguém está transmitindo agora. Quando alguém transmitir na sua chamada, escolha aqui quais lives aparecem (até {MAX_OVERLAY_LIVES} ao mesmo tempo).</p>}
+          {streamers.map((person) => <label key={person.peerId} className="sx-row">
+            <div><strong>Live de {person.displayName}</strong></div>
+            <span className="sx-switch"><input type="checkbox" checked={settings.lives[person.peerId]?.on !== false} onChange={(event) => update({ ...settings, lives: { ...settings.lives, [person.peerId]: { ...(settings.lives[person.peerId] ?? { x: settings.widgets.live.x, y: settings.widgets.live.y, scale: settings.widgets.live.scale }), on: event.target.checked } } })}/><i/></span>
+          </label>)}
+        </div>}
       </div>)}
       <div className="sx-divider"/>
       <label className="sx-row">

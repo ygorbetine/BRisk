@@ -253,16 +253,17 @@ contextBridge.exposeInMainWorld("desktop", {
     setVisible: (visible: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-visible", visible),
     setEditing: (editing: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-editing", editing),
     pushState: (state: unknown): void => ipcRenderer.send("overlay:state", state),
-    pushFrame: (frame: ArrayBuffer): void => ipcRenderer.send("overlay:frame", frame),
+    pushFrame: (frame: ArrayBuffer, peerId: string): void => ipcRenderer.send("overlay:frame", frame, peerId),
     sendCommand: (command: unknown): void => ipcRenderer.send("overlay:command", command),
     onState: (callback: (state: unknown) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
       ipcRenderer.on("overlay:state", listener);
       return () => ipcRenderer.removeListener("overlay:state", listener);
     },
-    onFrame: (callback: (frame: ArrayBuffer) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, frame: ArrayBuffer | Uint8Array) => {
-        callback(frame instanceof Uint8Array ? (frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer) : frame);
+    onFrame: (callback: (frame: ArrayBuffer, peerId: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, frame: ArrayBuffer | Uint8Array, peerId: unknown) => {
+        if (typeof peerId !== "string") return;
+        callback(frame instanceof Uint8Array ? (frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer) : frame, peerId);
       };
       ipcRenderer.on("overlay:frame", listener);
       return () => ipcRenderer.removeListener("overlay:frame", listener);

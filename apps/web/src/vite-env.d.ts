@@ -66,10 +66,10 @@ interface Window {
       setVisible(visible: boolean): Promise<void>;
       setEditing(editing: boolean): Promise<void>;
       pushState(state: unknown): void;
-      pushFrame(frame: ArrayBuffer): void;
+      pushFrame(frame: ArrayBuffer, peerId: string): void;
       sendCommand(command: { type: "select-live"; peerId: string } | { type: "exit-edit" }): void;
       onState(callback: (state: unknown) => void): () => void;
-      onFrame(callback: (frame: ArrayBuffer) => void): () => void;
+      onFrame(callback: (frame: ArrayBuffer, peerId: string) => void): () => void;
       onEditing(callback: (editing: boolean) => void): () => void;
       onCommand(callback: (command: { type: "select-live"; peerId: string } | { type: "exit-edit" }) => void): () => void;
     };

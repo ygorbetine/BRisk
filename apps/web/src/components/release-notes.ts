@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.2.2",
+    items: [
+      "Sobreposição: agora dá para mostrar até 3 transmissões ao mesmo tempo, cada uma independente, com posição e tamanho próprios. Escolha quais aparecem em Configurações › Sobreposição ou no modo de edição",
+      "A lista de quem está na sala de voz, na barra lateral do grupo, volta a aparecer embaixo da sala, alinhada",
+    ],
+  },
+  {
     version: "1.2.1",
     items: [
       "Corrige o erro \"Serviço de tokens do SFU respondeu 400\" ao entrar numa chamada pelo servidor",

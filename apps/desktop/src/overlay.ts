@@ -72,12 +72,13 @@ export class OverlayController {
       this.sendToOverlay("overlay:state", state);
     });
 
-    ipcMain.on("overlay:frame", (event, frame: unknown) => {
+    ipcMain.on("overlay:frame", (event, frame: unknown, peerId: unknown) => {
       try { trusted(event); } catch { return; }
+      if (typeof peerId !== "string" || peerId.length === 0 || peerId.length > 200) return;
       if (!(frame instanceof ArrayBuffer) && !ArrayBuffer.isView(frame)) return;
       const bytes = frame instanceof ArrayBuffer ? frame.byteLength : (frame as ArrayBufferView).byteLength;
       if (bytes > 2_000_000) return;
-      this.sendToOverlay("overlay:frame", frame);
+      this.sendToOverlay("overlay:frame", frame, peerId);
     });
 
     ipcMain.on("overlay:command", (event, command: unknown) => {
@@ -88,9 +89,9 @@ export class OverlayController {
     });
   }
 
-  private sendToOverlay(channel: string, payload: unknown): void {
+  private sendToOverlay(channel: string, payload: unknown, extra?: unknown): void {
     const window = this.window;
-    if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
+    if (window && !window.isDestroyed()) window.webContents.send(channel, payload, extra);
   }
 
   private show(): void {

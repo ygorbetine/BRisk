@@ -73,3 +73,4 @@
 .sx-range::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--briks-c3) var(--fill,0%),rgba(255,255,255,.18) var(--fill,0%))}
 .sx-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 5px rgba(0,0,0,.45)}
 .sx-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color-mix(in srgb,var(--briks-c3) 55%,transparent)}
+.sx-sublist{margin:6px 0 0 14px;padding-left:12px;border-left:2px solid rgba(255,255,255,.12);display:grid;gap:4px}

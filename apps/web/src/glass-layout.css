@@ -281,6 +281,8 @@ body {
 .friends-tabs button small{opacity:.8;margin-left:3px}
 .friends-search{margin-left:auto;min-width:140px;max-width:220px}
 .empty-filter{color:#a592b8;font-size:13px;padding:8px 2px}
+.channel-item:has(>.voice-members){flex-wrap:wrap}
+.channel-item>.voice-members{flex:0 0 calc(100% - 34px);box-sizing:border-box;min-width:0}
 .voice-members{list-style:none;margin:2px 0 6px 28px;padding:0;display:grid;gap:3px;font-size:12px;color:#cdbfe0}
 .voice-members li{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:2px 6px}
 .voice-members li em{font-style:normal;color:#a592b8;font-size:10px;margin-left:3px}

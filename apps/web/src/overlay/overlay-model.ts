@@ -4,7 +4,9 @@ import {
   type OverlayPerson,
   type OverlaySettings,
   type OverlayState,
+  type OverlayWidget,
   type OverlayWidgetId,
+  MAX_OVERLAY_LIVES,
 } from "../services/overlay/settings";
 
 export const MAX_DRAG_PERCENT = 96;
@@ -24,11 +26,10 @@ export function steppedScale(scale: number, direction: 1 | -1): number {
 
 /** Quais widgets aparecem. Em edição todos os ligados aparecem, mesmo sem dados (para poder posicionar). */
 export function visibleWidgets(settings: OverlaySettings, state: OverlayState, editing: boolean): OverlayWidgetId[] {
-  const ids: OverlayWidgetId[] = ["live", "voice", "status", "mute"];
+  const ids: OverlayWidgetId[] = ["voice", "status", "mute"];
   return ids.filter((id) => {
     if (!settings.widgets[id].on) return false;
     if (editing) return true;
-    if (id === "live") return Boolean(state.liveId);
     if (id === "voice") return state.people.length > 0;
     if (id === "status") return state.active || Boolean(state.roomName);
     return state.micMuted;
@@ -40,19 +41,20 @@ export function livePeople(people: OverlayPerson[]): OverlayPerson[] {
   return people.filter((person) => person.live);
 }
 
-/** Escolhe a live exibida: a preferida, se ainda estiver ao vivo; senão a primeira. */
-export function pickLiveId(people: OverlayPerson[], preferred: string | null): string | null {
-  const lives = livePeople(people);
-  if (preferred && lives.some((person) => person.id === preferred)) return preferred;
-  return lives[0]?.id ?? null;
+/** Lives exibidas: as que a pessoa não desligou, até o limite. Tudo desligado se o item "Transmissões" estiver desligado. */
+export function shownLiveIds(settings: OverlaySettings, liveIds: string[]): string[] {
+  if (!settings.widgets.live.on) return [];
+  return liveIds.filter((id) => settings.lives[id]?.on !== false).slice(0, MAX_OVERLAY_LIVES);
 }
 
-/** Próxima live ao trocar (circular). Devolve null se não há outra. */
-export function nextLiveId(people: OverlayPerson[], current: string | null): string | null {
-  const lives = livePeople(people);
-  if (lives.length < 2) return null;
-  const index = lives.findIndex((person) => person.id === current);
-  return lives[(index + 1) % lives.length]?.id ?? null;
+const LIVE_STACK_STEP = 20;
+
+/** Posição e tamanho de uma miniatura: os dela, ou a posição base escalonada para não ficarem uma sobre a outra. */
+export function liveTile(settings: OverlaySettings, peerId: string, index: number): OverlayWidget {
+  const saved = settings.lives[peerId];
+  if (saved) return saved;
+  const base = settings.widgets.live;
+  return { on: true, x: base.x, y: Math.min(MAX_DRAG_PERCENT, base.y + index * LIVE_STACK_STEP), scale: base.scale };
 }
 
 /** Escolhe o stream de tela de um participante: o id anunciado ou, na falta, o primeiro com vídeo que não é câmera. */
@@ -82,7 +84,6 @@ export function buildOverlayState(input: {
   selfSpeaking: boolean;
   participants: ParticipantLike[];
   speaking: ReadonlySet<string>;
-  preferredLive: string | null;
 }): OverlayState {
   const people: OverlayPerson[] = [
     { id: "self", name: input.selfName || "Você", speaking: input.micOn && input.selfSpeaking, muted: !input.micOn, live: input.selfLive },
@@ -94,7 +95,7 @@ export function buildOverlayState(input: {
       live: person.state.screenShare,
     })),
   ];
-  // A live exibida é sempre de outra pessoa: a própria tela você já vê no jogo.
+  // As lives exibidas são sempre de outras pessoas: a própria tela você já vê no jogo.
   const watchable = people.filter((person) => person.id !== "self");
   return {
     active: input.active,
@@ -102,7 +103,7 @@ export function buildOverlayState(input: {
     groupName: input.groupName,
     micMuted: !input.micOn,
     people,
-    liveId: pickLiveId(watchable, input.preferredLive),
+    liveIds: livePeople(watchable).map((person) => person.id),
   };
 }
 

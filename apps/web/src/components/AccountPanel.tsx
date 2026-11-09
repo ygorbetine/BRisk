@@ -12,6 +12,7 @@ import {
   type AccountState,
 } from "../services/account/account-service";
 import { checkNick, friendlyAccountError } from "../services/account/nick";
+import { rememberLogin, resolveLoginIdentifier } from "../services/account/login-hints";
 import { loadLocalIdentity } from "../services/offline/social-storage";
 import "./account-panel.css";
 
@@ -33,6 +34,7 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
     const next = await loadAccountState(known ?? identity);
     setState(next);
     onNickChanged?.(next.nick);
+    if (next.signedIn && next.nick && next.email) rememberLogin(next.nick, next.email);
   }, [identity, onNickChanged]);
 
   useEffect(() => {
@@ -72,7 +74,10 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
           return;
         }
       } else {
-        await signInAccount(email, password);
+        const target = resolveLoginIdentifier(email);
+        if ("error" in target) throw new Error(target.error);
+        await signInAccount(target.email, password);
+        setEmail(target.email);
       }
       setPassword("");
       await refresh();
@@ -101,7 +106,7 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
         <button type="button" role="tab" aria-selected={mode === "signin"} className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }}>Entrar</button>
         <button type="button" role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setError(""); }}>Criar conta</button>
       </div>
-      <input type="email" autoComplete="email" placeholder="E-mail" value={email} onChange={(event) => setEmail(event.target.value)} required/>
+      <input type={mode === "signin" ? "text" : "email"} autoComplete={mode === "signin" ? "username" : "email"} placeholder={mode === "signin" ? "E-mail ou @nick" : "E-mail"} value={email} onChange={(event) => setEmail(event.target.value)} required/>
       <input type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder="Senha (mínimo 8 caracteres)" value={password} onChange={(event) => setPassword(event.target.value)} required/>
       {error && <p className="account-error">{error}</p>}
       {notice && <p className="account-notice">{notice}</p>}

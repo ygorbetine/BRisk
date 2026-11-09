@@ -22,7 +22,6 @@ import {
   VideoOff,
   PhoneOff,
   RefreshCw,
-  Bell,
 } from "lucide-react";
 import {
   privateConversationId,
@@ -68,9 +67,11 @@ import {
 } from "../services/offline/social-storage";
 import { useCallStore } from "../store";
 import { AccountPanel } from "../components/AccountPanel";
-import { loadAccountState } from "../services/account/account-service";
+import { loadAccountState, signOutAccount } from "../services/account/account-service";
+import { rememberLogin } from "../services/account/login-hints";
 import { callOwnsTextConversation } from "../application/chat-routing";
 import { playCallSound } from "../services/audio/call-sounds";
+import { useOverlayBridge } from "../overlay/useOverlayBridge";
 
 type SocialModal = "account" | "friend" | "group" | "groupProfile" | "channel" | "inviteMember" | "manageMember" | "joinGroup" | "settings" | "profile" | null;
 type DeleteTarget = { kind: "friend"; friend: Friend } | { kind: "group"; group: Community } | null;
@@ -87,6 +88,7 @@ export function HomeView() {
   const setCallContext = useCallStore((state) => state.setCallContext);
   const setCallWorkspaceOpen = useCallStore((state) => state.setCallWorkspaceOpen);
   const localCallState = useCallStore((state) => state.localState);
+  useOverlayBridge();
   const localPreviews = useCallStore((state) => state.localPreviews);
   const callParticipants = useCallStore((state) => state.participants);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -115,6 +117,7 @@ export function HomeView() {
   const updateState = useUpdateState();
   const updateReady = updateState.phase === "ready";
   const [accountNick, setAccountNick] = useState<string>();
+  useEffect(() => { if (accountNick && currentUser?.email) rememberLogin(accountNick, currentUser.email); }, [accountNick, currentUser?.email]);
   const [resyncing, setResyncing] = useState(false);
   const [resyncNote, setResyncNote] = useState("");
   const [memberNicks, setMemberNicks] = useState<ReadonlyMap<string, string>>(new Map());
@@ -123,8 +126,9 @@ export function HomeView() {
   const [channelAction, setChannelAction] = useState<ChannelActionTarget>(null);
   const [channelSaving, setChannelSaving] = useState(false);
   const [error, setError] = useState("");
+  const joiningVoiceRef = useRef<string | null>(null);
+  const [joiningVoice, setJoiningVoice] = useState<string | null>(null);
   const [notices, setNotices] = useState<Array<{ id: number; text: string; at: number }>>([]);
-  const [noticesOpen, setNoticesOpen] = useState(false);
   useEffect(() => {
     if (!error) return;
     setNotices((items) => [{ id: Date.now(), text: error, at: Date.now() }, ...items.filter((item) => item.text !== error)].slice(0, 8));
@@ -429,6 +433,9 @@ export function HomeView() {
     }
     // Precisa ocorrer antes do primeiro await para que o Chromium associe a
     // reprodução ao clique do usuário e permita os próximos avisos da chamada.
+    if (joiningVoiceRef.current) return;
+    joiningVoiceRef.current = channel.voiceRoomId;
+    setJoiningVoice(channel.voiceRoomId);
     playCallSound("connect");
     try {
       const [{ iceServers }, identity, localGroups] = await Promise.all([
@@ -474,7 +481,11 @@ export function HomeView() {
     } catch (cause) {
       // Entrada cancelada (cliquei em sair, troquei de sala ou cliquei duas vezes) não é erro.
       if (cause instanceof DOMException && cause.name === "AbortError") return;
+      if (cause instanceof Error && /client initiated disconnect/i.test(cause.message)) return;
       setError(cause instanceof Error ? cause.message : "Não foi possível entrar na voz");
+    } finally {
+      joiningVoiceRef.current = null;
+      setJoiningVoice(null);
     }
   }
 
@@ -692,7 +703,13 @@ export function HomeView() {
       await session.logout();
     }
     catch { /* logout local continua mesmo se a API estiver indisponível */ }
-    finally { reset(); }
+    finally {
+      // A sessão da conta (@nick) é separada da do app: sem encerrá-la, o @nick antigo aparece na próxima conta.
+      await signOutAccount().catch(() => undefined);
+      setAccountNick(undefined);
+      setModal(null);
+      reset();
+    }
   }
 
   function profileSaved(profile: LocalProfile): void {
@@ -892,7 +909,7 @@ export function HomeView() {
           </div>)}
           <div className="nav-section"><span>SALAS DE VOZ</span>{canEditSelectedGroup && <button onClick={() => setModal("channel")}><Plus size={15}/></button>}</div>
           {channels.filter((item) => item.kind === "voice").map((channel) => <div className="channel-item" key={channel.id}>
-            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
+            <button className={`channel voice ${roomId === channel.voiceRoomId ? "connected" : ""}`} onClick={() => void enterVoice(channel)}><Headphones/><span>{channel.name}</span>{joiningVoice === channel.voiceRoomId ? <small className="voice-joining">Conectando…</small> : roomId === channel.voiceRoomId ? <small>{Object.keys(callParticipants).length + 1}</small> : (() => { const live = activeVoiceRooms.find((room) => room.roomId === channel.voiceRoomId); return live && live.participantCount > 0 ? <small className="voice-live" title={`${live.participantCount} na sala`}><i/>{live.participantCount}</small> : null; })()}</button>
             {roomId === channel.voiceRoomId && <ul className="voice-members" aria-label="Quem está na sala">
               <li><span>{currentUser?.displayName ?? "Você"} <em>você</em></span>{localCallState.screenShare && <b className="voice-member-live"><i/>Ao vivo</b>}</li>
               {Object.values(callParticipants).map((person) => <li key={person.peerId}>
@@ -932,17 +949,7 @@ export function HomeView() {
           <button className="account-profile" onClick={() => setModal("profile")} title="Editar perfil"><ProfileAvatar displayName={currentUser?.displayName ?? "Eu"} avatar={currentUser?.avatar}/></button>
           <button className="account-identity" onClick={() => setModal("profile")} title="Editar perfil"><strong>{currentUser?.displayName ?? "Carregando…"}</strong><small>{accountNick ? `@${accountNick}` : "Disponível"}</small></button>
           <button onClick={() => setModal("account")} title={accountNick ? `Perfil e conta · @${accountNick}` : "Perfil e conta"}><AtSign/></button>
-          <span className="notices-wrap">
-            <button className="notices-bell" onClick={() => setNoticesOpen((open) => !open)} title="Avisos" aria-label="Avisos" aria-expanded={noticesOpen}><Bell/>{notices.length + (updateReady ? 1 : 0) > 0 && <i className="update-dot" aria-hidden="true"/>}</button>
-            {noticesOpen && <div className="notices-popover" role="dialog" aria-label="Central de avisos">
-              <strong>Avisos</strong>
-              {updateReady && <div className="notice"><span>Versão {updateState.version ?? ""} pronta para instalar.</span><button onClick={() => void window.desktop?.installUpdate?.()}>Reiniciar e instalar</button></div>}
-              {notices.map((item) => <div className="notice error" key={item.id}><span>{item.text}</span><small>{new Date(item.at).toLocaleTimeString()}</small></div>)}
-              {!updateReady && !notices.length && <p>Nenhum aviso. Tudo certo por aqui.</p>}
-              {notices.length > 0 && <button className="notices-clear" onClick={() => setNotices([])}>Limpar avisos</button>}
-            </div>}
-          </span>
-          <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "about" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{updateReady && <i className="update-dot" aria-hidden="true"/>}</button>
+          <button className={`settings-gear${updateReady ? " has-update" : ""}`} onClick={() => { setSettingsTab(updateReady ? "about" : "voice"); setModal("settings"); }} title={updateReady ? `Configurações · atualização ${updateState.version ?? ""} pronta` : `Configurações de ${currentUser?.displayName ?? "você"}`} aria-label="Configurações"><Settings/>{(updateReady || notices.length > 0) && <i className="update-dot" aria-hidden="true"/>}</button>
           <button onClick={() => void logout()} title="Sair"><LogOut/></button>
         </div>
       </aside>
@@ -1002,11 +1009,12 @@ export function HomeView() {
       {membersPanel && <aside className="members-panel" aria-label="Membros do grupo">{membersPanel}</aside>}
 
       {modal === "friend" && <Modal title="Adicionar amigo" onClose={() => setModal(null)}>{currentUser ? <P2PInvitePanel type="friend" token={token} displayName={currentUser.displayName} onComplete={() => void loadSocial()}/> : <p>Carregando sua identidade…</p>}</Modal>}
-            {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView initialTab={settingsTab}/></Modal>}
+            {modal === "settings" && <Modal title="Configurações" onClose={() => setModal(null)}><SettingsView initialTab={settingsTab} notices={notices} onClearNotices={() => setNotices([])}/></Modal>}
       {(modal === "profile" || modal === "account") && currentUser && <Modal title="Perfil e conta" onClose={() => setModal(null)}>
         <div className="profile-account">
           <section><h3>Perfil</h3><ProfileEditor profile={{ displayName: currentUser.displayName, avatar: currentUser.avatar }} onSaved={profileSaved}/></section>
           <section><h3>Conta e @nick</h3><AccountPanel onNickChanged={setAccountNick}/></section>
+          <section><h3>Desconectar</h3><p className="account-muted">Sai desta conta e volta à tela inicial. Suas mensagens e amigos continuam salvos neste computador.</p><button type="button" className="account-disconnect" onClick={() => { if (window.confirm("Desconectar desta conta?")) void logout(); }}><LogOut size={15}/> Desconectar conta</button></section>
         </div>
       </Modal>}
       {modal === "groupProfile" && selectedLocalGroup && <Modal title="Personalizar grupo" onClose={() => setModal(null)}><GroupEditor group={selectedLocalGroup} onSaved={groupSaved}/></Modal>}

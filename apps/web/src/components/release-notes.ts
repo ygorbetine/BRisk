@@ -3,6 +3,18 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.1",
+    items: [
+      "Entrar com @nick (o app lembra o e-mail dos @nicks que já entraram neste computador)",
+      "Desconectar conta volta à tela inicial e encerra também a sessão do @nick",
+      "Entrada na chamada: sem aviso falso de desconexão e sem entrada duplicada ao clicar duas vezes",
+      "Armazenamento e outras abas das Configurações realinhados; aviso de avisos agora fica em Configurações",
+      "Botão de áudio da transmissão redesenhado; menu do Alt removido",
+      "Sobreposição em jogos: live, quem está na sala, sala conectada e aviso de mudo por cima do jogo, com modo de edição (Ctrl+Shift+O) para mover, redimensionar e ligar ou desligar cada item",
+      "Esqueci minha senha na tela de login (contas locais)",
+    ],
+  },
+  {
     version: "0.11.0",
     items: [
       "Configurações reformuladas: Voz e vídeo, Rede, Temas, Armazenamento e Sobre",

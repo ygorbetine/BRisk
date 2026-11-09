@@ -847,16 +847,15 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       <div className="share-control">
         <button className={localPreviews.screen ? "active" : ""} onClick={() => void showScreenPicker()}><MonitorUp/><span>{localPreviews.screen ? "Parar transmissão" : "Compartilhar"}</span></button>
         {localPreviews.screen && <button className={localPreviews.screen2 ? "active" : ""} onClick={() => void showScreenPicker(true)} title={localPreviews.screen2 ? "Parar a segunda tela" : "Transmitir outro monitor ao mesmo tempo (sem áudio, até 4 Mbps)"}><MonitorUp/><span>{localPreviews.screen2 ? "Parar 2ª tela" : "+ 2ª tela"}</span></button>}
-        <select
-          value={screenAudioEnabled ? "audio" : "silent"}
-          onChange={(event) => setScreenAudioEnabled(event.target.value === "audio")}
+        <button
+          type="button"
+          className={`share-audio-toggle${screenAudioEnabled ? " on" : ""}`}
+          onClick={() => setScreenAudioEnabled((current) => !current)}
           disabled={localState.screenShare}
+          aria-pressed={screenAudioEnabled}
           aria-label="Áudio da transmissão de tela"
-          title={localState.screenShare ? "Pare a transmissão para mudar o áudio" : "Escolha se o áudio do sistema será transmitido"}
-        >
-          <option value="audio">Com áudio</option>
-          <option value="silent">Sem áudio</option>
-        </select>
+          title={localState.screenShare ? "Pare a transmissão para mudar o áudio" : screenAudioEnabled ? "O áudio do sistema será transmitido. Clique para transmitir sem áudio" : "Só o vídeo será transmitido. Clique para incluir o áudio"}
+        >{screenAudioEnabled ? <Volume2 size={17}/> : <VolumeX size={17}/>}<span>{screenAudioEnabled ? "Com áudio" : "Sem áudio"}</span></button>
         <button className={qualityPanelOpen ? "quality-trigger active" : "quality-trigger"} onClick={() => setQualityPanelOpen((current) => !current)} title="Resolução, FPS e bitrate da transmissão" aria-expanded={qualityPanelOpen}>
           {qualityProfile.label}
         </button>

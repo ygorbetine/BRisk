@@ -58,6 +58,17 @@ interface Window {
     installUpdate?(): Promise<boolean>;
     onUpdateState?(callback: (state: BriksUpdateState) => void): () => void;
     openExternal(url: string): Promise<void>;
+    overlay?: {
+      setVisible(visible: boolean): Promise<void>;
+      setEditing(editing: boolean): Promise<void>;
+      pushState(state: unknown): void;
+      pushFrame(frame: ArrayBuffer): void;
+      sendCommand(command: { type: "select-live"; peerId: string } | { type: "exit-edit" }): void;
+      onState(callback: (state: unknown) => void): () => void;
+      onFrame(callback: (frame: ArrayBuffer) => void): () => void;
+      onEditing(callback: (editing: boolean) => void): () => void;
+      onCommand(callback: (command: { type: "select-live"; peerId: string } | { type: "exit-edit" }) => void): () => void;
+    };
     onBackendStatus(callback: (status: BriksDesktopBackendStatus) => void): () => void;
   };
 }

@@ -195,6 +195,13 @@ async function login(email: string, password: string): Promise<{ accessToken: st
   return result;
 }
 
+async function resetPassword(email: string, newPassword: string): Promise<{ accessToken: string }> {
+  if (!isApiConfigured()) throw new ApiRequestError("A redefinição de senha só existe no aplicativo instalado.", 400);
+  const result = await request<{ accessToken: string }>("/auth/reset-password", { method: "POST", body: JSON.stringify({ email, newPassword }) });
+  sessionStorage.setItem("accessToken", result.accessToken);
+  return result;
+}
+
 async function refresh(): Promise<{ accessToken: string }> {
   const accessToken = await refreshAccessToken();
   if (!accessToken) throw new ApiRequestError("Sessão indisponível.", 401);
@@ -297,6 +304,7 @@ function apiOnly<T>(operation: () => Promise<T>): Promise<T> {
 export const api = {
   register,
   login,
+  resetPassword,
   refresh,
   logout,
   me,

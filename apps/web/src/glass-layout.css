@@ -299,3 +299,26 @@ body {
 .notices-popover .notice button{justify-self:start;padding:4px 10px;border-radius:8px;background:var(--briks-c3);color:#fff}
 .notices-popover p{margin:0;color:#a592b8}
 .notices-clear{justify-self:end;background:transparent;color:#a592b8;font-size:11px}
+.account-bar{grid-template-columns:40px minmax(0,1fr) 28px 28px 28px;column-gap:4px;padding:8px}
+.share-control > .share-audio-toggle{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:112px;padding:0 14px;color:#a592b8;font-size:13px;border-left:1px solid #ffffff24 !important}
+.share-control > .share-audio-toggle svg{color:#a592b8}
+.share-control > .share-audio-toggle.on,.share-control > .share-audio-toggle.on svg{color:#8ff0a4}
+.share-control > .share-audio-toggle:disabled{opacity:.55;cursor:not-allowed}
+.account-disconnect{display:inline-flex;align-items:center;gap:8px;justify-self:start;padding:9px 14px;border-radius:10px;background:#e9555520;color:#ff9a9a;font-weight:500}
+.account-disconnect:hover{background:#e95555;color:#fff}
+.profile-account .account-muted{margin:0;color:#a592b8;font-size:12px}
+.friends-layout .friends-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px}
+.friends-layout .friends-tabs button{height:32px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;line-height:1}
+.friends-layout .friends-tabs .friends-search{flex:1 1 150px;min-width:120px;max-width:240px;width:auto;height:32px;margin:0 0 0 auto;padding:0 14px;border-radius:999px;font-size:13px}
+.auth-card .auth-hint{margin:10px 0 0;text-align:center;color:#a592b8;font-size:13px}
+.friends-layout .friends-tabs .friends-search{flex:1 1 100%;max-width:none;margin:2px 0 0}
+.profile-account{max-height:none;overflow:visible;padding-right:0}
+.modal:has(.profile-account){width:min(520px,calc(100vw - 32px))}
+.profile-account .account-panel{padding:0;margin:0}
+.profile-account .account-muted{padding:0}
+.global-error{width:max-content;max-width:min(440px,calc(100% - 24px));text-align:center;line-height:1.4}
+.settings-tabs{overflow-x:auto;scrollbar-width:none}
+.settings-tabs button{white-space:nowrap;flex:1 0 auto}
+.settings-tabs{overflow-x:auto;scrollbar-width:none}
+.settings-tabs::-webkit-scrollbar{display:none}
+.settings-tabs button{white-space:nowrap;flex:0 0 auto}

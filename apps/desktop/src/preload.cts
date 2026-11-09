@@ -241,6 +241,35 @@ contextBridge.exposeInMainWorld("desktop", {
     return () => ipcRenderer.removeListener("updater:state", listener);
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("shell:open-external", url),
+  overlay: {
+    setVisible: (visible: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-visible", visible),
+    setEditing: (editing: boolean): Promise<void> => ipcRenderer.invoke("overlay:set-editing", editing),
+    pushState: (state: unknown): void => ipcRenderer.send("overlay:state", state),
+    pushFrame: (frame: ArrayBuffer): void => ipcRenderer.send("overlay:frame", frame),
+    sendCommand: (command: unknown): void => ipcRenderer.send("overlay:command", command),
+    onState: (callback: (state: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
+      ipcRenderer.on("overlay:state", listener);
+      return () => ipcRenderer.removeListener("overlay:state", listener);
+    },
+    onFrame: (callback: (frame: ArrayBuffer) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, frame: ArrayBuffer | Uint8Array) => {
+        callback(frame instanceof Uint8Array ? (frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer) : frame);
+      };
+      ipcRenderer.on("overlay:frame", listener);
+      return () => ipcRenderer.removeListener("overlay:frame", listener);
+    },
+    onEditing: (callback: (editing: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, editing: boolean) => callback(Boolean(editing));
+      ipcRenderer.on("overlay:editing", listener);
+      return () => ipcRenderer.removeListener("overlay:editing", listener);
+    },
+    onCommand: (callback: (command: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: unknown) => callback(command);
+      ipcRenderer.on("overlay:command", listener);
+      return () => ipcRenderer.removeListener("overlay:command", listener);
+    },
+  },
   onBackendStatus: (callback: (status: DesktopBackendStatus) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: DesktopBackendStatus) => callback(status);
     ipcRenderer.on("backend:status", listener);

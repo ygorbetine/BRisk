@@ -14,6 +14,7 @@ import {
   registerPackagedProtocol,
   registerBriksScheme,
 } from "./protocol.js";
+import { OverlayController } from "./overlay.js";
 import { ScreenCaptureController } from "./screen-capture.js";
 import { createApplicationTray, isTrayAvailable } from "./tray.js";
 import { createMainWindow } from "./window.js";
@@ -72,6 +73,13 @@ const backend = new DesktopBackendManager(
   () => isQuitting,
 );
 const screenCapture = new ScreenCaptureController(isTrustedRendererUrl);
+const overlay = new OverlayController({
+  pageUrl: () => pageUrl,
+  rootDirectory,
+  getMainWindow: () => mainWindow,
+  isTrustedRendererUrl,
+});
+overlay.register();
 registerDesktopIpc(backend, isTrustedRendererUrl);
 
 function openMainWindow(): BrowserWindow {
@@ -153,6 +161,7 @@ app.on("before-quit", () => {
   tray?.destroy();
   tray = undefined;
   screenCapture.clear();
+  overlay.dispose();
   void backend.clearDevBridge();
   backend.stop();
 });

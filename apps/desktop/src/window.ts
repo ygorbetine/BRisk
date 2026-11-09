@@ -37,7 +37,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     backgroundColor: "#12041a",
     icon: options.iconPath,
     show: false,
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     webPreferences: {
       preload: path.join(options.rootDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -46,6 +46,10 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
       backgroundThrottling: false,
     },
   });
+
+  // Sem barra de menu (Alt não deve mostrar File/Edit/View/Window); copiar e colar continuam funcionando nos campos.
+  window.removeMenu();
+  window.setMenuBarVisibility(false);
 
   window.on("close", (event) => {
     if (!shouldHideWindowOnClose({

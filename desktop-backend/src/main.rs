@@ -114,6 +114,13 @@ struct LoginInput {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResetPasswordInput {
+    email: String,
+    new_password: String,
+}
+
+#[derive(Deserialize)]
 struct FriendRequestInput {
     email: String,
 }
@@ -237,6 +244,7 @@ async fn main() -> anyhow::Result<()> {
     let protected = Router::new()
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
+        .route("/auth/reset-password", post(reset_password))
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout))
         .route("/me", get(me))
@@ -380,6 +388,37 @@ async fn login(
     set_current_user(&state.db, user.0).await?;
     Ok(Json(TokenResponse {
         access_token: issue(&state, user.0)?,
+    }))
+}
+
+/// Redefine a senha de uma conta local. O backend só atende o renderer deste computador (token local),
+/// e as contas existem apenas neste banco: quem tem acesso à máquina já tem acesso ao arquivo.
+async fn reset_password(
+    State(state): State<AppState>,
+    Json(input): Json<ResetPasswordInput>,
+) -> Result<Json<TokenResponse>, ApiError> {
+    validate_password(&input.new_password)?;
+    let email = normalize_email(&input.email)?;
+    let user_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email=? COLLATE NOCASE")
+        .bind(&email)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| ApiError::Bad("Nenhuma conta com esse e-mail neste computador".into()))?;
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(input.new_password.as_bytes(), &salt)
+        .map_err(|error| ApiError::Internal(anyhow::anyhow!(error.to_string())))?
+        .to_string();
+    sqlx::query("UPDATE users SET password_hash=? WHERE id=?")
+        .bind(password_hash)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal)?;
+    set_current_user(&state.db, user_id).await?;
+    Ok(Json(TokenResponse {
+        access_token: issue(&state, user_id)?,
     }))
 }
 

@@ -287,7 +287,12 @@ export class CallController {
       this.presenceSounds.enable();
       return localStream;
     } catch (error) {
-      if (this.lifecycleId === lifecycle) await this.cleanup();
+      const superseded = this.lifecycleId !== lifecycle;
+      if (!superseded) await this.cleanup();
+      // Outra entrada ou uma saída assumiu o lugar: o erro do transporte (ex.: "Client initiated disconnect") é só consequência.
+      if (superseded && !(error instanceof DOMException && error.name === "AbortError")) {
+        throw new DOMException("Entrada na chamada cancelada.", "AbortError");
+      }
       throw error;
     }
   }

@@ -1,24 +1,10 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import { BriksApplicationProvider } from "./application/ApplicationContext";
-import { briksApplication } from "./application/runtime";
-import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { UpdateBanner } from "./components/UpdateBanner";
-import { VersionBadge } from "./components/VersionBadge";
-import { DesktopRecoveryNotice } from "./components/DesktopRecoveryNotice";
-import { applyStoredTheme } from "./services/theme/theme";
-import "./styles.css";
-import "./components/modal-layout.css";
-import "./glass-layout.css";
+// A janela de sobreposição (jogos) carrega só o necessário: nada do app, banco local ou tema.
+const overlayMode = window.location.hash === "#overlay" ? "overlay" : window.location.hash === "#overlay-demo" ? "demo" : null;
 
-applyStoredTheme();
-
-createRoot(document.getElementById("root")!).render(<React.StrictMode>
-  <BriksApplicationProvider application={briksApplication}>
-    <AppErrorBoundary><App/></AppErrorBoundary>
-    <DesktopRecoveryNotice/>
-    <VersionBadge/>
-    <UpdateBanner/>
-  </BriksApplicationProvider>
-</React.StrictMode>);
+if (overlayMode) {
+  void Promise.all([import("react"), import("react-dom/client"), import("./overlay/OverlayApp")]).then(([React, { createRoot }, { OverlayApp }]) => {
+    createRoot(document.getElementById("root")!).render(React.createElement(OverlayApp, { demo: overlayMode === "demo" }));
+  });
+} else {
+  void import("./main-app");
+}

@@ -15,16 +15,16 @@ html.overlay-demo,html.overlay-demo body{background:linear-gradient(#2c4560 0 55
 .ov-badge i{width:6px;height:6px;border-radius:50%;background:#fff}
 .ov-live .ov-badge{position:absolute;left:6px;top:6px}
 .ov-badge.small{padding:0 6px;font-size:10px}
-.ov-live-name{position:absolute;right:6px;bottom:6px;padding:1px 8px;border-radius:999px;background:rgba(0,0,0,.6);font-size:11px}
-.ov-voice{list-style:none;margin:0;padding:8px;display:grid;gap:6px;min-width:150px;border-radius:12px;background:rgba(20,10,30,.72)}
+.ov-live-name{position:absolute;right:6px;bottom:6px;padding:1px 8px;border-radius:999px;background:#000;font-size:11px}
+.ov-voice{list-style:none;margin:0;padding:8px;display:grid;gap:6px;min-width:150px;border-radius:12px;background:#140a1e}
 .ov-voice li{display:flex;align-items:center;gap:8px}
 .ov-avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#8b5cf6,#d946ef);font-weight:700;font-size:12px}
 .ov-voice li.speaking .ov-avatar{box-shadow:0 0 0 2px #75df8c}
 .ov-name{font-weight:500}
 .ov-muted{margin-left:auto;font-size:10px;opacity:.7}
-.ov-status{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;background:rgba(20,10,30,.78);font-weight:500}
+.ov-status{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;background:#140a1e;font-weight:500}
 .ov-status i{width:8px;height:8px;border-radius:50%;background:#75df8c;box-shadow:0 0 8px #75df8c}
-.ov-mute{padding:6px 14px;border-radius:999px;background:rgba(226,75,74,.9);font-weight:600}
+.ov-mute{padding:6px 14px;border-radius:999px;background:#e24b4a;font-weight:600}
 .ov-toolbar{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);display:grid;gap:10px;padding:14px 18px;border-radius:16px;background:rgba(22,10,34,.96);border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 40px rgba(0,0,0,.6);max-width:min(720px,92vw);pointer-events:auto}
 .ov-hint{margin:0;font-size:12px;color:rgba(255,255,255,.75);text-align:center}
 .ov-chips,.ov-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center}
@@ -33,3 +33,6 @@ html.overlay-demo,html.overlay-demo body{background:linear-gradient(#2c4560 0 55
 .ov-chips button.on{background:#7c3aed;border-color:#7c3aed}
 .ov-toolbar button.primary{background:linear-gradient(135deg,#7c3aed,#c026d3);border-color:transparent;font-weight:600}
 .ov-controls label{display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,.8)}
+/* Em edição, o conteúdo não captura o mouse: arrastar em qualquer ponto move o item inteiro. */
+.ov-widget.editable>:not(.ov-handle){pointer-events:none}
+.ov-widget img{-webkit-user-drag:none;user-select:none}

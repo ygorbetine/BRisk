@@ -105,7 +105,7 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
 
   const content: Record<OverlayWidgetId, ReactNode> = {
     live: <div className="ov-live">
-      {frameUrl ? <img src={frameUrl} alt=""/> : <span className="ov-live-empty">{livePerson ? "Carregando transmissão…" : "Transmissão"}</span>}
+      {frameUrl ? <img src={frameUrl} alt="" draggable={false}/> : <span className="ov-live-empty">{livePerson ? "Carregando transmissão…" : "Transmissão"}</span>}
       <span className="ov-badge"><i/>Ao vivo</span>
       <span className="ov-live-name">{livePerson?.name ?? "Sem transmissão"}</span>
     </div>,
@@ -200,6 +200,7 @@ function OverlayWidget({ id, label, settings, editing, onPatch, children }: {
     onPointerMove={move}
     onPointerUp={up}
     onPointerCancel={up}
+    onDragStart={(event) => event.preventDefault()}
     onWheel={(event) => { if (editing) onPatch(id, { scale: steppedScale(widget.scale, event.deltaY < 0 ? 1 : -1) }, true); }}
   >
     {editing && <div className="ov-handle">

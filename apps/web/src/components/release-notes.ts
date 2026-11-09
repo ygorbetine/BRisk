@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.5",
+    items: [
+      "Sobreposição: a miniatura da transmissão e os demais itens podem ser movidos arrastando de qualquer ponto",
+      "A opacidade agora chega ao máximo de verdade (os fundos eram semitransparentes)",
+    ],
+  },
+  {
     version: "0.11.4",
     items: [
       "Sobreposição: ao fixar depois de editar, ela volta ao topo do jogo e a sala conectada fica visível",

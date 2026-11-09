@@ -3,6 +3,12 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.1.1",
+    items: [
+      "Ao começar a transmitir a sua tela, a chamada entra sozinha no modo Transmissão. Ao parar, volta para o modo Call se ninguém mais estiver transmitindo",
+    ],
+  },
+  {
     version: "1.1.0",
     items: [
       "A chamada agora abre no modo Call, só com as pessoas. Quando alguém transmite a tela, um aviso com o botão Assistir leva ao modo Transmissão; o seletor Call | Transmissão fica no cabeçalho",

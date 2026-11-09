@@ -820,6 +820,12 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const liveTileIds = streaming ? allLiveTileIds : [];
   const liveCount = allLiveTileIds.length;
   useEffect(() => { if (streaming && liveCount === 0) setStageMode("call"); }, [streaming, liveCount]);
+  // Ao começar a transmitir a própria tela, entra sozinho no modo Transmissão.
+  const wasSharingRef = useRef(false);
+  useEffect(() => {
+    if (sharingScreen && !wasSharingRef.current) setStageMode("stream");
+    wasSharingRef.current = sharingScreen;
+  }, [sharingScreen]);
   const broadcasterNames = [...new Set([
     ...(sharingScreen ? ["Você"] : []),
     ...peers.filter((peer) => (peer.state.screenShare && peer.state.screenStreamId && peer.streams?.[peer.state.screenStreamId]) || (peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId])).map((peer) => peer.displayName),

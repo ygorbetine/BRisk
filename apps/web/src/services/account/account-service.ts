@@ -44,6 +44,16 @@ function requireClient(): SupabaseClient {
   return supabase;
 }
 
+/** JWT da sessão Supabase atual (null se deslogado ou sem servidor configurado). Usado para autenticar as Edge Functions. */
+export async function getAccountAccessToken(): Promise<string | null> {
+  const supabase = client();
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch { return null; }
+}
+
 export function isAccountConfigured(): boolean {
   return Boolean(client());
 }

@@ -1,26 +1,51 @@
-// Edge Function: emite tokens do LiveKit. O segredo fica só no servidor.
-// Secrets: LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL (supabase secrets set ...)
+// Edge Function: emite tokens do LiveKit para usuários logados. O segredo fica só no servidor.
+// Secrets: LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL. Opcionais: ALLOWED_ORIGINS, LIVEKIT_TOKEN_TTL_SECONDS (máx. 3600).
+// Deploy (JWT do gateway ligado, sem --no-verify-jwt): supabase functions deploy livekit-token
+//
+// LIMITAÇÃO CONHECIDA: as salas são derivadas de um segredo do grupo que só existe nos dispositivos dos membros
+// (groupRendezvousId); o servidor não tem a lista de membros, então NÃO consegue provar que o usuário pertence à sala.
+// Melhor checagem possível sem tabela nova: sessão válida, identity = peerId registrado e não revogado do próprio usuário
+// (profile_keys), formato de sala validado, TTL de 1 h e limite de requisições. Quem não sabe o nome da sala (segredo
+// de ~122 bits) não entra nela. Uma tabela de membros por sala fecharia essa lacuna no futuro.
 import { AccessToken } from "npm:livekit-server-sdk@2";
+import { authenticate, peerBelongsToUser } from "../_shared/auth.ts";
+import { RateLimiter, clampTtl, clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed, parseAllowedOrigins } from "../_shared/guard.ts";
 
-const cors = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-headers": "authorization, content-type, apikey",
-  "access-control-allow-methods": "POST, OPTIONS",
-};
+const allowedOrigins = parseAllowedOrigins(Deno.env.get("ALLOWED_ORIGINS"));
+const perUser = new RateLimiter(30, 10 * 60_000);
+const perIp = new RateLimiter(90, 10 * 60_000);
 
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") return new Response(null, { headers: cors });
-  if (request.method !== "POST") return new Response("method not allowed", { status: 405, headers: cors });
-  const { room, identity } = await request.json().catch(() => ({}));
-  if (typeof room !== "string" || typeof identity !== "string" || !room || !identity || room.length > 128 || identity.length > 128) {
-    return new Response("invalid body", { status: 400, headers: cors });
+  const origin = request.headers.get("origin");
+  const cors = corsHeaders(origin, allowedOrigins, "POST, OPTIONS");
+  const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, ...extra, "content-type": "application/json", "cache-control": "no-store" } });
+  if (!originAllowed(origin, allowedOrigins)) return json({ message: "Origem não permitida." }, 403);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  if (request.method !== "POST") return json({ message: "Método não permitido." }, 405);
+
+  const ipWait = perIp.check(clientIp(request.headers));
+  if (ipWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(ipWait) });
+  const user = await authenticate(request);
+  if (!user) return json({ message: "Entre na sua conta Briks para usar o servidor de chamadas." }, 401);
+  const userWait = perUser.check(user.id);
+  if (userWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(userWait) });
+
+  const body = await request.json().catch(() => ({})) as { room?: unknown; peerId?: unknown };
+  if (!isValidRoom(body.room)) return json({ message: "Nome de sala inválido." }, 400);
+  // A identidade nunca vem do corpo livremente: é o usuário, ou um peerId (UUID) registrado para ele.
+  let identity = user.id;
+  if (body.peerId !== undefined) {
+    if (!isValidPeerId(body.peerId)) return json({ message: "peerId inválido." }, 400);
+    if (!(await peerBelongsToUser(user, body.peerId))) return json({ message: "Esta instalação não está registrada na sua conta." }, 403);
+    identity = body.peerId;
   }
-  const token = new AccessToken(Deno.env.get("LIVEKIT_API_KEY")!, Deno.env.get("LIVEKIT_API_SECRET")!, {
-    identity,
-    ttl: "6h",
-  });
-  token.addGrant({ room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
-  return new Response(JSON.stringify({ token: await token.toJwt(), url: Deno.env.get("LIVEKIT_URL") }), {
-    headers: { ...cors, "content-type": "application/json" },
-  });
+
+  const key = Deno.env.get("LIVEKIT_API_KEY");
+  const secret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!key || !secret) return json({ message: "LiveKit não configurado." }, 503);
+  const ttl = clampTtl(Deno.env.get("LIVEKIT_TOKEN_TTL_SECONDS"));
+  const token = new AccessToken(key, secret, { identity, ttl });
+  token.addGrant({ room: body.room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
+  return json({ token: await token.toJwt(), url: Deno.env.get("LIVEKIT_URL"), ttl });
 });

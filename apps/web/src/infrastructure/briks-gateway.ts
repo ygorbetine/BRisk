@@ -6,6 +6,7 @@ import {
   loadLocalIdentity,
 } from "../services/offline/social-storage";
 import { checkAdult, rememberAdultDeclaration } from "../services/account/age";
+import { getAccountAccessToken } from "../services/account/account-service";
 import { resolveStaticIceConfiguration } from "../services/rtc/ice";
 import { TemporaryTurnCredentialClient } from "../services/rtc/turn-credentials";
 import type {
@@ -266,9 +267,11 @@ async function createChannel(token: string, communityId: string, name: string, k
 
 async function turnCredentials(token: string): Promise<{ iceServers: RTCIceServer[] }> {
   const client = configuredTurnCredentialClient();
-  if (client) {
+  // O emissor TURN exige sessão Supabase; sem login, cai direto na configuração ICE pública (STUN/fallback).
+  const accountToken = client ? await getAccountAccessToken() : null;
+  if (client && accountToken) {
     try {
-      const credentials = await client.get(isLocalSessionToken(token) ? undefined : token);
+      const credentials = await client.get(accountToken);
       return { iceServers: credentials.iceServers };
     } catch (error) {
       console.warn("Não foi possível obter credenciais TURN temporárias; usando a configuração ICE de fallback.", error);

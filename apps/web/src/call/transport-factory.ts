@@ -8,22 +8,36 @@ import {
   type CallTransportDecision,
   type CallTransportPreference,
 } from "@briks/rtc";
+import { getAccountAccessToken } from "../services/account/account-service";
 import { LiveKitTransport, type SfuConnectionProvider } from "@briks/rtc/sfu";
 
 const sfuTokenUrl = (import.meta.env?.VITE_LIVEKIT_TOKEN_URL as string | undefined)?.trim();
 const sfuServerUrl = (import.meta.env?.VITE_LIVEKIT_URL as string | undefined)?.trim();
 const supabaseAnonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
 
-/** Pede ao serviço de tokens a URL e o token do SFU; o segredo da API fica no servidor. */
-export function createSfuConnectionProvider(tokenUrl: string, serverUrl?: string, publicKey = supabaseAnonKey): SfuConnectionProvider {
-  return async ({ roomId, localPeerId, accessToken }) => {
+export const SFU_LOGIN_REQUIRED_MESSAGE = "Entre na sua conta Briks para usar chamadas em grupo pelo servidor. Sem login, chamadas pequenas continuam funcionando direto entre os participantes (P2P).";
+
+/** Pede ao serviço de tokens a URL e o token do SFU; exige a sessão do usuário (JWT do Supabase). O segredo da API fica no servidor. */
+export function createSfuConnectionProvider(
+  tokenUrl: string,
+  serverUrl?: string,
+  publicKey = supabaseAnonKey,
+  getSessionToken: () => Promise<string | null> = getAccountAccessToken,
+): SfuConnectionProvider {
+  return async ({ roomId, localPeerId }) => {
+    const sessionToken = await getSessionToken();
+    if (!sessionToken) throw new Error(SFU_LOGIN_REQUIRED_MESSAGE);
     const response = await fetch(tokenUrl, {
       method: "POST",
-      // Funções do Supabase exigem a chave pública (anon). Sem ela, usa o token do backend local.
-      headers: { "content-type": "application/json", ...(publicKey ? { apikey: publicKey, authorization: `Bearer ${publicKey}` } : accessToken ? { authorization: `Bearer ${accessToken}` } : {}) },
-      body: JSON.stringify({ room: roomId, identity: localPeerId }),
+      headers: { "content-type": "application/json", ...(publicKey ? { apikey: publicKey } : {}), authorization: `Bearer ${sessionToken}` },
+      // A identidade é derivada da sessão no servidor; o peerId só é aceito se estiver registrado na conta.
+      body: JSON.stringify({ room: roomId, peerId: localPeerId }),
     });
-    if (!response.ok) throw new Error(`Serviço de tokens do SFU respondeu ${response.status}.`);
+    if (response.status === 401) throw new Error(SFU_LOGIN_REQUIRED_MESSAGE);
+    if (!response.ok) {
+      const detail = await response.json().then((body: { message?: unknown }) => (typeof body.message === "string" ? body.message : "")).catch(() => "");
+      throw new Error(detail || `Serviço de tokens do SFU respondeu ${response.status}.`);
+    }
     const body = await response.json() as { token?: string; url?: string };
     const url = body.url ?? serverUrl;
     if (!body.token || !url) throw new Error("Resposta inválida do serviço de tokens do SFU.");

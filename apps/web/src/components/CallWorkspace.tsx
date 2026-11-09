@@ -331,7 +331,7 @@ function LocalVideoTile({
   >
     <video ref={videoRef} autoPlay playsInline muted className={`${source}${mirrored ? " mirrored" : ""}`}/>
     <FullscreenButton target={articleRef}/>
-    <div className="tile-label"><span>Você · {label}</span>{!microphone && <MicOff size={15}/>} {!compact && <em>PRÉVIA</em>}</div>
+    <div className="tile-label" title={`Você · ${label}`}><span>Você · {compact ? label.split(" · ")[0] : label}</span>{!microphone && <MicOff size={15}/>} {!compact && <em>PRÉVIA</em>}</div>
   </article>;
 }
 

@@ -3,6 +3,12 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.10",
+    items: [
+      "O rótulo da sua tela em miniatura ficou pequeno e numa linha só, sem cobrir a imagem quando a tela de um amigo está em destaque",
+    ],
+  },
+  {
     version: "0.11.9",
     items: [
       "A miniatura Ao vivo da barra lateral mostra qualquer tela compartilhada na sala, dando preferência à que está maximizada",

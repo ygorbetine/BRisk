@@ -328,3 +328,16 @@ body {
 .modal .modal-header h2 { margin: 0; line-height: 1.2; font-size: 22px; }
 .modal .modal-header .modal-close { position: static; flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border-radius: 10px; font-size: 22px; line-height: 1; background: #ffffff0d; color: #cdbfe0; }
 .modal .modal-header .modal-close:hover { background: #ffffff12; color: #fff; transform: none; filter: none; }
+
+/* Miniaturas (quando outra tela está em destaque): rótulo pequeno, numa linha só, que não cobre a imagem. */
+.call-workspace .tile.thumbnail .tile-label,
+.call-workspace .tile.local.screen.thumbnail .tile-label {
+  top: 8px; bottom: auto; left: 8px; right: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: calc(100% - 52px);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 11px; line-height: 1.4;
+  white-space: nowrap; overflow: hidden;
+}
+.call-workspace .tile.thumbnail .tile-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

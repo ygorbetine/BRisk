@@ -312,6 +312,9 @@ body {
 .friends-layout .friends-tabs button{height:32px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;line-height:1}
 .friends-layout .friends-tabs .friends-search{flex:1 1 150px;min-width:120px;max-width:240px;width:auto;height:32px;margin:0 0 0 auto;padding:0 14px;border-radius:999px;font-size:13px}
 .auth-card .auth-hint{margin:10px 0 0;text-align:center;color:#a592b8;font-size:13px}
+.auth-card .auth-birth{display:grid;gap:6px;color:#e8dcf5;font-size:13px;font-weight:600;text-align:left}
+.auth-card .auth-birth input{color-scheme:dark;margin:0}
+.auth-card .auth-birth small{color:#a592b8;font-size:12px;font-weight:400;line-height:1.4}
 .friends-layout .friends-tabs .friends-search{flex:1 1 100%;max-width:none;margin:2px 0 0}
 .profile-account{max-height:none;overflow:visible;padding-right:0}
 .modal:has(.profile-account){width:min(520px,calc(100vw - 32px))}

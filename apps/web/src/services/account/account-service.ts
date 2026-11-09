@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { checkAdult } from "./age";
 import { checkNick, friendlyAccountError } from "./nick";
 
 /** Parte da identidade local que a conta precisa para registrar esta instalação. */
@@ -77,9 +78,12 @@ export async function loadAccountState(identity?: AccountIdentity): Promise<Acco
   }
 }
 
-export async function signUpAccount(email: string, password: string): Promise<SignUpResult> {
+export async function signUpAccount(email: string, password: string, birthDate: string): Promise<SignUpResult> {
+  const age = checkAdult(birthDate);
+  if (!age.ok) throw new Error(age.message);
   const supabase = requireClient();
-  const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
+  // Guardamos só a declaração de maioridade, não a data de nascimento.
+  const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { adult_declared_at: new Date().toISOString() } } });
   if (error) throw new Error(friendlyAccountError(error));
   return { needsEmailConfirmation: !data.session };
 }

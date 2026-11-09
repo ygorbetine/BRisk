@@ -5,6 +5,7 @@ import {
   loadLocalGroups,
   loadLocalIdentity,
 } from "../services/offline/social-storage";
+import { checkAdult, rememberAdultDeclaration } from "../services/account/age";
 import { resolveStaticIceConfiguration } from "../services/rtc/ice";
 import { TemporaryTurnCredentialClient } from "../services/rtc/turn-credentials";
 import type {
@@ -177,7 +178,10 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return body;
 }
 
-async function register(displayName: string, email: string, password: string): Promise<{ accessToken: string }> {
+async function register(displayName: string, email: string, password: string, birthDate: string): Promise<{ accessToken: string }> {
+  const age = checkAdult(birthDate);
+  if (!age.ok) throw new ApiRequestError(age.message, 400);
+  rememberAdultDeclaration();
   if (!isApiConfigured()) {
     const name = displayName.trim();
     if (name.length < 2 || name.length > 80) throw new ApiRequestError("Nome deve ter entre 2 e 80 caracteres.", 400);

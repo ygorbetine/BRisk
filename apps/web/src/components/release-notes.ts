@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.13",
+    items: [
+      "Zoom na transmissão, dentro e fora da tela cheia: roda do mouse ou pinça aproxima, arrastar move a imagem e o selo com a porcentagem volta ao normal",
+      "Criar conta pede a data de nascimento: o Briks é só para maiores de 18 anos (a data não fica guardada)",
+    ],
+  },
+  {
     version: "0.11.12",
     items: [
       "A janela de Configurações tem tamanho fixo e não muda de uma aba para outra",

@@ -4,6 +4,7 @@ import { useBriksApplication } from "../application/ApplicationContext";
 import { useCallStore } from "../store";
 import { friendlyAuthError } from "./auth-errors";
 import { resolveLoginIdentifier } from "../services/account/login-hints";
+import { MIN_AGE, checkAdult, todayIso } from "../services/account/age";
 
 export function AuthView() {
   const { gateway: api, session } = useBriksApplication();
@@ -32,8 +33,12 @@ export function AuthView() {
         if ("error" in target) { setError(target.error); return; }
         email = target.email;
       }
+      if (register) {
+        const age = checkAdult(String(data.get("birthDate") ?? ""));
+        if (!age.ok) { setError(age.message); return; }
+      }
       const result = register
-        ? await api.register(String(data.get("name")), email, String(data.get("password")))
+        ? await api.register(String(data.get("name")), email, String(data.get("password")), String(data.get("birthDate")))
         : await api.login(email, String(data.get("password")));
       session.allowRestore();
       setSession(result.accessToken);
@@ -50,6 +55,10 @@ export function AuthView() {
       {register && <input name="name" placeholder="Como devemos chamar você?" minLength={2} required/>}
       <input name="email" type={register ? "email" : "text"} autoComplete={register ? "email" : "username"} placeholder={register ? "seu@email.com" : "E-mail ou @nick"} required/>
       <input name="password" type="password" minLength={8} placeholder={reset ? "Nova senha (mínimo 8 caracteres)" : "Senha"} autoComplete={reset ? "new-password" : "current-password"} required/>
+      {register && <label className="auth-birth">Data de nascimento
+        <input name="birthDate" type="date" max={todayIso()} autoComplete="bday" required/>
+        <small>O Briks é só para maiores de {MIN_AGE} anos. A data não fica guardada.</small>
+      </label>}
       {reset && <input name="confirm" type="password" minLength={8} placeholder="Repita a nova senha" autoComplete="new-password" required/>}
       {error && <div className="error" role="alert">{error}</div>}
       <button>{reset ? "Redefinir e entrar" : "Continuar"}</button>

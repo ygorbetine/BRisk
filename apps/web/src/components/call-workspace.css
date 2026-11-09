@@ -104,3 +104,14 @@ select option:checked{background:#6d3fc4;color:#fff}
 
 /* Layout 0.7.0: barra de controles flutuante em formato de pílula */
 .room.call-workspace>footer{justify-self:center;width:fit-content;max-width:calc(100% - 24px);margin:0 auto 14px;padding:8px 16px;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(26,10,38,.78);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 14px 40px rgba(0,0,0,.45)}
+
+/* Zoom na transmissão (roda do mouse / pinça; arrastar move). */
+.call-workspace .stage .tile.screen{overflow:hidden}
+.call-workspace .stage .tile.zoomed{cursor:grab}
+.call-workspace .stage .tile.zoomed:active{cursor:grabbing}
+.call-workspace .stage .tile .zoom-badge{position:absolute;top:12px;left:12px;z-index:6;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(15,3,22,.82);color:#fff;font:600 12px/1 inherit;box-shadow:none;backdrop-filter:blur(10px)}
+.call-workspace .stage .tile .zoom-badge:hover{background:rgba(109,63,196,.9)}
+.call-workspace .stage .tile .zoom-hint{position:absolute;right:12px;bottom:12px;z-index:5;padding:6px 10px;border-radius:999px;background:rgba(15,3,22,.78);color:#e8dcf5;font-size:12px;line-height:1;pointer-events:none;opacity:0;transition:opacity .2s ease}
+.call-workspace .stage .tile:hover .zoom-hint{opacity:.9;animation:zoom-hint-out .2s ease 2.8s forwards}
+@keyframes zoom-hint-out{to{opacity:0}}
+.call-workspace[data-briks-native-fullscreen-active="true"] .zoom-hint{display:none!important}

@@ -1,6 +1,7 @@
 import { BriksMark } from "./BriksMark";
 import { Modal } from "./Modal";
 import { SettingsView } from "../views/SettingsView";
+import { useVideoZoom } from "./video-zoom";
 import { loadCallLayoutMode, saveCallLayoutMode, weightedRows, bestFitLayout, type CallLayoutMode } from "./call-layout-mode";
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
@@ -205,10 +206,11 @@ function VideoTile({
   const userHasAudio = Boolean(microphoneStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const screenHasAudio = Boolean(screenStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const speaking = useVoiceActivity(microphoneStream, participant.state.microphone && userHasAudio);
+  const zoom = useVideoZoom(articleRef, source === "screen" && hasVideo && !compact);
 
   return <article
     ref={articleRef}
-    className={`tile ${source} ${participant.connection === "connected" ? "online" : ""} ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
+    className={`tile ${source} ${zoom.zoomed ? "zoomed" : ""} ${participant.connection === "connected" ? "online" : ""} ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
     onClick={(event) => {
       if ((event.target as HTMLElement).closest("button,input,.volume-panel")) return;
       onFocus(tileId);
@@ -218,7 +220,8 @@ function VideoTile({
       void articleRef.current?.requestFullscreen().catch(() => undefined);
     }}
   >
-    <video ref={videoRef} autoPlay playsInline muted className={hasVideo ? source : "hidden-video"}/>
+    <video ref={videoRef} autoPlay playsInline muted className={hasVideo ? source : "hidden-video"} style={zoom.videoStyle}/>
+    {zoom.badge}
     {!hasVideo && <div className="video-off"><ProfileAvatar displayName={participant.displayName} avatar={participant.avatar} className="call-profile-avatar"/><span>Vídeo desligado</span></div>}
     {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened || remoteMuted ? 0 : userVolume}/>}
     {screenHasAudio && <RemoteAudio stream={screenStream!} volume={deafened ? 0 : screenVolume}/>}
@@ -253,16 +256,18 @@ function RemoteSecondScreenTile({ participant, stream, tileId, focused, compact,
       void videoRef.current.play().catch(() => undefined);
     }
   }, [stream, trackKey]);
+  const zoom = useVideoZoom(articleRef, !compact);
   return <article
     ref={articleRef}
-    className={`tile screen online ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
+    className={`tile screen online ${zoom.zoomed ? "zoomed" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
     onClick={(event) => {
       if ((event.target as HTMLElement).closest("button")) return;
       onFocus(tileId);
     }}
     onDoubleClick={() => { void articleRef.current?.requestFullscreen().catch(() => undefined); }}
   >
-    <video ref={videoRef} autoPlay playsInline muted className="screen"/>
+    <video ref={videoRef} autoPlay playsInline muted className="screen" style={zoom.videoStyle}/>
+    {zoom.badge}
     <FullscreenButton target={articleRef}/>
     <div className="tile-label"><span>{participant.displayName} · 2ª tela</span></div>
   </article>;
@@ -319,17 +324,19 @@ function LocalVideoTile({
       void videoRef.current.play().catch(() => undefined);
     }
   }, [stream]);
+  const zoom = useVideoZoom(articleRef, !mirrored && !compact);
 
   return <article
     ref={articleRef}
-    className={`tile local online ${source} ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
+    className={`tile local online ${source} ${zoom.zoomed ? "zoomed" : ""} ${speaking ? "speaking" : ""} ${focused ? "focused" : ""} ${compact ? "thumbnail" : ""}`}
     onClick={(event) => {
       if ((event.target as HTMLElement).closest("button")) return;
       onFocus(tileId);
     }}
     onDoubleClick={() => { void articleRef.current?.requestFullscreen().catch(() => undefined); }}
   >
-    <video ref={videoRef} autoPlay playsInline muted className={`${source}${mirrored ? " mirrored" : ""}`}/>
+    <video ref={videoRef} autoPlay playsInline muted className={`${source}${mirrored ? " mirrored" : ""}`} style={zoom.videoStyle}/>
+    {zoom.badge}
     <FullscreenButton target={articleRef}/>
     <div className="tile-label" title={`Você · ${label}`}><span>Você · {compact ? label.split(" · ")[0] : label}</span>{!microphone && <MicOff size={15}/>} {!compact && <em>PRÉVIA</em>}</div>
   </article>;

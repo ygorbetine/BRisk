@@ -11,6 +11,7 @@ import {
   type AccountIdentity,
   type AccountState,
 } from "../services/account/account-service";
+import { MIN_AGE, todayIso } from "../services/account/age";
 import { checkNick, friendlyAccountError } from "../services/account/nick";
 import { rememberLogin, resolveLoginIdentifier } from "../services/account/login-hints";
 import { loadLocalIdentity } from "../services/offline/social-storage";
@@ -26,6 +27,7 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nick, setNick] = useState("");
+  const [birthDate, setBirthDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -67,7 +69,7 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
     void run(async () => {
       if (mode === "signup") {
         if (password.length < 8) throw new Error("A senha precisa ter pelo menos 8 caracteres.");
-        const result = await signUpAccount(email, password);
+        const result = await signUpAccount(email, password, birthDate);
         if (result.needsEmailConfirmation) {
           setNotice("Conta criada. Abra o link que enviamos para o seu e-mail e depois use Entrar.");
           setMode("signin");
@@ -108,6 +110,10 @@ export function AccountPanel({ onNickChanged }: { onNickChanged?(nick: string | 
       </div>
       <input type={mode === "signin" ? "text" : "email"} autoComplete={mode === "signin" ? "username" : "email"} placeholder={mode === "signin" ? "E-mail ou @nick" : "E-mail"} value={email} onChange={(event) => setEmail(event.target.value)} required/>
       <input type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder="Senha (mínimo 8 caracteres)" value={password} onChange={(event) => setPassword(event.target.value)} required/>
+      {mode === "signup" && <label className="account-birth">Data de nascimento
+        <input type="date" max={todayIso()} autoComplete="bday" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} required/>
+        <small>O Briks é só para maiores de {MIN_AGE} anos. A data não fica guardada.</small>
+      </label>}
       {error && <p className="account-error">{error}</p>}
       {notice && <p className="account-notice">{notice}</p>}
       <button type="submit" disabled={busy}>{busy ? "Aguarde…" : mode === "signup" ? "Criar conta" : "Entrar"}</button>

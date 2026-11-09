@@ -29,7 +29,7 @@ export type VoiceActivity = {
 };
 
 export interface BriksGateway {
-  register(displayName: string, email: string, password: string): Promise<{ accessToken: string }>;
+  register(displayName: string, email: string, password: string, birthDate: string): Promise<{ accessToken: string }>;
   login(email: string, password: string): Promise<{ accessToken: string }>;
   resetPassword(email: string, newPassword: string): Promise<{ accessToken: string }>;
   refresh(): Promise<{ accessToken: string }>;

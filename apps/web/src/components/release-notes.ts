@@ -3,6 +3,12 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.8",
+    items: [
+      "Barra de opacidade do modo de edição da sobreposição vai de 0 a 100% com o trilho cheio",
+    ],
+  },
+  {
     version: "0.11.7",
     items: [
       "Corrigido o risco roxo que aparecia no topo da tela quando a sobreposição estava ativa",

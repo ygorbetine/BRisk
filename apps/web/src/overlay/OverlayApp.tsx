@@ -146,7 +146,7 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
       </div>
       <div className="ov-controls">
         <label>Opacidade
-          <input type="range" min={0} max={100} step={1} value={Math.round(settings.opacity * 100)} aria-label="Opacidade" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 }, true)}/>
+          <input type="range" className="sx-range" style={{ "--fill": `${Math.round(settings.opacity * 100)}%`, width: 200 } as CSSProperties} min={0} max={100} step={1} value={Math.round(settings.opacity * 100)} aria-label="Opacidade" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 }, true)}/>
         </label>
         {nextLive && <button type="button" onClick={() => { if (overlay) overlay.sendCommand({ type: "select-live", peerId: nextLive }); else setState({ ...state, liveId: nextLive }); }}>Trocar transmissão</button>}
         <button type="button" className="primary" onClick={finishEditing}>Concluir</button>

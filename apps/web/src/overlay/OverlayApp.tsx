@@ -145,7 +145,7 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
         >{widget.label}</button>)}
       </div>
       <div className="ov-controls">
-        <label>Transparência
+        <label>Opacidade
           <input type="range" min={30} max={100} step={5} value={Math.round(settings.opacity * 100)} aria-label="Opacidade" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 }, true)}/>
         </label>
         {nextLive && <button type="button" onClick={() => { if (overlay) overlay.sendCommand({ type: "select-live", peerId: nextLive }); else setState({ ...state, liveId: nextLive }); }}>Trocar transmissão</button>}

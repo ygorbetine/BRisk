@@ -1,0 +1,37 @@
+.sp-backdrop{position:fixed;z-index:40;inset:0;display:grid;place-items:center;padding:24px;background:#030508cc;backdrop-filter:blur(8px)}
+.sp{width:min(940px,100%);max-height:min(720px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;background:#1a0a26;border:1px solid #ffffff16;border-radius:20px;overflow:hidden;box-shadow:0 30px 100px #000c}
+.sp-head{display:flex;align-items:center;gap:14px;padding:18px 20px 14px}
+.sp-head-icon{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;background:color-mix(in srgb,var(--briks-c3) 18%,transparent);color:var(--briks-c3)}
+.sp-head-text{flex:1;min-width:0}
+.sp-head-text h2{margin:0;font:700 18px/1.2 Manrope,system-ui,sans-serif;color:#f4eefb}
+.sp-head-text p{margin:3px 0 0;font-size:13px;color:#a592b8}
+.sp .sp-close{width:36px;height:36px;padding:0;display:grid;place-items:center;border-radius:11px;background:#ffffff0d;color:#cdbfe0}
+.sp .sp-close:hover{background:#ffffff1c;color:#fff;transform:none;filter:none}
+.sp-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 20px 14px;flex-wrap:wrap}
+.sp-tabs{display:inline-flex;padding:3px;border-radius:12px;background:#0f0316;border:1px solid #ffffff0d}
+.sp .sp-tabs button{padding:7px 16px;border-radius:9px;background:transparent;color:#a592b8;font-size:13px;font-weight:600}
+.sp .sp-tabs button:hover{transform:none;filter:none;color:#fff}
+.sp .sp-tabs button.on{background:var(--briks-c3);color:#fff}
+.sp-tabs small{margin-left:5px;opacity:.75;font-weight:500}
+.sp .sp-audio{display:inline-flex;align-items:center;gap:9px;padding:7px 8px 7px 12px;border-radius:999px;background:#ffffff0d;color:#a592b8;font-size:13px;font-weight:600}
+.sp .sp-audio:hover{transform:none;filter:none;background:#ffffff16}
+.sp .sp-audio.on{color:#fff}
+.sp-audio i{position:relative;width:34px;height:20px;border-radius:999px;background:#ffffff22;transition:background .15s}
+.sp-audio i::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s}
+.sp-audio.on i{background:var(--briks-c3)}
+.sp-audio.on i::after{transform:translateX(14px)}
+.sp-grid{padding:4px 20px 18px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;align-content:start}
+.sp .sp-card{display:grid;gap:9px;padding:0;background:transparent;color:#dccfe9;text-align:left;border-radius:14px}
+.sp .sp-card:hover{transform:none;filter:none;color:#fff}
+.sp-thumb{position:relative;aspect-ratio:16/9;display:grid;place-items:center;border-radius:12px;overflow:hidden;background:#080b10;outline:1px solid #ffffff12;outline-offset:-1px;transition:outline-color .15s,box-shadow .15s}
+.sp-thumb img{width:100%;height:100%;object-fit:cover}
+.sp-thumb svg{color:#637080}
+.sp-thumb em{position:absolute;inset:auto 10px 10px auto;padding:5px 11px;border-radius:999px;background:var(--briks-c3);color:#fff;font-size:12px;font-style:normal;font-weight:700;opacity:0;transform:translateY(4px);transition:opacity .15s,transform .15s}
+.sp-card:hover .sp-thumb,.sp-card:focus-visible .sp-thumb{outline:2px solid var(--briks-c3);outline-offset:-2px;box-shadow:0 8px 28px color-mix(in srgb,var(--briks-c3) 30%,transparent)}
+.sp-card:hover .sp-thumb em,.sp-card:focus-visible .sp-thumb em{opacity:1;transform:none}
+.sp-name{padding:0 2px;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-state{display:grid;place-items:center;align-content:center;gap:10px;min-height:220px;color:#a592b8}
+.sp-state svg{color:var(--briks-c3);animation:session-pulse 1.2s ease-in-out infinite}
+.sp-foot{padding:12px 20px 14px;border-top:1px solid #ffffff0d;font-size:12px;line-height:1.4;color:#8d7aa3}
+@media(max-width:560px){.sp-backdrop{padding:10px}.sp{max-height:calc(100vh - 20px)}.sp-grid{grid-template-columns:1fr 1fr;gap:10px;padding:4px 12px 12px}.sp-bar{padding:0 12px 12px}.sp-head{padding:14px 12px 10px}}
+@media(prefers-reduced-motion:reduce){.sp-thumb,.sp-thumb em,.sp-audio i,.sp-audio i::after{transition:none}}

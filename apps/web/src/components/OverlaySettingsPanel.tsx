@@ -40,7 +40,7 @@ export function OverlaySettingsPanel() {
       </div>)}
       <div className="sx-divider"/>
       <label className="sx-row">
-        <div><strong>Transparência</strong><small>{Math.round(settings.opacity * 100)}% de opacidade</small></div>
+        <div><strong>Opacidade</strong><small>{Math.round(settings.opacity * 100)}%</small></div>
         <input type="range" min={30} max={100} step={5} value={Math.round(settings.opacity * 100)} aria-label="Opacidade da sobreposição" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 })}/>
       </label>
     </div>

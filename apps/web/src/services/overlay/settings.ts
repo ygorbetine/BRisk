@@ -21,13 +21,13 @@ export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 2;
 
 export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
-  enabled: false,
+  enabled: true,
   opacity: 0.92,
   widgets: {
     live: { on: true, x: 80, y: 2, scale: 1 },
     voice: { on: false, x: 1, y: 28, scale: 1 },
-    status: { on: false, x: 1, y: 5, scale: 1 },
-    mute: { on: false, x: 2, y: 90, scale: 1 },
+    status: { on: true, x: 1, y: 5, scale: 1 },
+    mute: { on: true, x: 2, y: 90, scale: 1 },
   },
 };
 
@@ -49,7 +49,7 @@ export function sanitizeOverlaySettings(raw: unknown): OverlaySettings {
       scale: clamp(item.scale, MIN_SCALE, MAX_SCALE, fallback.scale),
     };
   }
-  return { enabled: source.enabled === true, opacity: clamp(source.opacity, 0.3, 1, DEFAULT_OVERLAY_SETTINGS.opacity), widgets };
+  return { enabled: source.enabled !== false, opacity: clamp(source.opacity, 0.3, 1, DEFAULT_OVERLAY_SETTINGS.opacity), widgets };
 }
 
 export function loadOverlaySettings(): OverlaySettings {

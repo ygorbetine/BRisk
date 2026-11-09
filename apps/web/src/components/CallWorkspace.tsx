@@ -53,6 +53,7 @@ import { InCallAudioSettings } from "./InCallAudioSettings";
 import { MessageComposer } from "./MessageComposer";
 import { ProfileAvatar } from "./ProfileAvatar";
 import "./call-workspace.css";
+import "./screen-picker.css";
 
 type ViewMode = "call" | "chat";
 
@@ -363,31 +364,35 @@ function ScreenSourcePicker({
   const [tab, setTab] = useState<"screens" | "windows">("screens");
   const active = tab === "screens" && screens.length === 0 && windows.length > 0 ? "windows" : tab;
   const visible = active === "screens" ? screens : windows;
-  return <div className="screen-picker-backdrop" onMouseDown={onClose}>
-    <section className="screen-picker" onMouseDown={(event) => event.stopPropagation()}>
-      <header>
-        <div><MonitorUp/><span><strong>Compartilhar tela</strong><small>Escolha uma tela ou janela</small></span></div>
-        <button
-          className={`screen-audio-option ${includeAudio ? "active" : ""}`}
-          onClick={() => onAudioChange(!includeAudio)}
-          aria-pressed={includeAudio}
-          title={includeAudio ? "O áudio do sistema será transmitido" : "Apenas o vídeo da tela será transmitido"}
-        >{includeAudio ? <Volume2 size={17}/> : <VolumeX size={17}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span></button>
-        <button className="screen-picker-close" onClick={onClose} aria-label="Fechar"><X/></button>
+  return <div className="sp-backdrop" onMouseDown={onClose}>
+    <section className="sp" role="dialog" aria-modal="true" aria-label="Compartilhar tela" onMouseDown={(event) => event.stopPropagation()}>
+      <header className="sp-head">
+        <span className="sp-head-icon"><MonitorUp size={20}/></span>
+        <div className="sp-head-text"><h2>Compartilhar tela</h2><p>Escolha o que aparece na chamada</p></div>
+        <button className="sp-close" onClick={onClose} aria-label="Fechar"><X size={18}/></button>
       </header>
-      <p className="screen-picker-note">Janela: só o som dela (sem Discord). Abas do navegador compartilham o som do navegador inteiro.</p>
-      <div className="screen-picker-tabs" role="tablist" aria-label="Tipo de fonte">
-        <button role="tab" aria-selected={active === "screens"} className={active === "screens" ? "on" : ""} onClick={() => setTab("screens")}>Telas <small>{screens.length}</small></button>
-        <button role="tab" aria-selected={active === "windows"} className={active === "windows" ? "on" : ""} onClick={() => setTab("windows")}>Janelas <small>{windows.length}</small></button>
+      <div className="sp-bar">
+        <div className="sp-tabs" role="tablist" aria-label="Tipo de fonte">
+          <button role="tab" aria-selected={active === "screens"} className={active === "screens" ? "on" : ""} onClick={() => setTab("screens")}>Telas <small>{screens.length}</small></button>
+          <button role="tab" aria-selected={active === "windows"} className={active === "windows" ? "on" : ""} onClick={() => setTab("windows")}>Janelas <small>{windows.length}</small></button>
+        </div>
+        <button
+          className={`sp-audio ${includeAudio ? "on" : ""}`}
+          onClick={() => onAudioChange(!includeAudio)}
+          role="switch"
+          aria-checked={includeAudio}
+          title={includeAudio ? "O áudio será transmitido" : "Só o vídeo será transmitido"}
+        >{includeAudio ? <Volume2 size={16}/> : <VolumeX size={16}/>}<span>{includeAudio ? "Com áudio" : "Sem áudio"}</span><i aria-hidden="true"/></button>
       </div>
-      {loading ? <div className="screen-picker-loading"><Sparkles/><span>Buscando telas e janelas…</span></div> :
-        <div className="screen-source-grid">
-          {visible.map((source) => <button key={source.id} className="screen-source" onClick={() => onChoose(source)}>
-            <div className="screen-source-preview">{source.thumbnail ? <img src={source.thumbnail} alt=""/> : <MonitorUp/>}</div>
-            <span title={source.name}>{source.name}</span>
+      {loading ? <div className="sp-state"><Sparkles/><span>Buscando telas e janelas…</span></div> :
+        visible.length === 0 ? <div className="sp-state"><span>{active === "screens" ? "Nenhuma tela encontrada." : "Nenhuma janela aberta encontrada."}</span></div> :
+        <div className="sp-grid">
+          {visible.map((source) => <button key={source.id} className="sp-card" onClick={() => onChoose(source)}>
+            <span className="sp-thumb">{source.thumbnail ? <img src={source.thumbnail} alt=""/> : <MonitorUp/>}<em>Transmitir</em></span>
+            <span className="sp-name" title={source.name}>{source.name}</span>
           </button>)}
-          {!visible.length && <div className="screen-picker-empty">{active === "screens" ? "Nenhuma tela encontrada." : "Nenhuma janela aberta encontrada."}</div>}
         </div>}
+      <footer className="sp-foot">Janela: só o som dela, sem o do Discord. Abas do navegador levam o som do navegador inteiro.</footer>
     </section>
   </div>;
 }

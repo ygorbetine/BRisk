@@ -3,6 +3,14 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.3",
+    items: [
+      "Sobreposição em jogos agora vem ligada por padrão, mostrando a sala e o aviso de mudo mesmo sem transmissão",
+      "Novo visual do seletor de tela e janela, com prévias maiores e áudio em um interruptor",
+      "Cabeçalho das Configurações alinhado",
+    ],
+  },
+  {
     version: "0.11.2",
     items: [
       "Corrige o app que não abria na 0.11.1 (arquivo da sobreposição faltando no pacote)",

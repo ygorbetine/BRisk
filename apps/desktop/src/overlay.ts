@@ -2,6 +2,24 @@ import { BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
 import path from "node:path";
 
 const EDIT_SHORTCUT = "CommandOrControl+Shift+O";
+// Outro programa (ex.: overlay do Discord) pode já ter o atalho principal; tenta alternativas.
+const EDIT_SHORTCUT_FALLBACKS = ["CommandOrControl+Alt+O", "CommandOrControl+Shift+F8"];
+let activeShortcuts: string[] = [];
+
+function unregisterEditShortcuts(): void {
+  for (const accelerator of activeShortcuts) globalShortcut.unregister(accelerator);
+  activeShortcuts = [];
+}
+
+function registerEditShortcuts(handler: () => void): void {
+  unregisterEditShortcuts();
+  for (const accelerator of [EDIT_SHORTCUT, ...EDIT_SHORTCUT_FALLBACKS]) {
+    try {
+      if (globalShortcut.register(accelerator, handler)) activeShortcuts.push(accelerator);
+      else console.warn("Atalho do overlay indisponível (em uso por outro programa):", accelerator);
+    } catch (error) { console.warn("Falha ao registrar atalho do overlay", accelerator, error); }
+  }
+}
 
 export type OverlayCommand = { type: "select-live"; peerId: string } | { type: "exit-edit" };
 
@@ -118,10 +136,9 @@ export class OverlayController {
     window.on("closed", () => {
       if (this.window === window) this.window = undefined;
       this.editing = false;
-      globalShortcut.unregister(EDIT_SHORTCUT);
+      unregisterEditShortcuts();
     });
-    globalShortcut.unregister(EDIT_SHORTCUT);
-    globalShortcut.register(EDIT_SHORTCUT, () => this.setEditing(!this.editing));
+    registerEditShortcuts(() => this.setEditing(!this.editing));
     void window.loadURL(`${this.options.pageUrl()}#overlay`).catch((error) => {
       console.error("Falha ao carregar o overlay", error);
       this.hide();
@@ -129,7 +146,7 @@ export class OverlayController {
   }
 
   private hide(): void {
-    globalShortcut.unregister(EDIT_SHORTCUT);
+    unregisterEditShortcuts();
     const window = this.window;
     this.window = undefined;
     this.editing = false;

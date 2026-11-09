@@ -322,3 +322,9 @@ body {
 .settings-tabs{overflow-x:auto;scrollbar-width:none}
 .settings-tabs::-webkit-scrollbar{display:none}
 .settings-tabs button{white-space:nowrap;flex:0 0 auto}
+
+/* Cabeçalho do modal: título à esquerda, botão fechar à direita, mesma linha. */
+.modal .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 22px 22px 0 28px; min-height: 40px; }
+.modal .modal-header h2 { margin: 0; line-height: 1.2; font-size: 22px; }
+.modal .modal-header .modal-close { position: static; flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border-radius: 10px; font-size: 22px; line-height: 1; background: #ffffff0d; color: #cdbfe0; }
+.modal .modal-header .modal-close:hover { background: #ffffff12; color: #fff; transform: none; filter: none; }

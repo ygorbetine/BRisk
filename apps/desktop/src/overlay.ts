@@ -166,6 +166,10 @@ export class OverlayController {
       window.setFocusable(false);
       window.blur();
     }
+    // Alternar foco/cliques pode tirar a janela do topo; reafirma para a sobreposição "fixar" por cima do jogo.
+    window.setAlwaysOnTop(true, "screen-saver");
+    window.moveTop();
+    if (!editing) window.showInactive();
     window.webContents.send("overlay:editing", editing);
   }
 

@@ -110,7 +110,7 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
       <span className="ov-live-name">{livePerson?.name ?? "Sem transmissão"}</span>
     </div>,
     voice: <ul className="ov-voice">
-      {(state.people.length ? state.people : DEMO_STATE.people).map((person) => <li key={person.id} className={person.speaking ? "speaking" : ""}>
+      {(state.people.length || !editing ? state.people : DEMO_STATE.people).map((person) => <li key={person.id} className={person.speaking ? "speaking" : ""}>
         <span className="ov-avatar">{(person.name[0] ?? "?").toUpperCase()}</span>
         <span className="ov-name">{person.name}</span>
         {person.live && <span className="ov-badge small"><i/>Ao vivo</span>}

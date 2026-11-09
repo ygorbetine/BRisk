@@ -30,7 +30,7 @@ export function visibleWidgets(settings: OverlaySettings, state: OverlayState, e
     if (editing) return true;
     if (id === "live") return Boolean(state.liveId);
     if (id === "voice") return state.people.length > 0;
-    if (id === "status") return Boolean(state.roomName);
+    if (id === "status") return state.active || Boolean(state.roomName);
     return state.micMuted;
   });
 }

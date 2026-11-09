@@ -1,4 +1,4 @@
-import { app, dialog, BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import electronUpdater from "electron-updater";
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -35,10 +35,10 @@ export function installUpdateNow(): boolean {
 
 /**
  * Atualização automática pelo GitHub Releases: baixa em segundo plano e, quando pronta,
- * avisa na interface (Sobre e tela principal) e pergunta se quer reiniciar agora. Só roda no app
+ * avisa na interface (Sobre e tela principal), onde há o botão "Reiniciar e instalar". Só roda no app
  * instalado (empacotado) e pode ser desligada com BRIKS_DISABLE_UPDATE=1.
  */
-export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, beforeInstall: () => void): void {
+export function startAutoUpdate(_getWindow: () => BrowserWindow | undefined, beforeInstall: () => void): void {
   if (!app.isPackaged || process.env.BRIKS_DISABLE_UPDATE === "1") return;
   const { autoUpdater } = electronUpdater;
   beforeInstallHook = beforeInstall;
@@ -57,19 +57,6 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | undefined, befo
   });
   autoUpdater.on("update-downloaded", (info) => {
     setState({ phase: "ready", version: info.version, percent: 100 });
-    const window = getWindow();
-    const options = {
-      type: "info" as const,
-      buttons: ["Reiniciar agora", "Depois"],
-      defaultId: 0,
-      cancelId: 1,
-      title: "Atualização do Briks",
-      message: `A versão ${info.version} está pronta.`,
-      detail: "Reinicie para instalar. Se escolher depois, ela é instalada quando você fechar o Briks.",
-    };
-    void (window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).then(({ response }) => {
-      if (response === 0) installUpdateNow();
-    });
   });
 
   const check = () => { void autoUpdater.checkForUpdates().catch(() => undefined); };

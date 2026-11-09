@@ -10,7 +10,7 @@ describe("provedor de conexão SFU", () => {
     const info = await createSfuConnectionProvider("https://t.example/token", "wss://sfu", "anon-public", session)({ roomId: "r", localPeerId: "p" });
     expect(info).toEqual({ url: "wss://sfu", token: "jwt" });
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ room: "r", peerId: "p" });
+    expect(JSON.parse(init.body as string)).toEqual({ room: "r", peerId: "p", identity: "p" });
     const headers = init.headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer user-jwt");
     expect(headers.apikey).toBe("anon-public");

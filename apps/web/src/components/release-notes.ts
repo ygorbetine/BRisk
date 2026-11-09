@@ -3,8 +3,9 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
-    version: "1.2.0",
+    version: "1.2.1",
     items: [
+      "Corrige o erro \"Serviço de tokens do SFU respondeu 400\" ao entrar numa chamada pelo servidor",
       "Status personalizado: emoji e texto curto no seu perfil, com prazo para sumir (1 h, 4 h, hoje ou nunca). Aparece na lista de amigos, na sua barra de conta e na chamada",
       "Programa em uso (opcional, desligado por padrão): mostra aos amigos o jogo ou programa que você está usando, com o ícone, numa linha abaixo do status. Dá para ocultar programas específicos. Só o nome vai, nunca o título da janela",
       "Avisos quando um amigo fica online ou começa a transmitir, com sino para silenciar cada pessoa. Nada é avisado durante a chamada nem logo ao abrir o app",
@@ -16,6 +17,9 @@ export const RELEASE_NOTES: ReleaseNotes[] = [
       "Botão do microfone verde quando ligado e vermelho quando mudo",
       "A sobreposição em jogos agora vem desligada por padrão, com todos os itens desligados",
       "Segurança: limite de requisições nos servidores de chamada e contadores anônimos de conexão (só se deu certo e se foi direta ou pelo relay), que podem ser desligados em Configurações › Sobre",
+      "Escada de qualidade na transmissão: quem assiste com rede fraca recebe uma versão menor da tela, sem derrubar a de todo mundo (H.264, camadas de qualidade e reserva em VP8)",
+      "Botão Adicionar amigo ao clicar num membro de um grupo",
+      "Instalador menor: cerca de 92 MB, antes 101 MB",
     ],
   },
   {

@@ -31,7 +31,8 @@ export function createSfuConnectionProvider(
       method: "POST",
       headers: { "content-type": "application/json", ...(publicKey ? { apikey: publicKey } : {}), authorization: `Bearer ${sessionToken}` },
       // A identidade é derivada da sessão no servidor; o peerId só é aceito se estiver registrado na conta.
-      body: JSON.stringify({ room: roomId, peerId: localPeerId }),
+      // O campo identity (igual ao peerId) é mandado também para a função antiga, que ainda o exige; a nova o ignora.
+      body: JSON.stringify({ room: roomId, peerId: localPeerId, identity: localPeerId }),
     });
     if (response.status === 401) throw new Error(SFU_LOGIN_REQUIRED_MESSAGE);
     if (!response.ok) {

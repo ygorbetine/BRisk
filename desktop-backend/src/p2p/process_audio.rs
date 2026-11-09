@@ -38,6 +38,9 @@ pub struct AudioApp {
     pub label: String,
     /// `true` se está tocando agora; `false` se a sessão existe, mas está em pausa.
     pub playing: bool,
+    /// Caminho completo do executável, para o Electron extrair o ícone. Vazio se desconhecido.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub path: String,
 }
 
 /// `spotify.exe` → `Spotify`.
@@ -64,7 +67,7 @@ pub fn group_audio_apps(sessions: Vec<(String, bool)>, skip: &[&str]) -> Vec<Aud
         }
         match apps.iter_mut().find(|app| app.name == name) {
             Some(app) => app.playing |= playing,
-            None => apps.push(AudioApp { label: friendly_app_label(&name), name, playing }),
+            None => apps.push(AudioApp { label: friendly_app_label(&name), name, playing, path: String::new() }),
         }
     }
     apps.sort_by(|left, right| right.playing.cmp(&left.playing).then_with(|| left.name.cmp(&right.name)));
@@ -110,7 +113,7 @@ mod windows_impl {
         thread,
         time::{Duration, Instant},
     };
-    use sysinfo::{Pid, ProcessesToUpdate, System};
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     use tokio::sync::{mpsc, oneshot};
     use tokio_stream::wrappers::ReceiverStream;
     use wasapi::{
@@ -505,9 +508,14 @@ mod windows_impl {
             Ok(system) => system,
             Err(_) => return Vec::new(),
         };
-        system.refresh_processes(ProcessesToUpdate::All, true);
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+        );
         let own_pid = std::process::id();
         let mut sessions: Vec<(String, bool)> = Vec::new();
+        let mut paths: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let Ok(enumerator) = DeviceEnumerator::new() else { return Vec::new() };
         let Ok(collection) = enumerator.get_device_collection(&Direction::Render) else {
             return Vec::new();
@@ -528,17 +536,24 @@ mod windows_impl {
                     continue;
                 }
                 let Some(process) = system.process(Pid::from_u32(pid)) else { continue };
-                sessions.push((
-                    process.name().to_string_lossy().to_string(),
-                    state == SessionState::Active,
-                ));
+                let executable = process.name().to_string_lossy().to_string();
+                if let Some(path) = process.exe() {
+                    paths.entry(executable.trim().to_lowercase()).or_insert_with(|| path.to_string_lossy().to_string());
+                }
+                sessions.push((executable, state == SessionState::Active));
             }
         }
         // Discord e o próprio Briks nunca entram na transmissão, então nem aparecem na lista.
-        group_audio_apps(
+        let mut apps = group_audio_apps(
             sessions,
             &["discord.exe", "discordptb.exe", "discordcanary.exe", "briks.exe", "briks-desktop-backend.exe"],
-        )
+        );
+        for app in &mut apps {
+            if let Some(path) = paths.remove(&app.name) {
+                app.path = path;
+            }
+        }
+        apps
     }
 
     fn active_render_pids() -> Vec<u32> {
@@ -601,7 +616,7 @@ mod tests {
     #[test]
     fn app_em_pausa_continua_na_lista() {
         let apps = group_audio_apps(vec![("spotify.exe".into(), false)], &[]);
-        assert_eq!(apps, vec![AudioApp { name: "spotify.exe".into(), label: "Spotify".into(), playing: false }]);
+        assert_eq!(apps, vec![AudioApp { name: "spotify.exe".into(), label: "Spotify".into(), playing: false, path: String::new() }]);
     }
 
     /// Manual: imprime os apps com sessão de áudio deste PC. `cargo test -- --ignored --nocapture lista_real`.

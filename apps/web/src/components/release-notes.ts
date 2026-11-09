@@ -3,6 +3,18 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "1.1.0",
+    items: [
+      "A chamada agora abre no modo Call, só com as pessoas. Quando alguém transmite a tela, um aviso com o botão Assistir leva ao modo Transmissão; o seletor Call | Transmissão fica no cabeçalho",
+      "Silenciar uma pessoa com um clique no ícone de som do bloco dela, só para você. O volume e o silêncio de cada pessoa ficam guardados para as próximas chamadas",
+      "O ícone de volume não some mais ao passar o mouse; os controles de volume aparecem acima dele",
+      "Desconexão por inatividade: depois de 1 hora sem falar você é tirado da chamada, com aviso e botão Continuar nos últimos 5 minutos. Transmitir a tela conta como presença",
+      "Mostra quais áudios estão indo na sua transmissão (apps escolhidos ou áudio da fonte), no bloco da tela e no botão de áudio",
+      "O seletor de áudio por app mostra o ícone de cada programa, e a janela de transmissão ficou mais alta para caber mais apps",
+      "Cabeçalho da chamada reorganizado, com atalhos só de ícone, e etiquetas de nome das miniaturas do modo Foco corrigidas",
+    ],
+  },
+  {
     version: "1.0.1",
     items: [
       "A barra inferior da chamada ficou mais bem alinhada: o botão de resolução, FPS e bitrate está mais largo, com o mesmo espaço nos dois lados do texto",

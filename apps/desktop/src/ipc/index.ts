@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { isAbsolute } from "node:path";
 import { networkInterfaces } from "node:os";
 import type { DesktopBackendManager } from "../backend.js";
 import { collectNetworkInterfaces } from "../network-interfaces.js";
@@ -22,6 +23,18 @@ export function registerDesktopIpc(
   ipcMain.handle("network:interfaces", async (event) => {
     assertTrusted(event.sender.getURL());
     return collectNetworkInterfaces(networkInterfaces());
+  });
+
+  // Ícone do executável de um app com áudio (seletor de áudio da transmissão). Só aceita .exe com caminho absoluto.
+  ipcMain.handle("app:icon", async (event, value: unknown) => {
+    assertTrusted(event.sender.getURL());
+    if (typeof value !== "string" || value.length > 1_024 || !isAbsolute(value) || !/\.exe$/i.test(value)) return null;
+    try {
+      const image = await app.getFileIcon(value, { size: "normal" });
+      return image.isEmpty() ? null : image.toDataURL();
+    } catch {
+      return null;
+    }
   });
 
   ipcMain.handle("updater:check", async (event) => {

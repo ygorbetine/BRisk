@@ -232,6 +232,7 @@ contextBridge.exposeInMainWorld("desktop", {
   setWindowFullscreen: (enabled: boolean): Promise<{ fullscreen: boolean }> => ipcRenderer.invoke("window:fullscreen", enabled),
   getBackendConfig: (): Promise<DesktopBackendConfig> => ipcRenderer.invoke("backend:config"),
   getNetworkInterfaces: (): Promise<DesktopNetworkInterface[]> => ipcRenderer.invoke("network:interfaces"),
+  getAppIcon: (path: string): Promise<string | null> => ipcRenderer.invoke("app:icon", path),
   checkForUpdates: (): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }> => ipcRenderer.invoke("updater:check"),
   getUpdateState: (): Promise<{ phase: "idle" | "checking" | "downloading" | "ready" | "error"; version?: string; percent?: number; message?: string }> => ipcRenderer.invoke("updater:state"),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke("updater:install"),

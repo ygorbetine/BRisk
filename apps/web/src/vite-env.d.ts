@@ -53,6 +53,7 @@ interface Window {
     setWindowFullscreen(enabled: boolean): Promise<{ fullscreen: boolean }>;
     getBackendConfig(): Promise<BriksDesktopBackendConfig>;
     getNetworkInterfaces(): Promise<BriksDesktopNetworkInterface[]>;
+    getAppIcon?(path: string): Promise<string | null>;
     checkForUpdates?(): Promise<{ status: "disabled" | "current" | "available" | "error"; version?: string; message?: string }>;
     getUpdateState?(): Promise<BriksUpdateState>;
     installUpdate?(): Promise<boolean>;

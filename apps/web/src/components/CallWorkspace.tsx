@@ -35,6 +35,8 @@ import {
   X,
   Check,
 } from "lucide-react";
+import { formatRemaining, idleStatus } from "../services/call/idle";
+import { loadPersonAudio, savePersonAudio, type PersonAudio } from "../services/audio/person-audio";
 import type { ChatMessage } from "../application/contracts";
 import { useBriksApplication } from "../application/ApplicationContext";
 import type { CallController, CallDiagnostics } from "../call";
@@ -166,6 +168,7 @@ function VideoTile({
   focused,
   compact,
   deafened,
+  watching,
   onFocus,
 }: {
   participant: Participant;
@@ -173,6 +176,8 @@ function VideoTile({
   focused: boolean;
   compact: boolean;
   deafened: boolean;
+  /** Modo Transmissão: só aí a tela compartilhada (vídeo e áudio) é exibida. */
+  watching: boolean;
   onFocus(tileId: string): void;
 }) {
   const streams = Object.values(participant.streams ?? {});
@@ -187,16 +192,21 @@ function VideoTile({
     && stream.getAudioTracks().some((track) => track.readyState === "live"),
   ) ?? (cameraStream?.getAudioTracks().length ? cameraStream : undefined);
   const [source, setSource] = useState<"camera" | "screen">("camera");
-  const [userVolume, setUserVolume] = useState(100);
-  const [screenVolume, setScreenVolume] = useState(100);
-  const [volumeOpen, setVolumeOpen] = useState(false);
+  const [audio, setAudio] = useState<PersonAudio>(() => loadPersonAudio(participant.displayName));
+  const updateAudio = (patch: Partial<PersonAudio>) => setAudio((current) => {
+    const next = { ...current, ...patch };
+    savePersonAudio(participant.displayName, next);
+    return next;
+  });
+  const userVolume = audio.user;
+  const screenVolume = audio.screen;
   const videoRef = useRef<HTMLVideoElement>(null);
   const articleRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    if (participant.state.screenShare && screenStream) setSource("screen");
-    else if (!participant.state.screenShare) setSource("camera");
-  }, [participant.state.screenShare, screenStream]);
+    if (watching && participant.state.screenShare && screenStream) setSource("screen");
+    else if (!watching || !participant.state.screenShare) setSource("camera");
+  }, [watching, participant.state.screenShare, screenStream]);
 
   const selected = source === "screen" ? screenStream : cameraStream;
   const trackKey = selected?.getVideoTracks().map((track) => track.id).join(":") ?? "";
@@ -208,11 +218,11 @@ function VideoTile({
   }, [selected, trackKey]);
 
   const hasVideo = Boolean(selected?.getVideoTracks().length);
-  const canSwitch = participant.state.camera && Boolean(cameraStream && screenStream);
+  const canSwitch = watching && participant.state.camera && Boolean(cameraStream && screenStream);
   // Quem está mutado não deve ser ouvido mesmo que o servidor (SFU) ainda repasse o áudio, p.ex. versões antigas do remetente.
   const remoteMuted = Boolean(participant.stateReceived) && !participant.state.microphone;
   const userHasAudio = Boolean(microphoneStream?.getAudioTracks().some((track) => track.readyState === "live"));
-  const screenHasAudio = Boolean(screenStream?.getAudioTracks().some((track) => track.readyState === "live"));
+  const screenHasAudio = watching && Boolean(screenStream?.getAudioTracks().some((track) => track.readyState === "live"));
   const speaking = useVoiceActivity(microphoneStream, participant.state.microphone && userHasAudio);
   const zoom = useVideoZoom(articleRef, source === "screen" && hasVideo && !compact);
 
@@ -231,19 +241,19 @@ function VideoTile({
     <video ref={videoRef} autoPlay playsInline muted className={hasVideo ? source : "hidden-video"} style={zoom.videoStyle}/>
     {zoom.badge}
     {!hasVideo && <div className="video-off"><ProfileAvatar displayName={participant.displayName} avatar={participant.avatar} className="call-profile-avatar"/><span>Vídeo desligado</span></div>}
-    {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened || remoteMuted ? 0 : userVolume}/>}
-    {screenHasAudio && <RemoteAudio stream={screenStream!} volume={deafened ? 0 : screenVolume}/>}
+    {userHasAudio && <RemoteAudio stream={microphoneStream!} volume={deafened || remoteMuted || audio.muted ? 0 : userVolume}/>}
+    {screenHasAudio && <RemoteAudio stream={screenStream!} volume={deafened || audio.muted ? 0 : screenVolume}/>}
     <FullscreenButton target={articleRef}/>
     {canSwitch && <div className="source-switch">
       <button className={source === "camera" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("camera"); }}><Video size={14}/> Câmera</button>
       <button className={source === "screen" ? "selected" : ""} onClick={(event) => { event.stopPropagation(); setSource("screen"); }}><MonitorUp size={14}/> Tela</button>
     </div>}
-    {(userHasAudio || screenHasAudio) && !compact && <button type="button" className={`volume-toggle ${volumeOpen ? "pinned" : ""}`} aria-label={volumeOpen ? "Ocultar volumes" : "Mostrar volumes"} aria-pressed={volumeOpen} title="Volumes" onClick={(event) => { event.stopPropagation(); setVolumeOpen((open) => !open); }} onDoubleClick={(event) => event.stopPropagation()}><Volume2 size={15}/></button>}
-    {(userHasAudio || screenHasAudio) && !compact && <div className={`volume-panel ${volumeOpen ? "open" : ""}`} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => { event.stopPropagation(); shieldClicksFromPanel(); }}>
-      {userHasAudio && <VolumeControl label="Usuário" value={userVolume} onChange={setUserVolume}/>} 
-      {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={setScreenVolume}/>} 
+    {!compact && <button type="button" className={`volume-toggle ${audio.muted ? "muted" : ""}`} aria-label={audio.muted ? `Ouvir ${participant.displayName}` : `Silenciar ${participant.displayName}`} aria-pressed={audio.muted} title={audio.muted ? "Silenciado só para você. Clique para ouvir" : "Clique para silenciar só para você"} onClick={(event) => { event.stopPropagation(); updateAudio({ muted: !audio.muted }); }} onDoubleClick={(event) => event.stopPropagation()}>{audio.muted ? <VolumeX size={15}/> : <Volume2 size={15}/>}</button>}
+    {(userHasAudio || screenHasAudio) && !compact && <div className="volume-panel" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => { event.stopPropagation(); shieldClicksFromPanel(); }}>
+      {userHasAudio && <VolumeControl label="Usuário" value={userVolume} onChange={(value) => updateAudio({ user: value })}/>} 
+      {screenHasAudio && <VolumeControl label="Transmissão" value={screenVolume} onChange={(value) => updateAudio({ screen: value })}/>} 
     </div>}
-    <div className="tile-label"><span>{participant.displayName}</span>{!participant.state.microphone && <MicOff size={15}/>} {participant.state.screenAudio && !compact && <em>ÁUDIO DA TELA</em>}</div>
+    <div className="tile-label"><span>{participant.displayName}</span>{!participant.state.microphone && <MicOff size={15}/>}{audio.muted && <VolumeX size={15} className="muted-person"/>} {watching && participant.state.screenAudio && !compact && <em>ÁUDIO DA TELA</em>}</div>
   </article>;
 }
 
@@ -360,6 +370,25 @@ function upsertAttachment(current: ChatAttachmentRecord[], record: ChatAttachmen
   return next.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+const appIconCache = new Map<string, Promise<string | null>>();
+
+/** Ícone do executável (via Electron). Sem ícone ou fora do desktop, cai no alto-falante. */
+function AppIcon({ path }: { path?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!path || !window.desktop?.getAppIcon) return undefined;
+    let alive = true;
+    let pending = appIconCache.get(path);
+    if (!pending) {
+      pending = window.desktop.getAppIcon(path).catch(() => null);
+      appIconCache.set(path, pending);
+    }
+    void pending.then((value) => { if (alive) setSrc(value); });
+    return () => { alive = false; };
+  }, [path]);
+  return src ? <img src={src} alt="" draggable={false}/> : <Volume2 size={15}/>;
+}
+
 export function ScreenSourcePicker({
   sources,
   loading,
@@ -459,7 +488,7 @@ export function ScreenSourcePicker({
                   aria-checked={on}
                   onClick={() => updateChoice({ ...choice, names: toggleAudioApp(choice.names, app.name) })}
                 >
-                  <span className="sp-app-icon" aria-hidden="true"><Volume2 size={15}/></span>
+                  <span className="sp-app-icon" aria-hidden="true"><AppIcon path={app.path}/></span>
                   <span className="sp-app-text"><b title={app.name}>{app.label}</b><small>{closed ? "Fechado agora" : app.playing ? "Tocando agora" : "Em pausa"}</small></span>
                   <i aria-hidden="true"/>
                 </button>;
@@ -497,6 +526,11 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
   const setRoom = useCallStore((state) => state.setRoom);
   const peers = Object.values(participants);
   const [view, setView] = useState<ViewMode>("call");
+  // A chamada abre em modo Call (só as pessoas); as transmissões só aparecem no modo Transmissão.
+  const [stageMode, setStageMode] = useState<"call" | "stream">("call");
+  const streaming = stageMode === "stream";
+  // O que está indo no áudio da transmissão: nomes dos apps escolhidos, "áudio da fonte" ou nenhum.
+  const [sharedAudioApps, setSharedAudioApps] = useState<string[] | null>(null);
   const [focusedTile, setFocusedTile] = useState<string | null>(null);
   const stageRef = useRef<HTMLElement>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
@@ -682,16 +716,16 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
 
   const tileIds = useMemo(() => {
     const ids: string[] = [];
-    if (!localPreviews.camera && !sharingScreen) ids.push("local-profile");
+    if (!localPreviews.camera && !(sharingScreen && streaming)) ids.push("local-profile");
     if (localPreviews.camera) ids.push("local-camera");
-    if (localPreviews.screen) ids.push("local-screen");
-    if (localPreviews.screen2) ids.push("local-screen2");
+    if (streaming && localPreviews.screen) ids.push("local-screen");
+    if (streaming && localPreviews.screen2) ids.push("local-screen2");
     peers.forEach((peer) => {
       ids.push(`peer-${peer.peerId}`);
-      if (peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId]) ids.push(`peer2-${peer.peerId}`);
+      if (streaming && peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId]) ids.push(`peer2-${peer.peerId}`);
     });
     return ids;
-  }, [localPreviews.camera, sharingScreen, localPreviews.screen, localPreviews.screen2, peers]);
+  }, [localPreviews.camera, sharingScreen, streaming, localPreviews.screen, localPreviews.screen2, peers]);
 
   useEffect(() => {
     if (focusedTile && !tileIds.includes(focusedTile)) setFocusedTile(null);
@@ -729,6 +763,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       else {
         // Modo "escolher apps" sem nenhum app marcado: a transmissão sai sem áudio.
         const includeAudio = screenAudioEnabled && audioApps?.length !== 0;
+        setSharedAudioApps(includeAudio ? (audioApps?.length ? audioApps : []) : null);
         await call.toggleScreen(roomId, source.id, includeAudio, qualityProfile, audioApps?.length ? audioApps : undefined);
       }
     } catch (cause) {
@@ -769,7 +804,7 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     catch (cause) { setError(cause instanceof Error ? cause.message : fallback); }
   }
 
-  const liveTileIds = [
+  const allLiveTileIds = [
     ...(localPreviews.screen ? ["local-screen"] : []),
     ...(localPreviews.screen2 ? ["local-screen2"] : []),
     ...peers.flatMap((peer) => [
@@ -777,6 +812,45 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
       ...(peer.state.screenShare && peer.state.screenStreamId && peer.streams?.[peer.state.screenStreamId] ? [`peer-${peer.peerId}`] : []),
     ]),
   ];
+  const sharedAudioText = !localState.screenAudio
+    ? "sem áudio"
+    : sharedAudioApps && sharedAudioApps.length > 0
+      ? sharedAudioApps.map((name) => name.replace(/\.exe$/i, "").replace(/^./, (first) => first.toUpperCase())).join(", ")
+      : "áudio da fonte";
+  const liveTileIds = streaming ? allLiveTileIds : [];
+  const liveCount = allLiveTileIds.length;
+  useEffect(() => { if (streaming && liveCount === 0) setStageMode("call"); }, [streaming, liveCount]);
+  const broadcasterNames = [...new Set([
+    ...(sharingScreen ? ["Você"] : []),
+    ...peers.filter((peer) => (peer.state.screenShare && peer.state.screenStreamId && peer.streams?.[peer.state.screenStreamId]) || (peer.state.secondScreenStreamId && peer.streams?.[peer.state.secondScreenStreamId])).map((peer) => peer.displayName),
+  ])];
+  const broadcasterText = broadcasterNames.length === 0 ? "" : broadcasterNames.length === 1
+    ? (broadcasterNames[0] === "Você" ? "Você está transmitindo a tela" : `${broadcasterNames[0]} está transmitindo a tela`)
+    : `${broadcasterNames.slice(0, -1).join(", ")} e ${broadcasterNames[broadcasterNames.length - 1]} estão transmitindo a tela`;
+
+  // Inatividade: 1 h sem falar desconecta; nos 5 minutos finais aparece o aviso com "Continuar".
+  const localSpeaking = useVoiceActivity(localPreviews.microphone, localState.microphone && Boolean(localPreviews.microphone));
+  const lastActiveRef = useRef(Date.now());
+  const [idleRemaining, setIdleRemaining] = useState<number | null>(null);
+  useEffect(() => { if (localSpeaking) lastActiveRef.current = Date.now(); }, [localSpeaking]);
+  const leaveCall = () => {
+    setAudioSettingsOpen(false);
+    setRoom(null);
+    setCallContext(null);
+    void chat.disconnect();
+    void call.leave(roomId);
+  };
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      // Transmitir a tela conta como presença ativa.
+      if (sharingScreen) lastActiveRef.current = Date.now();
+      const status = idleStatus(Date.now() - lastActiveRef.current);
+      if (status.phase === "expired") { setIdleRemaining(null); leaveCall(); return; }
+      setIdleRemaining(status.phase === "warning" ? status.remainingMs : null);
+    }, 1_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharingScreen, roomId]);
   const manualFocus = focusedTile && tileIds.includes(focusedTile) ? focusedTile : null;
   const focused = manualFocus ?? (layoutMode === "focus" ? (liveTileIds[0] ?? null) : null);
   const publishFocusedTile = useCallStore((state) => state.setFocusedTile);
@@ -835,7 +909,11 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           onMinimize();
         }} title="Voltar para o Briks"><PanelLeft size={17}/><span>Voltar ao menu</span></button>
         <button className="minimize-call settings-shortcut" onClick={() => setAppSettingsOpen(true)} title="Abrir as configurações do Briks" aria-label="Configurações"><Settings size={17}/><span>Configurações</span></button>
-        {view === "call" && <div className="call-view-tabs layout-tabs" role="group" aria-label="Disposição das telas">
+        {view === "call" && <div className="call-view-tabs stage-mode-tabs" role="group" aria-label="Modo da chamada">
+          <button className={!streaming ? "active" : ""} onClick={() => setStageMode("call")} title="Só as pessoas, sem exibir transmissões"><span>Call</span></button>
+          <button className={streaming ? "active" : ""} onClick={() => { if (liveCount > 0) setStageMode("stream"); }} disabled={liveCount === 0} title={liveCount > 0 ? "Assistir às transmissões" : "Ninguém está transmitindo"}><MonitorUp size={16}/><span>Transmissão{liveCount > 0 ? ` · ${liveCount}` : ""}</span></button>
+        </div>}
+        {view === "call" && streaming && <div className="call-view-tabs layout-tabs" role="group" aria-label="Disposição das telas">
           <button className={layoutMode === "weight" ? "active" : ""} onClick={() => chooseLayout("weight")} title="Grade: lives grandes e pessoas pequenas"><LayoutGrid size={16}/><span>Grade</span></button>
           <button className={layoutMode === "focus" ? "active" : ""} onClick={() => chooseLayout("focus")} title="Foco: uma live grande e miniaturas ao lado"><PanelRight size={16}/><span>Foco</span></button>
         </div>}
@@ -854,10 +932,11 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
     {callError && <div className="global-error" onClick={() => setError(null)}>{callError}</div>}
 
     <section className={`call-view ${view === "call" ? "" : "is-hidden"}`}>
+      {!streaming && liveCount > 0 && <div className="call-stage-banner"><span>{broadcasterText}</span><button type="button" onClick={() => setStageMode("stream")}>Assistir</button></div>}
       <section ref={stageRef} className={`stage ${focused ? "stage-focused" : ""} ${weighted ? "stage-weighted" : ""} ${livesOnly ? `stage-lives-only lives-${liveTileIds.length}` : ""}`} style={stageStyle} onMouseDown={(event) => {
         if (event.target === event.currentTarget) setFocusedTile(null);
       }}>
-        {!localPreviews.camera && !sharingScreen && <LocalProfileTile
+        {!localPreviews.camera && !(sharingScreen && streaming) && <LocalProfileTile
           displayName={context?.displayName ?? "Você"}
           avatar={context?.avatar}
           microphone={localState.microphone}
@@ -878,17 +957,17 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           compact={Boolean(focused && focused !== "local-camera")}
           onFocus={(id) => setFocusedTile((current) => current === id ? null : id)}
         />}
-        {localPreviews.screen && <LocalVideoTile
+        {streaming && localPreviews.screen && <LocalVideoTile
           stream={localPreviews.screen}
           tileId="local-screen"
-          label={localState.screenAudio ? `Tela · ${qualityProfile.label}` : `Tela · sem áudio · ${qualityProfile.label}`}
+          label={`Tela · ${localState.screenAudio ? "áudio: " : ""}${sharedAudioText} · ${qualityProfile.label}`}
           mirrored={false}
           microphone={localState.microphone}
           focused={focused === "local-screen"}
           compact={Boolean(focused && focused !== "local-screen")}
           onFocus={(id) => setFocusedTile((current) => current === id ? null : id)}
         />}
-        {localPreviews.screen2 && <LocalVideoTile
+        {streaming && localPreviews.screen2 && <LocalVideoTile
           stream={localPreviews.screen2}
           tileId="local-screen2"
           label="2ª tela · sem áudio"
@@ -902,13 +981,14 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           const id = `peer-${participant.peerId}`;
           const secondStream = participant.state.secondScreenStreamId ? participant.streams?.[participant.state.secondScreenStreamId] : undefined;
           const id2 = `peer2-${participant.peerId}`;
-          return <React.Fragment key={participant.peerId}>{secondStream && <RemoteSecondScreenTile participant={participant} stream={secondStream} tileId={id2} focused={focused === id2} compact={Boolean(focused && focused !== id2)} onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}/>}<VideoTile
+          return <React.Fragment key={participant.peerId}>{streaming && secondStream && <RemoteSecondScreenTile participant={participant} stream={secondStream} tileId={id2} focused={focused === id2} compact={Boolean(focused && focused !== id2)} onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}/>}<VideoTile
             key={participant.peerId}
             participant={participant}
             tileId={id}
             focused={focused === id}
             compact={Boolean(focused && focused !== id)}
             deafened={deafened}
+            watching={streaming}
             onFocus={(next) => setFocusedTile((current) => current === next ? null : next)}
           /></React.Fragment>;
         })}
@@ -952,21 +1032,16 @@ export function CallWorkspace({ call, chat, onMinimize }: { call: CallController
           disabled={localState.screenShare}
           aria-pressed={screenAudioEnabled}
           aria-label="Áudio da transmissão de tela"
-          title={localState.screenShare ? "Pare a transmissão para mudar o áudio" : screenAudioEnabled ? "O áudio do sistema será transmitido. Clique para transmitir sem áudio" : "Só o vídeo será transmitido. Clique para incluir o áudio"}
-        >{screenAudioEnabled ? <Volume2 size={17}/> : <VolumeX size={17}/>}<span>{screenAudioEnabled ? "Com áudio" : "Sem áudio"}</span></button>
+          title={localState.screenShare ? `Áudio da transmissão: ${sharedAudioText}. Pare a transmissão para mudar` : screenAudioEnabled ? "O áudio do sistema será transmitido. Clique para transmitir sem áudio" : "Só o vídeo será transmitido. Clique para incluir o áudio"}
+        >{screenAudioEnabled ? <Volume2 size={17}/> : <VolumeX size={17}/>}<span>{localState.screenShare ? (localState.screenAudio ? `Áudio: ${sharedAudioText}` : "Sem áudio") : screenAudioEnabled ? "Com áudio" : "Sem áudio"}</span></button>
         <button className={qualityPanelOpen ? "quality-trigger active" : "quality-trigger"} onClick={() => setQualityPanelOpen((current) => !current)} title="Resolução, FPS e bitrate da transmissão" aria-expanded={qualityPanelOpen}>
           {qualityProfile.label}
         </button>
       </div>
-      <button className="hangup" onClick={() => {
-        setAudioSettingsOpen(false);
-        setRoom(null);
-        setCallContext(null);
-        void chat.disconnect();
-        void call.leave(roomId);
-      }}><PhoneOff/><span>Sair</span></button>
+      <button className="hangup" onClick={leaveCall}><PhoneOff/><span>Sair</span></button>
     </footer>
 
+    {idleRemaining !== null && <div className="idle-warning" role="alert"><span>Você está há muito tempo sem falar. A chamada será encerrada em {formatRemaining(idleRemaining)}.</span><button type="button" onClick={() => { lastActiveRef.current = Date.now(); setIdleRemaining(null); }}>Continuar</button></div>}
     {appSettingsOpen && <Modal title="Configurações" onClose={() => setAppSettingsOpen(false)}><SettingsView/></Modal>}
     {audioSettingsOpen && <InCallAudioSettings call={call} onClose={() => setAudioSettingsOpen(false)}/>}
     {qualityPanelOpen && <ScreenQualityPanel settings={qualitySettings} viewers={Math.max(1, peers.length)} onChange={setQualitySettings} readDiagnostics={() => call.getLiveDiagnostics()} onClose={() => setQualityPanelOpen(false)}/>} 

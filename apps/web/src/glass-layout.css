@@ -243,11 +243,18 @@ body {
   transition: opacity .16s ease;
 }
 .call-workspace .tile .volume-toggle:hover { opacity: 1; transform: none; filter: none; }
-.call-workspace .tile .volume-toggle.pinned { background: linear-gradient(135deg, var(--briks-c1), var(--briks-c2)); opacity: 1; }
-.call-workspace .tile:hover .volume-toggle:not(.pinned),
-.call-workspace .tile:focus-within .volume-toggle:not(.pinned) { opacity: 0; pointer-events: none; }
+.call-workspace .tile .volume-toggle.muted { background: #e95555; border-color: transparent; color: #fff; opacity: 1; }
+.call-workspace .tile:hover .volume-toggle { opacity: 1; }
 .call-workspace .tile.thumbnail .volume-toggle { display: none; }
-.call-workspace .tile .volume-panel.open { bottom: 52px; }
+.call-workspace .tile .volume-panel { bottom: 52px; }
+.call-workspace .tile .tile-label .muted-person { color: #ff8585; }
+
+/* Call x Transmissão */
+.call-stage-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; padding: 9px 14px; border: 1px dashed color-mix(in srgb, var(--briks-c3) 70%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--briks-c3) 16%, transparent); color: #f4eefb; font-size: 14px; }
+.call-stage-banner button { flex: none; padding: 7px 14px; border-radius: 10px; background: var(--briks-c3); color: #fff; font-weight: 700; }
+.call-workspace > .call-view:has(.call-stage-banner) { grid-template-rows: auto minmax(0, 1fr); }
+.idle-warning { position: absolute; z-index: 30; left: 50%; bottom: 96px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 14px; background: #1a0a26; border: 1px solid #ffffff22; color: #f4eefb; font-size: 14px; box-shadow: 0 14px 40px #000a; }
+.idle-warning button { padding: 7px 14px; border-radius: 10px; background: var(--briks-c3); color: #fff; font-weight: 700; }
 
 /* Engrenagem da barra da conta, com bolinha quando há atualização pronta */
 .account-bar .settings-gear{position:relative}
@@ -346,3 +353,34 @@ body {
   white-space: nowrap; overflow: hidden;
 }
 .call-workspace .tile.thumbnail .tile-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.call-workspace .tile:has(.volume-toggle) .tile-fullscreen { bottom: auto; top: 14px; right: 14px; }
+.call-workspace .tile:has(.source-switch) .tile-fullscreen { top: auto; bottom: 14px; }
+.stage-mode-tabs button { white-space: nowrap; flex: none; }
+
+/* Cabeçalho da chamada: título à esquerda, ações sem quebrar linha */
+.call-workspace > header { grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px; padding: 0 20px; }
+.call-workspace > header > div:nth-child(2) { text-align: left; min-width: 0; }
+.call-workspace > header > div:nth-child(2) strong, .call-workspace > header > div:nth-child(2) span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-workspace .call-header-actions { gap: 8px; flex-wrap: nowrap; }
+.call-workspace .call-header-actions button { white-space: nowrap; flex: none; }
+.call-workspace .call-header-actions button span { display: inline; max-width: none; overflow: visible; color: inherit; font-size: inherit; }
+.call-workspace .call-header-actions .network-header-button small { white-space: nowrap; }
+@media (max-width: 1180px) { .call-workspace .call-header-actions .settings-shortcut span { display: none; } }
+@media (max-width: 1020px) { .call-workspace .call-header-actions .network-header-button > span { display: none; } }
+
+/* Cabeçalho enxuto: atalhos só com ícone; o seletor Call | Transmissão é o destaque */
+.call-workspace .call-header-actions .minimize-call:not(.settings-shortcut) span,
+.call-workspace .call-header-actions .settings-shortcut span { display: none; }
+.call-workspace .call-header-actions .minimize-call { padding: 9px 10px; }
+.call-workspace .call-header-actions .stage-mode-tabs { padding: 4px; background: #0f0316; border-color: #ffffff1a; }
+.call-workspace .call-header-actions .stage-mode-tabs button { padding: 8px 16px; font-weight: 700; }
+.call-workspace .call-header-actions .stage-mode-tabs button:disabled { opacity: .45; }
+.call-workspace .call-header-actions .layout-tabs button span { display: none; }
+@media (min-width: 1300px) { .call-workspace .call-header-actions .layout-tabs button span { display: inline; } }
+
+/* Miniaturas do modo Foco: o nome é uma etiqueta no canto, não uma faixa vertical */
+.call-workspace .stage.stage-focused .tile.thumbnail .tile-label { top: 8px; bottom: auto; height: auto; max-width: calc(100% - 52px); }
+
+/* Título da sala: levemente mais baixo, no mesmo eixo visual da marca e dos botões */
+.call-workspace > header > div:nth-child(2) { align-self: center; padding-top: 4px; line-height: 1.3; }
+.call-workspace > header > div:nth-child(2) strong { display: block; font-size: 15px; }

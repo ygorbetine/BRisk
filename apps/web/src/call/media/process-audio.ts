@@ -11,7 +11,7 @@ export type ProcessAudioRequest =
   | { mode: "apps"; includeNames: string[] };
 
 /** App com sessão de áudio aberta, devolvido pelo backend. `name` é o executável em minúsculas. */
-export type AudioApp = { name: string; label: string; playing: boolean };
+export type AudioApp = { name: string; label: string; playing: boolean; path?: string };
 
 /** Valida a resposta do backend: ignora itens malformados e limita o tamanho dos textos. */
 export function parseAudioApps(value: unknown): AudioApp[] {
@@ -19,12 +19,13 @@ export function parseAudioApps(value: unknown): AudioApp[] {
   const apps: AudioApp[] = [];
   for (const item of value.slice(0, 64)) {
     if (!item || typeof item !== "object") continue;
-    const { name, label, playing } = item as Record<string, unknown>;
+    const { name, label, playing, path } = item as Record<string, unknown>;
     if (typeof name !== "string" || !name.trim() || name.length > 128) continue;
     apps.push({
       name: name.trim().toLowerCase(),
       label: typeof label === "string" && label.trim() ? label.trim().slice(0, 60) : name,
       playing: playing === true,
+      ...(typeof path === "string" && path.length > 0 && path.length <= 1_024 ? { path } : {}),
     });
   }
   return apps;

@@ -1,5 +1,5 @@
 .sp-backdrop{position:fixed;z-index:40;inset:0;display:grid;place-items:center;padding:24px;background:#030508cc;backdrop-filter:blur(8px)}
-.sp{width:min(940px,100%);max-height:min(720px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto auto;background:#1a0a26;border:1px solid #ffffff16;border-radius:20px;overflow:hidden;box-shadow:0 30px 100px #000c}
+.sp{width:min(940px,100%);max-height:min(860px,calc(100vh - 48px));display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto auto;background:#1a0a26;border:1px solid #ffffff16;border-radius:20px;overflow:hidden;box-shadow:0 30px 100px #000c}
 .sp-head{display:flex;align-items:center;gap:14px;padding:18px 20px 14px}
 .sp-head-icon{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;background:color-mix(in srgb,var(--briks-c3) 18%,transparent);color:var(--briks-c3)}
 .sp-head-text{flex:1;min-width:0}
@@ -51,10 +51,11 @@
 .sp .sp-seg button{padding:6px 13px;border-radius:9px;background:transparent;color:#a592b8;font-size:12px;font-weight:600}
 .sp .sp-seg button:hover{transform:none;filter:none;color:#fff}
 .sp .sp-seg button.on{background:var(--briks-c3);color:#fff}
-.sp-apps{display:grid;gap:6px;max-height:164px;overflow:auto}
+.sp-apps{display:grid;gap:6px;max-height:min(340px,38vh);overflow:auto}
 .sp .sp-app{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:11px;background:#ffffff0a;color:#dccfe9;text-align:left}
 .sp .sp-app:hover{transform:none;filter:none;background:#ffffff14}
-.sp-app-icon{width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:8px;background:#ffffff14;color:#cdbfe0}
+.sp-app-icon{width:30px;height:30px;flex:none;display:grid;place-items:center;border-radius:8px;background:#ffffff14;color:#cdbfe0;overflow:hidden}
+.sp-app-icon img{width:22px;height:22px;object-fit:contain}
 .sp-app-text{flex:1;min-width:0;display:grid;gap:1px}
 .sp-app-text b{font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sp-app-text small{font-size:11px;color:#a592b8}

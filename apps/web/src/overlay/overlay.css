@@ -36,3 +36,5 @@ html.overlay-demo,html.overlay-demo body{background:linear-gradient(#2c4560 0 55
 /* Em edição, o conteúdo não captura o mouse: arrastar em qualquer ponto move o item inteiro. */
 .ov-widget.editable>:not(.ov-handle){pointer-events:none}
 .ov-widget img{-webkit-user-drag:none;user-select:none}
+/* O CSS do app é único (sem divisão por tela): na janela da sobreposição, nada do cromo do app pode aparecer. */
+html.overlay-mode body::before,html.overlay-mode body::after,html.overlay-mode #root::before,html.overlay-mode #root::after{display:none!important;content:none!important}

@@ -3,6 +3,14 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.7",
+    items: [
+      "Corrigido o risco roxo que aparecia no topo da tela quando a sobreposição estava ativa",
+      "Barra de opacidade vai de 0 a 100% e ocupa todo o trilho; mesma barra na porta de ruído",
+      "Tick de seleção no seletor de tela agora é branco",
+    ],
+  },
+  {
     version: "0.11.6",
     items: [
       "Seletor de tela refeito: escolha a tela ou janela, ajuste o áudio e confirme em Transmitir (duplo clique transmite direto)",

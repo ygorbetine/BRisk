@@ -67,3 +67,9 @@
 .sx-row input[type="range"]{flex:none;width:min(240px,45%);margin:0}
 .sx-row > div:first-child{min-width:0;flex:1 1 auto}
 .sx-stack input[type="range"],.in-call-audio-settings input[type="range"]{accent-color:var(--briks-c3)}
+
+/* Barra de valor: trilho cobre toda a largura e o preenchimento acompanha o ponteiro (--fill de 0 a 100%). */
+.sx-row input[type="range"].sx-range,input[type="range"].sx-range{appearance:none;-webkit-appearance:none;display:block;width:min(240px,45%);height:22px;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline:none;cursor:pointer}
+.sx-range::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--briks-c3) var(--fill,0%),rgba(255,255,255,.18) var(--fill,0%))}
+.sx-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 5px rgba(0,0,0,.45)}
+.sx-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px color-mix(in srgb,var(--briks-c3) 55%,transparent)}

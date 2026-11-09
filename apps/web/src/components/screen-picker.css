@@ -42,3 +42,4 @@
 .sp .sp-go{margin-left:auto;max-width:60%;padding:10px 18px;border-radius:11px;background:var(--briks-c3);color:#fff;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sp .sp-go:hover{transform:none;filter:brightness(1.1)}
 @media(max-width:560px){.sp-actions{padding:10px 12px}}
+.sp-thumb .sp-check svg{color:#fff;stroke:#fff}

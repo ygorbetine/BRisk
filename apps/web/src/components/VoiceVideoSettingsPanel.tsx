@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   loadVoiceVideoSettings,
   saveVoiceVideoSettings,
@@ -140,7 +140,7 @@ export function VoiceVideoSettingsPanel() {
       </label>
       {settings.noiseGateEnabled && <label className="sx-row">
         <div><strong>Limite</strong><small>{settings.noiseGateThresholdDb} dB — quanto mais alto, mais exigente</small></div>
-        <input type="range" min={-70} max={-20} step={1} value={settings.noiseGateThresholdDb} aria-label="Limite da porta de ruído" onChange={(event) => update({ noiseGateThresholdDb: Number(event.target.value) })}/>
+        <input type="range" className="sx-range" style={{ "--fill": `${((settings.noiseGateThresholdDb + 70) / 50) * 100}%` } as CSSProperties} min={-70} max={-20} step={1} value={settings.noiseGateThresholdDb} aria-label="Limite da porta de ruído" onChange={(event) => update({ noiseGateThresholdDb: Number(event.target.value) })}/>
       </label>}
     </section>
 

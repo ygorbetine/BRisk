@@ -49,7 +49,7 @@ export function sanitizeOverlaySettings(raw: unknown): OverlaySettings {
       scale: clamp(item.scale, MIN_SCALE, MAX_SCALE, fallback.scale),
     };
   }
-  return { enabled: source.enabled !== false, opacity: clamp(source.opacity, 0.3, 1, DEFAULT_OVERLAY_SETTINGS.opacity), widgets };
+  return { enabled: source.enabled !== false, opacity: clamp(source.opacity, 0, 1, DEFAULT_OVERLAY_SETTINGS.opacity), widgets };
 }
 
 export function loadOverlaySettings(): OverlaySettings {

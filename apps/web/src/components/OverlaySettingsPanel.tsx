@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   OVERLAY_WIDGETS,
   loadOverlaySettings,
@@ -41,7 +41,7 @@ export function OverlaySettingsPanel() {
       <div className="sx-divider"/>
       <label className="sx-row">
         <div><strong>Opacidade</strong><small>{Math.round(settings.opacity * 100)}%</small></div>
-        <input type="range" min={30} max={100} step={5} value={Math.round(settings.opacity * 100)} aria-label="Opacidade da sobreposição" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 })}/>
+        <input type="range" className="sx-range" style={{ "--fill": `${Math.round(settings.opacity * 100)}%` } as CSSProperties} min={0} max={100} step={1} value={Math.round(settings.opacity * 100)} aria-label="Opacidade da sobreposição" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 })}/>
       </label>
     </div>
 

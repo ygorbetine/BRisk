@@ -154,6 +154,8 @@ export default defineConfig(({ command, mode }) => {
     // Os testes não dependem do .env local (SFU/TURN configurados na máquina de quem desenvolve).
     ...({ test: { env: { VITE_LIVEKIT_URL: "", VITE_LIVEKIT_TOKEN_URL: "" } } } as object),
     build: {
+      // CSS único, ligado no index.html: o preload dinâmico de CSS por chunk falha sob risk:// (tela em branco).
+      cssCodeSplit: false,
       // O worklet de áudio por processo precisa ser um arquivo real: a CSP bloqueia worklets data: URI.
       assetsInlineLimit: (file) => (file.includes("process-pcm-worklet") || file.includes("noise-gate-worklet") ? false : undefined),
       rollupOptions: {

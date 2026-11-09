@@ -3,6 +3,13 @@ export type ReleaseNotes = { version: string; items: string[] };
 /** Novidades por versão, da mais nova para a mais antiga. A aba Sobre mostra as da versão em uso. */
 export const RELEASE_NOTES: ReleaseNotes[] = [
   {
+    version: "0.11.2",
+    items: [
+      "Corrige o app que não abria na 0.11.1 (arquivo da sobreposição faltando no pacote)",
+      "Tudo da 0.11.1 continua: sobreposição em jogos, login por @nick, desconectar conta e esqueci minha senha",
+    ],
+  },
+  {
     version: "0.11.1",
     items: [
       "Entrar com @nick (o app lembra o e-mail dos @nicks que já entraram neste computador)",

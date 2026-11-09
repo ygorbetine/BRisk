@@ -1,6 +1,6 @@
 {
   "name": "@briks/desktop",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "private": true,
   "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
   "homepage": "https://github.com/ygorbetine/BRisk",
@@ -48,6 +48,7 @@
       "dist/gpu.js",
       "dist/ipc/index.js",
       "dist/network-interfaces.js",
+      "dist/overlay.js",
       "dist/permissions.js",
       "dist/protocol.js",
       "dist/screen-capture.js",

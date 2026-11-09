@@ -16,7 +16,7 @@ export function AboutPanel() {
 
     <footer className="about-footer">
       <span>Feito por Becine Tools</span>
-      <a href="https://github.com/ygorbetine/BRisk" target="_blank" rel="noreferrer">Código-fonte</a>
+      <a href="https://github.com/ygorbetine/Briks" target="_blank" rel="noreferrer">Código-fonte</a>
       <span>Licença AGPL</span>
     </footer>
   </section>;

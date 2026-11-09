@@ -99,6 +99,12 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
     update({ ...settings, widgets: { ...settings.widgets, [id]: { ...settings.widgets[id], ...patch } } }, persist);
   };
 
+  const anyOn = OVERLAY_WIDGETS.some((widget) => settings.widgets[widget.id].on);
+  const toggleAll = (on: boolean) => {
+    const widgets = { ...settings.widgets };
+    for (const widget of OVERLAY_WIDGETS) widgets[widget.id] = { ...widgets[widget.id], on };
+    update({ ...settings, widgets }, true);
+  };
   const shown = visibleWidgets(settings, state, editing);
   const livePerson = state.people.find((person) => person.id === state.liveId);
   const nextLive = nextLiveId(state.people.filter((person) => person.id !== "self"), state.liveId);
@@ -133,8 +139,10 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
       onPatch={patchWidget}
     >{content[id]}</OverlayWidget>)}
 
+    {editing && <p className="ov-hint">Arraste para mover · roda do mouse ou − e + mudam o tamanho · Esc ou Ctrl+Shift+O fixa</p>}
     {editing && <div className="ov-toolbar" role="toolbar" aria-label="Editar sobreposição">
-      <p className="ov-hint">Arraste para mover · roda do mouse ou − e + mudam o tamanho · Esc ou Ctrl+Shift+O fixa</p>
+      <button type="button" className="ov-all" aria-pressed={anyOn} onClick={() => toggleAll(!anyOn)}>{anyOn ? "Desativar tudo" : "Ativar tudo"}</button>
+      <span className="ov-sep" aria-hidden="true"/>
       <div className="ov-chips">
         {OVERLAY_WIDGETS.map((widget) => <button
           key={widget.id}
@@ -144,9 +152,10 @@ export function OverlayApp({ demo = false }: { demo?: boolean }) {
           onClick={() => patchWidget(widget.id, { on: !settings.widgets[widget.id].on }, true)}
         >{widget.label}</button>)}
       </div>
+      <span className="ov-sep" aria-hidden="true"/>
       <div className="ov-controls">
         <label>Opacidade
-          <input type="range" className="sx-range" style={{ "--fill": `${Math.round(settings.opacity * 100)}%`, width: 200 } as CSSProperties} min={0} max={100} step={1} value={Math.round(settings.opacity * 100)} aria-label="Opacidade" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 }, true)}/>
+          <input type="range" className="sx-range" style={{ "--fill": `${Math.round(settings.opacity * 100)}%`, width: 140 } as CSSProperties} min={0} max={100} step={1} value={Math.round(settings.opacity * 100)} aria-label="Opacidade" onChange={(event) => update({ ...settings, opacity: Number(event.target.value) / 100 }, true)}/>
         </label>
         {nextLive && <button type="button" onClick={() => { if (overlay) overlay.sendCommand({ type: "select-live", peerId: nextLive }); else setState({ ...state, liveId: nextLive }); }}>Trocar transmissão</button>}
         <button type="button" className="primary" onClick={finishEditing}>Concluir</button>

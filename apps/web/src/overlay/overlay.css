@@ -25,9 +25,9 @@ html.overlay-demo,html.overlay-demo body{background:linear-gradient(#2c4560 0 55
 .ov-status{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;background:#140a1e;font-weight:500}
 .ov-status i{width:8px;height:8px;border-radius:50%;background:#75df8c;box-shadow:0 0 8px #75df8c}
 .ov-mute{padding:6px 14px;border-radius:999px;background:#e24b4a;font-weight:600}
-.ov-toolbar{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);display:grid;gap:10px;padding:14px 18px;border-radius:16px;background:rgba(22,10,34,.96);border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 40px rgba(0,0,0,.6);max-width:min(720px,92vw);pointer-events:auto}
-.ov-hint{margin:0;font-size:12px;color:rgba(255,255,255,.75);text-align:center}
-.ov-chips,.ov-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center}
+.ov-toolbar{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);display:flex;flex-wrap:nowrap;align-items:center;gap:12px;white-space:nowrap;padding:10px 14px;border-radius:16px;background:rgba(22,10,34,.96);border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 40px rgba(0,0,0,.6);max-width:98vw;pointer-events:auto}
+.ov-hint{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);margin:0;padding:3px 12px;border-radius:999px;background:rgba(22,10,34,.85);font-size:12px;color:rgba(255,255,255,.8);white-space:nowrap;pointer-events:none}
+.ov-chips,.ov-controls{display:flex;flex-wrap:nowrap;gap:8px;align-items:center}.ov-sep{width:1px;height:26px;background:rgba(255,255,255,.18);flex:none}
 .ov-toolbar button{padding:7px 14px;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:transparent;color:#fff;font-size:13px;cursor:pointer}
 .ov-toolbar button:hover{background:rgba(255,255,255,.1)}
 .ov-chips button.on{background:#7c3aed;border-color:#7c3aed}
@@ -42,3 +42,6 @@ html.overlay-mode body::before,html.overlay-mode body::after,html.overlay-mode #
 .ov-controls input[type="range"].sx-range{appearance:none;-webkit-appearance:none;display:block;height:22px;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline:none;cursor:pointer}
 .ov-controls .sx-range::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,#8b5cf6 var(--fill,0%),rgba(255,255,255,.22) var(--fill,0%))}
 .ov-controls .sx-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 5px rgba(0,0,0,.5)}
+.ov-toolbar .ov-all{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.35);font-weight:600}
+.ov-toolbar .ov-all[aria-pressed="false"]{background:#8b5cf6;border-color:transparent}
+@media(max-width:1100px){.ov-toolbar{flex-wrap:wrap;justify-content:center}.ov-chips,.ov-controls{flex-wrap:wrap;justify-content:center}.ov-sep{display:none}.ov-hint{bottom:150px}}

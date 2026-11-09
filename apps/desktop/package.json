@@ -3,7 +3,7 @@
   "version": "0.11.10",
   "private": true,
   "description": "Transmissão de tela e chamadas P2P com áudio, vídeo e chat via WebRTC",
-  "homepage": "https://github.com/ygorbetine/BRisk",
+  "homepage": "https://github.com/ygorbetine/Briks",
   "author": {
     "name": "Briks",
     "email": "ygorbetine@users.noreply.github.com"
@@ -32,7 +32,7 @@
     "publish": {
       "provider": "github",
       "owner": "ygorbetine",
-      "repo": "BRisk",
+      "repo": "Briks",
       "releaseType": "release"
     },
     "productName": "Briks",

@@ -7,6 +7,8 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <crtdbg.h>
+#include <stdlib.h>
 #endif
 
 static app_state_t state = { .screen = SCREEN_AUTH, .active_friend = -1, .active_group = -1, .mic_on = true };
@@ -54,16 +56,34 @@ static void frame(cui_ctx *ui) {
     briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }
 
+/* Teste automatizado (captura, roteiro, BRIKS_HIDDEN): nunca abre diálogo na tela de ninguém. Erros do CRT/Run-Time Check vão para stderr e o processo sai com código 70. */
+#ifdef _WIN32
+static int crt_hook(int type, char *msg, int *ret) { (void)type; if (msg) fputs(msg, stderr); fputs(" briks_cui: falha de runtime, encerrando (70) ", stderr); fflush(stderr); ExitProcess(70); *ret = 1; return TRUE; }
+static void quiet_automation(void) {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    _set_error_mode(_OUT_TO_STDERR);
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE); _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE); _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE); _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportHook(crt_hook);
+}
+#endif
+
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b; (void)c; (void)d;
 #else
 int main(void) {
 #endif
+    const bool automation = getenv("CUI_SCREENSHOT") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_HIDDEN");   /* janela oculta por padrão em testes */
+#ifdef _WIN32
+    if (automation) quiet_automation();
+#endif
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 900 && h >= 560) { win_w = a; win_h = h; } }
     cui_app *app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 900, .min_height = 560,
-        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL });
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
     if (!app) return 1;
     state.app = app;
     bk_start();

@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
+use crate::audio::Audio;
 use crate::identity::Identity;
 use crate::mesh::{self, MeshCfg, MeshCmd, MeshEvent};
 use crate::realtime::{self, RealtimeCfg};
@@ -107,6 +108,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
     let mut mesh_cmd: Option<mpsc::Sender<MeshCmd>> = None;
     let mut mesh_ev: Option<mpsc::Receiver<MeshEvent>> = None;
     let mut rt_status: Option<mpsc::Receiver<String>> = None;
+    let mut audio: Option<Arc<Audio>> = None;
+    let (mut mic_muted, mut deafened) = (false, false);
 
     loop {
         tokio::select! {
@@ -152,7 +155,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                                 if fw_tx.send(e).await.is_err() { break; }
                             }
                         });
-                        let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: vec![] }, id, rt, fw_rx);
+                        let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
+                        let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
+                        if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                        audio = au.clone();
+                        let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: vec![], audio: au.zip(au_rx) }, id, rt, fw_rx);
                         mesh_cmd = Some(h.cmd);
                         mesh_ev = Some(h.events);
                         rt_status = Some(st_rx);
@@ -170,6 +177,19 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                             let _ = c.send(MeshCmd::Chat { to_fp: to.into(), text: text.chars().take(crate::identity::MAX_CHAT_CHARS).collect() }).await;
                         }
                     }
+                    "mic.set" | "deafen.set" => {
+                        // a UI manda {"on":bool}: mic.set on=microfone ligado; deafen.set on=ensurdecido
+                        if v["cmd"] == "mic.set" { mic_muted = v["on"].as_bool().map(|o| !o).or(v["muted"].as_bool()).unwrap_or(false); }
+                        else { deafened = v["on"].as_bool().or(v["deafened"].as_bool()).unwrap_or(false); }
+                        if let Some(a) = &audio { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::BroadcastState).await; }
+                        // deafen implica mic mudo: o estado efetivo é o que a UI mostra
+                        out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
+                    }
+                    "peer.mute" => {
+                        let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
+                    }
                     "ping" => out(&mut wr, json!({ "ev": "pong" })).await?,
                     _ => {}
                 }
@@ -178,6 +198,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
+                    Some(MeshEvent::Speaking { peer_id, level }) => out(&mut wr, json!({ "ev": "speaking", "peer": peer_id, "level": level })).await?,
+                    Some(MeshEvent::PeerState { peer_id, microphone, deafened }) => out(&mut wr, json!({ "ev": "peer.state", "peer_id": peer_id, "microphone": microphone, "deafened": deafened })).await?,
                     Some(MeshEvent::Error(m)) => out(&mut wr, json!({ "ev": "error", "where": "mesh", "message": m })).await?,
                     None => { mesh_ev = None; }
                 }

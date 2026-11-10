@@ -77,7 +77,8 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
-    struct { char id[48]; char state[16]; } rtc_peers[8];
+    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; } rtc_peers[8];
+    float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
 } app_state_t;
 
 /* app.c: máquina de estados das chamadas ao backend */
@@ -101,6 +102,7 @@ void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se prec
 void rtc_leave_room(app_state_t *s);
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
+void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_pump(app_state_t *s);                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */

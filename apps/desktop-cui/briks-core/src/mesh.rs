@@ -11,8 +11,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::interceptor::registry::Registry;
+use webrtc::track::track_local::TrackLocal;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_server::RTCIceServer;
@@ -22,6 +26,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 
+use crate::audio::{Audio, AudioEvent};
 use crate::identity::{self, ChatWire, Identity, PublicJwk};
 use crate::realtime::{Realtime, RtEvent};
 use crate::signaling::{is_initiator, secure_room_id, Envelope, Reject, Validator};
@@ -34,10 +39,18 @@ pub enum MeshEvent {
     /// Estado de um peer: "negociando" | "conectado" | "autenticado" | "falhou" | "fechado".
     Peer { peer_id: String, state: String },
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
+    Speaking { peer_id: String, level: f32 },
+    /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
+    PeerState { peer_id: String, microphone: bool, deafened: bool },
     Error(String),
 }
 
 pub enum MeshCmd {
+    /// Reenvia o estado local (microfone/ensurdecido) a todos os peers autenticados.
+    BroadcastState,
+    /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
+    MutePeer { key: String, muted: bool },
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
     Chat { to_fp: String, text: String },
     /// Só para testes: força um offer agora (colisão).
@@ -74,6 +87,8 @@ pub struct MeshCfg {
     pub local_peer: String,
     pub display_name: String,
     pub ice_servers: Vec<RTCIceServer>,
+    /// Áudio da chamada (None = só DataChannel, como nos testes de chat).
+    pub audio: Option<(Arc<Audio>, mpsc::Receiver<AudioEvent>)>,
 }
 
 pub struct MeshHandle {
@@ -109,21 +124,31 @@ struct Actor {
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
     seen_msgs: HashSet<String>,
+    audio: Option<Arc<Audio>>,
+    audio_rx: Option<mpsc::Receiver<AudioEvent>>,
 }
 
 impl Actor {
-    fn new(cfg: MeshCfg, identity: Arc<Identity>, rt: Realtime, ev: mpsc::Sender<MeshEvent>) -> Self {
+    fn new(mut cfg: MeshCfg, identity: Arc<Identity>, rt: Realtime, ev: mpsc::Sender<MeshEvent>) -> Self {
+        let (audio, audio_rx) = match cfg.audio.take() { Some((a, r)) => (Some(a), Some(r)), None => (None, None) };
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
         let mut irx = self.irx.take().expect("irx");
         let mut retry = tokio::time::interval(std::time::Duration::from_secs(2));
+        let mut arx = self.audio_rx.take();
+        if let Some(a) = &self.audio { a.start(); }
         loop {
             tokio::select! {
+                ae = async { match arx.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => match ae {
+                    Some(AudioEvent::Speaking { peer, level }) => self.emit(MeshEvent::Speaking { peer_id: peer, level }).await,
+                    Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
+                    None => { arx = None; }
+                },
                 _ = retry.tick() => {
                     // mensagens sem ACK são reenviadas (o receptor deduplica por id)
                     let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();
@@ -140,6 +165,7 @@ impl Actor {
                 i = irx.recv() => if let Some(i) = i { self.on_internal(i).await },
             }
         }
+        if let Some(a) = &self.audio { a.stop(); }
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
         self.rt.close().await;
     }
@@ -157,6 +183,7 @@ impl Actor {
             }
             RtEvent::PeerLeft(p) => {
                 self.present.remove(&p);
+                if let Some(a) = &self.audio { a.remove_peer(&p); }
                 if let Some(peer) = self.peers.remove(&p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p, state: "fechado".into() }).await; }
             }
             RtEvent::Broadcast { event: _, payload } => {
@@ -175,8 +202,16 @@ impl Actor {
     }
 
     async fn new_pc(&mut self, peer_id: &str, gen: u32) -> Result<Arc<RTCPeerConnection>> {
-        let api = APIBuilder::new().build();
+        let mut m = MediaEngine::default();
+        m.register_default_codecs()?;
+        let registry = register_default_interceptors(Registry::new(), &mut m)?;
+        let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
+        if let Some(a) = &self.audio {
+            pc.add_track(a.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await?;
+            let (a, id) = (a.clone(), peer_id.to_string());
+            pc.on_track(Box::new(move |track, _rx, _tr| { let (a, id) = (a.clone(), id.clone()); Box::pin(async move { tokio::spawn(a.run_remote(id, track)); }) }));
+        }
         let (itx, id) = (self.itx.clone(), peer_id.to_string());
         { let (itx, id) = (itx.clone(), id.clone());
           pc.on_ice_candidate(Box::new(move |c| { let (itx, id) = (itx.clone(), id.clone()); Box::pin(async move {
@@ -288,7 +323,23 @@ impl Actor {
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 self.flush_outbox(&to_fp).await;
             }
+            MeshCmd::BroadcastState => {
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.send_state(&id).await; }
+            }
+            MeshCmd::MutePeer { key, muted } => {
+                if let Some(a) = &self.audio {
+                    let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                    a.mute_peer(&id, muted);
+                }
+            }
             MeshCmd::Close => {}
+        }
+    }
+
+    async fn send_state(&self, peer: &str) {
+        if let Some(a) = &self.audio {
+            self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": a.mic_open(), "deafened": a.deaf() })).await;
         }
     }
 
@@ -361,6 +412,10 @@ impl Actor {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
             }
+            "peer.state" => {
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false) }).await;
+            }
             "chat.message.ack" => {
                 let id = v["messageId"].as_str().unwrap_or("");
                 if let Some(fp) = self.peers.get(peer).and_then(|p| p.fp.clone()) { if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); } }
@@ -374,6 +429,7 @@ impl Actor {
         if ok {
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
             if let Some(fp) = fp { self.flush_outbox(&fp).await; }
+            self.send_state(peer).await;
         }
     }
 }

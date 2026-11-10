@@ -3,6 +3,7 @@
 #include "core.h"
 #include "json.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void copy(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src ? src : ""); }
@@ -31,7 +32,15 @@ void rtc_leave_room(app_state_t *s) {
     copy(s->rtc_state, sizeof s->rtc_state, "");
 }
 
-void rtc_set_mic(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
+void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
+/* silenciar uma pessoa = ganho zero só para ela (por peer_id) */
+void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
+    if (slot < 0 || slot >= 8 || !s->rtc_peers[slot].id[0]) return;
+    s->rtc_peers[slot].muted_by_me = muted;
+    char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
+    snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
+    if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
+}
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
 static void set_peer(app_state_t *s, const char *id, const char *state) {
@@ -40,7 +49,7 @@ static void set_peer(app_state_t *s, const char *id, const char *state) {
     for (int i = 0; i < n; i++) if (!strcmp(s->rtc_peers[i].id, id)) { slot = i; break; }
     if (slot < 0) for (int i = 0; i < n; i++) if (!s->rtc_peers[i].id[0]) { slot = i; break; }
     if (slot < 0) return;
-    if (!strcmp(state, "fechado")) { s->rtc_peers[slot].id[0] = 0; s->rtc_peers[slot].state[0] = 0; }
+    if (!strcmp(state, "fechado")) { memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]); }
     else { copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, state); }
     s->rtc_peer_count = s->rtc_authed_count = 0;
     for (int i = 0; i < n; i++) if (s->rtc_peers[i].id[0]) { s->rtc_peer_count++; if (!strcmp(s->rtc_peers[i].state, "autenticado")) s->rtc_authed_count++; }
@@ -60,6 +69,19 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "peer")) {
         set_peer(s, json_str(j, "peer_id", ""), json_str(j, "state", ""));
+    } else if (!strcmp(ev, "speaking")) {
+        const jval *lv = json_get(j, "level");
+        float l = lv && lv->type == J_NUM ? (float)lv->num : 0;
+        const char *p = json_str(j, "peer", "");
+        if (!strcmp(p, "me")) s->me_level = l;
+        else for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
+    } else if (!strcmp(ev, "peer.state")) {
+        const char *p = json_str(j, "peer_id", "");
+        const jval *m = json_get(j, "microphone"), *d = json_get(j, "deafened");
+        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
+            s->rtc_peers[i].mic_off = m && m->type == J_BOOL && !m->b;
+            s->rtc_peers[i].deafened = d && d->type == J_BOOL && d->b;
+        }
     } else if (!strcmp(ev, "error")) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
@@ -74,6 +96,9 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
 
 void rtc_pump(app_state_t *s) {
     core_status_t st = core_state();
+    static int demo_speak = -1;   /* BRIKS_DEMO_SPEAK=0.7: fixa o nível de fala local (captura de tela do halo, sem microfone) */
+    if (demo_speak < 0) demo_speak = getenv("BRIKS_DEMO_SPEAK") ? 1 : 0;
+    if (demo_speak) s->me_level = (float)atof(getenv("BRIKS_DEMO_SPEAK"));
     if (st == CORE_FAILED && s->in_room && strcmp(s->rtc_state, "erro")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());

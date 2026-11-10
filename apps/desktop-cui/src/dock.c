@@ -100,14 +100,14 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     if (!o->slot) return;
     /* só um contorno sutil, com o MESMO retângulo e raio (22) do painel: segue a curva, sem cantos retos */
     cui_rect z = { o->slot_r.x, o->slot_r.y, o->slot_r.w, o->slot_r.h };
-    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), CUI_RGBA(0xc4b0ffcc), 1.5f);
+    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), B_A(B_C3, 0xcc), 1.5f);
 }
 
 static bool inside(lrect r, float x, float y) { return x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h; }
 
 static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
     cui_push_id_int(ui, id);
-    cui_box(ui, .id = "b", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 9, .bg = CUI_RGBA(0x180726e6), .border = 1,
+    cui_box(ui, .id = "b", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 9, .bg = B_A(B_PANEL, 0xe6), .border = 1,
             .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         cui_icon(ui, icon, 13, B_TEXT);
     }
@@ -256,7 +256,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
                     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = d.x, .pad_top = d.y) {
                         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(d.w), .height = CUI_PX(d.h), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                             float len = (n->vertical ? d.w : d.h) * 0.12f; if (len < 56) len = 56;
-                            cui_box(ui, .width = CUI_PX(n->vertical ? len : 4), .height = CUI_PX(n->vertical ? 4 : len), .radius = 2, .bg = CUI_RGBA(0xa78bfaee)) {}
+                            cui_box(ui, .width = CUI_PX(n->vertical ? len : 4), .height = CUI_PX(n->vertical ? 4 : len), .radius = 2, .bg = B_A(B_C3, 0xee)) {}
                         }
                     }
                     cui_pop_id(ui);
@@ -269,7 +269,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
             cui_canvas(ui, "dock-over", CUI_FILL, CUI_FILL, paint_over, &o, sizeof o);
             if (drag.from_menu) {
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad = 18, .pad_top = 64) {
-                    cui_box(ui, .pad_x = 16, .pad_y = 9, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1, .border_color = B_GLASS_BORDER) {
+                    cui_box(ui, .pad_x = 16, .pad_y = 9, .radius = 14, .bg = B_A(B_PANEL, 0xf2), .border = 1, .border_color = B_GLASS_BORDER) {
                         cui_text(ui, "Clique para encaixar o painel · botão direito ou Esc cancela", .size = 13);
                     }
                 }

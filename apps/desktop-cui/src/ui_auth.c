@@ -8,7 +8,7 @@ void ui_auth(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 1.0f);   /* primeiro filho do STACK: fundo */
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         cui_box(ui, .width = CUI_FILL, .max_width = 430, .pad = 38, .gap = 12, .radius = 24,
-                .bg = B_GLASS_STRONG, .border = 1, .border_color = CUI_RGBA(0x8b5cf633), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
+                .bg = B_GLASS_STRONG, .border = 1, .border_color = B_A(B_C3, 0x33), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
             briks_brand(ui, 26);
             cui_gap(ui, 14);
             cui_text(ui, reset ? "Redefinir senha" : reg ? "Crie seu espaço" : "Bom ter você de volta",

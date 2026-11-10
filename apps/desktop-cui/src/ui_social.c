@@ -15,10 +15,10 @@ static void initials(const char *name, char *out) {
 static void space_button(cui_ctx *ui, const char *label, bool active, bool dashed, int *clicked_id, int id) {
     cui_push_id_int(ui, id);
     cui_box(ui, .id = "b", .width = CUI_PX(50), .height = CUI_PX(50), .radius = active ? 13 : 17,
-            .bg = active ? B_C3 : dashed ? CUI_RGBA(0x8b5cf60b) : CUI_RGB(0x171c24),
-            .border = dashed ? 1 : 0, .border_color = CUI_RGBA(0x8b5cf666),
+            .bg = active ? B_C3 : dashed ? B_A(B_C3, 0x0b) : B_PANEL,
+            .border = dashed ? 1 : 0, .border_color = B_A(B_C3, 0x66),
             .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-        cui_text(ui, label, .size = 13, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xc9d1dc));
+        cui_text(ui, label, .size = 13, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : B_MUTED);
     }
     if (briks_clicked(ui, "b")) *clicked_id = id;
     cui_pop_id(ui);
@@ -39,10 +39,10 @@ static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char 
 static bool nav_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_push_id(ui, label);
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 9, .gap = 10, .radius = 12,
-            .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000),
+            .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000),
             .border = active ? 1 : 0, .border_color = CUI_RGBA(0xffffff1a), .align = CUI_ALIGN_CENTER) {
-        cui_icon(ui, icon, 16, active ? B_TEXT : CUI_RGB(0x8d97a6));
-        cui_text(ui, label, .color = active ? B_TEXT : CUI_RGB(0xa592b8), .nowrap = true);
+        cui_icon(ui, icon, 16, active ? B_TEXT : B_MUTED);
+        cui_text(ui, label, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
@@ -51,7 +51,7 @@ static bool nav_item(cui_ctx *ui, const char *icon, const char *label, bool acti
 
 static void section_title(cui_ctx *ui, const char *t) {
     cui_box(ui, .pad_left = 9, .pad_top = 22, .pad_bottom = 7) {
-        cui_text(ui, t, .size = 10, .color = CUI_RGB(0x8472a0));
+        cui_text(ui, t, .size = 10, .color = g_th.ph);
     }
 }
 
@@ -92,7 +92,7 @@ static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
-            .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
+            .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
         cui_box(ui, .id = "av") { cui_avatar(ui, f->name, .size = 32); }
         const char *line = f->presence;   /* a linha sob o nome é só o rich presence; o status vai no balão */
         if (line[0]) {   /* rich presence: linha pequena sob o nome */
@@ -165,8 +165,8 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 14, .nowrap = true);
                     /* linha de status: presença em uso > status digitado > "Disponível" (verde) */
                     const char *mine = s->rp_enabled ? s->user_presence : "";
-                    if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = CUI_RGB(0xc9b8dc), .nowrap = true);
-                    else if (mine[0]) cui_text(ui, mine, .size = 11, .color = CUI_RGB(0xc9b8dc), .nowrap = true);
+                    if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = B_MUTED, .nowrap = true);
+                    else if (mine[0]) cui_text(ui, mine, .size = 11, .color = B_MUTED, .nowrap = true);
                     else cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
                         cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}
                         cui_text(ui, "Disponível", .size = 10.5f, .color = B_ONLINE, .nowrap = true);
@@ -201,7 +201,7 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                     .radius_tl = g_th.bubble_big, .radius_tr = g_th.bubble_small, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big,
                     .bg = g_th.bubble_own, .border = 1, .border_color = CUI_RGBA(0xffffff26)) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                    cui_text(ui, "Você", .size = 12, .color = CUI_RGB(0xe6dcff));
+                    cui_text(ui, "Você", .size = 12, .color = B_TEXT);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
                 }
                 cui_text(ui, m->content);
@@ -214,7 +214,7 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                     .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     cui_text(ui, m->author, .size = 12, .color = B_C3);
-                    cui_text(ui, hm, .size = 10, .color = CUI_RGB(0x8472a0));
+                    cui_text(ui, hm, .size = 10, .color = g_th.ph);
                 }
                 cui_text(ui, m->content);
             }
@@ -259,7 +259,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
-                    .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
+                    .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
                 cui_push_disabled(ui, true);
                 cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar (marco 3)");
                 cui_pop_disabled(ui);
@@ -392,7 +392,7 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
 static bool profile_nav(cui_ctx *ui, const char *icon, const char *label, bool active) {
     bool hit = false;
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
-            .bg = active ? CUI_RGBA(0x8b5cf633) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = CUI_RGBA(0x8b5cf666)) {
+            .bg = active ? B_A(B_C3, 0x33) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {
         cui_icon(ui, icon, 16, active ? B_TEXT : B_MUTED);
         cui_text(ui, label, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }
@@ -559,7 +559,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
-            cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,
+            cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = B_A(B_PANEL, 0xf2), .border = 1,
                     .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_text(ui, briks_perf_hint_text(), .size = 12);   /* frase sorteada a cada exibição (perf.c) */
                 char lab[48]; snprintf(lab, sizeof lab, "Ativar %s", briks_perf_label(briks_perf_hint_level()));

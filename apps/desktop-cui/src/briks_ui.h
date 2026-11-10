@@ -14,10 +14,10 @@
 #define B_C3        (g_th.c3)
 #define B_BG        CUI_RGB(0x12041a)
 #define B_BG_DEEP   CUI_RGB(0x0f0316)
-#define B_PANEL     CUI_RGB(0x1a0a26)
-#define B_LINE      CUI_RGB(0x2f1745)
+#define B_PANEL     (g_th.field)   /* campos de texto: versao escura do matiz do tema */
+#define B_LINE      (g_th.line)
 #define B_TEXT      CUI_RGB(0xedf1f7)
-#define B_MUTED     CUI_RGB(0xa592b8)
+#define B_MUTED     (g_th.muted)
 #define B_DANGER    CUI_RGB(0xe95555)
 #define B_ONLINE    CUI_RGB(0x57d28b)
 #define B_GLASS_BORDER CUI_RGBA(0xffffff1c)  /* .11 */
@@ -155,6 +155,10 @@ bool script_capture(cui_app *app);
 
 /* Clique de verdade num contêiner: cui_last_hovered não serve para caixas simples (o "último componente" é o canvas do fundo,
    que cobre a janela e deixava qualquer clique acionar todos os itens). `id` é o .id da caixa, no escopo de id atual. */
+/* cor do tema com alfa 0..255 (acentos, bordas, tintas): nada de roxo fixo fora do tema */
+static inline cui_color briks_acc(cui_color c, int a) { c.a = (uint8_t)a; return c; }
+#define B_A(c, a) briks_acc((c), (a))
+
 /* Estilo da bolha de status (liquid glass). Normal/Simplificado: o shader desenha tudo (glass.c). Mínimo: sem shader, preenchimento chapado violeta + borda. */
 static inline cui_color briks_bubble_bg(void) {
     if (g_perf < PERF_MIN) return B_GLASS_BUBBLE;

@@ -124,11 +124,11 @@ void settings_notice(const char *text) {
 
 static void sub(cui_ctx *ui, const char *t) { cui_text(ui, t, .size = 12, .color = B_MUTED); }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
-    cui_text(ui, "Salvo neste computador · sem efeito real ainda", .size = 11, .color = CUI_RGB(0x8472a0));
+    cui_text(ui, "Salvo neste computador · sem efeito real ainda", .size = 11, .color = g_th.ph);
 }
 static bool menu_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 7, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
-            .bg = active ? CUI_RGBA(0x8b5cf633) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = CUI_RGBA(0x8b5cf666)) {
+            .bg = active ? B_A(B_C3, 0x33) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {
         cui_icon(ui, icon, 15, active ? B_TEXT : B_MUTED);
         cui_text(ui, label, .size = 13, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }

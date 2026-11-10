@@ -71,6 +71,7 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "already_requested" => return e("already_requested", "Já existe um pedido de amizade pendente com essa pessoa."),
         "too_many_requests" => return e("rate_limited", "Você tem pedidos de amizade demais em aberto. Aguarde as respostas."),
         "invalid_public_key" | "invalid_fingerprint" => return e("server", "O servidor recusou a chave pública deste aparelho."),
+        "invalid_backup" => return e("invalid_backup", "O servidor recusou a cópia de segurança."),
         "invalid_avatar" => return e("avatar", "O servidor recusou o endereço da foto."),
         "invalid_display_name" => return e("invalid_name", "O nome deve ter de 1 a 64 caracteres."),
         _ => {}
@@ -237,6 +238,16 @@ impl AuthProvider for SupabaseProvider {
             }
             Err(ureq::Error::Transport(_)) => Err(AccountError::network()),
         }
+    }
+    fn backup_put(&self, access_token: &str, blob: &Value) -> AResult<()> {
+        self.rpc(access_token, "identity_backup_put", json!({ "p_blob": blob })).map(|_| ())
+    }
+    fn backup_get(&self, access_token: &str) -> AResult<Option<Value>> {
+        let v = self.rpc(access_token, "identity_backup_get", json!({}))?;
+        Ok(if v.is_null() { None } else { Some(v) })
+    }
+    fn backup_delete(&self, access_token: &str) -> AResult<()> {
+        self.rpc(access_token, "identity_backup_delete", json!({})).map(|_| ())
     }
     fn friends(&self, access_token: &str) -> AResult<Vec<Friend>> {
         let v = self.rpc(access_token, "friends_list", json!({}))?;

@@ -31,7 +31,8 @@ pub struct FakeState {
     refresh: HashMap<String, String>,              // refresh token -> user_id (uso único)
     otps: HashMap<String, String>,                 // "tipo:email" -> código
     pub profiles: HashMap<String, Value>,
-    pub objects: HashMap<String, Vec<u8>>,         // Storage: "<id>/avatar.jpg" -> bytes
+    pub objects: HashMap<String, Vec<u8>>,
+    pub backups: HashMap<String, Value>,           // cópia cifrada da identidade por conta         // Storage: "<id>/avatar.jpg" -> bytes
     requests: Vec<(String, String, String, bool)>, // id, de, para, aceito
     /// validade do access token em segundos (testes de renovação usam valores baixos)
     pub expires_in: u64,
@@ -346,6 +347,23 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
                 }
             }
             ok(p)
+        }
+        "identity_backup_put" => {
+            let blob = &b["p_blob"];
+            let b64 = |k: &str, n: usize| blob[k].as_str().is_some_and(|s| s.len() == n && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+            let range = |k: &str, lo: u64, hi: u64| blob[k].as_u64().is_some_and(|v| (lo..=hi).contains(&v));
+            let fields = blob.as_object().map(|o| o.len()).unwrap_or(0);
+            if !(blob["version"] == 1 && blob["kdf"] == "argon2id" && blob["cipher"] == "xchacha20poly1305" && range("m_kib", 19456, 262144) && range("t", 2, 10) && range("p", 1, 4)
+                && b64("salt", 22) && b64("nonce", 32) && b64("ciphertext", 64) && blob["fingerprint"].as_str().is_some_and(|f| f.len() == 64) && fields == 10) {
+                return pg("invalid_backup");
+            }
+            st.backups.insert(me.to_string(), json!({ "blob": blob, "updated_at": "2026-11-10T22:00:00+00:00" }));
+            ok(Value::Null)
+        }
+        "identity_backup_get" => ok(st.backups.get(me).cloned().unwrap_or(Value::Null)),
+        "identity_backup_delete" => {
+            st.backups.remove(me);
+            ok(Value::Null)
         }
         "account_update_profile" => {
             let Some(p) = st.profiles.get_mut(me) else { return pg("no_profile") };

@@ -11,7 +11,7 @@ use super::pkce::{challenge_of, parse_query, url_decode, url_encode, Pkce};
 use super::provider::*;
 use super::store::{Protector, SecretFile};
 use super::supabase::{map_error, SupabaseProvider};
-use super::{avatar, legacy, loopback, service, valid_email, Accounts, SignUpOutcome};
+use super::{avatar, backup, legacy, loopback, service, valid_email, Accounts, SignUpOutcome};
 
 /// Os fluxos que abrem o loopback usam portas fixas: um de cada vez.
 static FLOW: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -721,6 +721,228 @@ async fn service_applies_profile_changes_and_reports_them() {
     assert_eq!((e["ev"].as_str(), e["path"].is_null()), (Some("account.avatar"), true));
     assert!(!shown.exists());
     assert_eq!(next(&mut rx).await["message"], "Voltamos para a foto da sua conta.");
+}
+
+// ---------- fase 2: cópia cifrada da identidade, recuperável por frase ----------
+
+fn fixed_identity() -> crate::identity::Identity {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+    crate::identity::Identity::from_secret_b64(&B64.encode([7u8; 32])).unwrap()
+}
+fn fixed_phrase() -> String {
+    bip39::Mnemonic::from_entropy_in(bip39::Language::Portuguese, &[0x5au8; 16]).unwrap().to_string()
+}
+
+#[test]
+fn backup_known_vector_is_stable() {
+    // vetor fixo: mesma identidade, frase, conta, sal e nonce => sempre o mesmo pacote (trava o formato v1)
+    let id = fixed_identity();
+    let phrase = fixed_phrase();
+    assert_eq!(phrase, "envolver ringue mais panela narina cajado fita despesa envolver ringue mais palito");
+    let blob = backup::seal_with(&id, &phrase, "11111111-aaaa-4bbb-8ccc-222222222222", &[1u8; 16], &[2u8; 24], backup::M_KIB, backup::T_COST, backup::P_COST).unwrap();
+    assert_eq!((blob.version, blob.kdf.as_str(), blob.cipher.as_str(), blob.m_kib, blob.t, blob.p), (1, "argon2id", "xchacha20poly1305", 65536, 3, 1));
+    assert_eq!(blob.salt, "AQEBAQEBAQEBAQEBAQEBAQ");
+    assert_eq!(blob.nonce, "AgICAgICAgICAgICAgICAgICAgICAgIC");
+    assert_eq!(blob.ciphertext, "ievtV8mhLt9KOKOpJOJ0RYBsTwRYVZunsNKxTr_q6F-BGHUIUT0RD1bMfyZWgGxR");
+    assert_eq!(blob.fingerprint, id.fingerprint());
+    let back = backup::open(&blob, &phrase, "11111111-aaaa-4bbb-8ccc-222222222222").unwrap();
+    assert_eq!(back.secret_b64(), id.secret_b64());
+    // o pacote não contém a chave nem a frase
+    let text = serde_json::to_string(&blob).unwrap();
+    assert!(!text.contains(&id.secret_b64()) && !text.contains(&phrase));
+    assert!(text.len() < 2000, "cabe no limite do servidor");
+}
+
+#[test]
+fn backup_phrase_generation_and_typing_mistakes() {
+    let (a, b) = (backup::new_phrase(), backup::new_phrase());
+    assert_ne!(a, b);
+    assert_eq!(a.split(' ').count(), 12);
+    assert!(a.chars().all(|c| c.is_ascii_lowercase() || c == ' '), "só letras sem acento: {a}");
+    assert_eq!(backup::check_phrase(&a).unwrap(), a);
+    // maiúsculas e espaços a mais são tolerados
+    let messy = format!("  {}  ", a.to_uppercase().replace(' ', "   "));
+    assert_eq!(backup::check_phrase(&messy).unwrap(), a);
+    // faltando palavra, palavra inventada e palavra trocada (soma de verificação) são pegas sem ir à rede
+    let words: Vec<&str> = a.split(' ').collect();
+    assert_eq!(backup::check_phrase(&words[..11].join(" ")).unwrap_err().code, "invalid_phrase");
+    assert_eq!(backup::check_phrase(&format!("{} xyzzy", words[..11].join(" "))).unwrap_err().code, "invalid_phrase");
+    assert_eq!(backup::check_phrase("").unwrap_err().code, "invalid_phrase");
+    let other: Vec<String> = b.split(' ').map(String::from).collect();
+    let swapped: Vec<String> = (0..12).map(|i| if i == 3 { other[3].clone() } else { words[i].to_string() }).collect();
+    if swapped[3] != words[3] {
+        // 1 chance em 16 de a soma de verificação coincidir: aí a frase é válida, mas é OUTRA frase
+        match backup::check_phrase(&swapped.join(" ")) {
+            Err(e) => assert_eq!(e.code, "invalid_phrase"),
+            Ok(p) => assert_ne!(p, a),
+        }
+    }
+}
+
+#[test]
+fn backup_wrong_phrase_tampering_and_other_account_all_fail_the_same_way() {
+    let id = fixed_identity();
+    let phrase = fixed_phrase();
+    let user = "11111111-aaaa-4bbb-8ccc-222222222222";
+    let blob = backup::seal(&id, &phrase, user).unwrap();
+    // sal e nonce aleatórios: duas cópias da mesma chave com a mesma frase não se parecem
+    let again = backup::seal(&id, &phrase, user).unwrap();
+    assert!(blob.salt != again.salt && blob.nonce != again.nonce && blob.ciphertext != again.ciphertext);
+    assert_eq!(backup::open(&blob, &phrase, user).unwrap().fingerprint(), id.fingerprint());
+
+    let other_phrase = backup::new_phrase();
+    let e = backup::open(&blob, &other_phrase, user).unwrap_err();
+    assert_eq!(e.code, "wrong_phrase");
+    assert!(!e.message.contains(&id.secret_b64()) && !e.message.contains(&blob.ciphertext));
+    // pacote de outra conta (dado autenticado diferente) e pacote adulterado: mesmo erro, nada vaza
+    assert_eq!(backup::open(&blob, &phrase, "99999999-aaaa-4bbb-8ccc-222222222222").unwrap_err().code, "wrong_phrase");
+    let flip = |s: &str| { let mut c: Vec<char> = s.chars().collect(); c[5] = if c[5] == 'A' { 'B' } else { 'A' }; c.into_iter().collect::<String>() };
+    for field in ["ciphertext", "nonce", "salt"] {
+        let mut bad = blob.clone();
+        match field { "ciphertext" => bad.ciphertext = flip(&bad.ciphertext), "nonce" => bad.nonce = flip(&bad.nonce), _ => bad.salt = flip(&bad.salt) }
+        assert_eq!(backup::open(&bad, &phrase, user).unwrap_err().code, "wrong_phrase", "{field}");
+    }
+    // impressão digital trocada: a chave abre, mas não é a anunciada
+    let mut bad = blob.clone();
+    bad.fingerprint = "0".repeat(64);
+    assert_eq!(backup::open(&bad, &phrase, user).unwrap_err().code, "invalid_backup");
+    // um servidor malicioso não baixa o custo do KDF nem pede memória absurda
+    for (m, t, p) in [(1024, 3, 1), (65536, 1, 1), (4_000_000, 3, 1), (65536, 3, 64)] {
+        let mut bad = blob.clone();
+        (bad.m_kib, bad.t, bad.p) = (m, t, p);
+        assert_eq!(backup::open(&bad, &phrase, user).unwrap_err().code, "invalid_backup", "{m} {t} {p}");
+    }
+    let mut bad = blob.clone();
+    bad.version = 2;
+    assert_eq!(backup::open(&bad, &phrase, user).unwrap_err().code, "invalid_backup");
+}
+
+#[tokio::test]
+async fn backup_roundtrip_through_the_server_and_phrase_rotation() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let a = accounts(&f, &tmpdir("bk-a"));
+    let u = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(a.backup_fetch().await.unwrap(), None);
+    assert_eq!(a.backup_open(&backup::new_phrase()).await.unwrap_err().code, "no_backup");
+    assert_eq!(a.backup_open("isto nao e uma frase").await.unwrap_err().code, "invalid_phrase");
+
+    let id = crate::identity::Identity::generate();
+    let phrase1 = backup::new_phrase();
+    let saved = a.backup_save(&id, &phrase1).await.unwrap();
+    // o que o servidor guardou não tem a chave nem a frase, e é exatamente o pacote
+    let stored = f.state.lock().unwrap().backups[&u.id].clone();
+    assert_eq!(serde_json::from_value::<backup::Blob>(stored["blob"].clone()).unwrap(), saved);
+    let text = stored.to_string();
+    assert!(!text.contains(&id.secret_b64()) && !text.contains(&phrase1));
+
+    // "outro computador": outra instância, mesma conta, só a frase
+    let b = accounts(&f, &tmpdir("bk-b"));
+    b.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(b.backup_open(&phrase1).await.unwrap().secret_b64(), id.secret_b64());
+    assert_eq!(b.backup_open(&backup::new_phrase()).await.unwrap_err().code, "wrong_phrase");
+
+    // trocar a frase: a antiga deixa de abrir, a nova abre a mesma chave
+    let phrase2 = backup::new_phrase();
+    let rotated = a.backup_save(&id, &phrase2).await.unwrap();
+    assert!(rotated.salt != saved.salt && rotated.nonce != saved.nonce && rotated.ciphertext != saved.ciphertext);
+    assert_eq!(b.backup_open(&phrase1).await.unwrap_err().code, "wrong_phrase");
+    assert_eq!(b.backup_open(&phrase2).await.unwrap().fingerprint(), id.fingerprint());
+
+    // outra conta não enxerga a cópia
+    let c = accounts(&f, &tmpdir("bk-c"));
+    c.sign_in_oauth(OAuthProvider::Discord).await.unwrap();
+    assert_eq!(c.backup_fetch().await.unwrap(), None);
+    assert_eq!(c.backup_open(&phrase2).await.unwrap_err().code, "no_backup");
+
+    // o servidor recusa pacote fora do formato
+    let (prov, tok) = (SupabaseProvider::new(&f.url(), "k"), a.access_token().await.unwrap());
+    let junk = tokio::task::spawn_blocking(move || prov.backup_put(&tok, &json!({ "version": 1, "secret": "em claro" }))).await.unwrap();
+    assert_eq!(junk.unwrap_err().code, "invalid_backup");
+
+    a.backup_delete().await.unwrap();
+    assert_eq!(b.backup_fetch().await.unwrap(), None);
+    assert_eq!(b.backup_open(&phrase2).await.unwrap_err().code, "no_backup");
+}
+
+#[tokio::test]
+async fn service_backup_create_confirm_restore_on_new_computer_and_delete() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let skip = |v: &Value| matches!(v["ev"].as_str(), Some("account.state" | "account.profile" | "account.avatar" | "account.notice"));
+    // computador 1
+    let dir1 = tmpdir("bk-svc1");
+    let rt = service::Runtime::for_tests(Some(Arc::new(accounts(&f, &dir1))), dir1.clone());
+    let (tx, mut rx1) = tokio::sync::mpsc::channel(64);
+    let mut pc1 = service::Service::new(rt, tx);
+    pc1.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { assert!(skip(&next(&mut rx1).await)); }
+    let fp1 = crate::ipc::load_or_create_identity(&dir1).unwrap().fingerprint();
+
+    assert!(pc1.command("backup.status", &json!({})));
+    let e = next(&mut rx1).await;
+    assert_eq!((e["ev"].as_str(), e["exists"].as_bool()), (Some("backup.state"), Some(false)));
+
+    // gerar a frase não grava nada; cancelar descarta; confirmar sem frase pendente falha
+    pc1.command("backup.create", &json!({}));
+    let e = next(&mut rx1).await;
+    assert_eq!((e["ev"].as_str(), e["words"].as_array().map(|w| w.len())), (Some("backup.phrase"), Some(12)));
+    assert!(f.state.lock().unwrap().backups.is_empty(), "nada sobe antes do 'anotei'");
+    pc1.command("backup.cancel", &json!({}));
+    pc1.command("backup.confirm", &json!({}));
+    let e = next(&mut rx1).await;
+    assert_eq!((e["ev"].as_str(), e["ok"].as_bool()), (Some("backup.result"), Some(false)));
+    assert_eq!(next(&mut rx1).await["exists"], false);
+
+    pc1.command("backup.create", &json!({}));
+    let phrase: String = next(&mut rx1).await["words"].as_array().unwrap().iter().map(|w| w.as_str().unwrap()).collect::<Vec<_>>().join(" ");
+    pc1.command("backup.confirm", &json!({}));
+    let e = next(&mut rx1).await;
+    assert_eq!((e["op"].as_str(), e["ok"].as_bool()), (Some("save"), Some(true)));
+    assert!(!e.to_string().contains(&phrase), "a frase não volta nos eventos seguintes");
+    let e = next(&mut rx1).await;
+    assert_eq!((e["exists"].as_bool(), e["matches"].as_bool()), (Some(true), Some(true)));
+
+    // computador 2: identidade nova, mesma conta
+    let dir2 = tmpdir("bk-svc2");
+    let rt = service::Runtime::for_tests(Some(Arc::new(accounts(&f, &dir2))), dir2.clone());
+    let (tx, mut rx2) = tokio::sync::mpsc::channel(64);
+    let mut pc2 = service::Service::new(rt, tx);
+    pc2.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { assert!(skip(&next(&mut rx2).await)); }
+    let fp2 = crate::ipc::load_or_create_identity(&dir2).unwrap().fingerprint();
+    assert_ne!(fp1, fp2);
+    pc2.command("backup.status", &json!({}));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["exists"].as_bool(), e["matches"].as_bool()), (Some(true), Some(false)), "há cópia, mas de outra identidade");
+
+    // frase errada: nada muda neste computador
+    pc2.command("backup.restore", &json!({ "phrase": backup::new_phrase() }));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["op"].as_str(), e["ok"].as_bool(), e["error_code"].as_str()), (Some("restore"), Some(false), Some("wrong_phrase")));
+    assert_eq!(next(&mut rx2).await["matches"], false);
+    assert_eq!(crate::ipc::load_or_create_identity(&dir2).unwrap().fingerprint(), fp2);
+    assert!(!dir2.join("core-identity.prev.json").exists());
+
+    // frase certa: a identidade do computador 1 é instalada e anunciada no perfil
+    pc2.command("backup.restore", &json!({ "phrase": format!("  {}  ", phrase.to_uppercase()) }));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["ev"].as_str(), e["fingerprint"].as_str()), (Some("identity.changed"), Some(fp1.as_str())));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["ev"].as_str(), e["fingerprint"].as_str()), (Some("account.profile"), Some(fp1.as_str())));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["op"].as_str(), e["ok"].as_bool()), (Some("restore"), Some(true)));
+    assert_eq!(next(&mut rx2).await["matches"], true);
+    assert_eq!(crate::ipc::load_or_create_identity(&dir2).unwrap().fingerprint(), fp1);
+    assert!(dir2.join("core-identity.prev.json").exists(), "a identidade anterior deste computador fica guardada");
+    let uid = f.state.lock().unwrap().users[0].id.clone();
+    assert_eq!(f.state.lock().unwrap().profiles[&uid]["fingerprint"], fp1.as_str());
+
+    pc2.command("backup.delete", &json!({}));
+    let e = next(&mut rx2).await;
+    assert_eq!((e["op"].as_str(), e["ok"].as_bool()), (Some("delete"), Some(true)));
+    assert_eq!(next(&mut rx2).await["exists"], false);
+    assert!(f.state.lock().unwrap().backups.is_empty());
 }
 
 // ---------- Supabase REAL (opcional) ----------

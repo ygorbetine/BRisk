@@ -13,6 +13,7 @@
 #include <commdlg.h>
 
 static void copy(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src ? src : ""); }
+static void wipe_phrase(app_state_t *s);
 
 /* cmd + pares chave/valor de texto (escapados aqui). NULL termina a lista. */
 static bool send_kv(const char *cmd, const char *k1, const char *v1, const char *k2, const char *v2, const char *k3, const char *v3) {
@@ -97,6 +98,9 @@ void account_logout(app_state_t *s) {
     s->user_nick[0] = 0; set_photo(s, NULL);
     memset(s->bridge_pw, 0, sizeof s->bridge_pw);
     s->legacy_count = 0; s->import_state = 0; s->import_msg[0] = 0;
+    wipe_phrase(s); memset(s->backup_input, 0, sizeof s->backup_input);
+    s->backup_known = BKP_UNKNOWN; s->backup_msg[0] = 0; s->backup_busy = false;
+    s->backup_phrase_open = s->backup_restore_open = s->backup_delete_open = false;
 }
 
 void account_friends(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"friends.list\"}"); }
@@ -151,6 +155,39 @@ void account_reset_photo(app_state_t *s) {
     core_send("{\"cmd\":\"account.photo_reset\"}");
 }
 
+static void wipe_phrase(app_state_t *s) { memset(s->backup_words, 0, sizeof s->backup_words); s->backup_ack = false; }
+
+void account_backup_status(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"backup.status\"}"); }
+
+void account_backup_create(app_state_t *s) {
+    if (core_state() != CORE_READY) return;
+    wipe_phrase(s); s->backup_msg[0] = 0;
+    core_send("{\"cmd\":\"backup.create\"}");
+}
+
+void account_backup_confirm(app_state_t *s) {
+    if (core_state() != CORE_READY || !s->backup_ack || s->backup_busy) return;
+    s->backup_busy = true;
+    core_send("{\"cmd\":\"backup.confirm\"}");
+}
+
+void account_backup_cancel(app_state_t *s) {
+    wipe_phrase(s); s->backup_phrase_open = false;
+    if (core_state() == CORE_READY) core_send("{\"cmd\":\"backup.cancel\"}");
+}
+
+void account_backup_restore(app_state_t *s) {
+    if (core_state() != CORE_READY || s->backup_busy || !s->backup_input[0]) return;
+    s->backup_busy = true; s->backup_msg[0] = 0;
+    send_kv("backup.restore", "phrase", s->backup_input, NULL, NULL, NULL, NULL);
+}
+
+void account_backup_delete(app_state_t *s) {
+    if (core_state() != CORE_READY || s->backup_busy) return;
+    s->backup_busy = true;
+    core_send("{\"cmd\":\"backup.delete\"}");
+}
+
 void account_import(app_state_t *s, bool apply) {
     if (core_state() != CORE_READY) return;
     if (apply) { s->import_state = 2; copy(s->import_msg, sizeof s->import_msg, "Importando…"); }
@@ -159,7 +196,7 @@ void account_import(app_state_t *s, bool apply) {
 
 void account_bridge_done(app_state_t *s, bool ok) {
     memset(s->bridge_pw, 0, sizeof s->bridge_pw);
-    if (ok) { s->acct_bridge = BRIDGE_NONE; account_friends(s); account_import(s, false); return; }
+    if (ok) { s->acct_bridge = BRIDGE_NONE; account_friends(s); account_import(s, false); account_backup_status(s); return; }
     s->acct_bridge = BRIDGE_FAILED;
     copy(s->acct_error, sizeof s->acct_error, s->error[0] ? s->error : "Não foi possível abrir os dados locais deste computador.");
     s->error[0] = 0;
@@ -242,6 +279,28 @@ bool account_handle_event(app_state_t *s, const char *line) {
         if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }
     } else if (!strcmp(ev, "account.avatar")) {
         if (s->acct_state == ACCT_IN) set_photo(s, json_str(j, "path", ""));
+    } else if (!strcmp(ev, "backup.state")) {
+        s->backup_known = !jbool(j, "exists") ? BKP_NONE : jbool(j, "matches") ? BKP_OK : BKP_OTHER;
+        const char *d = json_str(j, "updated_at", "");   /* 2026-11-10T... -> 10/11/2026 */
+        if (strlen(d) >= 10) snprintf(s->backup_date, sizeof s->backup_date, "%.2s/%.2s/%.4s", d + 8, d + 5, d); else s->backup_date[0] = 0;
+        if (json_str(j, "message", "")[0]) copy(s->backup_msg, sizeof s->backup_msg, json_str(j, "message", ""));
+    } else if (!strcmp(ev, "backup.phrase")) {
+        const jval *w = json_get(j, "words");
+        wipe_phrase(s);
+        for (int i = 0; i < 12 && i < json_len(w); i++) { const jval *x = json_at(w, i); copy(s->backup_words[i], sizeof s->backup_words[i], x && x->type == J_STR ? x->str : ""); }
+        s->backup_phrase_open = true; s->backup_busy = false;
+    } else if (!strcmp(ev, "backup.result")) {
+        const char *op = json_str(j, "op", ""); const bool ok = jbool(j, "ok");
+        s->backup_busy = false;
+        copy(s->backup_msg, sizeof s->backup_msg, json_str(j, "message", ""));
+        if (!strcmp(op, "save")) { wipe_phrase(s); s->backup_phrase_open = false; }
+        if (!strcmp(op, "restore") && ok) { memset(s->backup_input, 0, sizeof s->backup_input); s->backup_restore_open = false; }
+        if (!strcmp(op, "delete")) s->backup_delete_open = false;
+    } else if (!strcmp(ev, "identity.changed")) {
+        /* a identidade deste aparelho foi trocada pela recuperada: a sessão P2P é reaberta com a chave nova */
+        if (s->in_room) rtc_leave_room(s);
+        s->rtc_session_sent = s->rtc_session_ready = false;
+        copy(s->rtc_fp, sizeof s->rtc_fp, json_str(j, "fingerprint", ""));
     } else if (!strcmp(ev, "account.notice")) {
         if (s->nick_open) copy(s->nick_msg, sizeof s->nick_msg, json_str(j, "message", ""));
         else if (s->profile_open) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
@@ -317,6 +376,11 @@ void account_tick(app_state_t *s) {
             char buf[1200]; snprintf(buf, sizeof buf, "%s", pr); char *bar = strchr(buf, '|'); if (bar) *bar++ = 0;
             snprintf(s->name_edit, sizeof s->name_edit, "%s", buf); account_set_name(s);
             if (bar && bar[0]) { char line[2600], esc[2400]; json_escape(bar, esc, sizeof esc); snprintf(line, sizeof line, "{\"cmd\":\"account.photo\",\"path\":\"%s\"}", esc); core_send(line); }
+        }
+        static int bk_step; const char *bk = getenv("BRIKS_DEV_BACKUP");   /* "phrase": abre o diálogo da frase; "saved": cria e confirma */
+        if (bk && s->screen == SCREEN_SOCIAL && s->backup_known != BKP_UNKNOWN) {
+            if (bk_step == 0) { bk_step = 1; account_backup_create(s); }
+            else if (bk_step == 1 && s->backup_words[0][0] && !strcmp(bk, "saved")) { bk_step = 2; s->backup_ack = true; account_backup_confirm(s); }
         }
         if (getenv("BRIKS_DEV_IMPORT") && !import_done && s->import_state == 1) { import_done = true; account_import(s, true); }
     }

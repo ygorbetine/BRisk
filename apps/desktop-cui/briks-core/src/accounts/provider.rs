@@ -148,6 +148,10 @@ pub trait AuthProvider: Send + Sync {
     fn update_profile(&self, access_token: &str, display_name: Option<&str>, avatar_url: Option<&str>) -> AResult<Profile>;
     /// Envia a foto (JPEG já recortado) para o armazenamento do provedor e devolve o endereço público dela.
     fn upload_avatar(&self, access_token: &str, user_id: &str, jpeg: &[u8]) -> AResult<String>;
+    /// Cópia cifrada da identidade (o provedor guarda um pacote que não consegue abrir). `None` = não há cópia.
+    fn backup_put(&self, access_token: &str, blob: &Value) -> AResult<()>;
+    fn backup_get(&self, access_token: &str) -> AResult<Option<Value>>;
+    fn backup_delete(&self, access_token: &str) -> AResult<()>;
     fn friends(&self, access_token: &str) -> AResult<Vec<Friend>>;
     fn friend_request(&self, access_token: &str, nick: &str) -> AResult<()>;
     fn friend_respond(&self, access_token: &str, request_id: &str, accept: bool) -> AResult<()>;

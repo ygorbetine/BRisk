@@ -189,7 +189,7 @@ Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_S
 
 ## 5. Testes
 
-`cargo test --release` em `apps/desktop-cui/briks-core` (54 testes, 25 do módulo de contas; nenhum usa a internet: o
+`cargo test --release` em `apps/desktop-cui/briks-core` (59 testes, 30 do módulo de contas; nenhum usa a internet: o
 cliente Supabase de verdade fala com `fake.rs` em 127.0.0.1):
 
 - PKCE: vetor da RFC 7636; verificador aleatório; a URL leva o desafio e nunca o verificador.
@@ -215,30 +215,58 @@ hash antes e depois).
 reais), o site com a 0003 aplicada, dois aparelhos na mesma conta, e os cliques da tela de e-mail no app (os fluxos de
 e-mail estão cobertos no core, não na UI).
 
-## 6. Fase 2 (desenhada, NÃO implementada): cópia cifrada da identidade, recuperável por frase
+## 6. Fase 2 (implementada): cópia cifrada da identidade, recuperável por frase
 
-Objetivo: usar a mesma identidade P2P em outro PC, ou recuperá-la depois de formatar, sem o servidor jamais conseguir
-ler a chave privada.
+Decisão do usuário: sim. Objetivo: usar a mesma identidade P2P em outro PC, ou recuperá-la depois de formatar, sem o
+servidor conseguir ler a chave privada. Depende da migração `0005_identity_backup.sql`.
 
-- No aparelho: frase de recuperação → Argon2id (64 MiB, 3 passadas, sal aleatório de 16 bytes) → chave de 32 bytes →
-  XChaCha20-Poly1305 sobre a chave privada (32 bytes), com `user_id` + versão como dado autenticado.
-- No servidor: tabela `identity_backups(user_id, versão, parâmetros do KDF, sal, nonce, texto cifrado, impressão
-  digital, atualizado_em)`, RLS só do dono, escrita por função. O servidor guarda só o que não consegue abrir.
-- Outro aparelho: entra na conta, baixa o pacote, pede a frase, decifra, confere a impressão digital com a do perfil.
-- Sem a frase não há recuperação (nem por nós). Esse é o preço de o servidor não poder ler.
+**Como funciona** (`briks-core/src/accounts/backup.rs`; tudo roda no aparelho):
 
-Decisões que são suas, antes de eu implementar:
-1. Frase **gerada pelo app** (12 palavras, 128 bits; resiste a força bruta mesmo se o banco vazar) ou **escolhida pela
-   pessoa** (mais cômoda, bem mais fraca)? Recomendo a gerada.
-2. Oferecer no primeiro login ou só em Configurações?
-3. Ao entrar num segundo aparelho sem a frase: criar identidade nova (os amigos veem a chave mudar) ou bloquear?
+```
+frase de 12 palavras (128 bits, gerada pelo app, lista BIP39 em português, com soma de verificação)
+  └─ Argon2id (64 MiB, 3 passadas, sal aleatório de 16 bytes) ──► chave de 32 bytes
+       └─ XChaCha20-Poly1305 (nonce aleatório de 24 bytes; dado autenticado = versão + id da conta)
+            └─ pacote: parâmetros do KDF, sal, nonce, texto cifrado (48 bytes) e a impressão digital pública
+```
+
+- O servidor (`identity_backups`, uma linha por conta, RLS, acesso só por função) guarda **apenas o pacote**. A frase e a
+  chave em claro nunca saem do computador. O banco recusa qualquer pacote fora do formato.
+- Frase errada, pacote adulterado e pacote de outra conta falham do mesmo jeito, sem instalar nada.
+- Ao abrir, o app recusa parâmetros de KDF fora da faixa (um servidor comprometido não consegue baixar o custo nem
+  travar o computador) e confere que a chave aberta é a da impressão digital anunciada.
+- Trocar a frase gera sal e nonce novos e substitui o pacote: a frase antiga deixa de abrir.
+
+**Na interface** (Configurações > Cópia de segurança da identidade):
+
+- **Criar cópia de segurança** / **Trocar frase**: mostra as 12 palavras uma única vez. Nada é enviado antes de marcar
+  "Anotei a frase em um lugar seguro" e concluir. Fechar o diálogo descarta a frase.
+- **Recuperar neste computador**: aparece quando a conta tem cópia de outra identidade. Pede a frase, baixa o pacote,
+  abre, instala a chave, reabre a sessão P2P e publica a chave recuperada no perfil. A identidade anterior deste
+  computador fica em `core-identity.prev.json`.
+- **Apagar cópia**: remove o pacote do servidor; a identidade local continua.
+
+**As três decisões que estavam em aberto** foram tomadas assim (dá para mudar):
+
+1. Frase **gerada pelo app** (12 palavras). Uma frase escolhida pela pessoa seria bem mais fraca contra força bruta se
+   o banco vazasse.
+2. A cópia é oferecida em **Configurações**, não empurrada no primeiro login.
+3. Num segundo computador sem a frase, o app **cria identidade nova** (como já fazia) e mostra o aviso para recuperar.
+
+**Limites**
+
+- Sem a frase não há recuperação, nem por nós.
+- O vetor fixo dos testes trava o formato, mas foi gerado pelo próprio código: a correção do Argon2id e do
+  XChaCha20-Poly1305 vem das bibliotecas (`argon2`, `chacha20poly1305`), não de um vetor externo conferido aqui.
+- A frase passa pela memória da UI enquanto o diálogo está aberto (é apagada ao fechar) e pelo canal local entre o core
+  e a UI. A captura de tela do Windows consegue fotografá-la.
+- Quem tem a frase **e** acesso à conta consegue instalar a sua identidade em outro computador.
 
 ## 7. Pendências e riscos conhecidos
 
 - `core-identity.json` guarda a chave privada P2P em texto aberto no disco (já era assim antes desta tarefa). Convém
   cifrá-la com a mesma DPAPI; é uma mudança pequena, fora do escopo pedido.
-- Troca de chave pública de um amigo (outro aparelho) é aceita sem aviso. Um aviso "a chave de Fulano mudou" faz
-  sentido junto com a fase 2.
+- Troca de chave pública de um amigo (outro aparelho, ou recuperação) é aceita sem aviso. Falta o aviso
+  "a chave de Fulano mudou".
 - Recuperação de senha e confirmação pelo **link** só funcionam com o app aberto neste computador (o link aponta para
   o loopback). Fora disso, vale o código de 6 dígitos (passo 5 da seção 4) ou entrar com e-mail e senha após confirmar.
 - Sem bloqueio de pessoas e sem limite por tempo nos pedidos de amizade (há teto de 50 pendentes).

@@ -22,6 +22,13 @@ pub struct Identity {
     key: SigningKey,
 }
 
+/// Depuração sem segredo: só a impressão digital pública aparece.
+impl std::fmt::Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Identity({})", self.fingerprint())
+    }
+}
+
 impl Identity {
     pub fn generate() -> Self {
         Identity { key: SigningKey::random(&mut OsRng) }

@@ -445,6 +445,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
                     if (cui_button(ui, "Sair", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { s->settings_open = false; rtc_leave_room(s); app_logout(s); }
                 }
                 cui_text(ui, "Sair apaga a sessão guardada neste computador. Suas mensagens locais continuam aqui para a próxima vez.", .size = 12, .color = B_MUTED);
+                ui_backup_section(ui, s);
                 if (s->import_state == 1 || s->import_state == 2 || s->import_state == 3) {
                     cui_text(ui, "Briks antigo", .font = CUI_FONT_MEDIUM);
                     if (s->import_msg[0]) cui_text(ui, s->import_msg, .size = 12, .color = B_MUTED);
@@ -484,6 +485,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             if (!s->acct_user_id[0] && cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
         }
     }
+    ui_backup_dialogs(ui, s);
     /* o dono da sala expulsou você */
     cui_dialog(ui, "Chamada", &s->kicked_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_text(ui, "Você foi removido da chamada.", .font = CUI_FONT_MEDIUM);

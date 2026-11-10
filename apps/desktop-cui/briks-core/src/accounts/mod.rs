@@ -6,6 +6,7 @@
 //!  - access token: só na memória deste processo, renovado sozinho antes de vencer;
 //!  - chave privada da identidade P2P: NUNCA vai ao servidor; só a chave pública e a impressão digital são publicadas no perfil.
 pub mod avatar;
+pub mod backup;
 pub mod config;
 pub mod fake;
 pub mod legacy;
@@ -325,6 +326,41 @@ impl Accounts {
                 let _ = self.store.save(&Stored { version: 1, refresh_token: s.refresh_token.clone(), user: s.user.clone() });
             }
         }
+    }
+    /// Guarda no servidor a cópia cifrada da identidade deste aparelho. A frase não sai daqui.
+    pub async fn backup_save(&self, id: &crate::identity::Identity, phrase: &str) -> AResult<backup::Blob> {
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let tok = self.access_token().await?;
+        let (p, phrase, secret) = (self.provider.clone(), phrase.to_string(), id.secret_b64());
+        blk(move || {
+            let id = crate::identity::Identity::from_secret_b64(&secret).map_err(|_| AccountError::new("backup", "Identidade deste aparelho inválida."))?;
+            let blob = backup::seal(&id, &phrase, &u.id)?;
+            p.backup_put(&tok, &serde_json::to_value(&blob).unwrap_or(Value::Null))?;
+            Ok(blob)
+        }).await
+    }
+    /// A cópia guardada (sem abrir) e quando foi gravada. `None` = não há.
+    pub async fn backup_fetch(&self) -> AResult<Option<(backup::Blob, String)>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        let Some(v) = blk(move || p.backup_get(&tok)).await? else { return Ok(None) };
+        let blob: backup::Blob = serde_json::from_value(v["blob"].clone())
+            .map_err(|_| AccountError::new("invalid_backup", "A cópia guardada no servidor está em um formato que este app não aceita."))?;
+        Ok(Some((blob, v["updated_at"].as_str().unwrap_or("").to_string())))
+    }
+    /// Baixa a cópia e abre com a frase. Frase errada = erro `wrong_phrase`, sem nada instalado.
+    pub async fn backup_open(&self, phrase: &str) -> AResult<crate::identity::Identity> {
+        let phrase = backup::check_phrase(phrase)?;   // erro de digitação aparece antes de ir à rede
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let Some((blob, _)) = self.backup_fetch().await? else {
+            return Err(AccountError::new("no_backup", "Esta conta não tem cópia de segurança guardada."));
+        };
+        blk(move || backup::open(&blob, &phrase, &u.id)).await
+    }
+    pub async fn backup_delete(&self) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.backup_delete(&tok)).await
     }
     pub async fn friends(&self) -> AResult<Vec<Friend>> {
         let tok = self.access_token().await?;

@@ -5,6 +5,10 @@
 //!   comandos de personalização: account.name {name}, account.photo {path}, account.photo_reset, account.nick {nick}
 //!   account.profile {nick, fingerprint}            perfil publicado (chave pública ligada à conta)
 //!   account.notice  {error_code, message}          falha que não derruba a sessão
+//!   backup.state    {exists, matches, updated_at}  cópia cifrada da identidade: existe? é a deste aparelho?
+//!   backup.phrase   {words:[12]}                   frase recém-gerada, mostrada uma vez (comandos: backup.create/confirm/cancel)
+//!   backup.result   {op: save|restore|delete, ok, message}   (comandos: backup.restore {phrase}, backup.delete, backup.status)
+//!   identity.changed {fingerprint}                 a identidade deste aparelho foi trocada pela recuperada
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
 //!   import.result   {state, friends, groups, messages, message}
@@ -18,7 +22,7 @@ use tokio::task::JoinHandle;
 
 use super::config::{self, AccountsConfig};
 use super::supabase::SupabaseProvider;
-use super::{avatar, fake, legacy, AccountError, Accounts, CodeKind, OAuthProvider, SignUpOutcome};
+use super::{avatar, backup, fake, legacy, AccountError, Accounts, CodeKind, OAuthProvider, SignUpOutcome};
 
 /// Criado uma vez por processo.
 pub struct Runtime {
@@ -64,6 +68,8 @@ impl Runtime {
 
 /// Um por conexão de UI.
 pub struct Service {
+    /// frase recém-gerada, esperando o "anotei" da pessoa; só existe na memória e some ao confirmar ou cancelar
+    pending_phrase: Arc<std::sync::Mutex<Option<String>>>,
     rt: Arc<Runtime>,
     tx: mpsc::Sender<Value>,
     flow: Option<JoinHandle<()>>,
@@ -128,6 +134,23 @@ async fn refresh_photo(rt: &Runtime, user_id: &str, url: String, tx: &mpsc::Send
     let _ = tx.send(json!({ "ev": "account.avatar", "path": path })).await;
 }
 
+/// Situação da cópia: existe? é da identidade deste aparelho? Nunca inclui o pacote cifrado nem a frase.
+async fn backup_state(rt: &Runtime, acc: &Accounts) -> Value {
+    let local = crate::ipc::load_or_create_identity(&rt.data_dir).map(|i| i.fingerprint()).unwrap_or_default();
+    match acc.backup_fetch().await {
+        Ok(Some((blob, updated))) => json!({ "ev": "backup.state", "exists": true, "matches": blob.fingerprint == local, "updated_at": updated }),
+        Ok(None) => json!({ "ev": "backup.state", "exists": false, "matches": false }),
+        Err(e) => json!({ "ev": "backup.state", "exists": false, "matches": false, "error_code": e.code, "message": e.message }),
+    }
+}
+
+fn backup_result(op: &str, r: Result<&str, AccountError>) -> Value {
+    match r {
+        Ok(m) => json!({ "ev": "backup.result", "op": op, "ok": true, "message": m }),
+        Err(e) => json!({ "ev": "backup.result", "op": op, "ok": false, "error_code": e.code, "message": e.message }),
+    }
+}
+
 fn profile_ev(p: &super::Profile, message: &str) -> Value {
     json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name, "changed": true, "message": message })
 }
@@ -157,7 +180,7 @@ impl Service {
                 }
             })
         });
-        Service { rt, tx, flow: None, refresher }
+        Service { pending_phrase: Default::default(), rt, tx, flow: None, refresher }
     }
 
     fn start_flow<F>(&mut self, what: Value, f: F)
@@ -176,7 +199,7 @@ impl Service {
 
     /// Devolve true se o comando era deste módulo.
     pub fn command(&mut self, cmd: &str, v: &Value) -> bool {
-        if !(cmd.starts_with("account.") || cmd.starts_with("friends.") || cmd.starts_with("import.") || cmd == "local.credentials") {
+        if !(cmd.starts_with("account.") || cmd.starts_with("backup.") || cmd.starts_with("friends.") || cmd.starts_with("import.") || cmd == "local.credentials") {
             return false;
         }
         let (rt, tx) = (self.rt.clone(), self.tx.clone());
@@ -340,6 +363,68 @@ impl Service {
                             let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
                         }
                     }
+                });
+            }
+            "backup.status" => {
+                tokio::spawn(async move {
+                    let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "backup.create" => {
+                // gera a frase e mostra UMA vez; nada vai ao servidor antes do "anotei" (backup.confirm)
+                let phrase = backup::new_phrase();
+                *self.pending_phrase.lock().unwrap() = Some(phrase.clone());
+                tokio::spawn(async move {
+                    let words: Vec<&str> = phrase.split(' ').collect();
+                    let _ = tx.send(json!({ "ev": "backup.phrase", "words": words })).await;
+                });
+            }
+            "backup.cancel" => {
+                *self.pending_phrase.lock().unwrap() = None;
+            }
+            "backup.confirm" => {
+                let phrase = self.pending_phrase.lock().unwrap().take();
+                tokio::spawn(async move {
+                    let r = match (phrase, crate::ipc::load_or_create_identity(&rt.data_dir)) {
+                        (Some(ph), Ok(id)) => acc.backup_save(&id, &ph).await.map(|_| ()),
+                        (None, _) => Err(AccountError::new("backup", "A frase expirou. Gere uma nova.")),
+                        (_, Err(_)) => Err(AccountError::new("backup", "Identidade deste aparelho indisponível.")),
+                    };
+                    let _ = tx.send(backup_result("save", r.map(|_| "Cópia de segurança guardada. Só a sua frase consegue abri-la."))).await;
+                    let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "backup.restore" => {
+                let phrase = s("phrase");
+                tokio::spawn(async move {
+                    let r: Result<String, AccountError> = async {
+                        let id = acc.backup_open(&phrase).await?;
+                        crate::ipc::install_identity(&rt.data_dir, &id).map_err(|_| AccountError::new("backup", "Não foi possível gravar a identidade neste computador."))?;
+                        Ok(id.fingerprint())
+                    }.await;
+                    match r {
+                        Ok(fp) => {
+                            // a identidade deste aparelho mudou: a UI reabre a sessão P2P e o perfil passa a anunciar a chave recuperada
+                            let _ = tx.send(json!({ "ev": "identity.changed", "fingerprint": fp })).await;
+                            if let Ok(id) = crate::ipc::load_or_create_identity(&rt.data_dir) {
+                                let jwk = serde_json::to_value(id.public_jwk()).unwrap_or(Value::Null);
+                                match acc.publish_identity(jwk, &id.fingerprint()).await {
+                                    Ok(p) => { let _ = tx.send(json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name })).await; }
+                                    Err(e) => { let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await; }
+                                }
+                            }
+                            let _ = tx.send(backup_result("restore", Ok("Identidade recuperada neste computador."))).await;
+                        }
+                        Err(e) => { let _ = tx.send(backup_result("restore", Err(e))).await; }
+                    }
+                    let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "backup.delete" => {
+                tokio::spawn(async move {
+                    let r = acc.backup_delete().await;
+                    let _ = tx.send(backup_result("delete", r.map(|_| "Cópia de segurança apagada do servidor."))).await;
+                    let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
             }
             "friends.list" | "friends.request" | "friends.respond" | "friends.remove" => {

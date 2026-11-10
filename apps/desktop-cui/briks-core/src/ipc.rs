@@ -70,6 +70,22 @@ pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {
     Ok(id)
 }
 
+/// Troca a identidade deste aparelho (recuperação pela frase). A anterior fica em `core-identity.prev.json`.
+pub fn install_identity(dir: &std::path::Path, id: &Identity) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let p = dir.join("core-identity.json");
+    if p.exists() {
+        let _ = std::fs::copy(&p, dir.join("core-identity.prev.json"));
+    }
+    let tmp = dir.join("core-identity.tmp");
+    std::fs::write(&tmp, json!({ "version": 1, "secret": id.secret_b64(), "note": "identidade ECDSA P-256 do app nativo; recuperada da cópia da conta" }).to_string())?;
+    std::fs::rename(&tmp, &p).or_else(|_| {
+        let _ = std::fs::remove_file(&p);
+        std::fs::rename(&tmp, &p)
+    })?;
+    Ok(())
+}
+
 pub async fn bind() -> Result<(TcpListener, u16)> {
     let l = TcpListener::bind(("127.0.0.1", 0)).await?;
     let p = l.local_addr()?.port();

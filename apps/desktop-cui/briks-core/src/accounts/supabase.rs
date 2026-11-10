@@ -71,8 +71,18 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "already_requested" => return e("already_requested", "Já existe um pedido de amizade pendente com essa pessoa."),
         "too_many_requests" => return e("rate_limited", "Você tem pedidos de amizade demais em aberto. Aguarde as respostas."),
         "invalid_public_key" | "invalid_fingerprint" => return e("server", "O servidor recusou a chave pública deste aparelho."),
+        "invalid_avatar" => return e("avatar", "O servidor recusou o endereço da foto."),
         "invalid_display_name" => return e("invalid_name", "O nome deve ter de 1 a 64 caracteres."),
         _ => {}
+    }
+    if low.contains("bucket not found") {
+        return e("server_not_ready", "O servidor de contas ainda não foi preparado para fotos (falta a migração 0004).");
+    }
+    if low.contains("maximum allowed size") || low.contains("mime type") {
+        return e("avatar", "O servidor recusou a foto (tamanho ou formato).");
+    }
+    if low.contains("row-level security") {
+        return e("server", "O servidor recusou a gravação.");
     }
     if code == "PGRST202" || (status == 404 && low.contains("could not find the function")) {
         return e("server_not_ready", "O servidor de contas ainda não foi preparado (faltam as migrações do banco).");
@@ -200,6 +210,33 @@ impl AuthProvider for SupabaseProvider {
     fn set_nick(&self, access_token: &str, nick: &str) -> AResult<Profile> {
         let v = self.rpc(access_token, "account_set_nick", json!({ "p_nick": nick }))?;
         serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn update_profile(&self, access_token: &str, display_name: Option<&str>, avatar_url: Option<&str>) -> AResult<Profile> {
+        let mut args = serde_json::Map::new();
+        if let Some(n) = display_name {
+            args.insert("p_display_name".into(), json!(n));
+        }
+        if let Some(a) = avatar_url {
+            args.insert("p_avatar_url".into(), json!(a));
+        }
+        let v = self.rpc(access_token, "account_update_profile", Value::Object(args))?;
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn upload_avatar(&self, access_token: &str, user_id: &str, jpeg: &[u8]) -> AResult<String> {
+        let path = format!("/storage/v1/object/avatars/{user_id}/avatar.jpg");
+        let res = self.agent.post(&format!("{}{}", self.base, path))
+            .set("apikey", &self.key).set("Authorization", &format!("Bearer {access_token}"))
+            .set("Content-Type", "image/jpeg").set("x-upsert", "true").set("Cache-Control", "max-age=3600")
+            .send_bytes(jpeg);
+        match res {
+            // ?v= muda a cada envio: o endereço novo não bate em cópia antiga guardada no caminho
+            Ok(_) => Ok(format!("{}/storage/v1/object/public/avatars/{user_id}/avatar.jpg?v={}", self.base, now())),
+            Err(ureq::Error::Status(status, r)) => {
+                let text = r.into_string().unwrap_or_default();
+                Err(map_error(status, &serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)))
+            }
+            Err(ureq::Error::Transport(_)) => Err(AccountError::network()),
+        }
     }
     fn friends(&self, access_token: &str) -> AResult<Vec<Friend>> {
         let v = self.rpc(access_token, "friends_list", json!({}))?;

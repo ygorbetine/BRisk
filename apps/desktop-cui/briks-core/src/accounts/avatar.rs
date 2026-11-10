@@ -71,6 +71,52 @@ pub fn clear(dir: &Path, user_id: &str) {
     }
 }
 
+/// Prepara uma foto escolhida no computador: lê (até 15 MB), recorta o quadrado central, reduz para 256x256 e
+/// devolve um JPEG. Metadados da imagem original (EXIF, localização) não passam: só os pixels são reaproveitados.
+pub fn prepare(path: &Path) -> AResult<Vec<u8>> {
+    let meta = std::fs::metadata(path).map_err(|_| bad("Não foi possível abrir a imagem escolhida."))?;
+    if meta.len() > 15 * 1024 * 1024 {
+        return Err(bad("A imagem é grande demais (máximo de 15 MB)."));
+    }
+    let bytes = std::fs::read(path).map_err(|_| bad("Não foi possível abrir a imagem escolhida."))?;
+    if sniff(&bytes).is_none() {
+        return Err(bad("Escolha uma imagem PNG ou JPEG."));
+    }
+    let img = image::load_from_memory(&bytes).map_err(|_| bad("A imagem escolhida está corrompida ou não é PNG/JPEG."))?;
+    let side = img.width().min(img.height());
+    if side < 32 {
+        return Err(bad("A imagem é pequena demais (mínimo de 32 pixels)."));
+    }
+    let sq = img.crop_imm((img.width() - side) / 2, (img.height() - side) / 2, side, side);
+    let small = if side > 256 { sq.resize_exact(256, 256, image::imageops::FilterType::Lanczos3) } else { sq };
+    // fundo branco sob transparência (JPEG não tem alfa)
+    let rgba = small.to_rgba8();
+    let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+    for (x, y, p) in rgba.enumerate_pixels() {
+        let a = p[3] as u32;
+        let mix = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
+        rgb.put_pixel(x, y, image::Rgb([mix(p[0]), mix(p[1]), mix(p[2])]));
+    }
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88).encode_image(&rgb).map_err(|_| bad("Não foi possível preparar a imagem."))?;
+    Ok(out)
+}
+
+/// Grava no cache uma foto que já está em mãos (a que acabou de ser enviada).
+pub fn store(dir: &Path, user_id: &str, bytes: &[u8]) -> AResult<PathBuf> {
+    let id = safe_id(user_id);
+    let ext = sniff(bytes).ok_or_else(|| bad("formato de foto não suportado"))?;
+    if id.is_empty() {
+        return Err(bad("conta inválida"));
+    }
+    let folder = dir.join("avatar-cache");
+    std::fs::create_dir_all(&folder).map_err(|_| bad("não foi possível guardar a foto"))?;
+    clear(dir, user_id);
+    let path = folder.join(format!("{id}.{ext}"));
+    std::fs::write(&path, bytes).map_err(|_| bad("não foi possível guardar a foto"))?;
+    Ok(path)
+}
+
 /// @nick provisório para mostrar enquanto o servidor não devolve o definitivo: derivado do NOME, nunca do e-mail.
 pub fn nick_hint(display_name: &str) -> String {
     let mut out = String::new();

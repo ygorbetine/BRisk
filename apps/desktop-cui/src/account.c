@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
+#include <commdlg.h>
 
 static void copy(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src ? src : ""); }
 
@@ -119,6 +121,36 @@ void account_set_nick(app_state_t *s) {
     send_kv("account.nick", "nick", s->nick_edit, NULL, NULL, NULL, NULL);
 }
 
+void account_set_name(app_state_t *s) {
+    if (core_state() != CORE_READY) return;
+    if (!s->name_edit[0]) { copy(s->profile_msg, sizeof s->profile_msg, "O nome não pode ficar vazio."); return; }
+    copy(s->profile_msg, sizeof s->profile_msg, "Salvando…");
+    send_kv("account.name", "name", s->name_edit, NULL, NULL, NULL, NULL);
+}
+
+void account_pick_photo(app_state_t *s) {
+    if (core_state() != CORE_READY) return;
+    wchar_t wpath[1024] = L""; char path[3072];
+    OPENFILENAMEW of = { sizeof of };
+    of.hwndOwner = GetActiveWindow();
+    of.lpstrFilter = L"Imagens (PNG, JPEG)\0*.png;*.jpg;*.jpeg\0";
+    of.lpstrFile = wpath; of.nMaxFile = (DWORD)(sizeof wpath / sizeof wpath[0]);
+    of.lpstrTitle = L"Escolher foto de perfil";
+    of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&of)) return;   /* cancelou */
+    if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)sizeof path, NULL, NULL)) return;
+    copy(s->profile_msg, sizeof s->profile_msg, "Enviando a foto…");
+    char line[6400], esc[6200]; json_escape(path, esc, sizeof esc);
+    snprintf(line, sizeof line, "{\"cmd\":\"account.photo\",\"path\":\"%s\"}", esc);
+    core_send(line);
+}
+
+void account_reset_photo(app_state_t *s) {
+    if (core_state() != CORE_READY) return;
+    copy(s->profile_msg, sizeof s->profile_msg, "Só um instante…");
+    core_send("{\"cmd\":\"account.photo_reset\"}");
+}
+
 void account_import(app_state_t *s, bool apply) {
     if (core_state() != CORE_READY) return;
     if (apply) { s->import_state = 2; copy(s->import_msg, sizeof s->import_msg, "Importando…"); }
@@ -205,11 +237,14 @@ bool account_handle_event(app_state_t *s, const char *line) {
     else if (!strcmp(ev, "account.profile")) {
         copy(s->acct_nick, sizeof s->acct_nick, json_str(j, "nick", ""));
         if (s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, s->acct_nick);
+        if (json_str(j, "display_name", "")[0]) copy(s->user_name, sizeof s->user_name, json_str(j, "display_name", ""));   /* vale o nome do perfil (pode ter sido trocado) */
+        if (json_str(j, "message", "")[0]) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
         if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }
     } else if (!strcmp(ev, "account.avatar")) {
         if (s->acct_state == ACCT_IN) set_photo(s, json_str(j, "path", ""));
     } else if (!strcmp(ev, "account.notice")) {
         if (s->nick_open) copy(s->nick_msg, sizeof s->nick_msg, json_str(j, "message", ""));
+        else if (s->profile_open) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
         else if (s->acct_bridge == BRIDGE_WAIT && !strcmp(json_str(j, "error_code", ""), "storage")) { s->acct_bridge = BRIDGE_FAILED; copy(s->acct_error, sizeof s->acct_error, json_str(j, "message", "")); }
         else copy(s->acct_info, sizeof s->acct_info, json_str(j, "message", ""));
     } else if (!strcmp(ev, "account.password")) {
@@ -276,6 +311,13 @@ void account_tick(app_state_t *s) {
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */
         if (a && !auto_done && s->acct_state == ACCT_OUT && s->acct_configured) { auto_done = true; account_oauth(s, a); }
+        static bool prof_done; const char *pr = getenv("BRIKS_DEV_PROFILE");   /* "Nome|caminho da foto": troca nome e foto depois de entrar */
+        if (pr && !prof_done && s->screen == SCREEN_SOCIAL && s->acct_nick[0]) {
+            prof_done = true;
+            char buf[1200]; snprintf(buf, sizeof buf, "%s", pr); char *bar = strchr(buf, '|'); if (bar) *bar++ = 0;
+            snprintf(s->name_edit, sizeof s->name_edit, "%s", buf); account_set_name(s);
+            if (bar && bar[0]) { char line[2600], esc[2400]; json_escape(bar, esc, sizeof esc); snprintf(line, sizeof line, "{\"cmd\":\"account.photo\",\"path\":\"%s\"}", esc); core_send(line); }
+        }
         if (getenv("BRIKS_DEV_IMPORT") && !import_done && s->import_state == 1) { import_done = true; account_import(s, true); }
     }
     if (s->acct_state == ACCT_UNKNOWN || s->acct_state == ACCT_BUSY || s->acct_bridge == BRIDGE_WAIT || s->acct_bridge == BRIDGE_RUNNING) cui_request_redraw(cui_app_ui(s->app));

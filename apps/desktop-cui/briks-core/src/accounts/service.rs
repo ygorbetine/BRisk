@@ -1,7 +1,8 @@
 //! Ponte entre os comandos do IPC (`account.*`, `friends.*`, `local.credentials`, `import.*`) e o `Accounts`.
 //! Eventos emitidos para a UI:
 //!   account.state   {state: signed_out|busy|email_sent|signed_in, what?, provider?, kind?, email?, user?, recovery?, error_code?, message?, configured, mock}
-//!   account.avatar  {path}                        foto da conta baixada para o cache local (PNG/JPEG)
+//!   account.avatar  {path|null}                   foto do perfil no cache local (PNG/JPEG); null = sem foto
+//!   comandos de personalização: account.name {name}, account.photo {path}, account.photo_reset, account.nick {nick}
 //!   account.profile {nick, fingerprint}            perfil publicado (chave pública ligada à conta)
 //!   account.notice  {error_code, message}          falha que não derruba a sessão
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
@@ -90,14 +91,7 @@ async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recov
     // foto: usa o cache se houver; baixa em segundo plano e avisa quando chegar. nick_hint: provisório, derivado do nome.
     let photo = avatar::cached(&rt.data_dir, &u.id);
     let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name) }))).await;
-    if !u.avatar_url.is_empty() {
-        let (dir, id, url, tx2) = (rt.data_dir.clone(), u.id.clone(), u.avatar_url.clone(), tx.clone());
-        tokio::spawn(async move {
-            if let Ok(Ok(path)) = tokio::task::spawn_blocking(move || avatar::cache(&dir, &id, &url)).await {
-                let _ = tx2.send(json!({ "ev": "account.avatar", "path": path })).await;
-            }
-        });
-    }
+
     let id = match crate::ipc::load_or_create_identity(&rt.data_dir) {
         Ok(id) => id,
         Err(e) => {
@@ -106,14 +100,36 @@ async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recov
         }
     };
     let jwk = serde_json::to_value(id.public_jwk()).unwrap_or(Value::Null);   // só x/y públicos; o segredo nunca entra aqui
+    // o nome e a foto que valem são os do perfil no servidor (a pessoa pode ter personalizado); sem perfil, os do provedor
+    let mut photo_url = u.avatar_url.clone();
     match acc.publish_identity(jwk, &id.fingerprint()).await {
         Ok(p) => {
+            acc.remember_name(&p.display_name);
+            photo_url = p.avatar_url.clone().unwrap_or_default();
             let _ = tx.send(json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name })).await;
         }
         Err(e) => {
             let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
         }
     }
+    refresh_photo(rt, &u.id, photo_url, tx).await;
+}
+
+/// Baixa a foto para o cache e avisa a UI; endereço vazio = sem foto (apaga o cache e a UI volta às iniciais).
+async fn refresh_photo(rt: &Runtime, user_id: &str, url: String, tx: &mpsc::Sender<Value>) {
+    let (dir, id) = (rt.data_dir.clone(), user_id.to_string());
+    let path = tokio::task::spawn_blocking(move || {
+        if url.is_empty() {
+            avatar::clear(&dir, &id);
+            return None;
+        }
+        avatar::cache(&dir, &id, &url).ok().or_else(|| avatar::cached(&dir, &id))
+    }).await.ok().flatten();
+    let _ = tx.send(json!({ "ev": "account.avatar", "path": path })).await;
+}
+
+fn profile_ev(p: &super::Profile, message: &str) -> Value {
+    json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name, "changed": true, "message": message })
 }
 
 impl Service {
@@ -285,6 +301,45 @@ impl Service {
                         Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
                     };
                     let _ = tx.send(ev).await;
+                });
+            }
+            "account.name" => {
+                let name = s("name");
+                tokio::spawn(async move {
+                    let ev = match acc.set_display_name(&name).await {
+                        Ok(p) => profile_ev(&p, "Nome alterado."),
+                        Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
+            "account.photo" | "account.photo_reset" => {
+                let (reset, path) = (cmd == "account.photo_reset", PathBuf::from(s("path")));
+                tokio::spawn(async move {
+                    let Some(u) = acc.user() else { return };
+                    let r = if reset {
+                        acc.reset_photo().await.map(|p| (p, None))
+                    } else {
+                        match tokio::task::spawn_blocking(move || avatar::prepare(&path)).await.unwrap_or_else(|_| Err(AccountError::new("avatar", "Não foi possível preparar a imagem."))) {
+                            Ok(jpeg) => acc.set_photo(jpeg.clone()).await.map(|p| (p, Some(jpeg))),
+                            Err(e) => Err(e),
+                        }
+                    };
+                    match r {
+                        Ok((p, Some(jpeg))) => {
+                            // a foto enviada vai direto para o cache: aparece na hora, sem baixar de volta
+                            let path = avatar::store(&rt.data_dir, &u.id, &jpeg).ok();
+                            let _ = tx.send(json!({ "ev": "account.avatar", "path": path })).await;
+                            let _ = tx.send(profile_ev(&p, "Foto alterada.")).await;
+                        }
+                        Ok((p, None)) => {
+                            refresh_photo(&rt, &u.id, p.avatar_url.clone().unwrap_or_default(), &tx).await;
+                            let _ = tx.send(profile_ev(&p, "Voltamos para a foto da sua conta.")).await;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
+                        }
+                    }
                 });
             }
             "friends.list" | "friends.request" | "friends.respond" | "friends.remove" => {

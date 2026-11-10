@@ -31,6 +31,7 @@ pub struct FakeState {
     refresh: HashMap<String, String>,              // refresh token -> user_id (uso único)
     otps: HashMap<String, String>,                 // "tipo:email" -> código
     pub profiles: HashMap<String, Value>,
+    pub objects: HashMap<String, Vec<u8>>,         // Storage: "<id>/avatar.jpg" -> bytes
     requests: Vec<(String, String, String, bool)>, // id, de, para, aceito
     /// validade do access token em segundos (testes de renovação usam valores baixos)
     pub expires_in: u64,
@@ -102,6 +103,31 @@ async fn serve(mut s: TcpStream, st: Arc<Mutex<FakeState>>) -> Result<()> {
         buf.extend_from_slice(&tmp[..n]);
     }
     let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    // Storage falso: POST /storage/v1/object/avatars/<id>/<arquivo> (só o dono) e GET .../object/public/avatars/...
+    {
+        let mut it = head.lines().next().unwrap_or("").split_whitespace();
+        let (m, t) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+        let t = t.split('?').next().unwrap_or("");
+        let auth = head.lines().find_map(|l| { let (k, v) = l.split_once(':')?; k.eq_ignore_ascii_case("authorization").then(|| v.trim().trim_start_matches("Bearer ").to_string()) }).unwrap_or_default();
+        let reply = if let (true, Some(key)) = (m == "POST", t.strip_prefix("/storage/v1/object/avatars/")) {
+            let mut g = st.lock().unwrap();
+            let owner = g.access.get(&auth).cloned();
+            let body = buf[head_end..].to_vec();
+            Some(match owner {
+                Some(o) if key.starts_with(&format!("{o}/")) && body.len() <= 524288 => { g.objects.insert(key.to_string(), body); ("200 OK", br#"{"Key":"ok"}"#.to_vec()) }
+                Some(_) if body.len() > 524288 => ("400 Bad Request", br#"{"statusCode":"413","error":"Payload too large","message":"The object exceeded the maximum allowed size"}"#.to_vec()),
+                _ => ("400 Bad Request", br#"{"statusCode":"403","error":"Unauthorized","message":"new row violates row-level security policy"}"#.to_vec()),
+            })
+        } else if let (true, Some(key)) = (m == "GET", t.strip_prefix("/storage/v1/object/public/avatars/")) {
+            Some(match st.lock().unwrap().objects.get(key).cloned() { Some(b) => ("200 OK", b), None => ("404 Not Found", b"{}".to_vec()) })
+        } else { None };
+        if let Some((status, body)) = reply {
+            s.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await?;
+            s.write_all(&body).await?;
+            s.shutdown().await.ok();
+            return Ok(());
+        }
+    }
     // fotos de teste: /avatar.png (PNG mínimo), /avatar.html (não é imagem), /avatar.big (acima do limite)
     if let Some(kind) = head.lines().next().and_then(|l| l.split_whitespace().nth(1)).and_then(|t| t.strip_prefix("/avatar.")) {
         let body: Vec<u8> = match kind {
@@ -308,7 +334,9 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
                 let base: String = name.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect();
                 format!("{}_{}", if base.len() < 2 { "briks".into() } else { base }, &me[..4])
             });
-            let p = json!({ "user_id": me, "nick": nick, "display_name": name, "avatar_url": b["p_avatar_url"], "fingerprint": b["p_fingerprint"], "public_key": b["p_public_key"], "status": null });
+            let old = st.profiles.get(me).cloned().unwrap_or(Value::Null);
+            let keep = |k: &str, new: Value| if old[k].is_null() { new } else { old[k].clone() };   // perfil existente: nome e foto ficam como estavam
+            let p = json!({ "user_id": me, "nick": nick, "display_name": keep("display_name", json!(name)), "avatar_url": keep("avatar_url", b["p_avatar_url"].clone()), "fingerprint": b["p_fingerprint"], "public_key": b["p_public_key"], "status": null });
             st.profiles.insert(me.to_string(), p.clone());
             if first && st.demo {
                 for (i, (n, nk, accepted)) in [("Marina Costa", "marina", true), ("Rafael Lima", "rafa_lima", false)].iter().enumerate() {
@@ -318,6 +346,23 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
                 }
             }
             ok(p)
+        }
+        "account_update_profile" => {
+            let Some(p) = st.profiles.get_mut(me) else { return pg("no_profile") };
+            if let Some(n) = b["p_display_name"].as_str() {
+                let n = n.trim();
+                if n.is_empty() || n.chars().count() > 64 {
+                    return pg("invalid_display_name");
+                }
+                p["display_name"] = json!(n);
+            }
+            if let Some(a) = b["p_avatar_url"].as_str() {
+                if !(a.is_empty() || a.starts_with("https://") || a.starts_with("http://127.0.0.1:")) {
+                    return pg("invalid_avatar");
+                }
+                p["avatar_url"] = if a.is_empty() { Value::Null } else { json!(a) };
+            }
+            ok(p.clone())
         }
         "account_set_nick" => {
             let n = b["p_nick"].as_str().unwrap_or("").to_string();

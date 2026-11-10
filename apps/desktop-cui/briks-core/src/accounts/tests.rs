@@ -479,6 +479,7 @@ async fn service_emits_states_for_login_cancel_and_logout() {
     assert_eq!(prof["public_key"]["x"], id.public_jwk().x.as_str());
     assert!(!prof.to_string().contains(&id.secret_b64()), "a chave privada nunca chega ao servidor");
 
+    assert_eq!(next(&mut rx).await["ev"], "account.avatar");
     svc.command("friends.list", &json!({}));
     assert_eq!(next(&mut rx).await["ev"], "friends.list");
     svc.command("local.credentials", &json!({}));
@@ -603,6 +604,123 @@ fn nick_hint_comes_from_the_name_never_the_email() {
     let s = super::supabase::session_of(&v).unwrap();
     assert_eq!(s.user.display_name, "Usuário");
     assert!(!avatar::nick_hint(&s.user.display_name).contains("segredo"));
+}
+
+// ---------- personalizar o perfil: nome e foto ----------
+
+fn write_png(path: &std::path::Path, w: u32, h: u32) {
+    let mut img = image::RgbaImage::new(w, h);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        *p = image::Rgba([(x % 256) as u8, (y % 256) as u8, 120, if x < w / 2 { 255 } else { 0 }]);
+    }
+    img.save(path).unwrap();
+}
+
+#[test]
+fn photo_is_cropped_square_resized_and_reencoded() {
+    let dir = tmpdir("prep");
+    write_png(&dir.join("larga.png"), 900, 400);
+    let jpeg = avatar::prepare(&dir.join("larga.png")).unwrap();
+    assert_eq!(avatar::sniff(&jpeg), Some("jpg"));
+    let out = image::load_from_memory(&jpeg).unwrap();
+    assert_eq!((out.width(), out.height()), (256, 256));
+    assert!(jpeg.len() < 524288, "cabe no limite do servidor");
+    // imagem pequena não é ampliada; minúscula, texto e arquivo inexistente são recusados com mensagem clara
+    write_png(&dir.join("pequena.png"), 100, 80);
+    let small = image::load_from_memory(&avatar::prepare(&dir.join("pequena.png")).unwrap()).unwrap();
+    assert_eq!((small.width(), small.height()), (80, 80));
+    write_png(&dir.join("mini.png"), 10, 10);
+    assert_eq!(avatar::prepare(&dir.join("mini.png")).unwrap_err().code, "avatar");
+    std::fs::write(dir.join("nota.png"), b"isto nao e imagem").unwrap();
+    assert_eq!(avatar::prepare(&dir.join("nota.png")).unwrap_err().message, "Escolha uma imagem PNG ou JPEG.");
+    assert_eq!(avatar::prepare(&dir.join("nao-existe.png")).unwrap_err().code, "avatar");
+}
+
+#[tokio::test]
+async fn custom_name_and_photo_survive_the_next_login() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("custom");
+    let a = accounts(&f, &dir);
+    let u = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let id = crate::identity::Identity::generate();
+    let jwk = serde_json::to_value(id.public_jwk()).unwrap();
+    assert_eq!(a.publish_identity(jwk.clone(), &id.fingerprint()).await.unwrap().display_name, "Conta Google");
+
+    assert_eq!(a.set_display_name("   ").await.unwrap_err().code, "invalid_name");
+    assert_eq!(a.set_display_name("  Ygor  ").await.unwrap().display_name, "Ygor");
+    assert_eq!(a.user().unwrap().display_name, "Ygor", "a sessão passa a usar o nome escolhido");
+
+    write_png(&dir.join("foto.png"), 600, 600);
+    let src = dir.join("foto.png");
+    let jpeg = tokio::task::spawn_blocking(move || avatar::prepare(&src)).await.unwrap().unwrap();
+    let p = a.set_photo(jpeg.clone()).await.unwrap();
+    let url = p.avatar_url.clone().unwrap();
+    assert!(url.contains(&format!("/storage/v1/object/public/avatars/{}/avatar.jpg?v=", u.id)));
+    assert_eq!(f.state.lock().unwrap().objects[&format!("{}/avatar.jpg", u.id)], jpeg);
+    // a foto publicada é baixável e é a mesma
+    let (d2, id2, url2) = (dir.clone(), u.id.clone(), url.clone());
+    let cached = tokio::task::spawn_blocking(move || avatar::cache(&d2, &id2, &url2)).await.unwrap().unwrap();
+    assert_eq!(std::fs::read(cached).unwrap(), jpeg);
+
+    // ninguém grava na pasta de outra pessoa
+    let (prov, tok) = (SupabaseProvider::new(&f.url(), "k"), a.access_token().await.unwrap());
+    let other = tokio::task::spawn_blocking(move || prov.upload_avatar(&tok, "00000000-0000-4000-8000-00000000dead", &[0xff, 0xd8, 0xff, 0])).await.unwrap();
+    assert_eq!(other.unwrap_err().code, "server");
+    let (prov, tok, uid) = (SupabaseProvider::new(&f.url(), "k"), a.access_token().await.unwrap(), u.id.clone());
+    let big = tokio::task::spawn_blocking(move || prov.upload_avatar(&tok, &uid, &vec![0u8; 600_000])).await.unwrap();
+    assert_eq!(big.unwrap_err().code, "avatar");
+
+    // sair e entrar de novo: o login NÃO devolve o nome e a foto do provedor por cima do que a pessoa escolheu
+    a.sign_out().await;
+    a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let again = a.publish_identity(jwk, &id.fingerprint()).await.unwrap();
+    assert_eq!((again.display_name.as_str(), again.avatar_url.as_deref()), ("Ygor", Some(url.as_str())));
+
+    // voltar para a foto da conta: o provedor falso não tem foto, então fica sem
+    assert_eq!(a.reset_photo().await.unwrap().avatar_url, None);
+}
+
+#[tokio::test]
+async fn service_applies_profile_changes_and_reports_them() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("svc-prof");
+    let rt = service::Runtime::for_tests(Some(Arc::new(accounts(&f, &dir))), dir.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut svc = service::Service::new(rt, tx);
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    assert_eq!(next(&mut rx).await["state"], "busy");
+    let e = next(&mut rx).await;
+    assert_eq!((e["state"].as_str(), e["nick_hint"].as_str()), (Some("signed_in"), Some("conta_google")));
+    assert_eq!(next(&mut rx).await["ev"], "account.profile");
+    let e = next(&mut rx).await;
+    assert_eq!((e["ev"].as_str(), e["path"].is_null()), (Some("account.avatar"), true), "sem foto no provedor");
+    let uid = f.state.lock().unwrap().users[0].id.clone();
+
+    svc.command("account.name", &json!({ "name": "Ygor Betine" }));
+    let e = next(&mut rx).await;
+    assert_eq!((e["ev"].as_str(), e["display_name"].as_str(), e["message"].as_str()), (Some("account.profile"), Some("Ygor Betine"), Some("Nome alterado.")));
+    svc.command("account.name", &json!({ "name": "" }));
+    assert_eq!(next(&mut rx).await["error_code"], "invalid_name");
+
+    write_png(&dir.join("eu.png"), 300, 500);
+    svc.command("account.photo", &json!({ "path": dir.join("eu.png") }));
+    let e = next(&mut rx).await;
+    assert_eq!(e["ev"], "account.avatar");
+    let shown = std::path::PathBuf::from(e["path"].as_str().unwrap());
+    assert_eq!(shown, dir.join("avatar-cache").join(format!("{uid}.jpg")));
+    assert_eq!(std::fs::read(&shown).unwrap(), f.state.lock().unwrap().objects[&format!("{uid}/avatar.jpg")]);
+    assert_eq!(next(&mut rx).await["message"], "Foto alterada.");
+    svc.command("account.photo", &json!({ "path": dir.join("nao-existe.png") }));
+    assert_eq!(next(&mut rx).await["error_code"], "avatar");
+    assert!(shown.exists(), "erro ao trocar não apaga a foto atual");
+
+    svc.command("account.photo_reset", &json!({}));
+    let e = next(&mut rx).await;
+    assert_eq!((e["ev"].as_str(), e["path"].is_null()), (Some("account.avatar"), true));
+    assert!(!shown.exists());
+    assert_eq!(next(&mut rx).await["message"], "Voltamos para a foto da sua conta.");
 }
 
 // ---------- Supabase REAL (opcional) ----------

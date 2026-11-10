@@ -144,6 +144,10 @@ pub trait AuthProvider: Send + Sync {
     /// Cria/atualiza o perfil do usuário logado e liga a chave PÚBLICA da identidade P2P à conta.
     fn sync_profile(&self, access_token: &str, display_name: &str, avatar_url: &str, public_key: &Value, fingerprint: &str) -> AResult<Profile>;
     fn set_nick(&self, access_token: &str, nick: &str) -> AResult<Profile>;
+    /// Troca nome e/ou foto do perfil. `None` = não mexe; foto `Some("")` = sem foto.
+    fn update_profile(&self, access_token: &str, display_name: Option<&str>, avatar_url: Option<&str>) -> AResult<Profile>;
+    /// Envia a foto (JPEG já recortado) para o armazenamento do provedor e devolve o endereço público dela.
+    fn upload_avatar(&self, access_token: &str, user_id: &str, jpeg: &[u8]) -> AResult<String>;
     fn friends(&self, access_token: &str) -> AResult<Vec<Friend>>;
     fn friend_request(&self, access_token: &str, nick: &str) -> AResult<()>;
     fn friend_respond(&self, access_token: &str, request_id: &str, accept: bool) -> AResult<()>;

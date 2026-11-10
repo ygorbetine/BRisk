@@ -284,6 +284,48 @@ impl Accounts {
         let (p, n) = (self.provider.clone(), nick.trim().trim_start_matches('@').to_lowercase());
         blk(move || p.set_nick(&tok, &n)).await
     }
+    /// Troca o nome de exibição (no servidor e na sessão guardada).
+    pub async fn set_display_name(&self, name: &str) -> AResult<Profile> {
+        let name: String = name.trim().chars().take(64).collect();
+        if name.is_empty() {
+            return Err(AccountError::new("invalid_name", "O nome não pode ficar vazio."));
+        }
+        let tok = self.access_token().await?;
+        let (p, n) = (self.provider.clone(), name.clone());
+        let prof = blk(move || p.update_profile(&tok, Some(&n), None)).await?;
+        self.remember_name(&prof.display_name);
+        Ok(prof)
+    }
+    /// Envia uma foto nova (JPEG já recortado por `avatar::prepare`) e passa a usá-la no perfil.
+    pub async fn set_photo(&self, jpeg: Vec<u8>) -> AResult<Profile> {
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || {
+            let url = p.upload_avatar(&tok, &u.id, &jpeg)?;
+            p.update_profile(&tok, None, Some(&url))
+        }).await
+    }
+    /// Volta para a foto da conta do provedor (Google/Discord); sem foto no provedor, fica só com as iniciais.
+    pub async fn reset_photo(&self) -> AResult<Profile> {
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.update_profile(&tok, None, Some(&u.avatar_url))).await
+    }
+    /// O nome que vale é o do perfil no servidor (a pessoa pode ter trocado): atualiza a sessão em memória e a guardada.
+    pub fn remember_name(&self, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        let mut g = self.session.lock().unwrap();
+        if let Some(s) = g.as_mut() {
+            if s.user.display_name != name {
+                s.user.display_name = name.to_string();
+                let _ = self.store.save(&Stored { version: 1, refresh_token: s.refresh_token.clone(), user: s.user.clone() });
+            }
+        }
+    }
     pub async fn friends(&self) -> AResult<Vec<Friend>> {
         let tok = self.access_token().await?;
         let p = self.provider.clone();

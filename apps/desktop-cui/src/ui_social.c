@@ -398,7 +398,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     }
     cui_dialog(ui, "Perfil", &s->profile_open) {
         cui_row(ui, .gap = 14, .align = CUI_ALIGN_CENTER) {
-            cui_avatar(ui, s->user_name, .size = 64);
+            cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 64, .image = s->user_photo });
             cui_column(ui, .gap = 2) {
                 cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 20);
                 cui_text(ui, s->user_email, .color = B_MUTED);
@@ -406,13 +406,8 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
         cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
         cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = sem balão");
-        if (s->acct_user_id[0]) {
-            cui_row(ui, .gap = 10, .align = CUI_ALIGN_CENTER) {
-                cui_textf(ui, "@%s", s->acct_nick[0] ? s->acct_nick : "…");
-                if (cui_button(ui, "Trocar @nick", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { s->profile_open = false; s->nick_open = true; s->nick_msg[0] = 0; snprintf(s->nick_edit, sizeof s->nick_edit, "%s", s->acct_nick); }
-            }
-            cui_text(ui, "Seus amigos acham você pelo @nick. Mensagens e grupos ficam guardados neste computador.", .size = 12, .color = B_MUTED);
-        } else cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+        if (s->acct_user_id[0]) ui_account_editor(ui, s);
+        else cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
     }
     cui_dialog(ui, "Trocar @nick", &s->nick_open) {
         cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);

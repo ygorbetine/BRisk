@@ -100,6 +100,7 @@ typedef struct {
     char acct_user_id[48], acct_nick[32], acct_code[12];
     char bridge_email[96], bridge_pw[64];                      /* credencial do banco LOCAL (não é a senha da conta) */
     bool nick_open; char nick_edit[32], nick_msg[160];
+    char name_edit[64], profile_msg[200];                      /* editor do Perfil: nome em edição e o retorno da última troca */
     int import_state;                                          /* 0 não consultado, 1 há dados, 2 importando, 3 feito, 4 nada a importar */
     char import_msg[240];
     person_t legacy[MAX_LEGACY]; int legacy_count;             /* contatos do Briks antigo (só nome; sem conta) */
@@ -125,6 +126,10 @@ void account_friends(app_state_t *s);
 void account_add_friend(app_state_t *s);
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept);
 void account_set_nick(app_state_t *s);
+void account_set_name(app_state_t *s);                      /* troca o nome de exibição por s->name_edit */
+void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
+void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
+void ui_account_editor(cui_ctx *ui, app_state_t *s);        /* bloco "foto, nome e @" para o diálogo de Perfil */
 void account_import(app_state_t *s, bool apply);
 void account_bridge_done(app_state_t *s, bool ok);          /* app.c avisa o fim da ligação com o banco local */
 void app_begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body);

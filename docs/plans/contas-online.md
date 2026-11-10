@@ -79,6 +79,27 @@ O módulo entrega à UI dois campos de `app_state_t`: `user_photo` (textura; 0 =
 - Os botões de entrada usam as logos do Google e do Discord (`apps/desktop-cui/assets/login`, copiadas para
   `build/assets/login`). São marcas dos respectivos donos, usadas só nos botões de login.
 
+### Personalizar o perfil (foto, nome e @)
+
+No diálogo **Perfil** há um bloco com: **Trocar foto** (abre o seletor de arquivos do Windows), **Usar a foto da conta**,
+o campo **Nome** e **Trocar @nick**. Depende da migração `0004_profile_customization.sql`.
+
+Onde cada coisa fica guardada:
+
+| Dado | Fonte da verdade (servidor) | Cópia neste computador |
+|---|---|---|
+| Nome | `profiles.display_name` | dentro de `account-session.bin` (cifrado), para aparecer ao abrir o app |
+| @nick | `profiles.nick` (único no servidor) | só na memória do app |
+| Foto | arquivo em Storage, bucket `avatars`, `<id da conta>/avatar.jpg`; o endereço fica em `profiles.avatar_url` | `avatar-cache\<id da conta>.jpg` |
+
+- A foto escolhida é lida no computador, recortada no quadrado central, reduzida para 256x256 e regravada como JPEG
+  antes de subir. Os metadados do arquivo original (EXIF, localização) não vão junto.
+- No servidor cada pessoa só grava na pasta com o próprio id (política do Storage); limite de 512 KB, PNG ou JPEG.
+- O bucket é **público para leitura**: quem tiver o endereço da foto consegue abri-la. O nome e a foto personalizados
+  são entregues pelo app só para amigos aceitos e pedidos pendentes.
+- O login não sobrescreve mais o nome e a foto escolhidos (antes da 0004, cada login regravava os do Google/Discord).
+- Limite conhecido: fotos de celular com rotação gravada só no EXIF podem aparecer deitadas.
+
 ### Ponte local (transição)
 
 Mensagens e grupos ainda são gravados pelo backend local (`briks-desktop-backend`), que exige um usuário local. Ao
@@ -168,7 +189,7 @@ Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_S
 
 ## 5. Testes
 
-`cargo test --release` em `apps/desktop-cui/briks-core` (51 testes, 22 do módulo de contas; nenhum usa a internet: o
+`cargo test --release` em `apps/desktop-cui/briks-core` (54 testes, 25 do módulo de contas; nenhum usa a internet: o
 cliente Supabase de verdade fala com `fake.rs` em 127.0.0.1):
 
 - PKCE: vetor da RFC 7636; verificador aleatório; a URL leva o desafio e nunca o verificador.

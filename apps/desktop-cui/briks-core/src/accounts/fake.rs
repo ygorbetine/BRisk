@@ -102,6 +102,18 @@ async fn serve(mut s: TcpStream, st: Arc<Mutex<FakeState>>) -> Result<()> {
         buf.extend_from_slice(&tmp[..n]);
     }
     let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    // fotos de teste: /avatar.png (PNG mínimo), /avatar.html (não é imagem), /avatar.big (acima do limite)
+    if let Some(kind) = head.lines().next().and_then(|l| l.split_whitespace().nth(1)).and_then(|t| t.strip_prefix("/avatar.")) {
+        let body: Vec<u8> = match kind {
+            "png" => [&[0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a][..], &[0u8; 64][..]].concat(),
+            "big" => [&[0xffu8, 0xd8, 0xff][..], &vec![0u8; 3 * 1024 * 1024][..]].concat(),
+            _ => b"<html>nao sou imagem</html>".to_vec(),
+        };
+        s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await?;
+        s.write_all(&body).await?;
+        s.shutdown().await.ok();
+        return Ok(());
+    }
     let mut first = head.lines().next().unwrap_or("").split_whitespace();
     let (method, target) = (first.next().unwrap_or("").to_string(), first.next().unwrap_or("").to_string());
     let bearer = head.lines().find_map(|l| {

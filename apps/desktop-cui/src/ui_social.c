@@ -442,10 +442,10 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             if (s->acct_user_id[0]) {
                 cui_text(ui, "Conta", .font = CUI_FONT_MEDIUM);
                 cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 10, .gap = 12, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                    cui_avatar(ui, s->user_name, .size = 40);
+                    cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 40, .image = s->user_photo });
                     cui_column(ui, .gap = 1, .width = CUI_FILL) {
                         cui_text(ui, s->user_name, .font = CUI_FONT_MEDIUM, .nowrap = true);
-                        cui_textf(ui, "@%s · %s", s->acct_nick[0] ? s->acct_nick : "…", s->user_email);
+                        cui_textf(ui, "@%s · %s", s->user_nick[0] ? s->user_nick : "…", s->user_email);
                     }
                     if (cui_button(ui, "Sair", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { s->settings_open = false; rtc_leave_room(s); app_logout(s); }
                 }

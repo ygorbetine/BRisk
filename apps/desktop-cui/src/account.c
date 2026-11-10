@@ -27,6 +27,13 @@ static bool send_kv(const char *cmd, const char *k1, const char *v1, const char 
     return ok;
 }
 
+/* foto da conta: o core baixa e guarda em cache (PNG/JPEG); aqui só vira textura. path vazio = volta às iniciais */
+static void set_photo(app_state_t *s, const char *path) {
+    cui_ctx *ui = cui_app_ui(s->app);
+    if (s->user_photo) { cui_image_destroy(ui, s->user_photo); s->user_photo = 0; }
+    if (path && path[0]) { int w = 0, h = 0; s->user_photo = cui_image_load(ui, path, &w, &h); }
+}
+
 static bool need_core(app_state_t *s) {
     if (core_state() == CORE_READY) return true;
     copy(s->acct_error, sizeof s->acct_error, core_state() == CORE_FAILED ? core_error() : "O Briks ainda está iniciando. Tente de novo em instantes.");
@@ -85,6 +92,7 @@ void account_logout(app_state_t *s) {
     if (core_state() == CORE_READY) core_send("{\"cmd\":\"account.logout\"}");
     s->acct_state = ACCT_OUT; s->acct_view = AV_MAIN; s->acct_bridge = BRIDGE_NONE;
     s->acct_user_id[0] = s->acct_nick[0] = s->acct_error[0] = s->acct_info[0] = 0;
+    s->user_nick[0] = 0; set_photo(s, NULL);
     memset(s->bridge_pw, 0, sizeof s->bridge_pw);
     s->legacy_count = 0; s->import_state = 0; s->import_msg[0] = 0;
 }
@@ -148,6 +156,8 @@ static void on_state(app_state_t *s, const jval *j) {
         copy(s->acct_user_id, sizeof s->acct_user_id, json_str(u, "id", ""));
         copy(s->user_name, sizeof s->user_name, json_str(u, "display_name", "Você"));
         copy(s->user_email, sizeof s->user_email, json_str(u, "email", ""));
+        if (!s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, json_str(j, "nick_hint", ""));   /* provisório até o servidor devolver o @nick */
+        if (!same) { const char *dp = getenv("BRIKS_DEV_PHOTO"); set_photo(s, dp ? dp : json_str(j, "photo", "")); }   /* BRIKS_DEV_PHOTO: captura com uma foto local */                                             /* foto já em cache de um login anterior */
         memset(s->password, 0, sizeof s->password); memset(s->confirm, 0, sizeof s->confirm);
         if (jbool(j, "recovery")) { s->acct_view = AV_NEWPASS; return; }   /* veio do e-mail de recuperação: escolhe a senha nova antes de entrar */
         if (same && s->screen != SCREEN_AUTH) return;                      /* cancelar um fluxo com a sessão já aberta */
@@ -156,7 +166,7 @@ static void on_state(app_state_t *s, const jval *j) {
     } else {   /* signed_out */
         const bool was_busy = s->acct_state == ACCT_BUSY;
         s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE;
-        s->acct_user_id[0] = s->acct_nick[0] = 0;
+        s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL);
         copy(s->acct_error, sizeof s->acct_error, strcmp(json_str(j, "error_code", ""), "cancelled") ? msg : "");
         copy(s->acct_info, sizeof s->acct_info, strcmp(json_str(j, "error_code", ""), "cancelled") || !was_busy ? "" : "Login cancelado.");
         if (s->acct_view == AV_NEWPASS) s->acct_view = AV_MAIN;
@@ -194,7 +204,10 @@ bool account_handle_event(app_state_t *s, const char *line) {
     if (!strcmp(ev, "account.state")) on_state(s, j);
     else if (!strcmp(ev, "account.profile")) {
         copy(s->acct_nick, sizeof s->acct_nick, json_str(j, "nick", ""));
+        if (s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, s->acct_nick);
         if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }
+    } else if (!strcmp(ev, "account.avatar")) {
+        if (s->acct_state == ACCT_IN) set_photo(s, json_str(j, "path", ""));
     } else if (!strcmp(ev, "account.notice")) {
         if (s->nick_open) copy(s->nick_msg, sizeof s->nick_msg, json_str(j, "message", ""));
         else if (s->acct_bridge == BRIDGE_WAIT && !strcmp(json_str(j, "error_code", ""), "storage")) { s->acct_bridge = BRIDGE_FAILED; copy(s->acct_error, sizeof s->acct_error, json_str(j, "message", "")); }

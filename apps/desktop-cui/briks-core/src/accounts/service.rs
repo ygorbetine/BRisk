@@ -1,6 +1,7 @@
 //! Ponte entre os comandos do IPC (`account.*`, `friends.*`, `local.credentials`, `import.*`) e o `Accounts`.
 //! Eventos emitidos para a UI:
 //!   account.state   {state: signed_out|busy|email_sent|signed_in, what?, provider?, kind?, email?, user?, recovery?, error_code?, message?, configured, mock}
+//!   account.avatar  {path}                        foto da conta baixada para o cache local (PNG/JPEG)
 //!   account.profile {nick, fingerprint}            perfil publicado (chave pública ligada à conta)
 //!   account.notice  {error_code, message}          falha que não derruba a sessão
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
@@ -16,7 +17,7 @@ use tokio::task::JoinHandle;
 
 use super::config::{self, AccountsConfig};
 use super::supabase::SupabaseProvider;
-use super::{fake, legacy, AccountError, Accounts, CodeKind, OAuthProvider, SignUpOutcome};
+use super::{avatar, fake, legacy, AccountError, Accounts, CodeKind, OAuthProvider, SignUpOutcome};
 
 /// Criado uma vez por processo.
 pub struct Runtime {
@@ -86,7 +87,17 @@ fn failed(rt: &Runtime, e: &AccountError) -> Value {
 /// Depois de entrar: avisa a UI e publica a chave pública da identidade P2P no perfil da conta.
 async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recovery: bool) {
     let Some(u) = acc.user() else { return };
-    let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery }))).await;
+    // foto: usa o cache se houver; baixa em segundo plano e avisa quando chegar. nick_hint: provisório, derivado do nome.
+    let photo = avatar::cached(&rt.data_dir, &u.id);
+    let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name) }))).await;
+    if !u.avatar_url.is_empty() {
+        let (dir, id, url, tx2) = (rt.data_dir.clone(), u.id.clone(), u.avatar_url.clone(), tx.clone());
+        tokio::spawn(async move {
+            if let Ok(Ok(path)) = tokio::task::spawn_blocking(move || avatar::cache(&dir, &id, &url)).await {
+                let _ = tx2.send(json!({ "ev": "account.avatar", "path": path })).await;
+            }
+        });
+    }
     let id = match crate::ipc::load_or_create_identity(&rt.data_dir) {
         Ok(id) => id,
         Err(e) => {
@@ -249,6 +260,9 @@ impl Service {
                     t.abort();
                 }
                 tokio::spawn(async move {
+                    if let Some(u) = acc.user() {
+                        avatar::clear(&rt.data_dir, &u.id);   // sair apaga também a foto guardada
+                    }
                     acc.sign_out().await;
                     let _ = tx.send(base(&rt, "signed_out")).await;
                 });

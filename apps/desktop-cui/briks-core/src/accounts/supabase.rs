@@ -131,7 +131,7 @@ fn user_of(u: &Value) -> AccountUser {
     let s = |v: &Value| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     let email = u["email"].as_str().unwrap_or("").to_string();
     let display_name = s(&meta["display_name"]).or_else(|| s(&meta["custom_claims"]["global_name"])).or_else(|| s(&meta["full_name"])).or_else(|| s(&meta["name"]))
-        .or_else(|| email.split('@').next().filter(|p| !p.is_empty()).map(String::from)).unwrap_or_else(|| "Usuário".into());
+        .unwrap_or_else(|| "Usuário".into());   // nunca derivar nome (nem @nick) do e-mail
     AccountUser {
         id: u["id"].as_str().unwrap_or("").to_string(),
         email,
@@ -141,7 +141,7 @@ fn user_of(u: &Value) -> AccountUser {
     }
 }
 
-fn session_of(v: &Value) -> AResult<Session> {
+pub(crate) fn session_of(v: &Value) -> AResult<Session> {
     let (Some(access), Some(refresh)) = (v["access_token"].as_str(), v["refresh_token"].as_str()) else {
         return Err(AccountError::new("server", "Resposta inesperada do servidor de contas."));
     };

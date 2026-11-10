@@ -5,6 +5,7 @@
 //!  - refresh token: em disco, cifrado com a DPAPI do Windows (`account-session.bin`); nunca em texto aberto;
 //!  - access token: só na memória deste processo, renovado sozinho antes de vencer;
 //!  - chave privada da identidade P2P: NUNCA vai ao servidor; só a chave pública e a impressão digital são publicadas no perfil.
+pub mod avatar;
 pub mod config;
 pub mod fake;
 pub mod legacy;

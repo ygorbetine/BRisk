@@ -67,6 +67,18 @@ o amigo dentro de uma sala P2P. Pedidos pendentes mostram só nome, avatar e @ni
 Limite desta fase: a identidade é por aparelho. Entrar em outro PC publica a chave daquele PC (a última vence).
 A fase 2 (seção 6) resolve isso.
 
+### Foto e @nick para a UI
+
+O módulo entrega à UI dois campos de `app_state_t`: `user_photo` (textura; 0 = só iniciais) e `user_nick` (sem o @).
+
+- **Foto**: no login social o core baixa a foto da conta (só https, sem seguir redirects, até 2 MB, PNG/JPEG conferidos
+  pelo conteúdo) para `%APPDATA%\Briks-CUIvatar-cache\<id da conta>.png|jpg` e avisa a UI (`account.avatar`). Nos
+  logins seguintes a foto em cache aparece na hora. **Sair** apaga o arquivo.
+- **@nick**: o definitivo vem do servidor (`account.profile`). Antes disso (ou enquanto as migrações não existem) a UI
+  mostra um provisório derivado do **nome** da conta. Nada é derivado do e-mail: sem nome no provedor, o nome é "Usuário".
+- Os botões de entrada usam as logos do Google e do Discord (`apps/desktop-cui/assets/login`, copiadas para
+  `build/assets/login`). São marcas dos respectivos donos, usadas só nos botões de login.
+
 ### Ponte local (transição)
 
 Mensagens e grupos ainda são gravados pelo backend local (`briks-desktop-backend`), que exige um usuário local. Ao
@@ -156,7 +168,7 @@ Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_S
 
 ## 5. Testes
 
-`cargo test --release` em `apps/desktop-cui/briks-core` (49 testes, 20 do módulo de contas; nenhum usa a internet: o
+`cargo test --release` em `apps/desktop-cui/briks-core` (51 testes, 22 do módulo de contas; nenhum usa a internet: o
 cliente Supabase de verdade fala com `fake.rs` em 127.0.0.1):
 
 - PKCE: vetor da RFC 7636; verificador aleatório; a URL leva o desafio e nunca o verificador.

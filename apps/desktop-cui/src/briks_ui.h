@@ -57,6 +57,8 @@ typedef struct {
     char email[96], password[64], name[64], confirm[64], error[160];
     /* sessão */
     char user_id[48], user_name[96], user_email[96];
+    cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
+    char user_nick[32];                        /* @nick da conta (sem o @): o escolhido, ou um provisório derivado do nome; nunca do e-mail */
     char user_status[64], user_presence[64];   /* status (balão) e rich presence (programa em uso); status vazio = mostra a presença */
     bool rp_enabled; int rp_audience;           /* rich presence ligado; 0 = todos os amigos, 1 = só quem está na mesma chamada */
     person_t friends[MAX_FRIENDS]; int friend_count;

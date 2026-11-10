@@ -15,6 +15,10 @@ if(MSVC)
 endif()
 target_link_libraries(briks_cui PRIVATE cui winhttp bcrypt shell32 opengl32 ws2_32)
 
+# Logos do login (Google e Discord) ao lado do executável.
+add_custom_command(TARGET briks_cui POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/assets/login" $<TARGET_FILE_DIR:briks_cui>/assets/login)
+
 # Copia o backend local (briks-desktop-backend.exe) para ao lado do executável.
 set(BRIKS_BACKEND_EXE "" CACHE FILEPATH "Caminho do briks-desktop-backend.exe")
 if(NOT BRIKS_BACKEND_EXE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-backend/target/release/briks-desktop-backend.exe")

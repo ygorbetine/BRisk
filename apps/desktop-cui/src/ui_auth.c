@@ -4,10 +4,26 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <windows.h>
+
 #define ERR_COLOR CUI_RGB(0xff9a9a)
 
+/* Logos dos provedores: assets\login\<nome>.png ao lado do executável. Se o arquivo faltar, o botão usa a letra. */
+static cui_texture logo(cui_ctx *ui, int which) {
+    static cui_texture tex[2]; static bool tried[2];
+    if (!tried[which]) {
+        tried[which] = true;
+        char dir[MAX_PATH], path[MAX_PATH + 40]; int w = 0, h = 0;
+        GetModuleFileNameA(NULL, dir, sizeof dir);
+        char *slash = strrchr(dir, '\\'); if (slash) *slash = 0;
+        snprintf(path, sizeof path, "%s\\assets\\login\\%s.png", dir, which ? "discord" : "google");
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) tex[which] = cui_image_load(ui, path, &w, &h);
+    }
+    return tex[which];
+}
+
 /* Botão grande de provedor: vidro arredondado com o selo da marca. Devolve true no clique. */
-static bool provider_button(cui_ctx *ui, const char *id, const char *label, const char *letter, cui_color badge, cui_color badge_fg, cui_color tint, bool enabled) {
+static bool provider_button(cui_ctx *ui, const char *id, const char *label, const char *letter, cui_texture mark, cui_color badge, cui_color badge_fg, cui_color tint, bool enabled) {
     cui_push_id(ui, id);
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, "b")); cui_vec2 m = cui_mouse_pos(ui);
     bool hover = enabled && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
@@ -17,7 +33,8 @@ static bool provider_button(cui_ctx *ui, const char *id, const char *label, cons
             .bg = bg, .border = 1, .border_color = hover ? CUI_RGBA(0xffffff55) : CUI_RGBA(0xffffff26),
             .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         cui_box(ui, .width = CUI_PX(30), .height = CUI_PX(30), .radius = 15, .bg = badge, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-            cui_text(ui, letter, .font = CUI_FONT_DISPLAY, .size = 16, .color = badge_fg);
+            if (mark) cui_image_ex(ui, mark, &(cui_image_opts){ .width = CUI_PX(18), .height = CUI_PX(18) });
+            else cui_text(ui, letter, .font = CUI_FONT_DISPLAY, .size = 16, .color = badge_fg);
         }
         cui_text(ui, label, .font = CUI_FONT_MEDIUM, .size = 16, .color = enabled ? CUI_RGB(0xffffff) : B_MUTED, .nowrap = true);
     }
@@ -48,8 +65,8 @@ static void heading(cui_ctx *ui, const char *title, const char *sub) {
 static void view_main(cui_ctx *ui, app_state_t *s) {
     heading(ui, "Entre no Briks", "Conversas que parecem estar na mesma sala.");
     bool on = s->acct_configured;
-    if (provider_button(ui, "google", "Continuar com Google", "G", CUI_RGB(0xffffff), CUI_RGB(0x4285f4), CUI_RGB(0xffffff), on)) account_oauth(s, "google");
-    if (provider_button(ui, "discord", "Continuar com Discord", "D", CUI_RGB(0x5865f2), CUI_RGB(0xffffff), CUI_RGB(0x5865f2), on)) account_oauth(s, "discord");
+    if (provider_button(ui, "google", "Continuar com Google", "G", logo(ui, 0), CUI_RGB(0xffffff), CUI_RGB(0x4285f4), CUI_RGB(0xffffff), on)) account_oauth(s, "google");
+    if (provider_button(ui, "discord", "Continuar com Discord", "D", logo(ui, 1), CUI_RGB(0x5865f2), CUI_RGB(0xffffff), CUI_RGB(0x5865f2), on)) account_oauth(s, "discord");
     cui_text(ui, "Mais rápido e mais seguro: você entra com uma conta que já tem, sem criar outra senha.", .color = B_MUTED, .size = 13);
     messages(ui, s);
     cui_gap(ui, 4);

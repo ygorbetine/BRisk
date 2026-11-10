@@ -11,7 +11,7 @@ use super::pkce::{challenge_of, parse_query, url_decode, url_encode, Pkce};
 use super::provider::*;
 use super::store::{Protector, SecretFile};
 use super::supabase::{map_error, SupabaseProvider};
-use super::{legacy, loopback, service, valid_email, Accounts, SignUpOutcome};
+use super::{avatar, legacy, loopback, service, valid_email, Accounts, SignUpOutcome};
 
 /// Os fluxos que abrem o loopback usam portas fixas: um de cada vez.
 static FLOW: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -563,6 +563,46 @@ fn legacy_import_reassigns_friends_without_old_accounts_or_keys() {
     assert_eq!(legacy::apply(&s, &d, "novo@conta.briks.local").unwrap()["state"], "already");
     assert_eq!(legacy::probe(&s, &d)["state"], "imported");
     assert!(!d.join("import-social-tmp").exists());
+}
+
+// ---------- foto da conta e @nick provisório ----------
+
+#[tokio::test]
+async fn avatar_is_cached_validated_and_cleared() {
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("avatar");
+    let base = f.url();
+    tokio::task::spawn_blocking(move || {
+        let id = "11111111-aaaa-4bbb-8ccc-222222222222";
+        let path = avatar::cache(&dir, id, &format!("{base}/avatar.png")).unwrap();
+        assert_eq!(path, dir.join("avatar-cache").join(format!("{id}.png")));
+        assert_eq!(avatar::cached(&dir, id), Some(path.clone()));
+        assert_eq!(avatar::sniff(&std::fs::read(&path).unwrap()), Some("png"));
+        // conteúdo que não é imagem, arquivo grande demais, http comum e arquivo local: nada é gravado
+        assert_eq!(avatar::cache(&dir, "u2", &format!("{base}/avatar.html")).unwrap_err().code, "avatar");
+        assert_eq!(avatar::cache(&dir, "u3", &format!("{base}/avatar.big")).unwrap_err().code, "avatar");
+        assert_eq!(avatar::fetch("http://exemplo.com/a.png").unwrap_err().code, "avatar");
+        assert_eq!(avatar::fetch("file:///c:/windows/win.ini").unwrap_err().code, "avatar");
+        assert!(avatar::cached(&dir, "u2").is_none() && avatar::cached(&dir, "u3").is_none());
+        // um id malicioso não sai da pasta do cache
+        assert_eq!(avatar::cache(&dir, "../../fora", &format!("{base}/avatar.png")).unwrap(), dir.join("avatar-cache").join("fora.png"));
+        avatar::clear(&dir, id);
+        assert!(!path.exists());
+    }).await.unwrap();
+}
+
+#[test]
+fn nick_hint_comes_from_the_name_never_the_email() {
+    assert_eq!(avatar::nick_hint("Ygor Mello Betine"), "ygor_mello_betine");
+    assert_eq!(avatar::nick_hint("  João  D'Ávila-Conceição "), "joao_davila_conceica");
+    assert_eq!(avatar::nick_hint("李"), "");
+    assert_eq!(avatar::nick_hint("Al"), "");
+    assert!(avatar::nick_hint("Nome Muito Comprido Que Passa Do Limite").len() <= 20);
+    // sem nome no provedor, o nome vira "Usuário": nada do e-mail aparece
+    let v = json!({ "access_token": "a", "refresh_token": "r", "expires_in": 60, "user": { "id": "u1", "email": "segredo.pessoal@exemplo.com", "user_metadata": {}, "app_metadata": { "provider": "google" } } });
+    let s = super::supabase::session_of(&v).unwrap();
+    assert_eq!(s.user.display_name, "Usuário");
+    assert!(!avatar::nick_hint(&s.user.display_name).contains("segredo"));
 }
 
 // ---------- Supabase REAL (opcional) ----------

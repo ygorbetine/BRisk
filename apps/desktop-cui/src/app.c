@@ -164,6 +164,8 @@ void app_pump(app_state_t *s) {
     case OP_MSG_SEND:
         if (!ok) { snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem."); if (s->msg_count) s->msg_count--; }
         break;
+    case OP_EVENT_SAVE:   /* evento assinado gravado na API local (se falhar, fica só no estado local) */
+        break;
     case OP_GROUP_SAVE:
         begin(s, OP_GROUPS, "GET", "/p2p/groups", NULL);
         break;

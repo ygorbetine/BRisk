@@ -48,8 +48,17 @@ Mesmo formato do web (`chat.event` v3, JSON canônico idêntico, assinatura ECDS
 - Compatibilidade: `parse_wire` devolve `Ignored` para versão, tipo ou ação desconhecidos (peers antigos e novos não quebram) e `Invalid` só para `chat.event` v3 de ação conhecida e malformado. Campos extras são tolerados.
 - Testes: `cargo test chat_events` (11 testes: canônico vs TypeScript, assinatura, adulteração, permissões, versões, ordem, reações, delete final).
 
-## O que NÃO está ligado
+## Eventos ligados (DataChannel + backend local)
 
-- Os eventos assinados **não** trafegam pelo DataChannel nem pelo backend local: a UI grava o estado em `%APPDATA%\Briks-CUI\msg_state.json` (respostas, edições, exclusões, reações próprias, fixadas, favoritas, lembretes, barra rápida). Ligar é: comando IPC do core para assinar/enviar `chat.event` e `POST /p2p/chat-events/<canal>` + projeção em `p2p_messages`.
-- Por isso reações, edições e exclusões ainda são locais: a outra pessoa não vê. Nada foi testado entre dois peers reais.
-- Exclusão é só marca local: a linha continua no `p2p_messages` do backend.
+- Core: `MeshCmd::Event` assina (`chat_events::create`, autor = minha impressão digital, relógio monotônico) e envia o `chat.event` v3 a todos os peers autenticados da sala; ao receber, o core confere que o `actorPeerId` é o peer provado no DataChannel, a assinatura, o relógio e a forma por ação. Versão/ação desconhecida é ignorada em silêncio; autor falso ou assinatura ruim gera erro e é descartado. IPC: comando `chat.event.send {channel,target,action,content?,reference?,emoji?}` e evento `chat.event {from_fp, local, wire, wire_raw}` (o eco `local:true` serve para gravar).
+- UI (`msgui.c`): reagir, editar, excluir, responder (evento `reply` com a mensagem nova como alvo) e fixar/desafixar disparam o evento quando há sala aberta (`in_room`) e o core está pronto. Eventos remotos (`msgui_on_event`) são aplicados ao estado local e gravados, junto com os locais, em `POST /p2p/chat-events/<canal>` (fila de 24, um por vez, `OP_EVENT_SAVE`).
+- Regras no receptor: reação vale de qualquer peer presente (deduplicada por peer e por id de evento); editar/excluir/responder só se a mensagem está na conversa aberta e o autor dela tem o mesmo nome do peer que assinou; fixar só em conversa direta (em grupo o receptor não sabe quem é admin). Delete não tem moderação remota: o apagar de admin em grupo continua só local.
+- Testes: `cargo test signed_chat_events` (dois nós em loopback: reação chega assinada com o autor real e há eco local; versão 99 é ignorada; autor falsificado é rejeitado; evento válido seguinte passa). 38 testes do core passam.
+
+## O que NÃO está ligado / não foi testado
+
+- **Não testado entre dois apps reais**: só o core foi testado com dois nós em loopback. O lado C (envio ao agir, aplicação de evento remoto, fila para o backend) compila, mas não foi executado de ponta a ponta.
+- Os eventos só viajam para peers na mesma sala de voz (a malha WebRTC); não há transporte de chat por conversa fora da sala, então fora de uma sala o efeito fica só local (`msg_state.json`).
+- Os ids de mensagem vêm do backend local de cada pessoa; o efeito remoto só aparece onde a mesma mensagem (mesmo id e canal) está carregada. Sem sincronização de histórico, as pessoas só compartilham ids de mensagens que ambas já têm.
+- O histórico de eventos no `p2p_chat_events` do backend não é reaplicado ao abrir a conversa (a projeção em `p2p_messages` não foi ligada à UI); a exclusão continua sendo só marca local na UI.
+- Reações remotas são persistidas por hash da impressão digital (não pelo nome); favoritos, lembrete e não lida continuam locais.

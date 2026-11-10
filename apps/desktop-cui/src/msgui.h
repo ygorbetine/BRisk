@@ -19,5 +19,7 @@ void msgui_composer(cui_ctx *ui, app_state_t *s);           /* faixa "Respondend
 void msgui_submit(app_state_t *s);                          /* Enter/Enviar: confirma a edição ou envia */
 void msgui_after_send(const char *new_id);                  /* chat.c: liga a mensagem nova à resposta pendente */
 void msgui_overlay(cui_ctx *ui, app_state_t *s);            /* fim do quadro: barra, menu e diálogos */
+void msgui_pump(app_state_t *s);                           /* todo quadro: grava na API local os eventos assinados pendentes */
+bool msgui_on_event(app_state_t *s, const char *from_fp, bool local, const char *wire);   /* evento verificado pelo core; true se mudou algo visível */
 void msgui_pinned_button(cui_ctx *ui, app_state_t *s);      /* cabeçalho do chat: lista de fixadas do canal */
 #endif

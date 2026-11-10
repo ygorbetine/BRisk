@@ -36,7 +36,7 @@ typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE } op_t;
+               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE } op_t;
 
 typedef struct {
     screen_t screen;
@@ -111,7 +111,8 @@ void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
-void rtc_pump(app_state_t *s);                           /* a cada quadro: consome eventos do core */
+void rtc_pump(app_state_t *s);
+void rtc_chat_event(const char *fields);   /* assina e envia um chat.event (campos JSON sem chaves) a quem está na sala */                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */
 

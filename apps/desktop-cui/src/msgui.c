@@ -10,7 +10,7 @@
 
 #define MAXST 512
 #define NREACT 6
-typedef struct { char e[16]; int n; bool mine; } react_t;
+typedef struct { char e[16]; int n; bool mine; unsigned who[8]; int nwho; } react_t;   /* who: hash das impressões digitais de quem reagiu (eventos remotos) */
 typedef struct {
     char id[48], reply[48], edited[512], remind[40];
     bool used, has_edit, deleted, pinned, fav, unread;
@@ -40,6 +40,84 @@ static mstate_t *st_find(const char *id, bool create) {
     return NULL;
 }
 
+/* ---------- eventos assinados (core) ---------- */
+static void st_save(void);
+static void st_load(void);
+static app_state_t *g_app;
+#define EVQ 24
+static struct { char ch[64]; char body[1200]; } g_evq[EVQ];
+static int g_evq_n;
+static char g_seen[128][40]; static int g_seen_n;
+
+static unsigned fphash(const char *t) { unsigned h = 2166136261u; for (; *t; t++) { h ^= (unsigned char)*t; h *= 16777619u; } return h; }
+
+/* assina e envia ao grupo da sala (peers autenticados). Fora de uma sala o efeito fica só local. */
+static void emit_ev(const char *target, const char *action, const char *content, const char *reference, const char *emoji) {
+    if (g_demo || !g_app || !g_app->in_room || !g_app->chat_channel[0]) return;
+    char ch[200], tg[120], ac[40], ct[1200] = "", rf[120] = "", em[40] = "", line[2000];
+    json_escape(g_app->chat_channel, ch, sizeof ch); json_escape(target, tg, sizeof tg); json_escape(action, ac, sizeof ac);
+    int n = snprintf(line, sizeof line, "\"channel\":\"%s\",\"target\":\"%s\",\"action\":\"%s\"", ch, tg, ac);
+    if (content) { json_escape(content, ct, sizeof ct); n += snprintf(line + n, sizeof line - (size_t)n, ",\"content\":\"%s\"", ct); }
+    if (reference) { json_escape(reference, rf, sizeof rf); n += snprintf(line + n, sizeof line - (size_t)n, ",\"reference\":\"%s\"", rf); }
+    if (emoji) { json_escape(emoji, em, sizeof em); snprintf(line + n, sizeof line - (size_t)n, ",\"emoji\":\"%s\"", em); }
+    rtc_chat_event(line);
+}
+
+/* fila de gravação no backend local (POST /p2p/chat-events/<canal>), um por vez */
+void msgui_pump(app_state_t *s) {
+    g_app = s;
+    if (g_evq_n && s->token[0] && !s->busy) {
+        char path[160]; snprintf(path, sizeof path, "/p2p/chat-events/%s", g_evq[0].ch);
+        app_begin(s, OP_EVENT_SAVE, "POST", path, g_evq[0].body);
+        memmove(&g_evq[0], &g_evq[1], sizeof g_evq[0] * (size_t)(g_evq_n - 1)); g_evq_n--;
+    }
+}
+
+static const char *peer_name(const app_state_t *s, const char *fp) {
+    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].fp[0] && !strcmp(s->rtc_peers[i].fp, fp)) return s->rtc_peers[i].name;
+    return NULL;
+}
+
+/* Evento verificado pelo core (assinatura, autor = peer provado). `local` = criado por mim (só persistir).
+ * Ações de autor (edit/delete/reply) só valem se a mensagem está na conversa aberta e o autor dela tem o nome do peer provado;
+ * fixar só em conversa direta (em grupo o core de cada lado não sabe quem é admin). Reações valem de qualquer peer presente. */
+bool msgui_on_event(app_state_t *s, const char *from_fp, bool local, const char *wire) {
+    g_app = s; st_load();
+    jval *j = json_parse(wire); if (!j) return false;
+    const char *id = json_str(j, "id", ""), *ch = json_str(j, "channelId", ""), *tg = json_str(j, "targetMessageId", ""), *ac = json_str(j, "action", "");
+    bool changed = false;
+    for (int i = 0; i < g_seen_n; i++) if (!strcmp(g_seen[i], id)) { json_free(j); return false; }
+    snprintf(g_seen[g_seen_n % 128], sizeof g_seen[0], "%s", id); g_seen_n++; if (g_seen_n > 100000) g_seen_n = 128;
+    if (g_evq_n < EVQ && !g_demo) { snprintf(g_evq[g_evq_n].ch, sizeof g_evq[0].ch, "%s", ch); snprintf(g_evq[g_evq_n].body, sizeof g_evq[0].body, "%s", wire); g_evq_n++; }
+    if (!local) {
+        const char *who = peer_name(s, from_fp);
+        const msg_t *msg = NULL;
+        if (!strcmp(ch, s->chat_channel)) for (int i = 0; i < s->msg_count; i++) if (!strcmp(s->msgs[i].id, tg)) { msg = &s->msgs[i]; break; }
+        bool author = msg && who && !msg->mine && !strcmp(msg->author, who);
+        mstate_t *t = NULL;
+        if (!strcmp(ac, "reaction.add") || !strcmp(ac, "reaction.remove")) {
+            const char *em = json_str(j, "emoji", ""); unsigned h = fphash(from_fp); bool add = !strcmp(ac, "reaction.add");
+            t = st_find(tg, true);
+            if (t && em[0]) {
+                int k = 0; while (k < t->nr && strcmp(t->r[k].e, em)) k++;
+                if (k == t->nr && add && t->nr < NREACT) { snprintf(t->r[k].e, sizeof t->r[k].e, "%s", em); t->r[k].n = 0; t->r[k].nwho = 0; t->nr++; }
+                if (k < t->nr) {
+                    react_t *r = &t->r[k]; int w = 0; while (w < r->nwho && r->who[w] != h) w++;
+                    if (add && w == r->nwho && r->nwho < 8) { r->who[r->nwho++] = h; r->n++; changed = true; }
+                    else if (!add && w < r->nwho) { r->who[w] = r->who[--r->nwho]; if (r->n > 0) r->n--; changed = true; }
+                    if (r->n <= 0 && !r->mine) { memmove(r, r + 1, sizeof *r * (size_t)(t->nr - k - 1)); t->nr--; }
+                }
+            }
+        } else if (!strcmp(ac, "edit") && author) { t = st_find(tg, true); if (t) { snprintf(t->edited, sizeof t->edited, "%s", json_str(j, "content", "")); t->has_edit = true; changed = true; } }
+        else if (!strcmp(ac, "delete") && author) { t = st_find(tg, true); if (t) { t->deleted = true; changed = true; } }
+        else if (!strcmp(ac, "reply") && author) { t = st_find(tg, true); if (t) { snprintf(t->reply, sizeof t->reply, "%s", json_str(j, "referenceMessageId", "")); changed = true; } }
+        else if ((!strcmp(ac, "pin") || !strcmp(ac, "unpin")) && msg && s->active_group < 0) { t = st_find(tg, true); if (t) { t->pinned = !strcmp(ac, "pin"); changed = true; } }
+        if (changed) st_save();
+    }
+    json_free(j);
+    return changed;
+}
+
 void msgui_demo_seed(void) {
     mstate_t *a = st_find("m1", true), *b = st_find("m2", true), *c = st_find("m3", true);
     snprintf(a->r[0].e, sizeof a->r[0].e, "👍"); a->r[0].n = 2; a->r[0].mine = true;
@@ -59,10 +137,14 @@ static void st_save(void) {
     for (int i = 0; i < MAXST; i++) {
         const mstate_t *m = &g_st[i];
         if (!m->used) continue;
-        char id[100], rp[100], ed[1100], rm[90], rx[400] = "";
+        char id[100], rp[100], ed[1100], rm[90], rx[900] = "";
         json_escape(m->id, id, sizeof id); json_escape(m->reply, rp, sizeof rp); json_escape(m->edited, ed, sizeof ed); json_escape(m->remind, rm, sizeof rm);
         size_t n = 0;
-        for (int k = 0; k < m->nr; k++) { char e[40]; json_escape(m->r[k].e, e, sizeof e); n += (size_t)snprintf(rx + n, sizeof rx - n, "%s[\"%s\",%d,%d]", k ? "," : "", e, m->r[k].n, m->r[k].mine); }
+        for (int k = 0; k < m->nr; k++) {
+            char e[40], w[120] = ""; json_escape(m->r[k].e, e, sizeof e);
+            size_t wn = 0; for (int q = 0; q < m->r[k].nwho; q++) wn += (size_t)snprintf(w + wn, sizeof w - wn, "%s%u", q ? "," : "", m->r[k].who[q]);
+            n += (size_t)snprintf(rx + n, sizeof rx - n, "%s[\"%s\",%d,%d,[%s]]", k ? "," : "", e, m->r[k].n, m->r[k].mine, w);
+        }
         fprintf(f, "%s{\"id\":\"%s\",\"reply\":\"%s\",\"edit\":%s%s%s,\"del\":%d,\"pin\":%d,\"fav\":%d,\"unread\":%d,\"remind\":\"%s\",\"rx\":[%s]}",
                 first ? "" : ",", id, rp, m->has_edit ? "\"" : "null", m->has_edit ? ed : "", m->has_edit ? "\"" : "", m->deleted, m->pinned, m->fav, m->unread, rm, rx);
         first = false;
@@ -96,7 +178,8 @@ static void st_load(void) {
         const jval *rx = json_get(o, "rx");
         for (int k = 0; rx && k < json_len(rx) && m->nr < NREACT; k++) {
             const jval *t = json_at(rx, k);
-            if (t && t->type == J_ARR && t->count >= 3) { react_t *r = &m->r[m->nr++]; snprintf(r->e, sizeof r->e, "%s", t->items[0].str ? t->items[0].str : ""); r->n = (int)t->items[1].num; r->mine = t->items[2].num != 0 || t->items[2].b; }
+            if (t && t->type == J_ARR && t->count >= 3) { react_t *r = &m->r[m->nr++]; snprintf(r->e, sizeof r->e, "%s", t->items[0].str ? t->items[0].str : ""); r->n = (int)t->items[1].num; r->mine = t->items[2].num != 0 || t->items[2].b;
+                if (t->count >= 4 && t->items[3].type == J_ARR) for (int q = 0; q < t->items[3].count && r->nwho < 8; q++) r->who[r->nwho++] = (unsigned)t->items[3].items[q].num; }
         }
     }
     json_free(j);
@@ -108,14 +191,16 @@ const char *msgui_text(const msg_t *m) { st_load(); const mstate_t *s = st_find(
 
 static void toggle_react(const char *id, const char *emoji) {
     mstate_t *m = st_find(id, true); if (!m) return;
+    char em[16], mid[48]; snprintf(em, sizeof em, "%s", emoji); snprintf(mid, sizeof mid, "%s", id); emoji = em; id = mid;   /* copia: os ponteiros podem apontar para dentro do que vamos mexer */
     for (int i = 0; i < m->nr; i++) if (!strcmp(m->r[i].e, emoji)) {
-        if (m->r[i].mine) { m->r[i].mine = false; if (m->r[i].n > 0) m->r[i].n--; } else { m->r[i].mine = true; m->r[i].n++; }
+        bool add = !m->r[i].mine;
+        if (!add) { m->r[i].mine = false; if (m->r[i].n > 0) m->r[i].n--; } else { m->r[i].mine = true; m->r[i].n++; }
         if (m->r[i].n <= 0) { memmove(&m->r[i], &m->r[i + 1], sizeof(react_t) * (size_t)(m->nr - i - 1)); m->nr--; }
-        st_save(); return;
+        st_save(); emit_ev(id, add ? "reaction.add" : "reaction.remove", NULL, NULL, emoji); return;
     }
     if (m->nr >= NREACT) return;
-    react_t *r = &m->r[m->nr++]; snprintf(r->e, sizeof r->e, "%s", emoji); r->n = 1; r->mine = true;
-    st_save();
+    react_t *r = &m->r[m->nr++]; memset(r, 0, sizeof *r); snprintf(r->e, sizeof r->e, "%s", emoji); r->n = 1; r->mine = true;
+    st_save(); emit_ev(id, "reaction.add", NULL, NULL, emoji);
 }
 
 static void set_clipboard(const char *utf8) {
@@ -265,7 +350,7 @@ void msgui_submit(app_state_t *s) {
     if (!s->draft[0]) return;
     if (g_edit_id[0]) {
         mstate_t *t = st_find(g_edit_id, true);
-        if (t) { snprintf(t->edited, sizeof t->edited, "%s", s->draft); t->has_edit = true; st_save(); }
+        if (t) { snprintf(t->edited, sizeof t->edited, "%s", s->draft); t->has_edit = true; st_save(); emit_ev(g_edit_id, "edit", s->draft, NULL, NULL); }
         s->draft[0] = 0; g_edit_id[0] = 0;
         return;
     }
@@ -275,7 +360,7 @@ void msgui_submit(app_state_t *s) {
 void msgui_after_send(const char *new_id) {
     if (!g_reply_id[0]) return;
     mstate_t *t = st_find(new_id, true);
-    if (t) { snprintf(t->reply, sizeof t->reply, "%s", g_reply_id); st_save(); }
+    if (t) { snprintf(t->reply, sizeof t->reply, "%s", g_reply_id); st_save(); emit_ev(new_id, "reply", NULL, g_reply_id, NULL); }
     g_reply_id[0] = 0;
 }
 
@@ -326,7 +411,7 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     if (mrow(ui, 6, CUI_ICON_COPY, "Copiar texto", NULL, false)) { set_clipboard(msgui_text(m)); act_close_menu(ui); }
     msep(ui);
     if (is_mine(m) && mrow(ui, 2, CUI_ICON_PENCIL, "Editar mensagem", NULL, false)) { start_edit(s, m); act_close_menu(ui); }
-    if (can_pin(s) && mrow(ui, 7, CUI_ICON_MAP_PIN, pinned ? "Desafixar mensagem" : "Fixar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->pinned = !pinned; st_save(); } act_close_menu(ui); }
+    if (can_pin(s) && mrow(ui, 7, CUI_ICON_MAP_PIN, pinned ? "Desafixar mensagem" : "Fixar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->pinned = !pinned; st_save(); emit_ev(m->id, w->pinned ? "pin" : "unpin", NULL, NULL, NULL); } act_close_menu(ui); }
     if (mrow(ui, 8, CUI_ICON_STAR, fav ? "Remover dos favoritos" : "Favoritar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->fav = !fav; st_save(); } act_close_menu(ui); }
     if (mrow(ui, 9, CUI_ICON_BELL, "Criar lembrete", "sem efeito", false)) { g_dlg_remind = true; act_close_menu(ui); }
     if (mrow(ui, 10, CUI_ICON_EYE_OFF, t && t->unread ? "Marcar como lida" : "Marcar como não lida", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->unread = !(t && t->unread); st_save(); } act_close_menu(ui); }
@@ -452,7 +537,7 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .width = CUI_FILL, .pad = 10, .radius = 12, .bg = CUI_RGBA(0x00000030)) { cui_text(ui, g_menu_m.author, .size = 12, .color = B_C3); cui_text(ui, msgui_text(&g_menu_m)); }
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) g_dlg_delete = false;
-            if (cui_button(ui, "Excluir", .variant = CUI_BUTTON_DANGER)) { mstate_t *w = st_find(g_menu_m.id, true); if (w) { w->deleted = true; st_save(); } g_dlg_delete = false; }
+            if (cui_button(ui, "Excluir", .variant = CUI_BUTTON_DANGER)) { mstate_t *w = st_find(g_menu_m.id, true); if (w) { w->deleted = true; st_save(); emit_ev(g_menu_m.id, "delete", NULL, NULL, NULL); } g_dlg_delete = false; }
         }
     }
     cui_dialog(ui, "Encaminhar para…", &g_dlg_forward, .width = dw) {

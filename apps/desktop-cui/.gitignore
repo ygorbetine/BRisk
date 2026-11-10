@@ -1,2 +1,5 @@
 build/
 shots/
+build-release/
+stage/
+installer-out/

@@ -84,7 +84,16 @@ typedef struct {
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
     bool kick_open, kicked_open;   /* diálogo de confirmação; aviso "Você foi removido da chamada" */
+    bool import_open, import_done;   /* diálogo "Importar seus dados do Briks antigo?" (migrate.c) */
+    char import_info[200], import_result[200];
 } app_state_t;
+
+/* migrate.c: importação dos dados do Electron */
+void migrate_probe(app_state_t *s);
+void migrate_pump(app_state_t *s);
+void migrate_dialog(cui_ctx *ui, app_state_t *s);
+/* ui_update.c: aviso "pronto para instalar" (update.c baixa e verifica em segundo plano) */
+void update_banner(cui_ctx *ui, app_state_t *s);
 
 /* app.c: máquina de estados das chamadas ao backend */
 void app_submit_auth(app_state_t *s);

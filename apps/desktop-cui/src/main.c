@@ -1,5 +1,6 @@
 /* Remake do Briks em CUI: login, social e chamada (dados de exemplo; sem rede/WebRTC ainda). */
 #include "briks_ui.h"
+#include "update.h"
 #include "backend.h"
 #include "core.h"
 #include <stdlib.h>
@@ -33,6 +34,7 @@ static void frame(cui_ctx *ui) {
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
     { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */
+    migrate_pump(&state);
     app_pump(&state);
     rtc_pump(&state);
     profile_tick(&state);
@@ -46,9 +48,11 @@ static void frame(cui_ctx *ui) {
             case SCREEN_CALL: ui_call(ui, &state); break;
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
     }
+    migrate_dialog(ui, &state);
     briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }
 
@@ -64,7 +68,8 @@ int main(void) {
         .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL });
     if (!app) return 1;
     state.app = app;
-    bk_start();
+    migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
+    update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */
     briks_perf_init();
     briks_theme_poll();   /* lê theme.json (ou os padrões) antes de montar o tema */
     briks_apply_theme(cui_app_ui(app));
@@ -80,5 +85,6 @@ int main(void) {
     cui_app_destroy(app);
     core_stop();
     bk_stop();
+    update_install_on_exit();   /* atualização já baixada e verificada: instala em silêncio ao fechar */
     return 0;
 }

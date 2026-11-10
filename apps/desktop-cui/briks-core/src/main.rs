@@ -4,6 +4,7 @@
 //!   briks-core mock-realtime [p]  servidor Phoenix/Realtime de teste em 127.0.0.1 (sem Supabase)
 mod audio;
 mod identity;
+mod import;
 mod ipc;
 mod mesh;
 mod mock;
@@ -17,6 +18,7 @@ use anyhow::{anyhow, Result};
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str).unwrap_or("serve-ipc") {
+        "import-electron" => std::process::exit(import::cli(&args[2..])),
         "serve-ipc" => {
             let token = std::env::var("BRIKS_CORE_TOKEN").map_err(|_| anyhow!("BRIKS_CORE_TOKEN ausente"))?;
             let (l, port) = ipc::bind().await?;

@@ -5,7 +5,7 @@ caption Pilha elástica: segure a alça de um painel
 wait 24
 to grip:chat 25
 wait 8
-caption Conversa: balões neumórficos e o enviado em roxo
+caption Conversa: balões de vidro e o enviado em roxo
 down
 wait 6
 to 900 330 8

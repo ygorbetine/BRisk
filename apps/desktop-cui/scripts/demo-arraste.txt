@@ -1,0 +1,9 @@
+# Roteiro curto: pega a alça do painel de conversa e arrasta (quadros de captura do meio do arraste).
+at 700 300
+wait 6
+to grip:chat 10
+down
+wait 4
+to 900 330 8
+to 560 400 10
+wait 6

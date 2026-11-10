@@ -1,6 +1,7 @@
 /* Remake do Briks em CUI: login, social e chamada (dados de exemplo; sem rede/WebRTC ainda). */
 #include "briks_ui.h"
 #include "backend.h"
+#include "core.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,7 +9,7 @@
 #include <windows.h>
 #endif
 
-static app_state_t state = { .screen = SCREEN_AUTH, .active_friend = -1, .mic_on = true };
+static app_state_t state = { .screen = SCREEN_AUTH, .active_friend = -1, .active_group = -1, .mic_on = true };
 
 /* Gancho só para teste automatizado: BRIKS_DEV_AUTH="modo|nome|email|senha" (modo 0 login, 1 cadastro). */
 static void dev_autologin(void) {
@@ -28,8 +29,12 @@ static void dev_autologin(void) {
 }
 
 static void frame(cui_ctx *ui) {
+    if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
+    { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
+    { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */
     app_pump(&state);
+    rtc_pump(&state);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strcmp(o, "settings")) state.settings_open = true; if (!strcmp(o, "add")) state.add_friend_open = true; } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
         briks_gradient_bar(ui);
@@ -38,9 +43,12 @@ static void frame(cui_ctx *ui) {
             case SCREEN_AUTH: ui_auth(ui, &state); break;
             case SCREEN_SOCIAL: ui_social(ui, &state); break;
             case SCREEN_CALL: ui_call(ui, &state); break;
+            case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
     }
+    briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }
 
 #ifdef _WIN32
@@ -48,17 +56,28 @@ int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b;
 #else
 int main(void) {
 #endif
+    int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
+    { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 900 && h >= 560) { win_w = a; win_h = h; } }
     cui_app *app = cui_app_create(&(cui_app_desc){
-        .title = "Briks", .width = 1280, .height = 800, .min_width = 900, .min_height = 560,
-        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET });
+        .title = "Briks", .width = win_w, .height = win_h, .min_width = 900, .min_height = 560,
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL });
     if (!app) return 1;
     state.app = app;
     bk_start();
+    briks_perf_init();
+    briks_theme_poll();   /* lê theme.json (ou os padrões) antes de montar o tema */
     briks_apply_theme(cui_app_ui(app));
+    cui_set_reduced_motion(cui_app_ui(app), g_perf >= PERF_SIMPLE);
     briks_glass_init(app);
-    while (cui_app_frame(app)) frame(cui_app_ui(app));
+    bool scripted = script_load();
+    while (cui_app_frame(app)) {
+        if (scripted) script_tick(cui_app_ui(app));
+        frame(cui_app_ui(app));
+        if (scripted && script_capture(app)) break;
+    }
     briks_glass_shutdown();
     cui_app_destroy(app);
+    core_stop();
     bk_stop();
     return 0;
 }

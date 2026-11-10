@@ -65,3 +65,47 @@ CUI (C99, apps/desktop-cui)  ── HTTP loopback + token ──>  briks-desktop
 ### O que falta
 
 Marco 2 (mensagens/grupos P2P e telas de perfil/configurações/histórico), overlay (`WS_EX_*`) como segundo executável, spike do marco 3 (`briks-core` com webrtc-rs) e screenshots lado a lado com o app web.
+
+## Marco 2 — mensagens e grupos P2P locais, telas
+
+- `src/chat.c`: DM e grupo gravam/lêem `/p2p/messages/{canal}` e `/p2p/groups` no sidecar (persistem em `%APPDATA%\Briks-CUI\risk.sqlite3`). Canal da DM = `dm-<id menor>-<id maior>`. Mensagens ficam locais até o `briks-core` entregá-las (marco 3); o texto da tela diz isso.
+- Telas: conversa com balões (hora local), campo com Enter/botão, criar grupo, perfil (clicando no avatar), configurações, histórico de chamadas (estado vazio: o backend ainda não registra chamadas).
+- `tests/smoke.c` cobre gravar/ler mensagem e grupo (passa).
+- Não feito neste marco: anexos, reações/edição/fixar, convites de grupo, membros (dependem do canal P2P).
+
+## Overlay (`briks_overlay.exe`)
+
+`src/overlay.c`, ~64 KB, sem dependências. `WS_EX_TOPMOST|LAYERED|TRANSPARENT|NOACTIVATE|TOOLWINDOW`, `WM_NCHITTEST → HTTRANSPARENT`, `WM_MOUSEACTIVATE → MA_NOACTIVATE`, desenho por `UpdateLayeredWindow` (alfa por pixel, cantos arredondados). Uso: `briks_overlay.exe "Marina:f" "Rafael"` (`:f` = falando). `--selftest` confere os estilos, o foco e o hit-test (7/7 ok). Não consegui capturar a janela em screenshot nesta sessão (a captura de tela do ambiente sai preta), então o visual do overlay não foi conferido a olho.
+
+## Como abrir as telas para comparação (captura estável)
+
+Executável: `A:\BRiskCall\Risk-P2P-cui\apps\desktop-cui\build\briks_cui.exe` (build: `$env:BRIKS_BACKEND_EXE='A:/BRiskCall/Risk-P2P/apps/desktop/resources/backend/briks-desktop-backend.exe'; powershell -File apps/desktop-cui/build.ps1`). Janela 1280x800.
+
+| Variável | Efeito |
+|---|---|
+| `BRIKS_DEMO=login` | tela de login |
+| `BRIKS_DEMO=social` | social com amigo "Marina Costa" selecionado e 3 mensagens |
+| `BRIKS_DEMO=group` | social com o grupo "Noite de jogos" selecionado |
+| `BRIKS_DEMO=call` | chamada de prévia (sala geral, microfone ligado) |
+| `BRIKS_DEMO=history` | histórico de chamadas |
+| `CUI_SCREENSHOT=C:\caminho\x.png` | salva um PNG do quadro e fecha o app |
+| `CUI_SCREENSHOT_FRAMES=30` | quadros a esperar antes de salvar |
+| `BRIKS_GLASS=0` | desliga o desfoque (para comparar com e sem vidro) |
+
+`BRIKS_DEMO` não usa backend nem grava nada. Atalho: `powershell -File apps/desktop-cui/capture.ps1 -Out <pasta> [-Modes login,social,call,history,group]` gera `cui-<modo>.png` de todas. Cuidado: chame esses scripts por PowerShell com caminhos entre aspas; no Bash do Windows as barras invertidas se perdem.
+
+## Spike do marco 3 — `briks-core` (webrtc-rs)
+
+`apps/desktop-cui/briks-core` (crate Rust, `webrtc = "=0.12.0"`, tokio). `briks-core serve [porta]` e `briks-core join [porta]` negociam por uma sinalização de linhas JSON em TCP local (no produto, Presence/Broadcast do Supabase) e abrem o DataChannel `briks.chat`.
+
+**Funciona (testado em duas instâncias na mesma máquina):** offer/answer, troca de candidatos ICE (trickle), conexão `connected`, DataChannel abre nos dois lados, mensagem "oi" de ida e eco de volta, fechamento limpo. Compila em ~1,3 min (release) e o exe tem 11 MB.
+
+**Não testado / riscos:**
+- Só candidatos de host no loopback: nada de NAT real, STUN/TURN (o STUN público está configurado, mas sem rede externa o host candidate basta), nem Perfect Negotiation (o spike tem papel fixo oferta/resposta).
+- Sem assinatura ECDSA das mensagens nem interoperabilidade com o app Electron/navegador (`docs/protocol.md`).
+- Sem áudio/vídeo: o spike cobre só o DataChannel. A versão 0.12 é a que conheço; o crates.io já tem 0.21 (API possivelmente diferente), então atualizar é uma decisão futura.
+- webrtc-rs traz a pilha inteira de DTLS/SCTP/SRTP em Rust puro: +11 MB no exe do spike, a maior parte do peso do produto final.
+
+## Comparação com o app web
+
+Só a tela de login foi comparada, a olho, com `apps/web/dist` servido em `localhost:5199` (viewport pequeno do painel). Ajustes feitos por causa disso: manchas do fundo agora seguem os `radial-gradient` do `.auth` (elípticas, localizadas, fundo `#0f0316`), cartão com opacidade ~.74, título numa linha. Ainda diferem: logotipo (o web usa um ícone, o CUI um "B"), tipografia (DM Sans/Manrope vs fontes embutidas do CUI) e o desfoque (Kawase aproximado vs gaussiano). Social e chamada do web precisam de conta logada e não foram comparados; capturas CUI de todas as telas ficam em `apps/desktop-cui/shots/` (ignorado pelo git).

@@ -8,11 +8,11 @@ void ui_auth(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 1.0f);   /* primeiro filho do STACK: fundo */
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         cui_box(ui, .width = CUI_FILL, .max_width = 430, .pad = 38, .gap = 12, .radius = 24,
-                .bg = B_GLASS, .border = 1, .border_color = CUI_RGBA(0x8b5cf633), .elevation = CUI_ELEVATION_FLOATING) {
+                .bg = B_GLASS_STRONG, .border = 1, .border_color = CUI_RGBA(0x8b5cf633), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
             briks_brand(ui, 26);
             cui_gap(ui, 14);
             cui_text(ui, reset ? "Redefinir senha" : reg ? "Crie seu espaço" : "Bom ter você de volta",
-                     .font = CUI_FONT_DISPLAY, .size = 36, .line_height = 1.1f);
+                     .font = CUI_FONT_DISPLAY, .size = 32, .line_height = 1.1f);
             cui_text(ui, reset ? "As contas ficam só neste computador. Informe o e-mail ou @nick e escolha uma senha nova."
                                : "Conversas que parecem estar na mesma sala.", .color = B_MUTED);
             cui_gap(ui, 8);

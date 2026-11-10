@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#define begin app_begin
 static void copy(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src ? src : ""); }
 
 static void set_error(app_state_t *s, const char *body, const char *fallback) {
@@ -13,7 +14,7 @@ static void set_error(app_state_t *s, const char *body, const char *fallback) {
     json_free(j);
 }
 
-static void begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body) {
+void app_begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body) {
     s->op = op;
     s->busy = true;
     s->call = bk_request(method, path, body, s->token[0] ? s->token : NULL);
@@ -63,7 +64,8 @@ void app_logout(app_state_t *s) {
         bk_free(c);
     }
     memset(s->token, 0, sizeof s->token);
-    s->friend_count = s->pending_count = s->community_count = 0;
+    s->friend_count = s->pending_count = s->community_count = s->group_count = s->msg_count = 0;
+    s->active_group = -1;
     s->password[0] = 0;
     s->screen = SCREEN_AUTH;
     s->active_friend = -1;
@@ -100,6 +102,16 @@ static void load_communities(app_state_t *s, const char *body) {
 }
 
 void app_pump(app_state_t *s) {
+    if (!s->call && !s->busy && s->reload_msgs && s->token[0]) {
+        s->reload_msgs = false;
+        char path[256]; snprintf(path, sizeof path, "/p2p/messages/%s?limit=200", s->chat_channel);
+        begin(s, OP_MSG_LOAD, "GET", path, NULL);
+    }
+    if (!s->call && !s->busy && s->reload_msgs2 && s->token[0]) {
+        s->reload_msgs2 = false;
+        char path[256]; snprintf(path, sizeof path, "/p2p/messages/%s?limit=200", s->chat2_channel);
+        begin(s, OP_MSG_LOAD2, "GET", path, NULL);
+    }
     if (!s->call || !bk_done(s->call)) { if (s->call) cui_request_redraw(cui_app_ui(s->app)); return; }
     int code = bk_http_status(s->call);
     char *body = _strdup(bk_body(s->call));
@@ -137,8 +149,23 @@ void app_pump(app_state_t *s) {
         break;
     case OP_COMMUNITIES:
         if (ok) load_communities(s, body);
-        s->screen = SCREEN_SOCIAL;
-        s->password[0] = 0; s->confirm[0] = 0;
+        begin(s, OP_GROUPS, "GET", "/p2p/groups", NULL);
+        break;
+    case OP_GROUPS:
+        if (ok) app_load_groups(s, body);
+        if (s->screen == SCREEN_AUTH) { s->screen = SCREEN_SOCIAL; s->password[0] = 0; s->confirm[0] = 0; s->active_group = -1; }
+        break;
+    case OP_MSG_LOAD:
+        if (ok) app_load_messages(s, body);
+        break;
+    case OP_MSG_LOAD2:
+        if (ok) app_load_messages2(s, body);
+        break;
+    case OP_MSG_SEND:
+        if (!ok) { snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem."); if (s->msg_count) s->msg_count--; }
+        break;
+    case OP_GROUP_SAVE:
+        begin(s, OP_GROUPS, "GET", "/p2p/groups", NULL);
         break;
     case OP_ADD_FRIEND: {
         if (ok) { copy(s->notice, sizeof s->notice, "Pedido enviado."); s->add_email[0] = 0; }

@@ -10,6 +10,8 @@
  * Sem GL de hardware (ou BRIKS_GLASS=0) o gancho não é instalado e o app fica só translúcido. */
 #include "briks_ui.h"
 #include <windows.h>
+/* GL 1.1 exportado por opengl32.dll; sem o protótipo o retorno vira int e o ponteiro é truncado em 64 bits */
+__declspec(dllimport) const unsigned char *APIENTRY glGetString(unsigned int name);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +21,8 @@ typedef float GLfloat; typedef char GLchar; typedef unsigned char GLboolean;
 #define GLAPI_ __stdcall
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_RGBA8 0x8058
+#define GL_RGBA16F 0x881A
+#define GL_FLOAT 0x1406
 #define GL_RGBA 0x1908
 #define GL_UNSIGNED_BYTE 0x1401
 #define GL_LINEAR 0x2601
@@ -86,7 +90,9 @@ typedef struct {
     GLuint lvl[MAX_LEVELS + 1];      /* lvl[i]: tamanho cheio / 2^i */
     int lw[MAX_LEVELS + 1], lh[MAX_LEVELS + 1];
     GLuint fbo, vao;
-    GLuint p_down, p_up, p_comp;
+    GLuint p_down, p_up, p_comp, p_dith;
+    GLuint hdr_tex, hdr_fbo; int hdr_w, hdr_h;   /* quadro em RGBA16F: o dither entra antes de quantizar para 8 bits */
+    GLint t_tex, t_vp, t_rect;
     GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
     GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
     GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl;
@@ -148,12 +154,23 @@ static const char *FS_COMP =
     "  float d = sd(p, b, u_rad); float cov = clamp(0.5 - d, 0.0, 1.0); if (cov <= 0.0) discard;\n"
     "  vec3 c = texture(u_tex, gl_FragCoord.xy / u_vp).rgb;\n"
     "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = clamp(mix(vec3(l), c, u_sat), 0.0, 1.0);\n"
-    "  /* brilho interno superior: inset 0 1px 0 rgba(255,255,255,.09) */\n"
-    "  float ty = clamp(1.0 - abs(p.y + b.y - 0.5), 0.0, 1.0);\n"
-    "  float rmax = max(max(u_rad.x, u_rad.y), 1.0);\n"
-    "  float side = clamp((b.x - rmax * 0.55 - abs(p.x)) / 2.0 + 0.5, 0.0, 1.0);\n"
-    "  c = mix(c, vec3(1.0), u_hl * ty * side);\n"
+    "  /* vidro: luz de borda suave vinda do canto superior esquerdo; normal da borda pelo gradiente do SDF, caimento suave para dentro */\n"
+    "  vec2 g = vec2(dFdx(d), dFdy(d)); g = g / max(length(g), 1e-4);          /* aponta para fora */\n"
+    "  float lit = dot(g, normalize(vec2(-0.7, -0.7)));                         /* +1 virado para a luz (y cresce para baixo) */\n"
+    "  float edge = exp(-max(-d, 0.0) / 3.0);                                   /* caimento ~3px */\n"
+    "  float rimL = max(lit, 0.0) * edge, rimD = max(-lit, 0.0) * edge;\n"
+    "  c = mix(c, vec3(1.0), u_hl * 1.6 * rimL);\n"
+    "  c *= 1.0 - u_hl * 1.1 * rimD;\n"
     "  f = vec4(c * cov, cov); }\n";
+
+/* Dither final: ruído triangular (2 amostras de ruído de gradiente intercalado) de +-1 LSB somado antes de gravar em 8 bits. */
+static const char *FS_DITH =
+    "#version 330 core\n"
+    "uniform sampler2D u_tex; uniform vec2 u_vp; out vec4 f;\n"
+    "float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }\n"
+    "void main(){ vec2 px = gl_FragCoord.xy; vec4 t = texture(u_tex, px / u_vp);\n"
+    "  float d = (ign(px) + ign(px + vec2(47.0, 17.0)) - 1.0) / 255.0;\n"
+    "  f = vec4(t.rgb + vec3(d), t.a); }\n";
 
 static GLuint make_prog(const char *fs, const char *name) {
     GLuint v = glCreateShader(GL_VERTEX_SHADER), s = glCreateShader(GL_FRAGMENT_SHADER);
@@ -175,8 +192,18 @@ static GLuint make_tex(int w, int h) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
     return t;
+}
+
+static bool ensure_hdr(int w, int h) {
+    if (G.hdr_tex && G.hdr_w == w && G.hdr_h == h) return true;
+    if (G.hdr_tex) glDeleteTextures(1, &G.hdr_tex);
+    G.hdr_tex = make_tex(w, h); G.hdr_w = w; G.hdr_h = h;
+    glBindFramebuffer(GL_FRAMEBUFFER, G.hdr_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, G.hdr_tex, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { G.p_dith = 0; return false; }
+    return true;
 }
 
 static void free_targets(void) {
@@ -220,11 +247,11 @@ static void capture_and_blur(int w, int h, GLuint target_fb) {
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
     glBindVertexArray(G.vao);
     glBindFramebuffer(GL_FRAMEBUFFER, G.fbo);
-    fs_pass(G.p_down, G.src, w, h, G.lvl[1], G.lw[1], G.lh[1], G.offset, true);
+    fs_pass(G.p_down, G.src, w, h, G.lvl[1], G.lw[1], G.lh[1], G.offset * g_th.blur_offset, true);
     for (int i = 2; i <= G.levels; i++)
-        fs_pass(G.p_down, G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.lvl[i], G.lw[i], G.lh[i], G.offset, true);
+        fs_pass(G.p_down, G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.lvl[i], G.lw[i], G.lh[i], G.offset * g_th.blur_offset, true);
     for (int i = G.levels; i >= 2; i--)
-        fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset, false);
+        fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset * g_th.blur_offset, false);
 }
 
 typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; } glass_quad;
@@ -253,10 +280,10 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
     glUniform4f(G.c_box, q->cx, q->cy, q->hw, q->hh);
     glUniform4f(G.c_rad, q->r[0], q->r[1], q->r[2], q->r[3]);
-    glUniform1f(G.c_sat, 1.55f);
+    glUniform1f(G.c_sat, g_th.saturation);
     /* o CSS soma o brilho sobre a camada translúcida; aqui ele vai por baixo, então compensa a opacidade */
     float inv = 1.0f - q->tint_a; if (inv < 0.2f) inv = 0.2f;
-    glUniform1f(G.c_hl, 0.09f / inv);
+    glUniform1f(G.c_hl, g_th.highlight / inv);
     glBindVertexArray(G.vao);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_SCISSOR_TEST);
@@ -267,8 +294,17 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
 static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *gl, void *user) {
     (void)app; (void)user;
     LARGE_INTEGER t0, t1, fq;
-    if (G.log) { QueryPerformanceCounter(&t0); QueryPerformanceFrequency(&fq); }
+    static int seen; seen++;
+    const bool timing = G.log || seen <= 10;   /* os primeiros quadros alimentam a detecção de hardware fraco */
+    const bool nog = g_perf >= PERF_MIN;       /* Mínimo: sem desfoque de vidro nem dither (fundo translúcido) */
+    if (timing) { QueryPerformanceCounter(&t0); QueryPerformanceFrequency(&fq); }
     int W = dd->width_px, H = dd->height_px;
+    GLint fb = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    GLuint tgt = (GLuint)fb;
+    bool hdr = !nog && G.p_dith && ensure_hdr(W, H);
+    if (hdr) tgt = G.hdr_fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, tgt);
 
     /* 1. acha os painéis de vidro: grupos de triângulos RRECT com a cor de vidro, 2 triângulos por painel */
     int nq = 0, qcap = 0; glass_quad *qs = NULL;
@@ -289,11 +325,9 @@ static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *
             run++;
         }
     }
-    if (!nq) { free(qs); cui_gl_render(gl, dd, true); goto done; }
+    if (!nq || nog) { free(qs); cui_gl_render(gl, dd, true); goto done; }   /* (já ligado ao alvo) */
 
     /* 2. desenha em segmentos; em cada painel, captura/desfoca (se a camada mudou) e pinta o vidro */
-    GLint fb = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
-    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
     cui_draw_cmd *out = malloc(sizeof *out * (size_t)(dd->command_count + nq * 2 + 2));
     int nout = 0, qi = 0, cur_layer = -1; bool first = true;
     for (int c = 0; c < dd->command_count; c++) {
@@ -304,24 +338,35 @@ static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *
             if ((uint32_t)q->idx > cur) { out[nout] = *cm; out[nout].index_offset = cur; out[nout].index_count = (uint32_t)q->idx - cur; nout++; }
             cui_draw_data part = *dd; part.commands = out; part.command_count = nout;
             cui_gl_render(gl, &part, first); first = false; nout = 0;
-            if (q->layer != cur_layer) { capture_and_blur(W, H, (GLuint)fb); cur_layer = q->layer; }
-            draw_glass(q, W, H, &cm->clip, (GLuint)fb);
+            if (q->layer != cur_layer) { capture_and_blur(W, H, tgt); cur_layer = q->layer; }
+            draw_glass(q, W, H, &cm->clip, tgt);
             cur = (uint32_t)q->idx;
             qi++;
         }
         if (cur < end) { out[nout] = *cm; out[nout].index_offset = cur; out[nout].index_count = end - cur; nout++; }
     }
     { cui_draw_data part = *dd; part.commands = out; part.command_count = nout; cui_gl_render(gl, &part, first); }
-    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fb);
-    glViewport(vp[0], vp[1], vp[2], vp[3]);
     free(out); free(qs);
 done:
-    if (G.log) {
+    if (hdr) {   /* passada final: copia o quadro float para o framebuffer real somando o dither */
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fb);
+        glViewport(0, 0, W, H);
+        glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST);
+        glUseProgram(G.p_dith);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, G.hdr_tex);
+        glUniform1i(G.t_tex, 0); glUniform2f(G.t_vp, (float)W, (float)H); glUniform4f(G.t_rect, 0, 0, (float)W, (float)H);
+        glBindVertexArray(G.vao); glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0); glUseProgram(0);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fb);
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    if (timing) {
         glFinish();
         QueryPerformanceCounter(&t1);
         double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
         G.ms_sum += ms; G.frames++;
-        fprintf(stderr, "glass: quadro %d: %.2f ms (media %.2f ms), paineis=%d\n", G.frames, ms, G.ms_sum / G.frames, nq);
+        briks_perf_note_frame(ms, seen);
+        if (G.log) fprintf(stderr, "glass: quadro %d: %.2f ms (media %.2f ms), paineis=%d\n", G.frames, ms, G.ms_sum / G.frames, nq);
     }
 }
 
@@ -334,6 +379,7 @@ bool briks_glass_init(cui_app *app) {
     if ((e = getenv("BRIKS_GLASS_LEVELS"))) { int n = atoi(e); if (n >= 2 && n <= MAX_LEVELS) G.levels = n; }
     if ((e = getenv("BRIKS_GLASS_OFFSET"))) { float o = (float)atof(e); if (o > 0.1f && o < 8.0f) G.offset = o; }
     G.log = getenv("BRIKS_GLASS_LOG") != NULL;
+    if (!(e = getenv("BRIKS_DITHER")) || e[0] != '0') G.p_dith = make_prog(FS_DITH, "dither");
     G.p_down = make_prog(FS_DOWN, "down"); G.p_up = make_prog(FS_UP, "up"); G.p_comp = make_prog(FS_COMP, "comp");
     if (!G.p_down || !G.p_up || !G.p_comp) return false;
 #define U(p, n) glGetUniformLocation(p, n)
@@ -344,9 +390,11 @@ bool briks_glass_init(cui_app *app) {
     G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
     G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl");
 #undef U
+    if (G.p_dith) { G.t_tex = glGetUniformLocation(G.p_dith, "u_tex"); G.t_vp = glGetUniformLocation(G.p_dith, "u_vp"); G.t_rect = glGetUniformLocation(G.p_dith, "u_rect"); glGenFramebuffers(1, &G.hdr_fbo); }
     glGenFramebuffers(1, &G.fbo);
     glGenVertexArrays(1, &G.vao);
     G.ok = true;
+    briks_perf_note_renderer((const char *)glGetString(0x1F01));   /* GL_RENDERER */
     cui_app_set_render_override(app, render_hook, NULL);
     return true;
 }

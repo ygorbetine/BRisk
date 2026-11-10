@@ -1,4 +1,5 @@
 #include "briks_ui.h"
+#include <math.h>
 #include <stdlib.h>
 
 void briks_apply_theme(cui_ctx *ui) {
@@ -23,32 +24,49 @@ void briks_apply_theme(cui_ctx *ui) {
     t->colors[CUI_TOKEN_SUCCESS]        = B_ONLINE;
     t->colors[CUI_TOKEN_HOVER]          = CUI_RGBA(0xffffff0f);
     t->colors[CUI_TOKEN_FOCUS_RING]     = B_C1;
-    t->radius_control = 12;
+    t->radius_control = g_th.control_radius;
     t->radius_panel   = 16;
     t->radius_surface = 20;
 }
 
 typedef struct { float strength; } ambient_t;
 
-static void blob(cui_ctx *ui, cui_rect area, float fx, float fy, float size, cui_color c, float a) {
+/* radial-gradient(rx ry at fx fy, cor a%, transparent 62%) do CSS: uma sombra muito desfocada de um retângulo pequeno
+   vira uma mancha elíptica suave. rx/ry em unidades de vmax. */
+static void blob(cui_ctx *ui, cui_rect area, float vmax, float fx, float fy, float rx, float ry, cui_color c, float a) {
     float cx = area.x + area.w * fx, cy = area.y + area.h * fy;
+    float hx = rx * vmax * 0.62f, hy = ry * vmax * 0.62f;      /* alcance visível do degradê */
+    float mn = hx < hy ? hx : hy;
+    a *= 2.0f; if (a > 1.0f) a = 1.0f;
     c.a = (uint8_t)(a * 255.0f);
-    /* Uma sombra muito desfocada de um retângulo pequeno vira uma mancha suave (o radial-gradient do CSS). */
-    cui_draw_shadow(ui, (cui_rect){ cx - size * 0.1f, cy - size * 0.1f, size * 0.2f, size * 0.2f },
-                    CUI_CORNERS(size * 0.1f), size, size * 0.18f, (cui_vec2){ 0, 0 }, c);
+    cui_draw_shadow(ui, (cui_rect){ cx - hx * 0.12f, cy - hy * 0.12f, hx * 0.24f, hy * 0.24f },
+                    CUI_CORNERS(mn * 0.12f), mn * 0.85f, 0, (cui_vec2){ 0, 0 }, c);
 }
 
 static void paint_ambient(cui_ctx *ui, cui_rect r, void *user) {
     const ambient_t *a = (const ambient_t *)user;
-    cui_draw_rect(ui, r, CUI_CORNERS(0), B_BG_DEEP);
-    float m = r.w > r.h ? r.w : r.h;
-    blob(ui, r, 0.08f, 0.12f, m * 0.80f, B_C1, 0.55f * a->strength);
-    blob(ui, r, 0.92f, 0.18f, m * 0.75f, B_C2, 0.50f * a->strength);
-    blob(ui, r, 0.55f, 1.00f, m * 0.70f, B_C3, 0.42f * a->strength);
+    cui_draw_rect(ui, r, CUI_CORNERS(0), g_th.bg);
+    float vmax = r.w > r.h ? r.w : r.h;
+    if (a->strength >= 1.0f) {   /* tela de login (html .auth) */
+        blob(ui, r, vmax, 0.12f, 0.18f, 0.46f, 0.36f, B_C1, 0.45f);
+        blob(ui, r, vmax, 0.88f, 0.22f, 0.44f, 0.38f, B_C2, 0.40f);
+        blob(ui, r, vmax, 0.50f, 1.08f, 0.40f, 0.34f, B_C3, 0.34f);
+    } else {                     /* corpo do app (body) */
+        /* referência do app original (Electron): magenta no topo esquerdo (barra lateral e canto da conversa), índigo largo no
+           topo direito descendo pela direita, roxo subindo da base central, centro/esquerda do meio mais escuro */
+        blob(ui, r, vmax, 0.17f, -0.02f, 0.66f, 0.34f, g_th.blob[0], g_th.blob_a[0]);
+        blob(ui, r, vmax, 0.95f, 0.10f, 0.60f, 0.52f, g_th.blob[1], g_th.blob_a[1]);
+        blob(ui, r, vmax, 0.55f, 1.06f, 0.55f, 0.28f, g_th.blob[2], g_th.blob_a[2]);
+    }
     /* BRIKS_GLASS_TEST=1: formas nítidas atrás dos painéis para ver o desfoque funcionando */
     static int test = -1;
-    if (test < 0) { const char *e = getenv("BRIKS_GLASS_TEST"); test = e && e[0] == '1'; }
-    if (test) {
+    if (test < 0) { const char *e = getenv("BRIKS_GLASS_TEST"); test = e ? e[0] - '0' : 0; }
+    if (test == 2) {   /* listras em toda a janela: aparecem atrás de cabeçalho, botões e barra de controles */
+        for (int i = 0; i < 64; i++) {
+            cui_color c = (i % 3 == 0) ? CUI_RGB(0xff5577) : (i % 3 == 1) ? CUI_RGB(0x55ddff) : CUI_RGB(0xffe066);
+            cui_draw_rect(ui, (cui_rect){ r.x + 6 + i * 20, r.y, 8, r.h }, CUI_CORNERS(0), c);
+        }
+    } else if (test) {
         for (int i = 0; i < 14; i++) {
             cui_color c = (i % 3 == 0) ? CUI_RGB(0xff5577) : (i % 3 == 1) ? CUI_RGB(0x55ddff) : CUI_RGB(0xffe066);
             cui_draw_rect(ui, (cui_rect){ r.x + 330 + i * 46, r.y + 80, 22, r.h - 160 }, CUI_CORNERS(4), c);

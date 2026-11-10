@@ -97,6 +97,7 @@ static void load_communities(app_state_t *s, const char *body) {
         community_t *d = &s->communities[s->community_count++];
         copy(d->id, sizeof d->id, json_str(json_at(j, i), "id", ""));
         copy(d->name, sizeof d->name, json_str(json_at(j, i), "name", "?"));
+        d->members = atoi(json_str(json_at(j, i), "member_count", "0"));
     }
     json_free(j);
 }

@@ -21,6 +21,12 @@ static int resizing = -1;          /* nó de divisão sendo arrastado */
 static bool prev_down;
 static bool drag_cancelled;
 static bool menu_open;
+static float menu_ax, menu_ay;     /* onde o usuário clicou para adicionar: o menu nasce ancorado aqui */
+static int menu_age;               /* quadros desde que abriu (o clique que abriu não pode fechar) */
+static int hdr_press = -1;         /* painel cujo cabeçalho está apertado (ainda sem passar do limiar) */
+static float hdr_px, hdr_py;
+#define HDR_DRAG_PX 5.0f           /* limiar: clique simples no cabeçalho não arrasta */
+#define MENU_W 300.0f
 static bool fake_mouse; static cui_vec2 fake_pos;
 static lrect last_r[LAYOUT_MAX_NODES];   /* retângulos do último quadro (para o roteiro) */
 static float last_vp_w = 1280;
@@ -103,6 +109,12 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), B_A(B_C3, 0xcc), 1.5f);
 }
 
+static float servers_target_w(float vw) {
+    float t = fminf(fmaxf((vw - 560.0f) / 340.0f, 0.0f), 1.0f), icon_w = 36.0f + 20.0f * t + 20.0f;   /* só ícones: 56..76 */
+    if (vw <= 900.0f) return icon_w;
+    float u = fminf((vw - 900.0f) / 40.0f, 1.0f), big = 180.0f + 90.0f * fminf((vw - 900.0f) / 500.0f, 1.0f);   /* larga: 180..270 */
+    return 76.0f + (big - 76.0f) * u;
+}
 static bool inside(lrect r, float x, float y) { return x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h; }
 
 static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
@@ -118,13 +130,32 @@ static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
 typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float mx, my; bool down; } rc_t;
 
 /* Painel na posição absoluta r dentro do contêiner de pilha. */
-static void render_leaf(rc_t *c, int kind, lrect r, bool tools) {
+/* Faixa do cabeçalho (arrastável como a barra de título de uma janela). A rail de comunidades não tem título: só a folga do topo. */
+static float header_h(int kind) { return kind == P_SERVERS ? 12.0f : 56.0f; }
+static bool in_header(int kind, lrect r, float x, float y) {
+    if (!inside(r, x, y) || y > r.y + header_h(kind)) return false;
+    int n = 1 + (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0);
+    float tw = 24.0f * n + 4.0f * (n - 1);
+    if (kind != P_SERVERS && x >= r.x + r.w - 6 - tw - 4 && y < r.y + 36) return false;   /* sob os botões de atalho */
+    return true;
+}
+
+static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
     cui_ctx *ui = c->ui;
     cui_push_id_int(ui, 100 + kind);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = r.x, .pad_top = r.y) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
+            g_panel_w = r.w;
             ui_panel(ui, c->s, kind);
-            if (tools) {
+            if (hot || tools) {   /* alça de arrasto no topo + leve destaque do cabeçalho (cantos de cima acompanham o painel) */
+                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START) {
+                    cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(header_h(kind)), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 5,
+                            .radius_tl = (int)g_th.panel_radius, .radius_tr = (int)g_th.panel_radius, .bg = hot ? CUI_RGBA(0xffffff14) : CUI_RGBA(0x00000000)) {
+                        if (kind != P_SERVERS) cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(4), .radius = 2, .bg = hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff30)) {}
+                    }
+                }
+            }
+            if (tools && !(kind == P_SERVERS && r.w < 76)) {
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 6) {
                     cui_box(ui, .dir = CUI_ROW, .gap = 4) {
                         bool g = false, p = false, x = false;
@@ -132,7 +163,7 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools) {
                         if (r.w >= 120) tool_button(ui, 2, CUI_ICON_PLUS, &p);
                         if (layout_count(&L) > 1) tool_button(ui, 3, CUI_ICON_X, &x);
                         if (g && !drag.active) { drag = (drag_t){ true, kind, false }; }
-                        if (p) menu_open = true;
+                        if (p) { menu_open = true; menu_age = 0; menu_ax = c->mx; menu_ay = c->my; }
                         if (x) { layout_remove(&L, kind); save_layout(); }
                     }
                 }
@@ -141,6 +172,8 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools) {
     }
     cui_pop_id(ui);
 }
+
+static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp);
 
 void dock_render(cui_ctx *ui, app_state_t *s) {
     cui_vec2 vp = cui_viewport_size(ui);
@@ -161,12 +194,31 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     rc_t c = { ui, s, {{0}}, mp.x, mp.y, down };
     lrect area = { 10, 10, vp.x - 20, vp.y - 3 - 20 };
     layout_compute(&L, area, c.r);
+    /* barra de grupos responsiva: a largura acompanha a janela (ícones 36..56 px; larga, ~180..270 px com nome) */
+    { int si = layout_find(&L, P_SERVERS), sp = si >= 0 ? L.n[si].parent : -1;
+      if (sp >= 0 && !L.n[sp].vertical && L.n[sp].a == si && c.r[sp].w > LAYOUT_GAP + 100) {
+          float want = servers_target_w(vp.x), nr = want / (c.r[sp].w - LAYOUT_GAP);
+          if (nr > 0.02f && nr < 0.6f && fabsf(nr - L.n[sp].ratio) > 1e-4f) { L.n[sp].ratio = nr; layout_compute(&L, area, c.r); }
+      } }
 
     /* redimensionar: acompanha o mouse enquanto o botão está apertado (sem animação) */
     if (resizing >= 0) {
         if (down) { layout_resize(&L, resizing, c.r[resizing], L.n[resizing].vertical ? mp.y : mp.x); layout_compute(&L, area, c.r); }
         else { resizing = -1; save_layout(); }
     }
+
+    /* arrastar pelo cabeçalho: aperta no cabeçalho (fora dos botões), passa do limiar e levanta o painel como a barra de título de uma janela */
+    int hdr_hot = -1;
+    bool modal = menu_open || s->add_friend_open || s->create_group_open || s->profile_open || s->settings_open;
+    if (!drag.active && resizing < 0 && !modal) {
+        int hk = -1;
+        for (int k = 0; k < P_COUNT; k++) if (anim_on[k] && in_header(k, anim[k], mp.x, mp.y)) hk = k;
+        if (hdr_press < 0 && hk >= 0 && cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) { hdr_press = hk; hdr_px = mp.x; hdr_py = mp.y; }
+        if (hdr_press >= 0 && !down) hdr_press = -1;
+        if (hdr_press >= 0 && hypotf(mp.x - hdr_px, mp.y - hdr_py) >= HDR_DRAG_PX) { drag = (drag_t){ true, hdr_press, false }; hdr_press = -1; }
+        hdr_hot = hdr_press >= 0 ? hdr_press : hk;
+        if (hdr_hot >= 0 && !drag.active) cui_set_cursor(ui, CUI_CURSOR_MOVE);
+    } else hdr_press = -1;
 
     /* arrastar: a zona sob o cursor (medida no layout ATUAL, estável) passa pela histerese e gera a árvore de pré-visualização */
     layout_t P = L; bool previewing = false;
@@ -242,7 +294,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         for (int k = 0; k < P_COUNT; k++) {
             if (!present[k]) continue;
             bool hover = !drag.active && resizing < 0 && inside(anim[k], mp.x, mp.y);
-            render_leaf(&c, k, anim[k], hover && !(drag.active && k == dk));
+            render_leaf(&c, k, anim[k], hover && !(drag.active && k == dk), hdr_hot == k);
         }
         /* divisórias: alça visível e redimensionável (só com o layout parado) */
         if (!moving && !drag.active) {
@@ -284,21 +336,79 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
             pd.scale = sc; pd.alpha = pile_alpha(&pile); pd.lift = pile.lift.x; pd.w = pile_w; pd.h = pile_h; pd.kind = pile_kind;
             cui_canvas(ui, "dock-pile", CUI_FILL, CUI_FILL, drag_stack_paint, &pd, sizeof pd);
         }
+        add_menu(ui, vp, mp);
     }
+}
 
-    cui_dialog(ui, "Adicionar painel", &menu_open) {
-        cui_text(ui, "Escolha o painel e leve o cursor à zona onde ele deve encaixar: os outros painéis abrem espaço ao vivo. Clique para confirmar.", .color = B_MUTED, .size = 13);
-        int shown = 0;
-        for (int k = 0; k < P_COUNT; k++) {
-            if (layout_find(&L, k) >= 0) continue;
-            shown++;
-            cui_push_id_int(ui, 400 + k);
-            if (cui_button(ui, panel_title(k), .width = CUI_FILL)) { drag = (drag_t){ true, k, true }; menu_open = false; }
-            cui_pop_id(ui);
-        }
-        if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13);
-        cui_dialog_footer(ui) {
-            if (cui_button(ui, "Restaurar layout padrão")) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
+/* alfa escalado (fade de abertura dos itens/textos) */
+static cui_color fade(cui_color c, float a) { c.a = (uint8_t)(c.a * a + 0.5f); return c; }
+
+typedef struct { float a; } menu_paint_t;
+/* fundo do popup: sombra suave que segue a curva, vidro (camada 1, com desfoque do que está atrás), tinta violeta leve e borda de luz fina */
+static void menu_bg_paint(cui_ctx *ui, cui_rect r, void *user) {
+    const menu_paint_t *mp = (const menu_paint_t *)user;
+    cui_corners rad = CUI_CORNERS(22);
+    if (g_perf < PERF_MIN) {
+        cui_draw_shadow(ui, r, rad, 40.0f, -12.0f, (cui_vec2){ 0, 20.0f }, fade(CUI_RGBA(0x0a001977), mp->a));
+        cui_draw_shadow(ui, r, rad, 14.0f, -2.0f, (cui_vec2){ 0, 6.0f }, fade(CUI_RGBA(0x0a00193c), mp->a));
+    }
+    cui_draw_rect_border(ui, r, rad, B_GLASS_POPUP, fade(CUI_RGBA(0xffffff30), mp->a), 1.0f);
+    cui_draw_rect(ui, r, rad, fade(CUI_RGBA(0x8b5cf61c), mp->a));                                    /* tinta violeta */
+    cui_rect in = { r.x + 1.5f, r.y + 1.5f, r.w - 3.0f, r.h - 3.0f };
+    cui_draw_rect_border(ui, in, CUI_CORNERS(20.5f), CUI_RGBA(0x00000000), fade(CUI_RGBA(0xd9ccff26), mp->a), 1.0f);   /* rim light interno, sem listra */
+}
+
+/* item "pílula de vidro": translúcido, brilho suave ao passar o mouse */
+static bool menu_pill(cui_ctx *ui, const char *label, int id, float a) {
+    cui_push_id_int(ui, id);
+    cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "pill")); cui_vec2 m = cui_mouse_pos(ui);
+    bool hot = lr.w > 0 && m.x >= lr.x && m.y >= lr.y && m.x < lr.x + lr.w && m.y < lr.y + lr.h;
+    cui_box(ui, .id = "pill", .width = CUI_FILL, .height = CUI_PX(36), .radius = 18,
+            .bg = fade(hot ? CUI_RGBA(0xc4b0ff3a) : CUI_RGBA(0xffffff16), a), .border = 1, .border_color = fade(hot ? CUI_RGBA(0xe9e0ff77) : CUI_RGBA(0xffffff2a), a),
+            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        cui_text(ui, label, .font = CUI_FONT_MEDIUM, .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
+    }
+    if (hot) cui_set_cursor(ui, CUI_CURSOR_HAND);
+    bool hit = briks_clicked(ui, "pill");
+    cui_pop_id(ui);
+    return hit;
+}
+
+/* Menu "Adicionar painel": popup de vidro ancorado onde o usuário clicou, sempre inteiro dentro da janela. */
+static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
+    static float t;   /* abertura 0..1 */
+    if (!menu_open) return;
+    if (menu_age == 0) t = g_perf >= PERF_MIN ? 1.0f : 0.0f;
+    float dur = g_perf == PERF_SIMPLE ? 0.07f : 0.16f;
+    if (t < 1.0f) { t += (dur > 0 ? 1.0f / 60.0f / dur : 1.0f); if (t > 1.0f) t = 1.0f; cui_request_redraw(ui); }
+    float e = 1.0f - (1.0f - t) * (1.0f - t), a = 0.25f + 0.75f * e;
+    int shown = 0; for (int k = 0; k < P_COUNT; k++) if (layout_find(&L, k) < 0) shown++;
+    cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "addmenu"));
+    float w = MENU_W, h = lr.h > 0 ? lr.h : 150.0f + 44.0f * (shown ? shown : 1);
+    float x = menu_ax, y = menu_ay;
+    if (x + w + 8 > vp.x) x = menu_ax - w;      /* sem espaço à direita: abre para a esquerda do clique */
+    if (y + h + 8 > vp.y) y = menu_ay - h;      /* sem espaço embaixo: abre para cima */
+    x = fminf(fmaxf(x, 8), fmaxf(vp.x - w - 8, 8)); y = fminf(fmaxf(y, 8), fmaxf(vp.y - h - 8, 8));
+    float lift = (1.0f - e) * 8.0f;             /* sobe 8 px ao abrir */
+    bool out = menu_age > 0 && lr.w > 0 && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !(mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h);
+    if (out || (menu_age > 0 && cui_key_pressed(ui, CUI_KEY_ESCAPE))) { menu_open = false; return; }
+    if (menu_age < 3) cui_request_redraw(ui);   /* o 2º quadro já mede o tamanho real e reposiciona */
+    menu_age++;
+    menu_paint_t pt = { a };
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y + lift) {
+        cui_box(ui, .id = "addmenu", .dir = CUI_STACK, .width = CUI_PX(w)) {
+            cui_canvas(ui, "addmenu-bg", CUI_FILL, CUI_FILL, menu_bg_paint, &pt, sizeof pt);
+            cui_box(ui, .width = CUI_FILL, .pad = 16, .gap = 8) {
+                cui_text(ui, "Adicionar painel", .font = CUI_FONT_MEDIUM, .size = 15, .color = fade(CUI_RGB(0xfaf7ff), a));
+                cui_text(ui, "Escolha o painel e leve o cursor à zona onde ele deve encaixar: os outros painéis abrem espaço ao vivo. Clique para confirmar.",
+                         .size = 12, .color = fade(CUI_RGB(0xd3c8ee), a));
+                for (int k = 0; k < P_COUNT; k++) {
+                    if (layout_find(&L, k) >= 0) continue;
+                    if (menu_pill(ui, panel_title(k), 400 + k, a)) { drag = (drag_t){ true, k, true }; menu_open = false; }
+                }
+                if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
+                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
+            }
         }
     }
 }
@@ -319,6 +429,7 @@ bool dock_script_point(const char *spec, float *x, float *y) {
     if (!strcmp(what, "grip")) { *x = x_grip; *y = cy; return true; }
     if (!strcmp(what, "plus") && has_plus) { *x = x_plus; *y = cy; return true; }
     if (!strcmp(what, "close") && has_x) { *x = x_close; *y = cy; return true; }
+    if (!strcmp(what, "header")) { *x = r.x + r.w * 0.35f; *y = r.y + 28; return true; }
     if (!strcmp(what, "panel")) { *x = r.x + r.w * 0.5f; *y = r.y + r.h * 0.5f; return true; }
     if (!strcmp(what, "divider")) {          /* vão entre este painel e o irmão (ou o lado de dentro) */
         int p = L.n[i].parent; if (p < 0) return false;
@@ -338,5 +449,6 @@ bool dock_script_point(const char *spec, float *x, float *y) {
     return false;
 }
 void dock_script_pick(const char *kind) { int k = panel_from_name(kind); if (k >= 0) { drag = (drag_t){ true, k, true }; menu_open = false; } }
+void dock_script_menu(float x, float y) { menu_open = true; menu_age = 0; menu_ax = x; menu_ay = y; }
 void dock_script_restore(void) { layout_default(&L, last_vp_w); menu_open = false; }
 void dock_restore_default(void) { layout_default(&L, last_vp_w); save_layout(); menu_open = false; }

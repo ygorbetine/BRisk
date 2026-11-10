@@ -84,9 +84,9 @@ int main(void) {
     if (automation) quiet_automation();
 #endif
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
-    { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 900 && h >= 560) { win_w = a; win_h = h; } }
+    { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 560 && h >= 480) { win_w = a; win_h = h; } }
     cui_app *app = cui_app_create(&(cui_app_desc){
-        .title = "Briks", .width = win_w, .height = win_h, .min_width = 900, .min_height = 560,
+        .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
         .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
     if (!app) return 1;
     state.app = app;

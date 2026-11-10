@@ -6,6 +6,7 @@
  *   to X Y N | to <ponto> N   move o cursor em N quadros (com suavização); <ponto> é grip:chat, zone:nav:left, divider:nav...
  *   down | up              aperta/solta o botão esquerdo
  *   wait N                 espera N quadros
+ *   menu X Y               abre o menu 'Adicionar painel' ancorado em X,Y (como o clique no +)
  *   pick <painel>          escolhe o painel no menu "Adicionar painel" (entra no modo "clique numa zona")
  *   esc                    aperta Esc (cancela o arraste)
  *   restore                restaura o layout padrão
@@ -74,6 +75,7 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "rdown")) { cui_input_mouse_move(ui, cx, cy); cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, true); }
         else if (!strcmp(cmd, "rup")) { cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, false); }
         else if (!strcmp(cmd, "up")) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, false); mdown = false; }
+        else if (!strcmp(cmd, "menu")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) dock_script_menu((float)atof(a), (float)atof(b)); }
         else if (!strcmp(cmd, "pick")) { char *k = strtok(NULL, " "); if (k) dock_script_pick(k); }
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }
         else if (!strcmp(cmd, "restore")) dock_script_restore();

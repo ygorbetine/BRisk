@@ -1,0 +1,8 @@
+wait 3
+to header:chat 15
+wait 3
+down
+to 500 600 20
+wait 20
+up
+wait 15

@@ -6,7 +6,7 @@
 #include <math.h>
 
 static const struct { const char *name, *title; float mw, mh; } PANELS[P_COUNT] = {
-    { "servers", "Servidores",    76, 200 },
+    { "servers", "Servidores",    56, 200 },
     { "nav",     "Menu lateral", 200, 240 },
     { "chat",    "Conversa",     320, 260 },
     { "friends", "Amigos",       200, 200 },

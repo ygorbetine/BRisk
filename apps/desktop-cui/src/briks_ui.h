@@ -28,7 +28,7 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
 typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
-typedef struct { char id[48]; char name[96]; } community_t;
+typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
 #define MAX_MSGS 200
@@ -150,10 +150,12 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
+void dock_script_menu(float x, float y);
 void dock_script_restore(void);
 void dock_restore_default(void);   /* configurações: reaplica o layout padrão (animado) e grava layout.json */
 /* script.c: BRIKS_SCRIPT injeta mouse e salva um PNG por quadro */

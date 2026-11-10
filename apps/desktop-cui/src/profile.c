@@ -52,7 +52,7 @@ static const known_t KNOWN[] = {
 };
 /* programas de sistema que não dizem nada sobre o que a pessoa está fazendo */
 static const char *SKIP_EXE[] = { "explorer", "searchhost", "startmenuexperiencehost", "lockapp", "applicationframehost", "shellexperiencehost",
-    "textinputhost", "dwm", "taskmgr", "systemsettings", "briks_cui", "snippingtool", "cmd", "powershell", "conhost", "windowsterminal" };
+    "textinputhost", "dwm", "taskmgr", "systemsettings", "briks_cui", "briks", "snippingtool", "cmd", "powershell", "conhost", "windowsterminal" };
 
 /* escreve o texto de presença do programa em primeiro plano; devolve false se não há nada a mostrar (mantém o anterior) */
 static bool foreground_text(char *out, size_t cap) {

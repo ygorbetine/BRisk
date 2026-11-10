@@ -37,6 +37,31 @@ Legenda: **Feito** = existe e foi exercitado; **Parcial** = existe só em parte 
 | 29 | Modos de desempenho, tema, vidro, layout arrastável | Feito (só no CUI) | – | – |
 | 30 | Outbox/entrega com reenvio, busca local | Falta | 3 | P2 |
 
+### Acrescentado pelo inventário da gravação do Electron 1.2.2 (A:\OBS\2026-11-10 16-33-24.mp4)
+Dono das telas: sessão `cui-ui-paridade` (interface) e `cui-transmissao` (item 9/31–33). Aqui só o inventário e o estado do CUI atual.
+
+| # | Feature vista no Electron | CUI hoje | Est. | Prio | Dono |
+|---|---|---|---|---|---|
+| 31 | Seletor de fonte: abas Telas/Janelas com miniaturas, "Transmitir Tela 1" | Falta | 3 | P0 | cui-transmissao |
+| 32 | Áudio da transmissão: da fonte / escolher apps (por app, "Tocando agora") / sem áudio; "O Discord nunca entra" | Falta | 3 | P0 | cui-transmissao |
+| 33 | Chip "Com áudio" e chip de qualidade "1080p · 30 FPS · 4 Mbps" na barra da call | Falta | 1 | P1 | cui-transmissao |
+| 34 | Barra da call: alternar Call/Transmissão, Chamada/Chat, "Rede Boa", botões de layout, seletor de áudio, Câmera | Parcial (mutar/ensurdecer/sair; sem o resto) | 3 | P1 | cui-ui-paridade |
+| 35 | Janela com barra de título roxa própria (min/max/fechar), versão "v1.2.2" | Falta (janela do SO) | 1 | P2 | cui-ui-paridade |
+| 36 | Foto de perfil (avatar imagem) no rodapé, tiles e mensagens | Falta (só iniciais) | 2 | P1 | cui-ui-paridade |
+| 37 | ＠nick e "Reparar identidades duplicadas" | Falta | 2 | P1 | cui-ui-paridade |
+| 38 | Amigos: abas Online/Todos/Pendentes com contadores, "Buscar amigo", 3 ações por linha, painel Atividade, "Entrar em grupo" | Parcial (lista e adicionar) | 3 | P1 | cui-ui-paridade |
+| 39 | Grupo: editar/excluir, canais de texto (#geral) e salas de voz com quem está nelas, busca | Parcial (só listagem) | 5 | P1 | cui-ui-paridade |
+| 40 | Membros: marcas VOCÊ/DONO/＠nick, atualizar, limpar duplicados; "Gerenciar membro" (tornar administrador, remover), "Personalizar grupo" (imagem/nome, sincroniza por WebRTC) | Falta | 4 | P1 | cui-ui-paridade |
+| 41 | Prévia de link nas mensagens (card com título/URL) | Falta | 2 | P2 | cui-ui-paridade |
+| 42 | Mini-painel "Voz conectada" (mic, fone, expandir, desligar) | Parcial (controles na tela da call) | 1 | P2 | cui-ui-paridade |
+| 43 | Configurações em abas: Voz e vídeo, Rede, Temas (presets + personalizado), Armazenamento, Sobreposição (interruptores, opacidade, editar posições), Atalhos, Notificações, Avisos, Atualizações, Sobre (telemetria, código-fonte, licença) | Parcial (uma tela: desempenho, presença, vidro) | 6 | P1 | cui-ui-paridade |
+| 44 | Status personalizado: emoji, chips rápidos, "Limpar depois de 4 horas" | Parcial (texto; sem emoji/chips/expiração) | 1 | P2 | cui-ui-paridade |
+| 45 | Programa em uso: lista "Ignorar programa" | Parcial (liga/desliga e público; sem lista de ignorados) | 1 | P2 | cui-ui-paridade |
+| 46 | Conta: sair da conta / desconectar conta | Parcial (sair) | 0,5 | P2 | cui-ui-paridade |
+| 47 | Atualizações: "Verificar agora", "Novidades da 1.2.2" | Parcial: núcleo do atualizador pronto, DESLIGADO por padrão; sem tela | 1 | P2 | cui-instalador |
+
+Obs.: a gravação não tem áudio e amostra a cada ~2 s; receber/assistir a transmissão e comportamentos rápidos não aparecem.
+
 ## Leitura rápida
 - **Bloqueia substituir o Electron de verdade:** 9 (transmissão de tela, a razão de ser do app), 6 (voz com áudio real), 2/3/4 (identidade, amigos, interop) e 27/28 (instalar e atualizar).
 - **Sem o item 9 o CUI não substitui o Electron em uso real**: quem atualizar perde a transmissão de tela até o item existir. Isso precisa estar claro antes de publicar o instalador como atualização automática.

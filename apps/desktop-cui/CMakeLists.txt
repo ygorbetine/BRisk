@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(briks_desktop_cui C)
+if(WIN32)
+  enable_language(RC)   # icone do executavel (src/briks.rc)
+endif()
 
 include(FetchContent)
 FetchContent_Declare(cui
@@ -9,11 +12,14 @@ FetchContent_Declare(cui
   PATCH_COMMAND  ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply.cmake")
 FetchContent_MakeAvailable(cui)
 
-add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/migrate.c)
+add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/migrate.c src/update.c src/ui_update.c)
+if(WIN32)
+  target_sources(briks_cui PRIVATE src/briks.rc)
+endif()
 if(MSVC)
   target_compile_options(briks_cui PRIVATE /utf-8)
 endif()
-target_link_libraries(briks_cui PRIVATE cui winhttp bcrypt shell32 opengl32 ws2_32)
+target_link_libraries(briks_cui PRIVATE cui winhttp bcrypt crypt32 shell32 opengl32 ws2_32)
 
 # Copia o backend local (briks-desktop-backend.exe) para ao lado do executável.
 set(BRIKS_BACKEND_EXE "" CACHE FILEPATH "Caminho do briks-desktop-backend.exe")
@@ -33,8 +39,10 @@ if(EXISTS "${BRIKS_CORE_EXE}")
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BRIKS_CORE_EXE}" $<TARGET_FILE_DIR:briks_cui>/briks-core.exe)
 endif()
 
-add_executable(briks_smoke tests/smoke.c src/backend.c src/json.c src/layout.c src/drag_stack.c src/core.c)
-target_link_libraries(briks_smoke PRIVATE winhttp bcrypt shell32 ws2_32)
+set(BRIKS_VERSION "1.3.0" CACHE STRING "Versao do app (usada pelo atualizador; o instalador recebe a sua em scripts/build-installer.ps1)")
+target_compile_definitions(briks_cui PRIVATE BRIKS_APP_VERSION="${BRIKS_VERSION}")
+add_executable(briks_smoke tests/smoke.c src/update.c src/backend.c src/json.c src/layout.c src/drag_stack.c src/core.c)
+target_link_libraries(briks_smoke PRIVATE winhttp bcrypt crypt32 shell32 ws2_32)
 # briks_smoke fica na mesma pasta do briks_cui e ja enxerga backend/ ao lado (sem copia)
 
 # Overlay: janela sempre no topo, sem foco, cliques passando (segundo executável, sem dependências).

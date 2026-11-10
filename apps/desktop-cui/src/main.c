@@ -1,5 +1,6 @@
 /* Remake do Briks em CUI: login, social e chamada (dados de exemplo; sem rede/WebRTC ainda). */
 #include "briks_ui.h"
+#include "update.h"
 #include "backend.h"
 #include "core.h"
 #include <stdlib.h>
@@ -47,6 +48,7 @@ static void frame(cui_ctx *ui) {
             case SCREEN_CALL: ui_call(ui, &state); break;
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
     }
@@ -67,6 +69,7 @@ int main(void) {
     if (!app) return 1;
     state.app = app;
     migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
+    update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */
     briks_perf_init();
     briks_theme_poll();   /* lê theme.json (ou os padrões) antes de montar o tema */
     briks_apply_theme(cui_app_ui(app));
@@ -82,5 +85,6 @@ int main(void) {
     cui_app_destroy(app);
     core_stop();
     bk_stop();
+    update_install_on_exit();   /* atualização já baixada e verificada: instala em silêncio ao fechar */
     return 0;
 }

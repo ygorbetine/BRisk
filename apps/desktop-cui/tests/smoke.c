@@ -4,6 +4,7 @@
 #include <math.h>
 #include "../src/layout.h"
 #include "../src/core.h"
+#include "../src/update.h"
 #include "../src/drag_stack.h"
 #include <stdio.h>
 #include <string.h>
@@ -250,8 +251,22 @@ static void core_tests(void) {
     if (mock) { TerminateProcess(pi.hProcess, 0); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); }
 }
 
+static void update_tests(void) {
+    CHECK(update_version_compare("1.2.2", "1.3.0") < 0 && update_version_compare("1.3.0", "1.2.9") > 0, "versao: ordem numerica");
+    CHECK(update_version_compare("1.3.0", "1.3.0") == 0 && update_version_compare("1.3.0-cui.1", "1.3.0") < 0, "versao: igual e pre-lancamento antes da final");
+    CHECK(update_version_compare("1.10.0", "1.9.0") > 0, "versao: 1.10 > 1.9");
+    char v[48], p[128], h[200];
+    const char *ok = "version: 1.3.1\nfiles:\n  - url: Briks-Setup-1.3.1.exe\n    sha512: ZZZ\n    size: 10\npath: Briks-Setup-1.3.1.exe\nsha512: AbC+/=\nreleaseDate: '2026-01-01T00:00:00.000Z'\n";
+    CHECK(update_parse_feed(ok, v, sizeof v, p, sizeof p, h, sizeof h) && !strcmp(v, "1.3.1") && !strcmp(p, "Briks-Setup-1.3.1.exe") && !strcmp(h, "AbC+/="), "feed latest.yml do electron-updater lido");
+    CHECK(!update_parse_feed("version: 1.3.1\npath: ..\\evil.exe\nsha512: x\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: caminho com .. ou barra invertida recusado");
+    CHECK(!update_parse_feed("version: 1.3.1\npath: setup.zip\nsha512: x\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: so aceita .exe");
+    CHECK(!update_parse_feed("version: 1.3.1\npath: a.exe\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: sem sha512 recusado");
+    CHECK(update_url_allowed("https://github.com/x/y/latest.yml") && update_url_allowed("http://127.0.0.1:8099/latest.yml") && !update_url_allowed("http://example.com/latest.yml") && !update_url_allowed("ftp://x"), "url: https ou http so em loopback");
+}
+
 int main(void) {
     layout_tests();
+    update_tests();
     pile_tests();
     live_tests();
     core_tests();

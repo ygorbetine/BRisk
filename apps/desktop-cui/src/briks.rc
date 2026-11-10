@@ -1,0 +1,2 @@
+#include <winver.h>
+1 ICON "../assets/briks.ico"

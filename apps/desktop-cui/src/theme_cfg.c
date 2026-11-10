@@ -26,8 +26,8 @@ void briks_theme_defaults(briks_theme_t *t) {
     t->a_glass = 0.50f; t->a_soft = 0.34f; t->a_strong = 0.74f; t->a_popup = 0.85f;
     t->blur_offset = 1.0f; t->saturation = 1.55f; t->highlight = 0.09f;
     t->bubble_align = 0;
-    t->bubble_refract = 14; t->bubble_disp = 0.22f; t->bubble_spec = 0.6f; t->bubble_tint = 0.10f;
-    t->sheen = 0.09f; t->sheen_line = 0.14f; t->card_fill = 0.05f; t->card_sat = 1.2f;
+    t->bubble_refract = 12; t->bubble_disp = 0.08f; t->bubble_spec = 0.5f; t->bubble_tint = 0.22f;
+    t->sheen = 0.06f; t->sheen_line = 0.10f; t->card_fill = 0.05f; t->card_sat = 1.2f;
     t->panel_radius = 22; t->control_radius = 12; t->chat_pad = 20;
     t->bubble_own = CUI_RGB(0x6d5cf6); t->bubble_big = 16; t->bubble_small = 2;
     briks_theme_validate(t);
@@ -103,8 +103,9 @@ bool briks_theme_load(const char *path, briks_theme_t *t) {
     get_c(js, "glass_rgb", &t->glass_rgb);
     get_f(js, "glass_a", &t->a_glass); get_f(js, "soft_a", &t->a_soft); get_f(js, "strong_a", &t->a_strong); get_f(js, "popup_a", &t->a_popup);
     get_f(js, "blur_offset", &t->blur_offset); get_f(js, "saturation", &t->saturation); get_f(js, "highlight", &t->highlight);
-    get_f(js, "sheen", &t->sheen); get_f(js, "sheen_line", &t->sheen_line); get_f(js, "card_fill", &t->card_fill); get_f(js, "card_sat", &t->card_sat);
-    get_f(js, "bubble_refract", &t->bubble_refract); get_f(js, "bubble_disp", &t->bubble_disp); get_f(js, "bubble_spec", &t->bubble_spec); get_f(js, "bubble_tint", &t->bubble_tint);
+    const bool v2 = find_val(js, "recipe") != NULL;   /* receita de vidro v2 (violeta + rim light); arquivos antigos não sobrepõem esses padrões */
+    if (v2) { get_f(js, "sheen", &t->sheen); get_f(js, "sheen_line", &t->sheen_line); } get_f(js, "card_fill", &t->card_fill); get_f(js, "card_sat", &t->card_sat);
+    if (v2) { get_f(js, "bubble_refract", &t->bubble_refract); get_f(js, "bubble_disp", &t->bubble_disp); get_f(js, "bubble_spec", &t->bubble_spec); get_f(js, "bubble_tint", &t->bubble_tint); }
     get_f(js, "panel_radius", &t->panel_radius); get_f(js, "control_radius", &t->control_radius); get_f(js, "chat_pad", &t->chat_pad);
     get_c(js, "bubble_own", &t->bubble_own); get_f(js, "bubble_big", &t->bubble_big); get_f(js, "bubble_small", &t->bubble_small);
     { const char *v = find_val(js, "bubble_align"); if (v && *v == '"') t->bubble_align = (v[1] == 'm' || v[1] == 'M') ? 1 : 0; }

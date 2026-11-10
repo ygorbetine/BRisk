@@ -83,6 +83,19 @@ pub fn test_pattern(w: usize, h: usize, t: usize) -> Vec<u8> {
     f
 }
 
+/// Carimba o relógio (ms, 32 bits) como 32 blocos 16x16 preto/branco no canto superior esquerdo (medição de latência nos testes).
+pub fn stamp_ms(f: &mut [u8], w: usize) {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u32).unwrap_or(0);
+    for i in 0..32 { let v = if (ms >> (31 - i)) & 1 == 1 { 255 } else { 0 };
+        for y in 0..16 { for x in 0..16 { let o = (y * w + i * 16 + x) * 4; f[o] = v; f[o + 1] = v; f[o + 2] = v; } } }
+}
+/// Lê o carimbo de um quadro RGBA (inverso de `stamp_ms`).
+pub fn read_stamp(rgba: &[u8], w: usize) -> u32 {
+    let mut ms = 0u32;
+    for i in 0..32 { let o = (8 * w + i * 16 + 8) * 4; ms = (ms << 1) | (rgba[o + 1] > 127) as u32; }
+    ms
+}
+
 impl Capture {
     pub fn start(kind: SourceKind, fps: u32) -> Result<Capture> {
         let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0) });
@@ -97,7 +110,7 @@ impl Capture {
                     while !st.load(Ordering::Relaxed) {
                         {
                             let mut l = sh.latest.lock().unwrap();
-                            l.w = w; l.h = h; l.counter += 1; l.data = test_pattern(w, h, t / 10);
+                            l.w = w; l.h = h; l.counter += 1; l.data = test_pattern(w, h, t / 10); stamp_ms(&mut l.data, w);
                         }
                         sh.frames.fetch_add(1, Ordering::Relaxed);
                         t += 1;

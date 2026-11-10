@@ -28,6 +28,11 @@ use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::audio::{Audio, AudioEvent};
+use crate::share::{self, RecvState, ShareCfg};
+use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use crate::identity::{self, ChatWire, Identity, PublicJwk};
 use crate::realtime::{Realtime, RtEvent};
 use crate::signaling::{is_initiator, secure_room_id, Envelope, Reject, Validator};
@@ -52,6 +57,8 @@ pub enum MeshEvent {
     Kicked { reason: String },
     /// Alguém foi expulso (ou eu mesmo apliquei): fp banido nesta sessão.
     Banned { fp: String },
+    /// Eventos da transmissão de tela (JSON já no formato do IPC: "share.local", "share.stats", "share.remote"...).
+    Share(Value),
     Error(String),
 }
 
@@ -73,6 +80,11 @@ pub enum MeshCmd {
     Chat { to_fp: String, text: String },
     /// Só para testes: força um offer agora (colisão).
     ForceOffer { peer_id: String },
+    /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
+    ShareStart { cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf> },
+    ShareStop,
+    /// Liga/desliga a decodificação do vídeo de um peer e define o arquivo de quadro compartilhado.
+    ShareWatch { key: String, on: bool, path: std::path::PathBuf },
     Close,
 }
 
@@ -98,7 +110,11 @@ struct Peer {
     proven: bool,   // o outro provou a identidade para mim
     sent_proof: bool,
     name: String,
+    vsender: Option<Arc<RTCRtpSender>>,
+    recv: Arc<RecvState>,
 }
+
+struct ActiveShare { gen: u64, track: Arc<TrackLocalStaticSample>, sender: share::Sender, info: Option<Value> }
 
 pub struct MeshCfg {
     pub namespace: String,
@@ -154,6 +170,12 @@ struct Actor {
     profile: (String, String),      // (status, presença) anunciados aos peers autenticados
     dead: bool,                     // fui expulso: encerra o ator
     blocked: HashSet<String>,       // peerIds de banidos: sinalização deles é ignorada
+    share: Option<ActiveShare>,
+    share_gen: u64,
+    idr: Arc<std::sync::atomic::AtomicBool>,   // pedido de quadro-chave (PLI/FIR/novo espectador), único para a sala toda
+    vtrack: Option<Arc<TrackLocalStaticSample>>,   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
+    sev_tx: mpsc::Sender<Value>,
+    sev_rx: Option<mpsc::Receiver<Value>>,
 }
 
 impl Actor {
@@ -162,13 +184,15 @@ impl Actor {
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new() }
+        let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
         let mut irx = self.irx.take().expect("irx");
         let mut retry = tokio::time::interval(std::time::Duration::from_secs(2));
         let mut arx = self.audio_rx.take();
+        let mut srx = self.sev_rx.take().expect("sev_rx");
         if let Some(a) = &self.audio { a.start(); }
         loop {
             tokio::select! {
@@ -177,6 +201,7 @@ impl Actor {
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
                     None => { arx = None; }
                 },
+                sv = srx.recv() => if let Some(v) = sv { self.on_share_event(v).await },
                 _ = retry.tick() => {
                     // mensagens sem ACK são reenviadas (o receptor deduplica por id)
                     let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();
@@ -196,6 +221,7 @@ impl Actor {
             if self.dead { break; }
         }
         if let Some(a) = &self.audio { a.stop(); }
+        if let Some(sh) = self.share.take() { sh.sender.stop(); }
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
         self.rt.close().await;
     }
@@ -232,16 +258,33 @@ impl Actor {
         RTCConfiguration { ice_servers: self.cfg.ice_servers.clone(), ..Default::default() }
     }
 
-    async fn new_pc(&mut self, peer_id: &str, gen: u32) -> Result<Arc<RTCPeerConnection>> {
+    async fn new_pc(&mut self, peer_id: &str, gen: u32, recv: Arc<RecvState>) -> Result<Arc<RTCPeerConnection>> {
         let mut m = MediaEngine::default();
         m.register_default_codecs()?;
         let registry = register_default_interceptors(Registry::new(), &mut m)?;
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
-        if let Some(a) = &self.audio {
-            pc.add_track(a.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await?;
-            let (a, id) = (a.clone(), peer_id.to_string());
-            pc.on_track(Box::new(move |track, _rx, _tr| { let (a, id) = (a.clone(), id.clone()); Box::pin(async move { tokio::spawn(a.run_remote(id, track)); }) }));
+        {
+            let audio = self.audio.clone();
+            if let Some(a) = &audio { pc.add_track(a.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await?; }
+            let (id, sev) = (peer_id.to_string(), self.sev_tx.clone());
+            let wk = Arc::downgrade(&pc);
+            pc.on_track(Box::new(move |track, _rx, _tr| {
+                let (audio, id, sev, recv, wk) = (audio.clone(), id.clone(), sev.clone(), recv.clone(), wk.clone());
+                Box::pin(async move {
+                    use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+                    if track.kind() == RTPCodecType::Video {
+                        let ssrc = track.ssrc();
+                        let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                            if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
+                        });
+                        tokio::spawn(share::run_remote_video(id, track, recv, sev, pli));
+                    } else if let Some(a) = audio {
+                        let key = if track.id() == share::AUDIO_TRACK_ID { format!("{id}#screen") } else { id };
+                        tokio::spawn(a.run_remote(key, track));
+                    }
+                })
+            }));
         }
         let (itx, id) = (self.itx.clone(), peer_id.to_string());
         { let (itx, id) = (itx.clone(), id.clone());
@@ -256,9 +299,10 @@ impl Actor {
 
     async fn add_peer(&mut self, peer_id: &str) -> Result<()> {
         let gen = self.next_gen; self.next_gen += 1;
-        let pc = self.new_pc(peer_id, gen).await?;
+        let recv = Arc::new(RecvState::default());
+        let pc = self.new_pc(peer_id, gen, recv.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new() });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, recv });
         Ok(())
     }
 
@@ -386,8 +430,88 @@ impl Actor {
                     a.mute_peer(&id, muted);
                 }
             }
+            MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
+            MeshCmd::ShareStop => self.share_stop().await,
+            MeshCmd::ShareWatch { key, on, path } => {
+                let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv.clone()));
+                match found {
+                    Some((id, r)) => {
+                        if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.frames.store(0, std::sync::atomic::Ordering::Relaxed); }
+                        r.watching.store(on, std::sync::atomic::Ordering::Relaxed);
+                        self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
+                    }
+                    None => self.emit(MeshEvent::Error("assistir: peer desconhecido".into())).await,
+                }
+            }
             MeshCmd::Close => {}
         }
+    }
+
+    fn authed_ids(&self) -> Vec<String> { self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect() }
+
+    async fn share_start(&mut self, cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
+        self.share_stop().await;
+        let track = self.vtrack.get_or_insert_with(share::new_video_track).clone();
+        self.share_gen += 1;
+        let gen = self.share_gen;
+        match share::start_sender(gen, self.idr.clone(), cfg, track.clone(), self.sev_tx.clone(), preview, dump) {
+            Ok(sender) => { self.share = Some(ActiveShare { gen, track, sender, info: None }); }
+            Err(e) => { self.emit(MeshEvent::Share(json!({ "ev": "share.local", "state": "off", "reason": e }))).await; return; }
+        }
+        for id in self.authed_ids() { self.attach_share(&id).await; }
+    }
+
+    /// Adiciona a faixa de vídeo ao peer (se ainda não tem), lê o RTCP (PLI/FIR) e renegocia.
+    async fn attach_share(&mut self, id: &str) {
+        let Some(sh) = &self.share else { return };
+        let (track, idr) = (sh.track.clone(), sh.sender.idr.clone());
+        let Some(p) = self.peers.get_mut(id) else { return };
+        if p.vsender.is_some() {
+            idr.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(info) = self.share.as_ref().and_then(|s| s.info.clone()) { self.send_share_state(id, &info).await; }
+            return;
+        }
+        match p.pc.add_track(track as Arc<dyn TrackLocal + Send + Sync>).await {
+            Ok(sender) => {
+                let (s2, idr2) = (sender.clone(), idr.clone());
+                tokio::spawn(async move {
+                    while let Ok((pkts, _)) = s2.read_rtcp().await {
+                        for pk in pkts { if pk.as_any().downcast_ref::<PictureLossIndication>().is_some() || pk.as_any().downcast_ref::<FullIntraRequest>().is_some() { idr2.store(true, std::sync::atomic::Ordering::Relaxed); } }
+                    }
+                });
+                p.vsender = Some(sender);
+                idr.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Err(e) => { self.emit(MeshEvent::Error(format!("faixa de vídeo: {e}"))).await; return; }
+        }
+        self.start_offer(id, false).await;
+        if let Some(info) = self.share.as_ref().and_then(|s| s.info.clone()) { self.send_share_state(id, &info).await; }
+    }
+
+    /// Para o envio. A faixa continua ligada aos peers (retomar não renegocia); os espectadores são avisados pelo DataChannel.
+    async fn share_stop(&mut self) {
+        let Some(sh) = self.share.take() else { return };
+        sh.sender.stop();
+        for id in self.authed_ids() { self.dc_send(&id, json!({ "version": 2, "type": "share.state", "on": false })).await; }
+    }
+
+    async fn send_share_state(&self, peer: &str, info: &Value) {
+        let mut m = json!({ "version": 2, "type": "share.state", "on": true });
+        for k in ["w", "h", "fps", "kbps", "label", "audio"] { if let Some(v) = info.get(k) { m[k] = v.clone(); } }
+        self.dc_send(peer, m).await;
+    }
+
+    /// Eventos do emissor (thread de captura/codificação) e do receptor.
+    async fn on_share_event(&mut self, v: Value) {
+        // eventos de um emissor antigo (já parado) chegam atrasados: ignora
+        if let Some(g) = v["gen"].as_u64() { if self.share.as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share.is_none()) { return; } }
+        if v["ev"] == "share.local" {
+            if v["state"] == "on" {
+                if let Some(sh) = self.share.as_mut() { sh.info = Some(v.clone()); }
+                for id in self.authed_ids() { self.send_share_state(&id, &v).await; }
+            } else { self.share_stop().await; }
+        }
+        self.emit(MeshEvent::Share(v)).await;
     }
 
     /// O desafio pode chegar antes de o outro lado ligar o on_message (corrida com 3+ peers): reenvia, com o MESMO nonce, a quem ainda não provou.
@@ -539,6 +663,16 @@ impl Actor {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
             }
+            "share.state" => {
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                let on = v["on"].as_bool().unwrap_or(false);
+                let mut m = json!({ "ev": "share.remote", "peer_id": peer, "state": if on { "on" } else { "off" } });
+                for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
+                m["label"] = json!(v["label"].as_str().unwrap_or("").chars().take(64).collect::<String>());
+                m["audio"] = json!(v["audio"].as_bool().unwrap_or(false));
+                if !on { if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
+                self.emit(MeshEvent::Share(m)).await;
+            }
             "chat.message.ack" => {
                 let id = v["messageId"].as_str().unwrap_or("");
                 if let Some(fp) = self.peers.get(peer).and_then(|p| p.fp.clone()) { if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); } }
@@ -557,6 +691,7 @@ impl Actor {
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
             if let Some(fp) = fp { self.flush_outbox(&fp).await; }
             self.send_state(peer).await;
+            if self.share.is_some() { self.attach_share(peer).await; }
         }
     }
 }

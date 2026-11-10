@@ -8,9 +8,11 @@ mod video;
 mod identity;
 mod ipc;
 mod mesh;
+mod mfenc;
 mod mock;
 mod phoenix;
 mod realtime;
+mod share;
 mod signaling;
 
 use anyhow::{anyhow, Result};

@@ -333,3 +333,100 @@ async fn status_and_presence_reach_authenticated_peers_and_late_joiners_get_them
     a.cmd.send(MeshCmd::SetProfile { status: String::new(), presence: String::new() }).await.unwrap();
     assert!(wait_for(&mut b, 10, |e| matches!(e, MeshEvent::PeerState { status, presence, .. } if status.is_empty() && presence.is_empty())).await.is_some(), "B não viu o status limpo");
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Transmissão de tela: A transmite (fonte sintética), B assiste; conteúdo, latência, parar e retomar (renegociação)
+// ---------------------------------------------------------------------------------------------------------------------
+async fn wait_share(h: &mut MeshHandle, pred: impl Fn(&serde_json::Value) -> bool, secs: u64) -> Option<serde_json::Value> {
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        match timeout(left, h.events.recv()).await { Ok(Some(MeshEvent::Share(v))) => { if pred(&v) { return Some(v); } } Ok(Some(_)) => {} _ => return None }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn screen_share_flows_end_to_end_in_loopback() {
+    use crate::capture::{read_stamp, test_pattern, SourceKind};
+    use crate::share::ShareCfg;
+    use crate::video::{psnr, FrameSource};
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "tela1", ia);
+    let mut b = node(port, PB, "Beto", "tela1", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await, "não autenticou");
+    let dir = std::env::temp_dir().join(format!("briks-share-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    let (w, h) = (1280usize, 720usize);
+    for round in 0..2 {
+        let sent_png = dir.join(format!("enviado-{round}.png"));
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into() }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
+        let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
+        assert_eq!((on["w"].as_u64(), on["h"].as_u64(), on["fps"].as_u64()), (Some(1280), Some(720), Some(30)), "{on}");
+        let rpath = dir.join(format!("recebido-{round}.bin"));
+        b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
+        let fr = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("nenhum quadro chegou ao B");
+        assert_eq!((fr["w"].as_u64(), fr["h"].as_u64()), (Some(w as u64), Some(h as u64)));
+        // amostra 4 s de quadros: latência (carimbo → gravação no quadro compartilhado) e conteúdo
+        let src = FrameSource::open(&rpath).unwrap();
+        let (mut last_n, mut lats, mut best, mut shot) = (0u64, vec![], 0f64, None);
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < Duration::from_secs(4) {
+            if let Some((rw, rh, n, rgba)) = src.read() {
+                if n != last_n && rw == w && rh == h {
+                    last_n = n;
+                    let ts = src.ts() as u32; let st = read_stamp(&rgba, w);
+                    lats.push(ts.wrapping_sub(st) as i32);
+                    if shot.is_none() || n % 40 == 0 { shot = Some(rgba); }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(8)).await;
+        }
+        let rgba = shot.expect("sem quadros");
+        // conteúdo: o quadro recebido tem de bater com algum quadro do padrão (a barra anda); procura o melhor
+        let mut bgr = rgba.clone(); for p in bgr.chunks_mut(4) { p.swap(0, 2); }
+        for t in 0..160 { let mut e = test_pattern(w, h, t); for q in e[..16 * w * 4].chunks_mut(4) { q[0] = 0; } let mut r = bgr.clone(); for q in r[..16 * w * 4].chunks_mut(4) { q[0] = 0; } let p = psnr(&e, &r); if p > best { best = p; } }
+        image::RgbaImage::from_raw(w as u32, h as u32, rgba).unwrap().save(dir.join(format!("recebido-{round}.png"))).unwrap();
+        lats.sort();
+        let (n, p50, p95, avg) = (lats.len(), lats[lats.len() / 2], lats[lats.len() * 95 / 100], lats.iter().sum::<i32>() as f64 / lats.len() as f64);
+        eprintln!("round {round}: {n} quadros em 4 s ({:.1} fps), latência captura→quadro p50 {p50} ms p95 {p95} ms média {avg:.1} ms, PSNR conteúdo {best:.1} dB", n as f64 / 4.0);
+        assert!(n >= 40, "poucos quadros: {n}");
+        assert!(best > 25.0, "conteúdo diferente do enviado: PSNR {best}");
+        assert!(sent_png.exists());
+        // parar: B é avisado e a transmissão some; depois recomeça na rodada seguinte (renegociação nos dois sentidos)
+        a.cmd.send(MeshCmd::ShareStop).await.unwrap();
+        wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await.expect("B não soube que parou");
+    }
+    let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
+    eprintln!("provas em {}", dir.display());
+}
+
+/// Medição com a tela real (não roda por padrão): `cargo test --release -- --ignored --nocapture real_screen_share_stats`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn real_screen_share_stats() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "tela2", ia);
+    let mut b = node(port, PB, "Beto", "tela2", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-real-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let hm: isize = crate::capture::list_sources(&dir)["screens"][0]["id"].as_str().unwrap().parse().unwrap();
+    let rpath = dir.join("recebido.bin");
+    for (height, fps, kbps) in [(720usize, 30u32, 0u32), (1080, 30, 0), (1080, 60, 0), (1440, 30, 0), (2160, 30, 0)] {
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into() }, preview: None, dump: None }).await.unwrap();
+        wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
+        b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
+        wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await;   // descarta a 1ª janela (parcial)
+        let st = wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await.expect("stats");
+        let st2 = wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await.expect("stats2");
+        let src = FrameSource::open(&rpath).ok().and_then(|s| s.read()).map(|(w, h, n, _)| (w, h, n));
+        eprintln!("{height}p{fps}: enviado {}x{} {} fps {} kbps, codificação {} ms/quadro, CPU do core {}% | {} ; recebido {:?}", st2["w"], st2["h"], st2["fps"], st2["kbps"], st2["enc_ms"], st2["cpu_pct"], st["cpu_pct"], src);
+        a.cmd.send(MeshCmd::ShareStop).await.unwrap();
+        wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await;
+    }
+}

@@ -1,8 +1,10 @@
 /* Teste de fumaça: sidecar real + cliente HTTP + JSON. Usa %APPDATA%\Briks-CUI (não toca no Briks de produção). */
 #include "../src/backend.h"
 #include "../src/json.h"
+#include <math.h>
 #include "../src/layout.h"
 #include "../src/core.h"
+#include "../src/drag_stack.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -92,6 +94,80 @@ static void layout_tests(void) {
     CHECK(layout_valid(&back) && layout_count(&back) == 3, "layout anterior fica intacto quando o JSON é inválido");
 }
 
+/* ---- pilha levantada: mola, inclinação por velocidade e fases ---- */
+static void pile_tests(void) {
+    spring1 s = { 0, 0 };
+    for (int i = 0; i < 90; i++) spring_step(&s, 100, 1.0f / 60, 400, 1.0f);
+    CHECK(fabsf(s.x - 100) < 1.0f, "mola crítica chega ao alvo em 1,5 s (%.2f)", s.x);
+    spring1 e = { 0, 0 }; float peak = 0;
+    for (int i = 0; i < 120; i++) { spring_step(&e, 1, 1.0f / 60, 380, 0.5f); if (e.x > peak) peak = e.x; }
+    CHECK(peak > 1.05f && peak < 1.4f && fabsf(e.x - 1) < 0.01f, "mola elástica passa do alvo (pico %.3f) e assenta", peak);
+    spring1 a = { 0, 0 }, b = { 0, 0 };
+    for (int i = 0; i < 30; i++) spring_step(&a, 50, 1.0f / 30, 300, 0.8f);
+    for (int i = 0; i < 120; i++) spring_step(&b, 50, 1.0f / 120, 300, 0.8f);
+    CHECK(fabsf(a.x - b.x) < 1.5f, "resultado independe do passo de tempo (%.2f vs %.2f)", a.x, b.x);
+    spring1 big = { 0, 0 }; spring_step(&big, 10, 0.5f, 5000, 0.7f);
+    CHECK(isfinite(big.x) && fabsf(big.x) < 100, "passo grande não explode");
+
+    CHECK(pile_tilt_deg(0) == 0 && pile_tilt_deg(1000) > 5 && pile_tilt_deg(-1000) < -5, "inclina para o lado em que se move");
+    CHECK(pile_tilt_deg(100000) <= 14.01f && pile_tilt_deg(-100000) >= -14.01f, "inclinação limitada a 14 graus");
+
+    pile_t p; pile_grab(&p, 300, 300);
+    CHECK(p.phase == PILE_HELD && fabsf(p.rot[2].x - 2) < 0.01f && fabsf(p.rot[0].x + 5) < 0.01f, "repouso: giros -5, -2 e +2");
+    for (int i = 0; i < 40; i++) pile_step(&p, 1.0f / 60);
+    CHECK(p.lift.x > 0.9f && pile_scale(&p) > 1.035f && pile_scale(&p) < 1.06f, "pegar levanta a pilha (escala %.3f)", pile_scale(&p));
+    float mx = 300; float max_tilt = 0;
+    for (int i = 0; i < 30; i++) { mx += 20; pile_follow(&p, mx, 300, 1.0f / 60); pile_step(&p, 1.0f / 60); if (p.rot[2].x > max_tilt) max_tilt = p.rot[2].x; }
+    CHECK(max_tilt > 6, "mover para a direita inclina a frente no sentido do movimento (%.1f)", max_tilt);
+    CHECK(p.x[0].x < p.x[2].x - 8, "a camada de trás fica atrasada em relação à da frente (%.0f < %.0f)", p.x[0].x, p.x[2].x);
+    for (int i = 0; i < 90; i++) { pile_follow(&p, mx, 300, 1.0f / 60); pile_step(&p, 1.0f / 60); }
+    CHECK(fabsf(p.rot[2].x - 2) < 0.6f && fabsf(p.rot[0].x + 5) < 0.6f, "parado, o giro volta ao repouso (%.2f, %.2f)", p.rot[2].x, p.rot[0].x);
+    CHECK(fabsf(p.x[2].x - mx) < 1.0f && fabsf(p.x[0].x - (mx - 10)) < 1.0f, "parado, as camadas assentam no empilhamento");
+    pile_follow(&p, mx - 40, 300, 1.0f / 60); pile_step(&p, 1.0f / 60);
+    CHECK(p.vx < 0, "velocidade negativa ao ir para a esquerda");
+    pile_release(&p, 700, 400);
+    CHECK(p.phase == PILE_DROP, "soltar inicia a descida");
+    float prev = 2, mono = 1; float s0 = pile_scale(&p);
+    for (int i = 0; i < 12; i++) { pile_step(&p, 1.0f / 60); float al = pile_alpha(&p); if (al > prev + 1e-4f) mono = 0; prev = al; }
+    CHECK(mono && pile_scale(&p) < s0, "descida: opacidade só diminui e a pilha encolhe (%.3f -> %.3f)", s0, pile_scale(&p));
+    for (int i = 0; i < 40; i++) pile_step(&p, 1.0f / 60);
+    CHECK(!pile_active(&p) && pile_alpha(&p) == 0, "termina em ~260 ms e some (sem redesenho ocioso)");
+    pile_grab(&p, 100, 100); for (int i = 0; i < 20; i++) { pile_follow(&p, 400, 300, 1.0f / 60); pile_step(&p, 1.0f / 60); }
+    pile_cancel(&p, 100, 100);
+    CHECK(p.phase == PILE_CANCEL, "Esc inicia a volta à origem");
+    for (int i = 0; i < 8; i++) pile_step(&p, 1.0f / 60);
+    CHECK(p.x[2].x < 380, "na volta o cartão da frente se aproxima da origem (%.0f)", p.x[2].x);
+    for (int i = 0; i < 40; i++) pile_step(&p, 1.0f / 60);
+    CHECK(!pile_active(&p), "a volta termina");
+    pile_t idle = { 0 }; pile_step(&idle, 0.016f);
+    CHECK(!pile_active(&idle) && idle.phase == PILE_IDLE, "ocioso: nada anima");
+    /* arte do cartão: tamanho e grades */
+    float cw, ch;
+    stack_card_size(P_CHAT, 790, 777, &cw, &ch);
+    CHECK(cw >= 150 && cw <= 200 && ch >= 100 && ch <= 128, "cartão da conversa dentro dos limites (%.0fx%.0f)", cw, ch);
+    stack_card_size(P_NAV, 270, 777, &cw, &ch);
+    CHECK(cw >= 150 && cw < 170 && ch >= 100 && ch <= 128, "painel alto vira cartão estreito com mínimo (%.0fx%.0f)", cw, ch);
+    stack_card_size(P_SERVERS, 76, 777, &cw, &ch); float sw = cw;
+    stack_card_size(P_VOICE, 400, 300, &cw, &ch);
+    CHECK(sw >= 176 && cw >= 168, "servidores e voz ganham largura mínima para a grade (%.0f, %.0f)", sw, cw);
+    stack_card_size(P_CHAT, 1000, 100, &cw, &ch);
+    CHECK(cw <= 200 && ch >= 100, "painel muito largo respeita o teto (%.0fx%.0f)", cw, ch);
+    stack_grid g;
+    g = stack_voice_grid(1); CHECK(g.cols == 1 && g.rows == 1 && g.cells == 1 && !g.plus_n, "voz: 1 pessoa = 1 bloco");
+    g = stack_voice_grid(3); CHECK(g.cols == 3 && g.rows == 1 && g.cells == 3, "voz: 3 pessoas em uma linha");
+    g = stack_voice_grid(4); CHECK(g.cols == 2 && g.rows == 2 && g.cells == 4, "voz: 4 pessoas = 2x2");
+    g = stack_voice_grid(5); CHECK(g.cols == 3 && g.rows == 2 && g.cells == 5 && !g.plus_n, "voz: 5 pessoas = 3x2 com 5 blocos");
+    g = stack_voice_grid(6); CHECK(g.cols == 3 && g.rows == 2 && g.cells == 6 && !g.plus_n, "voz: 6 pessoas = 3x2 cheio");
+    g = stack_voice_grid(9); CHECK(g.cols == 3 && g.rows == 2 && g.cells == 6 && g.plus_n == 4, "voz: 9 pessoas = 3x2 com +4 no último");
+    g = stack_voice_grid(0); CHECK(g.cells == 1, "voz: 0 vira 1 bloco");
+    g = stack_servers_grid(0); CHECK(g.cols == 6 && g.rows == 1 && g.cells == 2 && !g.plus_n, "servidores: só B e + quando não há comunidades");
+    g = stack_servers_grid(3); CHECK(g.cells == 5 && g.rows == 1 && !g.plus_n, "servidores: 3 comunidades = 5 quadrados em uma linha");
+    g = stack_servers_grid(5); CHECK(g.cells == 7 && g.rows == 2, "servidores: 7 quadrados quebram para a 2a linha");
+    g = stack_servers_grid(10); CHECK(g.cells == 12 && g.rows == 2 && !g.plus_n, "servidores: exatamente 12 cabem sem +N");
+    g = stack_servers_grid(11); CHECK(g.cells == 12 && g.plus_n == 2, "servidores: 13 itens, o 12o vira +2 (%d)", g.plus_n);
+    g = stack_servers_grid(40); CHECK(g.cells == 12 && g.plus_n == 31, "servidores: 42 itens, o 12o vira +31 (%d)", g.plus_n);
+}
+
 /* ---- reajuste ao vivo: prévia, histerese e interpolação ---- */
 static void live_tests(void) {
     const lrect area = { 10, 10, 1260, 777 };
@@ -176,6 +252,7 @@ static void core_tests(void) {
 
 int main(void) {
     layout_tests();
+    pile_tests();
     live_tests();
     core_tests();
     bk_start();

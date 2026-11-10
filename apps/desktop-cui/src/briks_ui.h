@@ -107,6 +107,13 @@ void rtc_pump(app_state_t *s);                           /* a cada quadro: conso
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */
 
+/* Pilha levantada: grupos 0..2 = cartões (atrás, meio, frente), 3 = âncora de captura do vidro (alfa 0). O dock desenha cada grupo sem giro entre
+   marcadores PILE_MARK(g)...PILE_MARK_END e chama briks_pile_set antes do quadro; glass.c gira/escala/esmaece os vértices do grupo. */
+#define PILE_GROUPS 4
+#define PILE_MARK(g)  CUI_RGBA(0x5A17C100 | ((g) + 1))
+#define PILE_MARK_END CUI_RGBA(0x5A17C1FF)
+void briks_pile_set(int group, float pivot_x, float pivot_y, float angle_deg, float scale, float alpha);
+void briks_pile_clear(void);
 bool briks_glass_init(cui_app *app);        /* glass.c: desfoque real por trás dos painéis B_GLASS* */
 void briks_glass_shutdown(void);
 void briks_apply_theme(cui_ctx *ui);

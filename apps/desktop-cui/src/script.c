@@ -9,8 +9,12 @@
  *   pick <painel>          escolhe o painel no menu "Adicionar painel" (entra no modo "clique numa zona")
  *   esc                    aperta Esc (cancela o arraste)
  *   restore                restaura o layout padrão
+ *   voice N | servers N    (demo da pilha) pessoas na call / comunidades na arte do cartão; art <painel> força a arte
  *   demo <modo>            não usado no vídeo; reservado */
 #include "briks_ui.h"
+#include "drag_stack_ui.h"
+#include "layout.h"
+static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -71,6 +75,9 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "pick")) { char *k = strtok(NULL, " "); if (k) dock_script_pick(k); }
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }
         else if (!strcmp(cmd, "restore")) dock_script_restore();
+        else if (!strcmp(cmd, "art")) { char *n = strtok(NULL, " "); drag_stack_set_art(n ? panel_from_name(n) : -1); }
+        else if (!strcmp(cmd, "voice")) { char *n = strtok(NULL, " "); demo_voice_n = n ? atoi(n) : -1; drag_stack_set_demo(demo_voice_n, demo_servers_n); }
+        else if (!strcmp(cmd, "servers")) { char *n = strtok(NULL, " "); demo_servers_n = n ? atoi(n) : -1; drag_stack_set_demo(demo_voice_n, demo_servers_n); }
         else if (!strcmp(cmd, "wait")) { char *n = strtok(NULL, " "); timed_total = timed_left = n ? atoi(n) : 1; timed_move = false; }
         else if (!strcmp(cmd, "to")) {
             char *a = strtok(NULL, " "), *b = strtok(NULL, " "), *c = NULL;

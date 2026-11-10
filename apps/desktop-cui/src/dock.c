@@ -2,6 +2,8 @@
  * o menu "+ Painel" e a persistência em %APPDATA%\Briks-CUI\layout.json. Os painéis animam quando o layout muda e a pré-visualização é ao vivo no arraste; parado, não redesenha. */
 #include "briks_ui.h"
 #include "layout.h"
+#include "drag_stack.h"
+#include "drag_stack_ui.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,10 +19,17 @@ typedef struct { bool active; int kind; bool from_menu; } drag_t;
 static drag_t drag;
 static int resizing = -1;          /* nó de divisão sendo arrastado */
 static bool prev_down;
+static bool drag_cancelled;
 static bool menu_open;
 static bool fake_mouse; static cui_vec2 fake_pos;
 static lrect last_r[LAYOUT_MAX_NODES];   /* retângulos do último quadro (para o roteiro) */
 static float last_vp_w = 1280;
+
+/* ---- pilha levantada: prévia que acompanha o cursor (dinâmica em drag_stack.c, desenho em drag_stack_ui.c, vidro/giro em glass.c) ---- */
+static pile_t pile;
+static bool prev_drag_active;
+static int pile_kind = -1;
+static float pile_w = 170, pile_h = 104, pile_ox, pile_oy;   /* tamanho do cartão e origem (centro ao pegar) */
 
 static void save_layout(void) {
     if (demo_mode || !file_path[0]) return;
@@ -172,10 +181,29 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         zone_hold_update(&hold, tk, z, dt, HOLD_S);
         previewing = layout_preview(&L, drag.kind, drag.from_menu, hold.cur_target, hold.cur_zone, &P);
         bool release = drag.from_menu ? cui_mouse_clicked(ui, CUI_MOUSE_LEFT) : (prev_down && !down && !fake_mouse);
-        if (release) { if (previewing) { L = P; save_layout(); } drag.active = false; zone_hold_reset(&hold); }
-        else if (cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) || cui_key_pressed(ui, CUI_KEY_ESCAPE)) { drag.active = false; zone_hold_reset(&hold); }
+        if (release && getenv("BRIKS_DBG")) fprintf(stderr, "release: down=%d prev=%d fake=%d from_menu=%d\n", down, prev_down, fake_mouse, drag.from_menu);
+        if (release) { if (previewing) { L = P; save_layout(); } drag.active = false; drag_cancelled = false; zone_hold_reset(&hold); }
+        else if (cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) || cui_key_pressed(ui, CUI_KEY_ESCAPE)) { drag_cancelled = true; if (getenv("BRIKS_DBG")) fprintf(stderr, "cancel: right=%d esc=%d\n", cui_mouse_clicked(ui, CUI_MOUSE_RIGHT), cui_key_pressed(ui, CUI_KEY_ESCAPE)); drag.active = false; zone_hold_reset(&hold); }
         if (!drag.active) { P = L; previewing = false; layout_compute(&L, area, c.r); }
     }
+    /* pilha: nasce ao começar o arraste; ao soltar desce até o slot, no Esc volta à origem */
+    int pile_end = 0;   /* 1 = soltou, 2 = cancelou */
+    if (prev_drag_active && !drag.active) pile_end = drag_cancelled ? 2 : 1;
+    if (drag.active && !prev_drag_active) {
+        lrect src = (drag.kind >= 0 && anim_on[drag.kind]) ? anim[drag.kind] : (lrect){ 0, 0, 300, 200 };
+        stack_card_size(drag.kind, src.w, src.h, &pile_w, &pile_h);
+        pile_kind = drag.kind;
+        pile_ox = fminf(fmaxf(mp.x + 16 + pile_w * 0.5f, pile_w * 0.5f + 8), vp.x - pile_w * 0.5f - 8);
+        pile_oy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), vp.y - pile_h * 0.5f - 8);
+        pile_grab(&pile, pile_ox, pile_oy);
+    }
+    prev_drag_active = drag.active;
+    if (drag.active) {
+        float fx = fminf(fmaxf(mp.x + 16 + pile_w * 0.5f, pile_w * 0.5f + 8), vp.x - pile_w * 0.5f - 8);
+        float fy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), vp.y - pile_h * 0.5f - 8);
+        pile_follow(&pile, fx, fy, dt);
+    }
+    if (getenv("BRIKS_DBG")) { static int fr; fprintf(stderr, "f%d mp=%.0f,%.0f down=%d drag=%d prev=%d prv=%d\n", fr++, mp.x, mp.y, down, drag.active, prev_down, previewing); }
     prev_down = down;
     memcpy(last_r, c.r, sizeof last_r);
 
@@ -194,7 +222,14 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         if (snap_all || resizing >= 0) anim[k] = tgt[k];
         else moving |= lrect_step(&anim[k], tgt[k], dt, g_perf == PERF_SIMPLE ? ANIM_TAU_SIMPLE : ANIM_TAU);
     }
-    if (moving || drag.active) cui_request_redraw(ui);   /* parado = nenhum redesenho */
+    if (pile_end == 1) {   /* desce até o centro do slot onde o painel se acomoda */
+        int k = pile_kind;
+        if (k >= 0 && present[k]) pile_release(&pile, tgt[k].x + tgt[k].w * 0.5f, tgt[k].y + tgt[k].h * 0.5f);
+        else pile_cancel(&pile, pile_ox, pile_oy);
+        if (pile.phase == PILE_HELD) pile_cancel(&pile, pile_ox, pile_oy);
+    } else if (pile_end == 2) pile_cancel(&pile, pile_ox, pile_oy);
+    pile_step(&pile, dt);
+    if (moving || drag.active || pile_active(&pile)) cui_request_redraw(ui);   /* parado = nenhum redesenho */
     last_vp_w = vp.x; last_vp_h = vp.y;
     (void)previewing;
 
@@ -231,41 +266,6 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         }
         if (drag.active) {
             cui_canvas(ui, "dock-over", CUI_FILL, CUI_FILL, paint_over, &o, sizeof o);
-            /* miniatura no cursor: só enquanto NENHUMA zona de encaixe foi detectada; ao detectar, some e vale a prévia do layout */
-            if (!previewing) {
-                /* miniatura simplificada da janela: mesma proporção do painel, cabeçalho e linhas esquemáticas do conteúdo */
-                lrect src = present[dk] ? anim[dk] : (lrect){ 0, 0, 300, 200 };
-                if (dk < 0) src = (lrect){ 0, 0, 300, 200 };
-                float sc = fminf(220.0f / fmaxf(src.w, 1), 150.0f / fmaxf(src.h, 1));
-                float bw = fmaxf(src.w * sc, 120), bh = fmaxf(src.h * sc, 84);
-                bool is_chat = dk >= 0 && strstr(panel_name(dk), "chat") != NULL;
-                int rows = (int)((bh - 46) / 15); if (rows < 1) rows = 1; if (rows > 6) rows = 6;
-                static const float frac[6] = { 0.62f, 0.8f, 0.46f, 0.72f, 0.55f, 0.68f };
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START,
-                        .pad_left = fminf(mp.x + 14, vp.x - bw - 8), .pad_top = fminf(mp.y + 14, vp.y - bh - 8)) {
-                    cui_box(ui, .width = CUI_PX(bw), .height = CUI_PX(bh), .radius = 14, .pad = 10, .gap = 7, .bg = CUI_RGBA(0x2b1752ea),
-                            .border = 1, .border_color = CUI_RGBA(0xc4b0ffb0)) {
-                        cui_box(ui, .dir = CUI_ROW, .gap = 6, .align = CUI_ALIGN_CENTER, .height = CUI_PX(16)) {
-                            cui_icon(ui, is_chat ? CUI_ICON_MESSAGE_SQUARE : CUI_ICON_USERS, 11, B_MUTED);
-                            cui_text(ui, panel_title(dk), .size = 11, .color = B_MUTED);
-                        }
-                        for (int i = 0; i < rows; i++) {
-                            float w = (bw - 20) * frac[i];
-                            if (is_chat) {
-                                bool mine = (i % 2) == 1;
-                                cui_box(ui, .width = CUI_FILL, .height = CUI_PX(12), .justify = mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START) {
-                                    cui_box(ui, .width = CUI_PX(w * 0.8f), .height = CUI_PX(12), .radius = 6, .bg = mine ? CUI_RGBA(0x8b5cf666) : CUI_RGBA(0xffffff22)) {}
-                                }
-                            } else {
-                                cui_box(ui, .dir = CUI_ROW, .gap = 6, .align = CUI_ALIGN_CENTER, .height = CUI_PX(12)) {
-                                    cui_box(ui, .width = CUI_PX(10), .height = CUI_PX(10), .radius = 5, .bg = CUI_RGBA(0xffffff33)) {}
-                                    cui_box(ui, .width = CUI_PX(w * 0.75f), .height = CUI_PX(6), .radius = 3, .bg = CUI_RGBA(0xffffff22)) {}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             if (drag.from_menu) {
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad = 18, .pad_top = 64) {
                     cui_box(ui, .pad_x = 16, .pad_y = 9, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1, .border_color = B_GLASS_BORDER) {
@@ -273,6 +273,15 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
                     }
                 }
             }
+        }
+        if (pile_active(&pile)) {
+            drag_stack_draw pd; memset(&pd, 0, sizeof pd); pd.s = s;
+            float sc = pile_scale(&pile), ax = pile.x[PILE_LAYERS - 1].x, ay = pile.y[PILE_LAYERS - 1].x;
+            for (int i = 0; i < PILE_LAYERS; i++) {   /* afastamentos entre os cartões escalam com a pilha */
+                pd.cx[i] = ax + (pile.x[i].x - ax) * sc; pd.cy[i] = ay + (pile.y[i].x - ay) * sc; pd.ang[i] = pile.rot[i].x;
+            }
+            pd.scale = sc; pd.alpha = pile_alpha(&pile); pd.lift = pile.lift.x; pd.w = pile_w; pd.h = pile_h; pd.kind = pile_kind;
+            cui_canvas(ui, "dock-pile", CUI_FILL, CUI_FILL, drag_stack_paint, &pd, sizeof pd);
         }
     }
 

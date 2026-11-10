@@ -15,6 +15,7 @@ __declspec(dllimport) const unsigned char *APIENTRY glGetString(unsigned int nam
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef unsigned int GLuint; typedef int GLint; typedef int GLsizei; typedef unsigned int GLenum;
 typedef float GLfloat; typedef char GLchar; typedef unsigned char GLboolean;
@@ -95,7 +96,7 @@ typedef struct {
     GLint t_tex, t_vp, t_rect;
     GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
     GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
-    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl;
+    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha;
     double ms_last, ms_sum; int frames;
     bool log;
 } glass_t;
@@ -147,11 +148,11 @@ static const char *FS_UP =
 static const char *FS_COMP =
     "#version 330 core\n"
     "in vec2 v_px; uniform sampler2D u_tex; uniform vec2 u_vp; uniform vec4 u_box; uniform vec4 u_rad;\n"
-    "uniform float u_sat; uniform float u_hl; out vec4 f;\n"
+    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; out vec4 f;\n"
     "float sd(vec2 p, vec2 b, vec4 r){ float rr = p.x < 0.0 ? (p.y < 0.0 ? r.x : r.w) : (p.y < 0.0 ? r.y : r.z);\n"
     "  rr = min(rr, min(b.x, b.y)); vec2 q = abs(p) - b + rr; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr; }\n"
-    "void main(){ vec2 p = v_px - u_box.xy; vec2 b = u_box.zw;\n"
-    "  float d = sd(p, b, u_rad); float cov = clamp(0.5 - d, 0.0, 1.0); if (cov <= 0.0) discard;\n"
+    "void main(){ vec2 p = v_px - u_box.xy; p = vec2(u_rot.x * p.x + u_rot.y * p.y, -u_rot.y * p.x + u_rot.x * p.y); vec2 b = u_box.zw;\n"
+    "  float d = sd(p, b, u_rad); float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; if (cov <= 0.0) discard;\n"
     "  vec3 c = texture(u_tex, gl_FragCoord.xy / u_vp).rgb;\n"
     "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = clamp(mix(vec3(l), c, u_sat), 0.0, 1.0);\n"
     "  /* vidro: luz de borda suave vinda do canto superior esquerdo; normal da borda pelo gradiente do SDF, caimento suave para dentro */\n"
@@ -254,7 +255,7 @@ static void capture_and_blur(int w, int h, GLuint target_fb) {
         fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset * g_th.blur_offset, false);
 }
 
-typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; } glass_quad;
+typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; int grp; float rc, rs, alpha; } glass_quad;
 
 static int glass_layer(cui_color c) {
     if (c.r == B_GLASS.r && c.g == B_GLASS.g && c.b == B_GLASS.b && c.a == B_GLASS.a) return 0;
@@ -277,7 +278,11 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glBindTexture(GL_TEXTURE_2D, G.lvl[1]);
     glUniform1i(G.c_tex, 0);
     glUniform2f(G.c_vp, (float)W, (float)H);
-    glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
+    float ext = q->grp >= 0 ? sqrtf(q->hw * q->hw + q->hh * q->hh) + 2 : 0;   /* girado: caixa envolvente maior */
+    if (ext > 0) glUniform4f(G.c_rect, q->cx - ext, q->cy - ext, ext * 2, ext * 2);
+    else glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
+    glUniform2f(G.c_rot, q->grp >= 0 ? q->rc : 1.0f, q->grp >= 0 ? q->rs : 0.0f);
+    glUniform1f(G.c_alpha, q->grp >= 0 ? q->alpha : 1.0f);
     glUniform4f(G.c_box, q->cx, q->cy, q->hw, q->hh);
     glUniform4f(G.c_rad, q->r[0], q->r[1], q->r[2], q->r[3]);
     glUniform1f(G.c_sat, g_th.saturation);
@@ -291,8 +296,68 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glBindVertexArray(0);
 }
 
-static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *gl, void *user) {
+/* ---- pilha levantada (prévia de arraste): cartões girados ----
+ * O dock desenha cada cartão em coordenadas sem giro, entre marcadores (retângulos 2x2 com cor mágica). Aqui os vértices entre
+ * marcadores são girados/escalados/esmaecidos em torno do pivô do grupo; os vidros dos cartões (cor B_GLASS_POPUP, camada 1) ganham o
+ * giro no shader e o degradê de 145° de branco 17% -> 5% nos vértices. */
+typedef struct { bool on; float px, py, rc, rs, scale, alpha; } pile_xf;
+static pile_xf PXF[PILE_GROUPS];
+void briks_pile_set(int g, float px, float py, float ang_deg, float scale, float alpha) {
+    if (g < 0 || g >= PILE_GROUPS) return;
+    float a = ang_deg * 3.14159265f / 180.0f;
+    PXF[g] = (pile_xf){ true, px, py, cosf(a), sinf(a), scale, alpha };
+}
+void briks_pile_clear(void) { memset(PXF, 0, sizeof PXF); }
+
+static bool pile_marker(const cui_vertex *v, int *grp) {
+    if (v->mode != CUI_SHADE_RRECT || v->color.r != 0x5A || v->color.g != 0x17 || v->color.b != 0xC1) return false;
+    *grp = v->color.a == 0xFF ? -1 : (int)v->color.a - 1;
+    return true;
+}
+static uint8_t scale_a(uint8_t a, float k) { float f = a * k; return (uint8_t)(f < 0 ? 0 : f > 255 ? 255 : f + 0.5f); }
+
+/* devolve dd (sem marcadores) ou uma cópia transformada; tag[i] = grupo do vértice i (ou -1) */
+static const cui_draw_data *pile_transform(const cui_draw_data *dd, cui_draw_data *out, cui_vertex **vcopy, int **tag) {
+    *vcopy = NULL; *tag = NULL;
+    bool any = false;
+    for (int i = 0; i + 2 < dd->index_count && !any; i += 3) { int g; any = pile_marker(&dd->vertices[dd->indices[i]], &g); }
+    if (!any) return dd;
+    cui_vertex *vv = malloc(sizeof *vv * (size_t)dd->vertex_count); int *tg = malloc(sizeof *tg * (size_t)dd->vertex_count);
+    memcpy(vv, dd->vertices, sizeof *vv * (size_t)dd->vertex_count);
+    for (int i = 0; i < dd->vertex_count; i++) tg[i] = -1;
+    int grp = -1;
+    for (int i = 0; i + 2 < dd->index_count; i += 3) {
+        int g;
+        if (pile_marker(&dd->vertices[dd->indices[i]], &g)) {
+            grp = g;
+            for (int k = 0; k < 3; k++) { cui_vertex *v = &vv[dd->indices[i + k]]; v->color.a = 0; v->border_color.a = 0; }
+            continue;
+        }
+        if (grp < 0 || grp >= PILE_GROUPS || !PXF[grp].on) continue;
+        const pile_xf *x = &PXF[grp];
+        for (int k = 0; k < 3; k++) {
+            uint32_t id = dd->indices[i + k];
+            if (tg[id] >= 0) continue;
+            tg[id] = grp;
+            cui_vertex *v = &vv[id];
+            float dx = (v->x - x->px) * x->scale, dy = (v->y - x->py) * x->scale;
+            v->x = x->px + dx * x->rc - dy * x->rs; v->y = x->py + dx * x->rs + dy * x->rc;
+            if (v->mode == CUI_SHADE_RRECT || v->mode == CUI_SHADE_SHADOW) {
+                v->lx *= x->scale; v->ly *= x->scale; v->hw *= x->scale; v->hh *= x->scale;
+                v->r_tl *= x->scale; v->r_tr *= x->scale; v->r_br *= x->scale; v->r_bl *= x->scale; v->border *= x->scale;
+            }
+            if (glass_layer(v->color) < 0) v->color.a = scale_a(v->color.a, x->alpha);   /* vidro: a cor exata é a chave de detecção; o alfa entra no degradê */
+            v->border_color.a = scale_a(v->border_color.a, x->alpha);
+        }
+    }
+    *out = *dd; out->vertices = vv; *vcopy = vv; *tag = tg;
+    return out;
+}
+
+static void render_hook(cui_app *app, const cui_draw_data *dd_in, cui_gl_renderer *gl, void *user) {
     (void)app; (void)user;
+    cui_draw_data dd_copy; cui_vertex *vcopy; int *tag;
+    const cui_draw_data *dd = pile_transform(dd_in, &dd_copy, &vcopy, &tag);
     LARGE_INTEGER t0, t1, fq;
     static int seen; seen++;
     const bool timing = G.log || seen <= 10;   /* os primeiros quadros alimentam a detecção de hardware fraco */
@@ -313,14 +378,27 @@ static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *
         int run = 0;
         for (uint32_t i = cm->index_offset; i + 2 < cm->index_offset + cm->index_count; i += 3) {
             const cui_vertex *v = &dd->vertices[dd->indices[i]];
-            int layer = (v->mode == CUI_SHADE_RRECT) ? glass_layer(v->color) : -1;
+            const cui_vertex *ov = &dd_in->vertices[dd->indices[i]];   /* cor ORIGINAL: o degradê da pilha reescreve a cópia */
+            int layer = (ov->mode == CUI_SHADE_RRECT) ? glass_layer(ov->color) : -1;
             if (layer < 0) { run = 0; continue; }
+            int pg = tag ? tag[dd->indices[i]] : -1;
+            if (pg >= 0) {   /* vidro de cartão da pilha: degradê de 145° (branco 17% -> 5%) pelos vértices, já com a opacidade do grupo */
+                for (int k = 0; k < 3; k++) {
+                    cui_vertex *w = &vcopy[dd->indices[i + k]];
+                    float t = 0.5f + 0.5f * (0.5736f * (w->hw > 0 ? w->lx / w->hw : 0) + 0.8192f * (w->hh > 0 ? w->ly / w->hh : 0));
+                    t = t < 0 ? 0 : t > 1 ? 1 : t;
+                    w->color = (cui_color){ 255, 255, 255, scale_a((uint8_t)255, (0.17f + (0.05f - 0.17f) * t) * PXF[pg].alpha) };
+                }
+            }
             if (run % 2 == 0) {
                 if (nq == qcap) { qcap = qcap ? qcap * 2 : 16; qs = realloc(qs, sizeof *qs * (size_t)qcap); }
                 glass_quad *q = &qs[nq++];
-                q->idx = (int)i; q->cx = v->x - v->lx; q->cy = v->y - v->ly; q->hw = v->hw; q->hh = v->hh;
+                q->grp = pg; q->alpha = pg >= 0 ? PXF[pg].alpha : 1; q->rc = pg >= 0 ? PXF[pg].rc : 1; q->rs = pg >= 0 ? PXF[pg].rs : 0;
+                q->idx = (int)i; q->hw = v->hw; q->hh = v->hh;
+                if (pg >= 0) { q->cx = v->x - (q->rc * v->lx - q->rs * v->ly); q->cy = v->y - (q->rs * v->lx + q->rc * v->ly); }
+                else { q->cx = v->x - v->lx; q->cy = v->y - v->ly; }
                 q->r[0] = v->r_tl; q->r[1] = v->r_tr; q->r[2] = v->r_br; q->r[3] = v->r_bl;
-                q->layer = layer; q->tint_a = v->color.a / 255.0f; q->cmd = c;
+                q->layer = layer; q->tint_a = pg >= 0 ? 0.11f : v->color.a / 255.0f; q->cmd = c;
             }
             run++;
         }
@@ -339,7 +417,7 @@ static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *
             cui_draw_data part = *dd; part.commands = out; part.command_count = nout;
             cui_gl_render(gl, &part, first); first = false; nout = 0;
             if (q->layer != cur_layer) { capture_and_blur(W, H, tgt); cur_layer = q->layer; }
-            draw_glass(q, W, H, &cm->clip, tgt);
+            if (q->grp < 0 || q->alpha > 0.004f) draw_glass(q, W, H, &cm->clip, tgt);
             cur = (uint32_t)q->idx;
             qi++;
         }
@@ -360,6 +438,7 @@ done:
     }
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fb);
     glViewport(vp[0], vp[1], vp[2], vp[3]);
+    free(vcopy); free(tag);
     if (timing) {
         glFinish();
         QueryPerformanceCounter(&t1);
@@ -388,7 +467,7 @@ bool briks_glass_init(cui_app *app) {
     G.u_tex = U(G.p_up, "u_tex"); G.u_out = U(G.p_up, "u_out"); G.u_texel = U(G.p_up, "u_texel"); G.u_off = U(G.p_up, "u_off");
     G.u_vp = U(G.p_up, "u_vp"); G.u_rect = U(G.p_up, "u_rect");
     G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
-    G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl");
+    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl");
 #undef U
     if (G.p_dith) { G.t_tex = glGetUniformLocation(G.p_dith, "u_tex"); G.t_vp = glGetUniformLocation(G.p_dith, "u_vp"); G.t_rect = glGetUniformLocation(G.p_dith, "u_rect"); glGenFramebuffers(1, &G.hdr_fbo); }
     glGenFramebuffers(1, &G.fbo);

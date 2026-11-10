@@ -29,7 +29,7 @@ receptor: RTP ─► H264 (Media Foundation) ─► NV12→RGBA ─► arquivo m
 
 ## Quadro compartilhado (core → UI)
 
-Arquivo mapeado de tamanho fixo em `<dados>/video/` (`preview.bin` para a prévia local, `remote-<peer>.bin` por espectado):
+Arquivo mapeado de tamanho fixo em `<dados>/video/` (`preview.bin` para a prévia local, `remote-<peer>.bin` por transmissor assistido):
 
 | deslocamento | campo |
 |---|---|

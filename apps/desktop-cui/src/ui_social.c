@@ -63,7 +63,7 @@ static void bubble_note(cui_rect av, const char *text) {
 }
 static void abs_glass(cui_ctx *ui, float x, float y, float w, float h, float r, bool shadow) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = r, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = r, .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                 .elevation = shadow ? CUI_ELEVATION_RESTING : CUI_ELEVATION_NONE) {}
     }
 }
@@ -78,7 +78,7 @@ static void bubbles_draw(cui_ctx *ui) {
         abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior */
         abs_glass(ui, a.x + 31, a.y - 18, 14, 14, 7, false);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
-            cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 16, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+            cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                     .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffffff), .nowrap = true);
             }

@@ -38,6 +38,7 @@ static void frame(cui_ctx *ui) {
     profile_tick(&state);
     settings_tick();
     themes_tick(ui);
+    for (int k = 0; k < 5; k++) if (cui_shortcut(ui, CUI_MOD_ALT, (cui_key)(CUI_KEY_1 + k))) g_th.bubble_style = k + 1;   /* Alt+1..5: troca o estilo da bolha ao vivo */
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
         briks_gradient_bar(ui);

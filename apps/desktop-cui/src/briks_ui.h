@@ -155,10 +155,19 @@ bool script_capture(cui_app *app);
 
 /* Clique de verdade num contêiner: cui_last_hovered não serve para caixas simples (o "último componente" é o canvas do fundo,
    que cobre a janela e deixava qualquer clique acionar todos os itens). `id` é o .id da caixa, no escopo de id atual. */
+/* Estilo da bolha de status (liquid glass). Normal/Simplificado: o shader desenha tudo (glass.c). Mínimo: sem shader, preenchimento chapado violeta + borda. */
+static inline cui_color briks_bubble_bg(void) {
+    if (g_perf < PERF_MIN) return B_GLASS_BUBBLE;
+    static const unsigned c[6] = { 0, 0x7a56e8b0, 0xb59cff50, 0x5b2fb8d8, 0x9a64f0b0, 0xb08cff38 };
+    return CUI_RGBA(c[g_th.bubble_style]);
+}
+static inline cui_color briks_bubble_border(void) { return g_perf >= PERF_MIN ? CUI_RGBA(0xdcc8ff90) : CUI_RGBA(0x00000000); }
+static inline float briks_bubble_radius(float h) { return g_th.bubble_style == 2 ? 12.0f : g_th.bubble_style == 3 ? 10.0f : h * 0.5f; }
+
 /* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */
 static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     if (!text || !text[0]) return;
-    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = 14, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30), .align = CUI_ALIGN_CENTER) {
+    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = briks_bubble_radius(26), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(), .align = CUI_ALIGN_CENTER) {
         cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
     }
 }

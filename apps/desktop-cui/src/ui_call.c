@@ -1,6 +1,7 @@
 /* Tela de chamada: cabeçalho com abas em blocos, grade de tiles e barra de controles flutuante.
  * Medidas de apps/web/src/components/CallWorkspace.tsx + call-workspace.css / glass-layout.css. */
 #include "briks_ui.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -29,13 +30,26 @@ static void paint_avatar(cui_ctx *ui, cui_rect r, void *user) {
     cui_rect box = r;                                   /* o canvas é maior que o disco para o halo não ser cortado */
     float d = 128;
     r = (cui_rect){ box.x + (box.w - d) * 0.5f, box.y + (box.h - d) * 0.5f, d, d };
-    if (lvl > 0) {   /* falando: anel circular que cresce com o nível (sempre redondo, sem cantos vazando) */
-        float g = 8 + 10 * lvl, dd = d + 2 * g;
-        cui_color ring = CUI_RGB(0x57d28b); ring.a = (unsigned char)(70 + 140 * lvl);
-        cui_draw_rect(ui, (cui_rect){ r.x - g, r.y - g, dd, dd }, CUI_CORNERS(dd * 0.5f), ring);
+    /* halo radial: discos concêntricos com queda suave, todos dentro do canvas (nunca um retângulo de blur cortado) */
+    {
+        cui_vec2 c = { box.x + box.w * 0.5f, box.y + box.h * 0.5f };
+        float rmax = fminf(box.w, box.h) * 0.5f - 1, rmin = d * 0.5f;
+        const int N = 28;
+        for (int k = 0; k < N; k++) {
+            float t = (float)k / (N - 1);                       /* 0 fora .. 1 dentro */
+            float rad = rmax - (rmax - rmin) * t;
+            cui_color h = B_C3; h.a = (unsigned char)(2 + 5 * t * t);
+            cui_draw_circle(ui, c, rad, h);
+        }
+        if (lvl > 0) {   /* falando: anel fino e nítido (2,5 px) com brilho suave que cresce com o nível */
+            float gap = 7 + 3 * lvl;
+            cui_color glow = CUI_RGB(0x57d28b); glow.a = (unsigned char)(30 + 50 * lvl);
+            cui_color ring = CUI_RGB(0x57d28b); ring.a = (unsigned char)(150 + 100 * lvl);
+            float rg = rmin + gap;
+            cui_draw_rect_border(ui, (cui_rect){ c.x - rg - 3, c.y - rg - 3, (rg + 3) * 2, (rg + 3) * 2 }, CUI_CORNERS(rg + 3), CUI_RGBA(0x00000000), glow, 6);
+            cui_draw_rect_border(ui, (cui_rect){ c.x - rg, c.y - rg, rg * 2, rg * 2 }, CUI_CORNERS(rg), CUI_RGBA(0x00000000), ring, 2.5f);
+        }
     }
-    cui_color halo = B_C3; halo.a = 120;
-    cui_draw_shadow(ui, (cui_rect){ r.x + r.w * 0.2f, r.y + r.h * 0.2f, r.w * 0.6f, r.h * 0.6f }, CUI_CORNERS(r.w * 0.3f), 160, 0, (cui_vec2){ 0, 0 }, halo);
     cui_color sh = CUI_RGBA(0x00000066);
     cui_draw_shadow(ui, r, CUI_CORNERS(r.w * 0.5f), 18, 0, (cui_vec2){ 0, 6 }, sh);
     cui_draw_rect(ui, r, CUI_CORNERS(r.w * 0.5f), CUI_RGBA(0x8b5cf6ff));
@@ -75,7 +89,11 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
             cui_card_end(ui);
             if (!t->me) {
                 if (briks_clicked(ui, "lab")) act = TILE_MUTE;
-                cui_context_menu(ui, "pmenu") {
+                {   /* botão direito no rótulo: popover de vidro acima do rótulo (não o cobre) */
+                    cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "lab")); cui_vec2 mp = cui_mouse_pos(ui);
+                    if (cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && lr.w > 0 && mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h) cui_popover_open(ui, "pmenu");
+                }
+                cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
                     if (t->can_kick) {
@@ -83,6 +101,7 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
                         if (cui_menu_item(ui, "Expulsar da chamada…", .icon = CUI_ICON_PHONE, .danger = true)) act = TILE_KICK;
                     }
                 }
+                if (act != TILE_NONE) cui_popover_close(ui, "pmenu");
             }
         }
     }

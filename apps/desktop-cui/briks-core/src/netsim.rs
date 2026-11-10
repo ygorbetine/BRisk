@@ -39,6 +39,16 @@ pub fn strip_sdp(sdp: &str) -> String {
 
 struct Shaper { next_free: Instant }
 
+/// Tomada UDP com buffers grandes (os 64 kB padrão do Windows transbordam com rajadas de vídeo e criariam perda que não é da simulação).
+fn big_socket() -> Option<UdpSocket> {
+    let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).ok()?;
+    let _ = s.set_recv_buffer_size(4 << 20);
+    let _ = s.set_send_buffer_size(4 << 20);
+    s.bind(&"0.0.0.0:0".parse::<SocketAddr>().ok()?.into()).ok()?;
+    s.set_nonblocking(true).ok()?;
+    UdpSocket::from_std(s.into()).ok()
+}
+
 impl NetSim {
     pub fn set(&self, mbps: f64, loss_pct: f64) {
         self.limit_bps.store((mbps * 1e6) as u64, Ordering::Relaxed);
@@ -83,7 +93,7 @@ impl NetSim {
     async fn map(self: &Arc<Self>, target: SocketAddr) -> Option<u16> {
         let mut maps = self.maps.lock().await;
         if let Some(p) = maps.get(&target) { return Some(*p); }
-        let front = Arc::new(UdpSocket::bind("0.0.0.0:0").await.ok()?);
+        let front = Arc::new(big_socket()?);
         let port = front.local_addr().ok()?.port();
         maps.insert(target, port);
         let me = self.clone();
@@ -96,7 +106,7 @@ impl NetSim {
                 let back = match backs.get(&src) {
                     Some(b) => b.clone(),
                     None => {
-                        let Ok(b) = UdpSocket::bind("0.0.0.0:0").await else { continue };
+                        let Some(b) = big_socket() else { continue };
                         let b = Arc::new(b);
                         backs.insert(src, b.clone());
                         let (b2, front2, me2, down2) = (b.clone(), front.clone(), me.clone(), down.clone());

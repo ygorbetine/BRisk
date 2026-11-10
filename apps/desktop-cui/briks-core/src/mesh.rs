@@ -11,7 +11,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
@@ -267,7 +266,14 @@ impl Actor {
     async fn new_pc(&mut self, peer_id: &str, gen: u32, recv: Arc<RecvState>) -> Result<Arc<RTCPeerConnection>> {
         let mut m = MediaEngine::default();
         m.register_default_codecs()?;
-        let registry = register_default_interceptors(Registry::new(), &mut m)?;
+        // Interceptadores: relatórios RTCP, feedback TWCC (lado receptor) e GERADOR de NACK. O respondedor de NACK embutido fica de
+        // fora: ele retransmite sem limite nem espaçamento; as retransmissões são nossas, pelo pacer (share::pacer_task).
+        use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+        for parameter in ["", "pli"] { m.register_feedback(webrtc::rtp_transceiver::RTCPFeedback { typ: "nack".into(), parameter: parameter.into() }, RTPCodecType::Video); }
+        let mut registry = Registry::new();
+        registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder()));
+        let registry = webrtc::api::interceptor_registry::configure_rtcp_reports(registry);
+        let registry = webrtc::api::interceptor_registry::configure_twcc_receiver_only(registry, &mut m)?;
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
         {
@@ -494,6 +500,7 @@ impl Actor {
         match p.pc.add_track(track as Arc<dyn TrackLocal + Send + Sync>).await {
             Ok(sender) => {
                 let (s2, idr2, net, pid) = (sender.clone(), idr.clone(), self.net.clone(), id.to_string());
+                let nack_tx = self.vtrack.as_ref().map(|v| v.nack_tx.clone());
                 tokio::spawn(async move {
                     use webrtc::rtcp::receiver_report::ReceiverReport;
                     use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
@@ -519,7 +526,12 @@ impl Actor {
                                     e.updated = std::time::Instant::now();
                                 }
                             } else if let Some(nk) = any.downcast_ref::<TransportLayerNack>() {
-                                if nk.media_ssrc == ssrc { e.nacks += nk.nacks.iter().map(|p| 1 + p.lost_packets.count_ones() as u64).sum::<u64>(); }
+                                if nk.media_ssrc == ssrc {
+                                    let mut seqs = vec![];
+                                    for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
+                                    e.nacks += seqs.len() as u64;
+                                    if let Some(t) = &nack_tx { let _ = t.send(seqs); }
+                                }
                             }
                         }
                     }

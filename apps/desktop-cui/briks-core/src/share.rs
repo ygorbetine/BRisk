@@ -57,36 +57,72 @@ pub fn new_video_track() -> Arc<TrackLocalStaticRTP> {
 pub struct VideoOut {
     pub track: Arc<TrackLocalStaticRTP>,
     tx: mpsc::UnboundedSender<(Vec<u8>, u32, u32)>,
+    /// pedidos de retransmissão (números de sequência) vindos do RTCP dos espectadores
+    pub nack_tx: mpsc::UnboundedSender<Vec<u16>>,
     queued: Arc<AtomicU64>,
+    pub rtx_sent: Arc<AtomicU64>,
+    pub rtx_skipped: Arc<AtomicU64>,
 }
 impl VideoOut {
     pub fn new() -> Self {
         let track = new_video_track();
         let (tx, rx) = mpsc::unbounded_channel();
-        let queued = Arc::new(AtomicU64::new(0));
-        tokio::spawn(pacer_task(track.clone(), rx, queued.clone()));
-        VideoOut { track, tx, queued }
+        let (nack_tx, nack_rx) = mpsc::unbounded_channel();
+        let (queued, rtx_sent, rtx_skipped) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone()));
+        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped }
     }
 }
 
+const HISTORY: usize = 2048;
+
 /// Pacer: empacota cada unidade de acesso e solta os pacotes espaçados a `pace_bps` em vez de despejar o quadro inteiro de uma vez
-/// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Um quadro-chave grande leva alguns períodos
-/// para sair; se a fila passar de ~0,5 s, o quadro é descartado e um quadro-chave é pedido.
-async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, queued: Arc<AtomicU64>) {
+/// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Também responde aos NACKs: guarda os últimos
+/// pacotes e retransmite pelo mesmo espaçamento, com orçamento de 25% da taxa e no máximo uma vez a cada 150 ms por pacote —
+/// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
+async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::UnboundedReceiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>) {
+    use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
-    while let Some((au, samples, pace_bps)) = rx.recv().await {
-        let len = au.len() as u64;
-        let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
-        let late = tokio::time::Instant::now().saturating_duration_since(budget_at);
-        if late > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: não acumula crédito
-        for p in pkts {
-            let now = tokio::time::Instant::now();
-            if budget_at > now + Duration::from_millis(2) { tokio::time::sleep_until(budget_at).await; }
-            let _ = track.write_rtp(&p).await;
-            budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace_bps.max(100_000) as f64);
+    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>)> = HashMap::new();
+    let mut order: VecDeque<u16> = VecDeque::new();
+    let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
+    loop {
+        tokio::select! {
+            biased;
+            n = nack_rx.recv() => {
+                let Some(seqs) = n else { break };
+                // crédito de retransmissão: 25% da taxa do pacer, acumulando no máximo 0,5 s
+                rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.25 / 8.0).min(pace * 0.25 / 8.0 * 0.5);
+                rtx_t = Instant::now();
+                for sq in seqs {
+                    let Some((p, last)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    let size = (p.payload.len() + 12) as f64;
+                    if last.map(|t| t.elapsed() < Duration::from_millis(150)).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
+                    rtx_credit -= size; *last = Some(Instant::now());
+                    let _ = track.write_rtp(p).await;
+                    rtx_sent.fetch_add(1, Ordering::Relaxed);
+                    budget_at = budget_at.max(tokio::time::Instant::now()) + Duration::from_secs_f64(size * 8.0 / pace);
+                }
+            }
+            m = rx.recv() => {
+                let Some((au, samples, pace_bps)) = m else { break };
+                pace = (pace_bps as f64).max(600_000.0);
+                let len = au.len() as u64;
+                let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
+                if tokio::time::Instant::now().saturating_duration_since(budget_at) > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: sem crédito acumulado
+                for p in pkts {
+                    let now = tokio::time::Instant::now();
+                    if budget_at > now + Duration::from_millis(2) { tokio::time::sleep_until(budget_at).await; }
+                    let _ = track.write_rtp(&p).await;
+                    budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
+                    let sq = p.header.sequence_number;
+                    if hist.insert(sq, (p, None)).is_none() { order.push_back(sq); }
+                    if order.len() > HISTORY { if let Some(old) = order.pop_front() { hist.remove(&old); } }
+                }
+                queued.fetch_sub(len, Ordering::Relaxed);
+            }
         }
-        queued.fetch_sub(len, Ordering::Relaxed);
     }
 }
 
@@ -116,6 +152,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
     let stop = Arc::new(AtomicBool::new(false));
     idr.store(true, Ordering::Relaxed);
     let (tx, queued) = (out.tx.clone(), out.queued.clone());   // bytes esperando no pacer
+    let out_rtx = (out.rtx_sent.clone(), out.rtx_skipped.clone());
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
         use crate::adapt::{Controller, Estimator};
@@ -181,7 +218,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": dec.bps / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
-                    "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
+                    "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)

@@ -266,7 +266,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             since_idr += 1;
             // quadro-chave: só a pedido (rede de segurança a cada 30 s) (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
-            let min_gap = Duration::from_millis(1000);
+            let min_gap = Duration::from_millis(if est.reason != "" { 2000 } else { 1000 });   // rede apertada: quadros-chave mais espaçados
             if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };

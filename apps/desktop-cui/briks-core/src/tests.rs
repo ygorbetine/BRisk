@@ -537,7 +537,10 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
     a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 12_000, label: "Adaptação".into(), audio: crate::procaudio::AudioMode::None, content, adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: rpath.clone() }).await.unwrap();
-    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("1º quadro");
+    if wait_share(&mut b, |v| { if v["ev"] == "share.rxstats" { eprintln!("[dbg rx] {v}"); } v["ev"] == "share.remote" && v["state"] == "frame" }, 30).await.is_none() {
+        while let Ok(e) = a.events.try_recv() { if let MeshEvent::Share(v) = e { eprintln!("[dbg tx] {v}"); } }
+        panic!("1º quadro não chegou (proxy: {} bytes encaminhados, {} pacotes descartados)", sim.forwarded.load(std::sync::atomic::Ordering::Relaxed), sim.dropped.load(std::sync::atomic::Ordering::Relaxed));
+    }
     assert!(sim.forwarded.load(std::sync::atomic::Ordering::Relaxed) > 10_000, "o tráfego não está passando pelo proxy");
     let src = FrameSource::open(&rpath).unwrap();
     let mut rows = vec![];

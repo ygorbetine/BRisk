@@ -75,10 +75,14 @@ impl Estimator {
             // Cai rápido, mas com freios: (1) os relatórios do segundo seguinte a uma queda ainda refletem o envio antigo, então
             // só cai de novo depois de 2 s (ou com perda acima de 30%); (2) parte do que realmente passou, porém nunca abaixo de
             // 60% da estimativa — o envio do último segundo já vem reduzido pelos nossos próprios descartes.
-            let settling = self.last_drop.map(|t| now.duration_since(t) < Duration::from_millis(1900)).unwrap_or(false);
+            // Atraso (fila enchendo) é medida atual do caminho: enquanto ele durar, corta a cada segundo para 70% do que passou —
+            // é preciso ficar ABAIXO da capacidade para a fila esvaziar. Perda é sinal mais atrasado: espera 2 s entre cortes.
+            let wait = if delayed { 900 } else { 1900 };
+            let settling = self.last_drop.map(|t| now.duration_since(t) < Duration::from_millis(wait)).unwrap_or(false);
             if !settling || loss_eff > 0.30 {
-                let from = if sent > FLOOR_BPS { self.est.min(sent.max(self.est * 0.6)) } else { self.est };
-                let factor = if loss_eff > 0.10 { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) } else { 0.8 };
+                let floor = self.est * if delayed { 0.4 } else { 0.6 };
+                let from = if sent > FLOOR_BPS { self.est.min(sent.max(floor)) } else { self.est };
+                let factor = if delayed { 0.7 } else { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) };
                 self.est = (from * factor).max(FLOOR_BPS);
                 self.last_drop = Some(now);
             }
@@ -230,6 +234,7 @@ mod tests {
         // perda pesada: cai mais
         let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0);
         assert!(b < 3_000_000.0 && e.reason == "perda", "{b}");
+        let b = b.min(e.est);
         // rede limpa: fica parado 3 s e depois sobe ~8% por segundo
         let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0);
         assert_eq!(c, b);

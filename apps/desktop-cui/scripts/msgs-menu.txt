@@ -1,0 +1,5 @@
+at 640 330
+wait 4
+rdown
+rup
+wait 14

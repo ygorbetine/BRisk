@@ -32,7 +32,7 @@ typedef struct { char id[48]; char name[96]; } community_t;
 
 #define MAX_GROUPS 32
 #define MAX_MSGS 200
-typedef struct { char id[48]; char name[96]; char channel[64]; } group_t;
+typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
@@ -97,6 +97,7 @@ void app_open_group(app_state_t *s, int idx);
 void app_open_chat2(app_state_t *s, int friend_idx);
 void app_load_messages2(app_state_t *s, const char *body);
 void app_send_message(app_state_t *s);
+void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text);   /* encaminha o texto para outra conversa */
 void app_create_group(app_state_t *s);
 void app_load_messages(app_state_t *s, const char *body);
 void app_load_groups(app_state_t *s, const char *body);

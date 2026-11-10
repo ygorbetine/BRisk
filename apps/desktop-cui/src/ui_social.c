@@ -1,6 +1,7 @@
 #include "briks_ui.h"
 #include <math.h>
 #include "layout.h"
+#include "msgui.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -167,10 +168,11 @@ static void hhmm_local(const char *iso, char *out, size_t cap) {
     else snprintf(out, cap, "--:--");
 }
 
-static void bubble(cui_ctx *ui, const msg_t *m) {
+static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive) {
     char hm[8]; hhmm_local(m->created, hm, sizeof hm);
+    const char *text = interactive ? msgui_text(m) : m->content;
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
-    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
+    cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
         if (!m->mine) { cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo */
         if (m->mine) {
@@ -181,8 +183,11 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     cui_text(ui, "Você", .size = 12, .color = CUI_RGB(0xe6dcff));
                     cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
+                    if (interactive) msgui_tags(ui, m);
                 }
-                cui_text(ui, m->content);
+                if (interactive) msgui_quote(ui, s, m);
+                cui_text(ui, text);
+                if (interactive) msgui_reactions(ui, m);
             }
         } else {
             /* recebido: vidro; quina superior do lado do avatar com raio 4 */
@@ -193,12 +198,16 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     cui_text(ui, m->author, .size = 12, .color = B_C3);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGB(0x8472a0));
+                    if (interactive) msgui_tags(ui, m);
                 }
-                cui_text(ui, m->content);
+                if (interactive) msgui_quote(ui, s, m);
+                cui_text(ui, text);
+                if (interactive) msgui_reactions(ui, m);
             }
             }
         }
     }
+    if (interactive) msgui_row(ui, s, m);
 }
 
 static void content(cui_ctx *ui, app_state_t *s) {
@@ -221,8 +230,10 @@ static void content(cui_ctx *ui, app_state_t *s) {
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
             cui_text(ui, group ? "Grupo P2P · canal geral" : "Mensagem direta P2P", .size = 12, .color = B_MUTED);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
+            msgui_pinned_button(ui, s);
         }
         cui_separator(ui);
+        msgui_set_view(cui_get_rect(ui, cui_make_id(ui, "chat-scroll")));
         cui_scroll(ui, .id = "chat-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = g_th.chat_pad) {
             if (!s->msg_count) {
                 cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 60, .gap = 8) {
@@ -232,10 +243,11 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg_count; i++) { cui_push_id_int(ui, 5000 + i); bubble(ui, &s->msgs[i]); cui_pop_id(ui); }
+                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id)) continue; cui_push_id_int(ui, 5000 + i); bubble(ui, s, &s->msgs[i], true); cui_pop_id(ui); }
             }
         }
-        cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
+        cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {
+            msgui_composer(ui, s);
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
                 cui_push_disabled(ui, true);
@@ -243,7 +255,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 cui_pop_disabled(ui);
                 int r = cui_input(ui, "draft", s->draft, sizeof s->draft, .placeholder = "Escreva uma mensagem", .width = CUI_FILL);
                 bool send = cui_icon_button(ui, CUI_ICON_SEND, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Enviar");
-                if ((send || (r & CUI_SUBMITTED)) && s->draft[0]) app_send_message(s);
+                if ((send || (r & CUI_SUBMITTED)) && s->draft[0]) msgui_submit(s);
             }
         }
     }
@@ -337,7 +349,7 @@ static void panel_chat2(cui_ctx *ui, app_state_t *s) {
         cui_scroll(ui, .id = "chat2-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 16) {
             if (!s->msg2_count) cui_text(ui, "Sem mensagens ainda.", .size = 12, .color = B_MUTED);
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg2_count; i++) { cui_push_id_int(ui, 8000 + i); bubble(ui, &s->msgs2[i]); cui_pop_id(ui); }
+                for (int i = 0; i < s->msg2_count; i++) { cui_push_id_int(ui, 8000 + i); bubble(ui, s, &s->msgs2[i], false); cui_pop_id(ui); }
             }
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 12, .gap = 8, .align = CUI_ALIGN_CENTER) {
@@ -394,6 +406,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
     }
     bubbles_draw(ui);
+    msgui_overlay(ui, s);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,

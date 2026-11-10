@@ -1,0 +1,5 @@
+at 1100 240
+wait 4
+rdown
+rup
+wait 14

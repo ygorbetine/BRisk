@@ -25,5 +25,6 @@ uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 opus = "0.3"
 cpal = "0.15"
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 [workspace]

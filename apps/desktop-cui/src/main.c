@@ -33,6 +33,7 @@ static void frame(cui_ctx *ui) {
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
     { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */
+    migrate_pump(&state);
     app_pump(&state);
     rtc_pump(&state);
     profile_tick(&state);
@@ -49,6 +50,7 @@ static void frame(cui_ctx *ui) {
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
     }
+    migrate_dialog(ui, &state);
     briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }
 
@@ -64,7 +66,7 @@ int main(void) {
         .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL });
     if (!app) return 1;
     state.app = app;
-    bk_start();
+    migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
     briks_perf_init();
     briks_theme_poll();   /* lê theme.json (ou os padrões) antes de montar o tema */
     briks_apply_theme(cui_app_ui(app));

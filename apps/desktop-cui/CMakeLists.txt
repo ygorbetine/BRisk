@@ -9,7 +9,7 @@ FetchContent_Declare(cui
   PATCH_COMMAND  ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply.cmake")
 FetchContent_MakeAvailable(cui)
 
-add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c)
+add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/migrate.c)
 if(MSVC)
   target_compile_options(briks_cui PRIVATE /utf-8)
 endif()
@@ -35,8 +35,7 @@ endif()
 
 add_executable(briks_smoke tests/smoke.c src/backend.c src/json.c src/layout.c src/drag_stack.c src/core.c)
 target_link_libraries(briks_smoke PRIVATE winhttp bcrypt shell32 ws2_32)
-add_custom_command(TARGET briks_smoke POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory $<TARGET_FILE_DIR:briks_cui>/backend $<TARGET_FILE_DIR:briks_smoke>/backend)
+# briks_smoke fica na mesma pasta do briks_cui e ja enxerga backend/ ao lado (sem copia)
 
 # Overlay: janela sempre no topo, sem foco, cliques passando (segundo executável, sem dependências).
 add_executable(briks_overlay WIN32 src/overlay.c)

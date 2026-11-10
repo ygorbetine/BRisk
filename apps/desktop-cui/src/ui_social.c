@@ -389,8 +389,8 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
                 cui_text(ui, s->user_email, .color = B_MUTED);
             }
         }
-        cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
-        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = sem balão");
+        cui_text(ui, "Status", .size = 12, .color = B_MUTED);
+        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "O que está pensando?");
         cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
     }
     bubbles_draw(ui);

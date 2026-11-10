@@ -385,7 +385,8 @@ async fn screen_share_flows_end_to_end_in_loopback() {
         let rgba = shot.expect("sem quadros");
         // conteúdo: o quadro recebido tem de bater com algum quadro do padrão (a barra anda); procura o melhor
         let mut bgr = rgba.clone(); for p in bgr.chunks_mut(4) { p.swap(0, 2); }
-        for t in 0..160 { let mut e = test_pattern(w, h, t); for q in e[..16 * w * 4].chunks_mut(4) { q[0] = 0; } let mut r = bgr.clone(); for q in r[..16 * w * 4].chunks_mut(4) { q[0] = 0; } let p = psnr(&e, &r); if p > best { best = p; } }
+        let sr = crate::capture::stamp_rows(w);
+        for t in 0..160 { let mut e = test_pattern(w, h, t); for q in e[..sr * w * 4].chunks_mut(4) { q[0] = 0; q[1] = 0; q[2] = 0; } let mut r = bgr.clone(); for q in r[..sr * w * 4].chunks_mut(4) { q[0] = 0; q[1] = 0; q[2] = 0; } let p = psnr(&e, &r); if p > best { best = p; } }
         image::RgbaImage::from_raw(w as u32, h as u32, rgba).unwrap().save(dir.join(format!("recebido-{round}.png"))).unwrap();
         lats.sort();
         let (n, p50, p95, avg) = (lats.len(), lats[lats.len() / 2], lats[lats.len() * 95 / 100], lats.iter().sum::<i32>() as f64 / lats.len() as f64);

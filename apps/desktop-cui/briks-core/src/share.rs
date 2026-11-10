@@ -86,7 +86,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
-    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido)
+    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
     loop {
@@ -98,8 +98,11 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                 rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.25 / 8.0).min(pace * 0.25 / 8.0 * 0.5);
                 rtx_t = Instant::now();
                 for sq in seqs {
-                    let Some((p, last, asked)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    let Some((p, last, asked, sent_at)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
                     if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); }
+                    // pacote velho: o receptor já desistiu desse quadro (espera no máximo 400 ms) e vai pedir quadro-chave; reenviar só
+                    // gastaria banda. O gerador de NACK do outro lado continua pedindo por muito tempo.
+                    if sent_at.elapsed() > Duration::from_millis(600) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     let size = (p.payload.len() + 12) as f64;
                     if last.map(|t| t.elapsed() < Duration::from_millis(150)).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
@@ -120,7 +123,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     let _ = track.write_rtp(&p).await;
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
-                    if hist.insert(sq, (p, None, false)).is_none() { order.push_back(sq); }
+                    if hist.insert(sq, (p, None, false, Instant::now())).is_none() { order.push_back(sq); }
                     if order.len() > HISTORY { if let Some(old) = order.pop_front() { hist.remove(&old); } }
                 }
                 queued.fetch_sub(len, Ordering::Relaxed);
@@ -163,6 +166,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
     std::thread::spawn(move || {
         use crate::adapt::{Controller, Estimator};
         let max_fps = cfg.fps.clamp(5, 120);
+        let no_cpu = std::env::var("BRIKS_ADAPT_NO_CPU").is_ok();   // testes de rede: isola o laço de rede da carga da máquina
         let mut ctl = Controller::new(cfg.content, cfg.height, max_fps, cfg.kbps.min(MAX_BPS / 1000));
         let mut est = Estimator::new(ctl.top_ceil());
         let mut dec = ctl.decide(est.est);
@@ -204,7 +208,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 if cfg.adaptive {
                     est.set_ceil(ctl.top_ceil());
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
-                    ctl.note_cpu(work_ms, offered, sent_fps);
+                    if !no_cpu { ctl.note_cpu(work_ms, offered, sent_fps); }
                     if let Some(e) = enc.as_ref() { if frames >= 2 { ctl.note_encoder(sent_bps, e.bps as f64); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {

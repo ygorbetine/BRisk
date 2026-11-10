@@ -11,6 +11,7 @@ mod mesh;
 mod mfenc;
 mod mock;
 mod phoenix;
+mod procaudio;
 mod realtime;
 mod share;
 mod signaling;

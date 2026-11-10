@@ -70,6 +70,8 @@ impl GraphicsCaptureApiHandler for Handler {
     fn on_closed(&mut self) -> Result<(), Self::Error> { self.shared.closed.store(true, Ordering::Relaxed); Ok(()) }
 }
 
+pub fn window_pid(hwnd: isize) -> u32 { Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void).process_id().unwrap_or(0) }
+
 /// Quadro sintético: degradê + xadrez + barra móvel + contador em blocos (determinístico por `t`). BGRA.
 pub fn test_pattern(w: usize, h: usize, t: usize) -> Vec<u8> {
     let mut f = vec![255u8; w * h * 4];

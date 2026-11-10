@@ -34,6 +34,7 @@ pub struct ShareCfg {
     /// 0 = automático.
     pub kbps: u32,
     pub label: String,
+    pub audio: crate::procaudio::AudioMode,
 }
 
 pub fn new_video_track() -> Arc<TrackLocalStaticSample> {

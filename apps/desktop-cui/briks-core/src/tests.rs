@@ -360,7 +360,7 @@ async fn screen_share_flows_end_to_end_in_loopback() {
     let (w, h) = (1280usize, 720usize);
     for round in 0..2 {
         let sent_png = dir.join(format!("enviado-{round}.png"));
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into() }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
         let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
         assert_eq!((on["w"].as_u64(), on["h"].as_u64(), on["fps"].as_u64()), (Some(1280), Some(720), Some(30)), "{on}");
         let rpath = dir.join(format!("recebido-{round}.bin"));
@@ -418,7 +418,7 @@ async fn real_screen_share_stats() {
     let hm: isize = crate::capture::list_sources(&dir)["screens"][0]["id"].as_str().unwrap().parse().unwrap();
     let rpath = dir.join("recebido.bin");
     for (height, fps, kbps) in [(720usize, 30u32, 0u32), (1080, 30, 0), (1080, 60, 0), (1440, 30, 0), (2160, 30, 0)] {
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into() }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None }, preview: None, dump: None }).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
         b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
         wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await;   // descarta a 1ª janela (parcial)
@@ -429,4 +429,33 @@ async fn real_screen_share_stats() {
         a.cmd.send(MeshCmd::ShareStop).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await;
     }
+}
+
+/// Áudio só do processo, de ponta a ponta: A transmite com o áudio de um PowerShell tocando um WAV; B recebe a faixa "screen-audio".
+/// Emite som de verdade por alguns segundos: não roda por padrão.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn process_audio_reaches_the_viewer() {
+    use crate::capture::SourceKind;
+    use crate::procaudio::AudioMode;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "tela3", ia);
+    let (mut b, bau) = node_audio(port, PB, "Beto", "tela3", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", r"$p = New-Object Media.SoundPlayer 'C:\Windows\Media\Alarm01.wav'; $p.PlayLooping(); Start-Sleep -Seconds 9"]).spawn().expect("powershell");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 15, kbps: 0, label: "Teste".into(), audio: AudioMode::Tree(child.id()) }, preview: None, dump: None }).await.unwrap();
+    let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
+    assert_eq!(on["audio"], true, "{on}");
+    let key = format!("{PA}#screen");
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(6) && bau.rx_stat(&key).frames < 100 { tokio::time::sleep(Duration::from_millis(100)).await; }
+    let st = bau.rx_stat(&key);
+    let stats = wait_share(&mut a, |v| v["ev"] == "share.stats" && v["audio_frames"].as_u64().unwrap_or(0) > 0, 5).await;
+    let _ = child.kill();
+    eprintln!("B recebeu da faixa de áudio da tela: {} quadros Opus, pico {:.3}; emissor: {:?}", st.frames, st.peak, stats.map(|s| (s["audio_sources"].clone(), s["audio_peak"].clone(), s["audio_frames"].clone())));
+    assert!(st.frames >= 50 && st.peak > 0.01, "áudio do processo não chegou: {st:?}");
+    assert_eq!(bau.rx_stat(PA).frames, 0, "a faixa da tela não pode cair no canal de voz");
 }

@@ -83,6 +83,8 @@ pub enum MeshCmd {
     /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
     ShareStart { cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf> },
     ShareStop,
+    /// Troca os processos capturados durante a transmissão ("Escolher apps"); só vale se ela começou com áudio.
+    ShareAudio { mode: crate::procaudio::AudioMode },
     /// Liga/desliga a decodificação do vídeo de um peer e define o arquivo de quadro compartilhado.
     ShareWatch { key: String, on: bool, path: std::path::PathBuf },
     Close,
@@ -111,10 +113,11 @@ struct Peer {
     sent_proof: bool,
     name: String,
     vsender: Option<Arc<RTCRtpSender>>,
+    asender: bool,   // faixa de áudio da transmissão já ligada a este peer
     recv: Arc<RecvState>,
 }
 
-struct ActiveShare { gen: u64, track: Arc<TrackLocalStaticSample>, sender: share::Sender, info: Option<Value> }
+struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<TrackLocalStaticSample>, sender: share::Sender, info: Option<Value> }
 
 pub struct MeshCfg {
     pub namespace: String,
@@ -173,7 +176,8 @@ struct Actor {
     share: Option<ActiveShare>,
     share_gen: u64,
     idr: Arc<std::sync::atomic::AtomicBool>,   // pedido de quadro-chave (PLI/FIR/novo espectador), único para a sala toda
-    vtrack: Option<Arc<TrackLocalStaticSample>>,   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
+    vtrack: Option<Arc<TrackLocalStaticSample>>,
+    atrack: Option<Arc<TrackLocalStaticSample>>,   // áudio da transmissão (só do processo), também persistente   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
     sev_tx: mpsc::Sender<Value>,
     sev_rx: Option<mpsc::Receiver<Value>>,
 }
@@ -185,7 +189,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -221,7 +225,7 @@ impl Actor {
             if self.dead { break; }
         }
         if let Some(a) = &self.audio { a.stop(); }
-        if let Some(sh) = self.share.take() { sh.sender.stop(); }
+        if let Some(sh) = self.share.take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } }
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
         self.rt.close().await;
     }
@@ -302,7 +306,7 @@ impl Actor {
         let recv = Arc::new(RecvState::default());
         let pc = self.new_pc(peer_id, gen, recv.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, recv });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, asender: false, recv });
         Ok(())
     }
 
@@ -432,6 +436,7 @@ impl Actor {
             }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
             MeshCmd::ShareStop => self.share_stop().await,
+            MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => {
                 let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv.clone()));
                 match found {
@@ -454,8 +459,14 @@ impl Actor {
         let track = self.vtrack.get_or_insert_with(share::new_video_track).clone();
         self.share_gen += 1;
         let gen = self.share_gen;
+        let amode = cfg.audio.clone();
+        let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
         match share::start_sender(gen, self.idr.clone(), cfg, track.clone(), self.sev_tx.clone(), preview, dump) {
-            Ok(sender) => { self.share = Some(ActiveShare { gen, track, sender, info: None }); }
+            Ok(sender) => {
+                let has_audio = amode != crate::procaudio::AudioMode::None;
+                let audio = if has_audio { Some(crate::procaudio::start(amode, atrack)) } else { None };
+                self.share = Some(ActiveShare { audio, has_audio, gen, track, sender, info: None });
+            }
             Err(e) => { self.emit(MeshEvent::Share(json!({ "ev": "share.local", "state": "off", "reason": e }))).await; return; }
         }
         for id in self.authed_ids() { self.attach_share(&id).await; }
@@ -471,6 +482,7 @@ impl Actor {
             if let Some(info) = self.share.as_ref().and_then(|s| s.info.clone()) { self.send_share_state(id, &info).await; }
             return;
         }
+        if !p.asender { if let Some(at) = self.atrack.clone() { if p.pc.add_track(at as Arc<dyn TrackLocal + Send + Sync>).await.is_ok() { p.asender = true; } } }
         match p.pc.add_track(track as Arc<dyn TrackLocal + Send + Sync>).await {
             Ok(sender) => {
                 let (s2, idr2) = (sender.clone(), idr.clone());
@@ -492,6 +504,7 @@ impl Actor {
     async fn share_stop(&mut self) {
         let Some(sh) = self.share.take() else { return };
         sh.sender.stop();
+        if let Some(a) = &sh.audio { a.stop(); }
         for id in self.authed_ids() { self.dc_send(&id, json!({ "version": 2, "type": "share.state", "on": false })).await; }
     }
 
@@ -502,9 +515,16 @@ impl Actor {
     }
 
     /// Eventos do emissor (thread de captura/codificação) e do receptor.
-    async fn on_share_event(&mut self, v: Value) {
+    async fn on_share_event(&mut self, mut v: Value) {
         // eventos de um emissor antigo (já parado) chegam atrasados: ignora
         if let Some(g) = v["gen"].as_u64() { if self.share.as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share.is_none()) { return; } }
+        if let Some(sh) = &self.share {
+            if v["ev"] == "share.local" && v["state"] == "on" { v["audio"] = json!(sh.has_audio); }
+            if v["ev"] == "share.stats" { if let Some(a) = &sh.audio {
+                use std::sync::atomic::Ordering::Relaxed;
+                v["audio_peak"] = json!(a.stats.peak_milli.load(Relaxed) as f64 / 1000.0); v["audio_sources"] = json!(a.stats.sources.load(Relaxed)); v["audio_frames"] = json!(a.stats.frames.load(Relaxed));
+            } }
+        }
         if v["ev"] == "share.local" {
             if v["state"] == "on" {
                 if let Some(sh) = self.share.as_mut() { sh.info = Some(v.clone()); }

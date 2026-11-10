@@ -264,6 +264,7 @@ dependencies = [
  "webrtc",
  "windows 0.61.3",
  "windows-capture",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

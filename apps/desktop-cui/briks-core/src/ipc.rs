@@ -70,6 +70,16 @@ pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {
     Ok(id)
 }
 
+/// `audio`: "source" (da fonte: a árvore do processo da janela, ou tudo menos Briks/Discord numa tela), "apps" (+ `pids`), "none".
+fn audio_mode(v: &Value, kind: &crate::capture::SourceKind) -> crate::procaudio::AudioMode {
+    use crate::procaudio::AudioMode;
+    match v["audio"].as_str().unwrap_or("none") {
+        "apps" => AudioMode::Pids(v["pids"].as_array().map(|a| a.iter().filter_map(|p| p.as_u64().map(|p| p as u32)).collect()).unwrap_or_default()),
+        "source" => match kind { crate::capture::SourceKind::Window(h) => match crate::capture::window_pid(*h) { 0 => AudioMode::None, p => AudioMode::Tree(p) }, _ => AudioMode::AllExcept },
+        _ => AudioMode::None,
+    }
+}
+
 pub async fn bind() -> Result<(TcpListener, u16)> {
     let l = TcpListener::bind(("127.0.0.1", 0)).await?;
     let p = l.local_addr()?.port();
@@ -220,11 +230,20 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         let Some(c) = &mesh_cmd else { out(&mut wr, json!({ "ev": "share.local", "state": "off", "reason": "entre numa sala primeiro" })).await?; continue };
                         let id: isize = v["id"].as_str().and_then(|s| s.parse().ok()).or(v["id"].as_i64().map(|n| n as isize)).unwrap_or(0);
                         let kind = match v["kind"].as_str().unwrap_or("screen") { "window" => crate::capture::SourceKind::Window(id), "test" => crate::capture::SourceKind::Test, _ => crate::capture::SourceKind::Screen(id) };
+                        let kind2 = kind.clone();
                         let scfg = crate::share::ShareCfg { kind, height: v["height"].as_u64().unwrap_or(1080).clamp(240, 2160) as usize, fps: v["fps"].as_u64().unwrap_or(30).clamp(5, 60) as u32,
-                            kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect() };
+                            kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect(), audio: audio_mode(&v, &kind2) };
                         let preview = cfg.data_dir.join("video").join("preview.bin");
                         let dump = std::env::var("BRIKS_SHARE_DUMP").ok().map(PathBuf::from);
                         let _ = c.send(MeshCmd::ShareStart { cfg: scfg, preview: Some(preview.clone()), dump }).await;
+                    }
+                    "share.audio.list" => {
+                        let apps = tokio::task::spawn_blocking(crate::procaudio::list_apps).await.unwrap_or_default();
+                        out(&mut wr, json!({ "ev": "share.audio.apps", "apps": apps })).await?;
+                    }
+                    "share.audio.set" => {
+                        let mode = audio_mode(&v, &crate::capture::SourceKind::Test);
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareAudio { mode }).await; }
                     }
                     "share.stop" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareStop).await; } }
                     "share.watch" => {

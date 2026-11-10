@@ -176,7 +176,7 @@ impl Audio {
             if let Ok(n) = dec.decode_float(&pkt.payload, &mut pcm, false) { self.deliver(&peer, &pcm[..n], &mut spk); }
         }
         self.sinks.lock().unwrap().remove(&peer);
-        let _ = self.ev.try_send(AudioEvent::Speaking { peer, level: 0.0 });
+        if !peer.contains('#') { let _ = self.ev.try_send(AudioEvent::Speaking { peer, level: 0.0 }); }
     }
 
     fn deliver(&self, peer: &str, pcm: &[f32], spk: &mut Speaker) {
@@ -188,7 +188,8 @@ impl Audio {
             s.zero_cross += pcm.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as u64;
             s.peak = s.peak.max(pcm.iter().fold(0.0f32, |m, v| m.max(v.abs())));
         }
-        if let Some(l) = spk.feed(rms(pcm)) { let _ = self.ev.try_send(AudioEvent::Speaking { peer: peer.to_string(), level: l }); }
+        // faixas de áudio de transmissão ("peer#screen") não contam como fala
+        if !peer.contains('#') { if let Some(l) = spk.feed(rms(pcm)) { let _ = self.ev.try_send(AudioEvent::Speaking { peer: peer.to_string(), level: l }); } }
         if let Some(s) = self.sinks.lock().unwrap().get_mut(peer) {
             s.buf.extend(pcm.iter().copied());
             if s.buf.len() > MAX_BUF { let drop = s.buf.len() - PRIME; s.buf.drain(..drop); }
@@ -197,6 +198,7 @@ impl Audio {
 
     pub fn remove_peer(&self, peer: &str) {
         self.sinks.lock().unwrap().remove(peer);
+        self.sinks.lock().unwrap().remove(&format!("{peer}#screen"));
         self.muted_peers.lock().unwrap().remove(peer);
     }
 
@@ -210,7 +212,7 @@ impl Audio {
         for (peer, s) in sinks.iter_mut() {
             if !s.primed { if s.buf.len() >= PRIME { s.primed = true; } else { continue; } }
             let take = out.len().min(s.buf.len());
-            let silent = deaf || muted.contains(peer);
+            let silent = deaf || muted.contains(peer) || muted.contains(peer.split('#').next().unwrap_or(""));
             for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v; } }
             if take < out.len() { s.primed = false; }
         }

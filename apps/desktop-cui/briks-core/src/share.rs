@@ -315,6 +315,15 @@ pub struct RecvState {
     pub epoch: AtomicU64,
     /// O decodificador falhou: o laço de RTP pede um quadro-chave.
     pub want_pli: AtomicBool,
+    /// telemetria do decodificador: unidades entregues, erros, chamadas sem quadro de saída
+    pub fed: AtomicU64,
+    pub dec_err: AtomicU64,
+    pub dec_none: AtomicU64,
+}
+
+/// O pacote começa uma NAL? (FU-A só com o bit S; NAL única e STAP-A sempre.)
+fn frame_start(payload: &[u8]) -> bool {
+    match payload.first().map(|b| b & 0x1f) { Some(28) => payload.get(1).map(|b| b & 0x80 != 0).unwrap_or(false), Some(_) => true, None => false }
 }
 
 /// Buffer de reordenação/perda do receptor. Entrega as unidades de acesso em ordem; um buraco na sequência espera a
@@ -351,6 +360,9 @@ impl JitterBuf {
         loop {
             let Some(next) = self.next else { break };
             if self.pkts.contains_key(&next) {
+                // O primeiro pacote tem de ser um INÍCIO de quadro. Quem entra no meio de um quadro (ou retoma depois de um
+                // descarte) veria só a cauda dele; montada como se fosse um quadro inteiro, ela trava o decodificador sem erro.
+                if !frame_start(&self.pkts[&next].payload) { self.pkts.remove(&next); self.next = Some(next + 1); self.need_key = true; continue; }
                 // corrida contígua a partir de `next`, mesmo timestamp, até o marcador
                 let ts = self.pkts[&next].header.timestamp;
                 let mut end = None;
@@ -407,12 +419,16 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
         let mut dec: Option<H264Dec> = None;
         let mut sink: Option<(PathBuf, FrameSink)> = None;
         let mut dims = (0usize, 0usize);
+        let mut dry = 0u32;
         while let Ok(m) = drx.recv() {
             let Some(au) = m else { dec = None; continue };   // reset (voltou a assistir)
             if dec.is_none() { dec = H264Dec::new().ok(); }
             let Some(d) = dec.as_mut() else { continue };
             let r = d.decode(&au);
-            if r.is_err() { st2.want_pli.store(true, Ordering::Relaxed); }
+            st2.fed.fetch_add(1, Ordering::Relaxed);
+            match &r { Err(_) => { st2.dec_err.fetch_add(1, Ordering::Relaxed); st2.want_pli.store(true, Ordering::Relaxed); } Ok(None) => { st2.dec_none.fetch_add(1, Ordering::Relaxed); dry += 1; } _ => { dry = 0; } }
+            // rede de segurança: 45 unidades seguidas sem sair quadro = decodificador perdido; recria e pede quadro-chave
+            if dry >= 45 { dry = 0; drop(r); dec = None; st2.want_pli.store(true, Ordering::Relaxed); continue; }
             if let Ok(Some((w, h, rgba))) = r {
                 let path = st2.sink_path.lock().unwrap().clone();
                 let Some(path) = path else { continue };
@@ -448,7 +464,8 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
-            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered }));
+            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+                "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
             frames0 = f; win = Instant::now();
         }
     }
@@ -474,6 +491,13 @@ mod jb_tests {
         jb.push(pk(11, 100, true, true)); jb.push(pk(10, 100, false, true));
         let (f, pli) = jb.pop(t);
         assert!(f.len() == 1 && !pli, "reordenou e entregou o quadro-chave");
+        // entrar no meio de um quadro: a cauda (FU-A sem bit de início) não pode ser entregue como quadro
+        let mut mid = JitterBuf::new();
+        let mut tail = pk(50, 900, true, true); tail.payload = Bytes::from(vec![0x7c, 0x45, 9, 9]);   // FU-A de IDR, bit E, sem S
+        mid.push(tail);
+        assert!(mid.pop(t).0.is_empty(), "cauda de quadro não é quadro");
+        mid.push(pk(51, 1000, true, true));
+        assert_eq!(mid.pop(t).0.len(), 1);
         // quadro P com buraco (12 faltando): espera; a retransmissão chega dentro do prazo
         jb.push(pk(13, 200, true, false));
         assert!(jb.pop(t).0.is_empty());

@@ -79,7 +79,7 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
-    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; char fp[72], name[64]; } rtc_peers[8];
+    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; char fp[72], name[64], status[64], presence[64]; } rtc_peers[8];
     float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
@@ -105,6 +105,7 @@ void app_pump(app_state_t *s);
 /* rtc.c: ponte com o briks-core */
 void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se preciso, abre a sessão e entra na sala */
 void rtc_leave_room(app_state_t *s);
+void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
@@ -144,6 +145,13 @@ bool script_capture(cui_app *app);
 
 /* Clique de verdade num contêiner: cui_last_hovered não serve para caixas simples (o "último componente" é o canvas do fundo,
    que cobre a janela e deixava qualquer clique acionar todos os itens). `id` é o .id da caixa, no escopo de id atual. */
+/* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */
+static inline void briks_status_pill(cui_ctx *ui, const char *text) {
+    if (!text || !text[0]) return;
+    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = 14, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30), .align = CUI_ALIGN_CENTER) {
+        cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
+    }
+}
 static inline bool briks_clicked(cui_ctx *ui, const char *id) {
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;

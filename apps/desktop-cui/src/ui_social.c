@@ -78,17 +78,18 @@ static void bubbles_draw(cui_ctx *ui) {
 
 static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
     cui_push_id(ui, f->name);
+    if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
             .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
         cui_box(ui, .id = "av") { cui_avatar(ui, f->name, .size = 32); }
-        const char *line = f->status[0] ? f->status : f->presence;
+        const char *line = f->presence;   /* a linha sob o nome é só o rich presence; o status vai no balão */
         if (line[0]) {   /* rich presence: linha pequena sob o nome */
             cui_column(ui, .gap = 0, .width = CUI_FILL) {
                 cui_text(ui, f->name, .nowrap = true);
                 cui_text(ui, line, .size = 11, .color = B_MUTED, .nowrap = true);
             }
         } else cui_text(ui, f->name, .nowrap = true, .width = CUI_FILL);
-        if (active && line[0]) bubble_note(cui_get_rect(ui, cui_make_id(ui, "av")), line);
+        if (active && f->status[0]) bubble_note(cui_get_rect(ui, cui_make_id(ui, "av")), f->status);
     }
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
@@ -146,8 +147,8 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar(ui, s->user_name, .size = 36); }
                 if (briks_clicked(ui, "avatar")) s->profile_open = true;
-                const char *mine = s->user_status[0] ? s->user_status : (s->rp_enabled ? s->user_presence : "");
-                bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), mine);
+                const char *mine = s->rp_enabled ? s->user_presence : "";   /* linha sob o nome: só a presença */
+                bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
                 cui_column(ui, .gap = 0, .width = CUI_FILL) {
                     cui_text(ui, s->user_name, .nowrap = true);
                     cui_text(ui, mine[0] ? mine : s->user_email, .size = 11, .color = B_MUTED, .nowrap = true);
@@ -219,6 +220,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
             cui_text(ui, group ? "Grupo P2P · canal geral" : "Mensagem direta P2P", .size = 12, .color = B_MUTED);
+            if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
         }
         cui_separator(ui);
         cui_scroll(ui, .id = "chat-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = g_th.chat_pad) {
@@ -388,12 +390,12 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             }
         }
         cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
-        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = mostra o programa em uso");
+        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = sem balão");
         cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
     }
     bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 16) {
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,
                     .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_text(ui, "Seu computador parece lento. Ativar o modo Simplificado?", .size = 12);

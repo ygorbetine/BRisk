@@ -107,6 +107,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             s->rtc_peers[i].mic_off = m && m->type == J_BOOL && !m->b;
             s->rtc_peers[i].deafened = d && d->type == J_BOOL && d->b;
+            copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
+            copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
     } else if (!strcmp(ev, "error")) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
@@ -131,7 +133,7 @@ void rtc_pump(app_state_t *s) {
         const char *nm[2] = { "Marina Costa", "Rafael Lima" };
         for (int i = 0; i < 2; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i]); snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); }
-        s->rtc_peers[1].level = 0.6f; s->rtc_owner_me = true; s->in_room = true;
+        s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }
     }
     if (st == CORE_FAILED && s->in_room && strcmp(s->rtc_state, "erro")) {
@@ -139,6 +141,16 @@ void rtc_pump(app_state_t *s) {
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());
     }
     if (st == CORE_READY) {
+        {   /* status e presença (programa em uso, se ligado) seguem para o core; ele anuncia aos peers autenticados da sala */
+            static char sent_st[64], sent_pr[64]; static bool sent_once;
+            const char *pr = s->rp_enabled ? s->user_presence : "";
+            if (!sent_once || strcmp(sent_st, s->user_status) || strcmp(sent_pr, pr)) {
+                sent_once = true; copy(sent_st, sizeof sent_st, s->user_status); copy(sent_pr, sizeof sent_pr, pr);
+                char extra[320], a[140], b[140]; json_escape(s->user_status, a, sizeof a); json_escape(pr, b, sizeof b);
+                snprintf(extra, sizeof extra, "\"status\":\"%s\",\"presence\":\"%s\"", a, b);
+                send_cmd("profile.set", extra);
+            }
+        }
         if (s->rtc_want_room && !s->rtc_session_sent) {
             char extra[256], nm[160];
             json_escape(s->user_name[0] ? s->user_name : "Você", nm, sizeof nm);

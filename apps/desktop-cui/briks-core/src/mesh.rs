@@ -43,7 +43,7 @@ pub enum MeshEvent {
     /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
     Speaking { peer_id: String, level: f32 },
     /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
-    PeerState { peer_id: String, microphone: bool, deafened: bool },
+    PeerState { peer_id: String, microphone: bool, deafened: bool, status: String, presence: String },
     /// Identidade provada de um peer (impressão digital e nome de exibição).
     PeerInfo { peer_id: String, fp: String, name: String },
     /// Quem é o dono da sala segundo este nó e se sou eu (quem pode expulsar).
@@ -65,6 +65,8 @@ pub enum MeshCmd {
     Allow { fp: String },
     /// Reenvia o estado local (microfone/ensurdecido) a todos os peers autenticados.
     BroadcastState,
+    /// Status (texto do balão) e presença (programa em uso) que os peers autenticados veem; vazio = nada.
+    SetProfile { status: String, presence: String },
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
     MutePeer { key: String, muted: bool },
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
@@ -149,6 +151,7 @@ struct Actor {
     audio_rx: Option<mpsc::Receiver<AudioEvent>>,
     joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
     banned: HashSet<String>,        // fps expulsos nesta sessão
+    profile: (String, String),      // (status, presença) anunciados aos peers autenticados
     dead: bool,                     // fui expulso: encerra o ator
     blocked: HashSet<String>,       // peerIds de banidos: sinalização deles é ignorada
 }
@@ -159,7 +162,7 @@ impl Actor {
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), dead: false, blocked: HashSet::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -372,6 +375,11 @@ impl Actor {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.send_state(&id).await; }
             }
+            MeshCmd::SetProfile { status, presence } => {
+                self.profile = (status.chars().take(64).collect(), presence.chars().take(64).collect());
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.send_state(&id).await; }
+            }
             MeshCmd::MutePeer { key, muted } => {
                 if let Some(a) = &self.audio {
                     let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
@@ -432,9 +440,8 @@ impl Actor {
     }
 
     async fn send_state(&self, peer: &str) {
-        if let Some(a) = &self.audio {
-            self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": a.mic_open(), "deafened": a.deaf() })).await;
-        }
+        let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).unwrap_or((true, false));
+        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1 })).await;
     }
 
     async fn flush_outbox(&mut self, fp: &str) {
@@ -530,7 +537,7 @@ impl Actor {
             }
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
-                self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false) }).await;
+                self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
             }
             "chat.message.ack" => {
                 let id = v["messageId"].as_str().unwrap_or("");

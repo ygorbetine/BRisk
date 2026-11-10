@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; bool can_kick; } tile_t;
+typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; bool can_kick; const char *status; } tile_t;
 enum { TILE_NONE = 0, TILE_MUTE = 1, TILE_KICK = 2 };
 static float g_lvl[10];   /* nível de fala por tile, lido pelo canvas do avatar na hora de pintar */
 
@@ -78,6 +78,7 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = 14) {
+            briks_status_pill(ui, t->status);   /* chip de status acima do rótulo: só com status */
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .hoverable = true, .dir = CUI_ROW, .gap = 7, .pad_x = 12, .pad_y = 8, .align = CUI_ALIGN_CENTER });
             {
                 if (muted) cui_icon(ui, CUI_ICON_VOLUME_X, 14, B_DANGER);
@@ -205,15 +206,15 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 }
             } else {
                 bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
-                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false };
-                const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false };
+                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false, s->user_status };
+                const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false, "" };
                 cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
                     tile(ui, &me, mic_eff);
                     if (!s->in_room) tile(ui, &other, s->mic_on);   /* prévia local sem sala */
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
                         const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0 };
+                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, s->rtc_peers[i].status };
                         cui_push_id_int(ui, 700 + i);
                         int act = tile(ui, &t, true);
                         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);

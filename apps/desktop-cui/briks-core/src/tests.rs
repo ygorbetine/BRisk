@@ -318,3 +318,18 @@ async fn realtime_reports_error_when_server_is_down() {
     assert!(saw_reconnecting, "deveria tentar reconectar");
     rt.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn status_and_presence_reach_authenticated_peers_and_late_joiners_get_them() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-status", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-status", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+    a.cmd.send(MeshCmd::SetProfile { status: "Volto já".into(), presence: "Jogando Valorant".into() }).await.unwrap();
+    let e = wait_for(&mut b, 10, |e| matches!(e, MeshEvent::PeerState { status, .. } if status == "Volto já")).await;
+    assert!(matches!(e, Some(MeshEvent::PeerState { presence, .. }) if presence == "Jogando Valorant"), "B não recebeu status/presença de A");
+    // limpar = vazio
+    a.cmd.send(MeshCmd::SetProfile { status: String::new(), presence: String::new() }).await.unwrap();
+    assert!(wait_for(&mut b, 10, |e| matches!(e, MeshEvent::PeerState { status, presence, .. } if status.is_empty() && presence.is_empty())).await.is_some(), "B não viu o status limpo");
+}

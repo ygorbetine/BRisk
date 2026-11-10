@@ -112,6 +112,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
+    let mut profile: (String, String) = (String::new(), String::new());   // status e presença locais, reenviados ao entrar numa sala
 
     loop {
         tokio::select! {
@@ -168,6 +169,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         audio = au.clone();
                         let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: vec![], audio: au.zip(au_rx), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at }, id, rt, fw_rx);
                         mesh_cmd = Some(h.cmd);
+                        if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
                         mesh_ev = Some(h.events);
                         rt_status = Some(st_rx);
                         out(&mut wr, json!({ "ev": "room.joining", "peer_id": local_peer })).await?;
@@ -192,6 +194,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::BroadcastState).await; }
                         // deafen implica mic mudo: o estado efetivo é o que a UI mostra
                         out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
+                    }
+                    "profile.set" => {
+                        profile = (v["status"].as_str().unwrap_or("").chars().take(64).collect(), v["presence"].as_str().unwrap_or("").chars().take(64).collect());
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; }
                     }
                     "peer.kick" => {
                         let fp = v["fp"].as_str().unwrap_or("").to_string();
@@ -221,7 +227,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         out(&mut wr, json!({ "ev": "kicked", "reason": reason })).await?;
                     }
                     Some(MeshEvent::Speaking { peer_id, level }) => out(&mut wr, json!({ "ev": "speaking", "peer": peer_id, "level": level })).await?,
-                    Some(MeshEvent::PeerState { peer_id, microphone, deafened }) => out(&mut wr, json!({ "ev": "peer.state", "peer_id": peer_id, "microphone": microphone, "deafened": deafened })).await?,
+                    Some(MeshEvent::PeerState { peer_id, microphone, deafened, status, presence }) => out(&mut wr, json!({ "ev": "peer.state", "peer_id": peer_id, "microphone": microphone, "deafened": deafened, "status": status, "presence": presence })).await?,
                     Some(MeshEvent::Error(m)) => out(&mut wr, json!({ "ev": "error", "where": "mesh", "message": m })).await?,
                     None => { mesh_ev = None; }
                 }

@@ -35,6 +35,7 @@ static void frame(cui_ctx *ui) {
     { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */
     app_pump(&state);
     rtc_pump(&state);
+    profile_tick(&state);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strcmp(o, "settings")) state.settings_open = true; if (!strcmp(o, "add")) state.add_friend_open = true; } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
         briks_gradient_bar(ui);

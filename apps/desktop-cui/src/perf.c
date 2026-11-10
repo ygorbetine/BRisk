@@ -74,5 +74,6 @@ void briks_perf_note_renderer(const char *name) {
 void briks_perf_note_frame(double ms, int index) {
     static double sum; if (index == 1) sum = 0;
     if (index >= 2 && index <= 9) sum += ms;     /* o 1º quadro paga compilação de shaders */
+    if (getenv("CUI_SCREENSHOT") || getenv("BRIKS_SCRIPT")) return;   /* captura/roteiro paga leitura de pixels: não é máquina lenta */
     if (index == 9 && !g_explicit && g_perf == PERF_NORMAL && sum / 8.0 > 45.0) g_perf_hint = true;
 }

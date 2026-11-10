@@ -24,6 +24,18 @@ static void space_button(cui_ctx *ui, const char *label, bool active, bool dashe
     cui_pop_id(ui);
 }
 
+/* ícone compacto (26 px) do rodapé do usuário: cabe três na largura do menu sem espremer o nome/status */
+static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip) {
+    cui_push_id(ui, id);
+    cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
+        cui_icon(ui, icon, 15, B_MUTED);
+        if (cui_last_hovered(ui)) cui_tooltip(ui, tip);
+    }
+    bool hit = briks_clicked(ui, "b");
+    cui_pop_id(ui);
+    return hit;
+}
+
 static bool nav_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_push_id(ui, label);
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 9, .gap = 10, .radius = 12,
@@ -142,18 +154,28 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_pop_id(ui);
             }
         }
+        /* rodapé do usuário (paridade com o .account-bar do Electron): foto, nome + status/@nick, e três ícones: @ (Perfil e conta), configurações, sair */
         cui_box(ui, .width = CUI_FILL, .pad = 10) {
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 16, .bg = B_GLASS_CARD,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .gap = 2, .radius = 16, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                cui_box(ui, .id = "avatar") { cui_avatar(ui, s->user_name, .size = 36); }
-                if (briks_clicked(ui, "avatar")) s->profile_open = true;
-                const char *mine = s->rp_enabled ? s->user_presence : "";   /* linha sob o nome: só a presença */
+                cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
+                if (briks_clicked(ui, "avatar")) { s->profile_open = true; s->profile_tab = 0; }
                 bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
-                cui_column(ui, .gap = 0, .width = CUI_FILL) {
-                    cui_text(ui, s->user_name, .nowrap = true);
-                    cui_text(ui, mine[0] ? mine : s->user_email, .size = 11, .color = B_MUTED, .nowrap = true);
+                cui_box(ui, .id = "ident", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 4) {
+                    cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 14, .nowrap = true);
+                    /* linha de status: presença em uso > status digitado > "Disponível" (verde) */
+                    const char *mine = s->rp_enabled ? s->user_presence : "";
+                    if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = CUI_RGB(0xc9b8dc), .nowrap = true);
+                    else if (mine[0]) cui_text(ui, mine, .size = 11, .color = CUI_RGB(0xc9b8dc), .nowrap = true);
+                    else cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
+                        cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}
+                        cui_text(ui, "Disponível", .size = 10.5f, .color = B_ONLINE, .nowrap = true);
+                    }
                 }
-                if (cui_icon_button(ui, CUI_ICON_SETTINGS, .tooltip = "Configurações")) s->settings_open = true;
+                if (briks_clicked(ui, "ident")) { s->profile_open = true; s->profile_tab = 1; }   /* clicar no status: abre Perfil e conta na aba Status */
+                if (foot_icon(ui, "ft-at", CUI_ICON_AT_SIGN, "Perfil e conta")) { s->profile_open = true; s->profile_tab = 3; }
+                if (foot_icon(ui, "ft-cfg", CUI_ICON_SETTINGS, "Configurações")) s->settings_open = true;
+                if (foot_icon(ui, "ft-out", CUI_ICON_LOG_OUT, "Sair")) app_logout(s);
             }
         }
     }
@@ -381,7 +403,7 @@ static bool profile_nav(cui_ctx *ui, const char *icon, const char *label, bool a
 static void profile_dialog(cui_ctx *ui, app_state_t *s) {
     static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
     static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
-    static const char *CLEAR[] = { "Não limpar", "30 minutos", "1 hora", "Hoje" };
+    static const char *CLEAR[] = { "Não limpar", "1 hora", "4 horas", "Hoje" };   /* mesmas opções do Electron (StatusEditor) */
     /* a fonte do app não traz emoji colorido: o seletor usa os ícones do CUI (UI pronta; emoji de verdade depende de fonte) */
     static const char *const EMOJI[] = { CUI_ICON_SMILE, CUI_ICON_MUSIC, CUI_ICON_BRIEFCASE, CUI_ICON_MOON, CUI_ICON_ROCKET, CUI_ICON_HEART, CUI_ICON_STAR, CUI_ICON_BOOKMARK };
     static bool emoji_open;
@@ -552,6 +574,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     cui_dialog(ui, "Configurações", &s->settings_open, .width = fminf(480.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 200.0f, 120.0f), .scroll_y = true, .gap = 12) {
             cui_textf(ui, "Conectado como %s", s->user_name);
+            if (s->user_email[0]) cui_text(ui, s->user_email, .size = 12, .color = B_MUTED);   /* e-mail só como texto secundário: o rodapé funciona com foto/nome de qualquer conta */
             cui_text(ui, "Voz e vídeo, rede, atalhos, atualizações e sobre chegam nos próximos marcos.", .color = B_MUTED);
             cui_text(ui, "Desempenho", .font = CUI_FONT_MEDIUM);
             cui_row(ui, .gap = 8) {

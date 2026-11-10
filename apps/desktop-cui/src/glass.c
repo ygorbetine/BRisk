@@ -1,0 +1,354 @@
+/* Glassmorfismo real: backdrop-filter: blur(20px) saturate(155%) do glass-layout.css.
+ *
+ * O CUI desenha o quadro inteiro numa única chamada cui_gl_render. Pelo gancho
+ * cui_app_set_render_override (patches/cui-render-override.patch) o quadro é desenhado em segmentos.
+ * Cada caixa cujo fundo é uma das cores B_GLASS* vira um "painel de vidro": antes de o CUI desenhar o
+ * fundo translúcido, o framebuffer atual é copiado para uma textura, desfocado (dual-Kawase) e o
+ * retângulo arredondado do painel é preenchido com o resultado saturado. Depois o CUI pinta a camada
+ * translúcida, a borda e o conteúdo por cima. O desfoque é refeito só quando a camada muda
+ * (painéis de base compartilham o fundo ambiente; popups usam a cena inteira).
+ * Sem GL de hardware (ou BRIKS_GLASS=0) o gancho não é instalado e o app fica só translúcido. */
+#include "briks_ui.h"
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef unsigned int GLuint; typedef int GLint; typedef int GLsizei; typedef unsigned int GLenum;
+typedef float GLfloat; typedef char GLchar; typedef unsigned char GLboolean;
+#define GLAPI_ __stdcall
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_RGBA8 0x8058
+#define GL_RGBA 0x1908
+#define GL_UNSIGNED_BYTE 0x1401
+#define GL_LINEAR 0x2601
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#define GL_CLAMP_TO_EDGE 0x812F
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#define GL_VIEWPORT 0x0BA2
+#define GL_BLEND 0x0BE2
+#define GL_SCISSOR_TEST 0x0C11
+#define GL_TRIANGLE_STRIP 5
+#define GL_ONE 1
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_VERTEX_SHADER 0x8B31
+#define GL_FRAGMENT_SHADER 0x8B30
+#define GL_COMPILE_STATUS 0x8B81
+#define GL_LINK_STATUS 0x8B82
+#define GL_TEXTURE0 0x84C0
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+
+#define GL_FNS(X) \
+    X(void, Viewport, (GLint, GLint, GLsizei, GLsizei)) \
+    X(void, Enable, (GLenum)) X(void, Disable, (GLenum)) \
+    X(void, BlendFunc, (GLenum, GLenum)) \
+    X(void, Scissor, (GLint, GLint, GLsizei, GLsizei)) \
+    X(void, GetIntegerv, (GLenum, GLint *)) \
+    X(void, GenTextures, (GLsizei, GLuint *)) X(void, DeleteTextures, (GLsizei, const GLuint *)) \
+    X(void, BindTexture, (GLenum, GLuint)) \
+    X(void, TexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *)) \
+    X(void, TexParameteri, (GLenum, GLenum, GLint)) \
+    X(void, CopyTexSubImage2D, (GLenum, GLint, GLint, GLint, GLint, GLint, GLsizei, GLsizei)) \
+    X(void, DrawArrays, (GLenum, GLint, GLsizei)) \
+    X(void, ActiveTexture, (GLenum)) \
+    X(void, GenFramebuffers, (GLsizei, GLuint *)) X(void, DeleteFramebuffers, (GLsizei, const GLuint *)) \
+    X(void, BindFramebuffer, (GLenum, GLuint)) \
+    X(void, FramebufferTexture2D, (GLenum, GLenum, GLenum, GLuint, GLint)) \
+    X(GLenum, CheckFramebufferStatus, (GLenum)) \
+    X(GLuint, CreateShader, (GLenum)) X(void, ShaderSource, (GLuint, GLsizei, const GLchar *const *, const GLint *)) \
+    X(void, CompileShader, (GLuint)) X(void, GetShaderiv, (GLuint, GLenum, GLint *)) \
+    X(GLuint, CreateProgram, (void)) X(void, AttachShader, (GLuint, GLuint)) X(void, LinkProgram, (GLuint)) \
+    X(void, GetProgramiv, (GLuint, GLenum, GLint *)) X(void, DeleteShader, (GLuint)) \
+    X(void, DeleteProgram, (GLuint)) X(void, UseProgram, (GLuint)) \
+    X(GLint, GetUniformLocation, (GLuint, const GLchar *)) \
+    X(void, Uniform1i, (GLint, GLint)) X(void, Uniform1f, (GLint, GLfloat)) \
+    X(void, Uniform2f, (GLint, GLfloat, GLfloat)) X(void, Uniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat)) \
+    X(void, GenVertexArrays, (GLsizei, GLuint *)) X(void, BindVertexArray, (GLuint)) \
+    X(void, Finish, (void))
+
+#define X(r, n, a) static r (GLAPI_ *gl##n) a;
+GL_FNS(X)
+#undef X
+
+#define MAX_LEVELS 5
+
+typedef struct {
+    bool ok;
+    int w, h;
+    int levels;
+    float offset;
+    GLuint src;                      /* cópia do quadro, tamanho cheio */
+    GLuint lvl[MAX_LEVELS + 1];      /* lvl[i]: tamanho cheio / 2^i */
+    int lw[MAX_LEVELS + 1], lh[MAX_LEVELS + 1];
+    GLuint fbo, vao;
+    GLuint p_down, p_up, p_comp;
+    GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
+    GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
+    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl;
+    double ms_last, ms_sum; int frames;
+    bool log;
+} glass_t;
+static glass_t G;
+
+static void *gl_proc(const char *name) {
+    static HMODULE lib;
+    void *p = (void *)wglGetProcAddress(name);
+    if (!p || p == (void *)1 || p == (void *)2 || p == (void *)3 || p == (void *)-1) {
+        if (!lib) lib = LoadLibraryA("opengl32.dll");
+        p = (void *)GetProcAddress(lib, name);
+    }
+    return p;
+}
+
+static bool load_gl(void) {
+#define X(r, n, a) if (!(gl##n = (r (GLAPI_ *) a)gl_proc("gl" #n))) return false;
+    GL_FNS(X)
+#undef X
+    return true;
+}
+
+static const char *VS =
+    "#version 330 core\n"
+    "uniform vec4 u_rect; uniform vec2 u_vp; out vec2 v_px;\n"
+    "void main(){ vec2 c = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));\n"
+    "  vec2 p = u_rect.xy + c * u_rect.zw; v_px = p;\n"
+    "  gl_Position = vec4(p.x / u_vp.x * 2.0 - 1.0, 1.0 - p.y / u_vp.y * 2.0, 0.0, 1.0); }\n";
+
+static const char *FS_DOWN =
+    "#version 330 core\n"
+    "uniform sampler2D u_tex; uniform vec2 u_out; uniform vec2 u_texel; uniform float u_off; out vec4 f;\n"
+    "void main(){ vec2 uv = gl_FragCoord.xy / u_out; vec2 o = u_texel * u_off;\n"
+    "  vec4 s = texture(u_tex, uv) * 4.0;\n"
+    "  s += texture(u_tex, uv + vec2(-o.x, -o.y)); s += texture(u_tex, uv + vec2(o.x, -o.y));\n"
+    "  s += texture(u_tex, uv + vec2(-o.x, o.y));  s += texture(u_tex, uv + vec2(o.x, o.y));\n"
+    "  f = vec4((s / 8.0).rgb, 1.0); }\n";
+
+static const char *FS_UP =
+    "#version 330 core\n"
+    "uniform sampler2D u_tex; uniform vec2 u_out; uniform vec2 u_texel; uniform float u_off; out vec4 f;\n"
+    "void main(){ vec2 uv = gl_FragCoord.xy / u_out; vec2 o = u_texel * u_off;\n"
+    "  vec4 s = texture(u_tex, uv + vec2(-o.x * 2.0, 0.0)) + texture(u_tex, uv + vec2(o.x * 2.0, 0.0))\n"
+    "         + texture(u_tex, uv + vec2(0.0, -o.y * 2.0)) + texture(u_tex, uv + vec2(0.0, o.y * 2.0));\n"
+    "  s += 2.0 * (texture(u_tex, uv + vec2(-o.x, -o.y)) + texture(u_tex, uv + vec2(o.x, -o.y))\n"
+    "            + texture(u_tex, uv + vec2(-o.x, o.y)) + texture(u_tex, uv + vec2(o.x, o.y)));\n"
+    "  f = vec4((s / 12.0).rgb, 1.0); }\n";
+
+static const char *FS_COMP =
+    "#version 330 core\n"
+    "in vec2 v_px; uniform sampler2D u_tex; uniform vec2 u_vp; uniform vec4 u_box; uniform vec4 u_rad;\n"
+    "uniform float u_sat; uniform float u_hl; out vec4 f;\n"
+    "float sd(vec2 p, vec2 b, vec4 r){ float rr = p.x < 0.0 ? (p.y < 0.0 ? r.x : r.w) : (p.y < 0.0 ? r.y : r.z);\n"
+    "  rr = min(rr, min(b.x, b.y)); vec2 q = abs(p) - b + rr; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr; }\n"
+    "void main(){ vec2 p = v_px - u_box.xy; vec2 b = u_box.zw;\n"
+    "  float d = sd(p, b, u_rad); float cov = clamp(0.5 - d, 0.0, 1.0); if (cov <= 0.0) discard;\n"
+    "  vec3 c = texture(u_tex, gl_FragCoord.xy / u_vp).rgb;\n"
+    "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = clamp(mix(vec3(l), c, u_sat), 0.0, 1.0);\n"
+    "  /* brilho interno superior: inset 0 1px 0 rgba(255,255,255,.09) */\n"
+    "  float ty = clamp(1.0 - abs(p.y + b.y - 0.5), 0.0, 1.0);\n"
+    "  float rmax = max(max(u_rad.x, u_rad.y), 1.0);\n"
+    "  float side = clamp((b.x - rmax * 0.55 - abs(p.x)) / 2.0 + 0.5, 0.0, 1.0);\n"
+    "  c = mix(c, vec3(1.0), u_hl * ty * side);\n"
+    "  f = vec4(c * cov, cov); }\n";
+
+static GLuint make_prog(const char *fs, const char *name) {
+    GLuint v = glCreateShader(GL_VERTEX_SHADER), s = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(v, 1, &VS, NULL); glCompileShader(v);
+    glShaderSource(s, 1, &fs, NULL); glCompileShader(s);
+    GLint okv = 0, oks = 0; glGetShaderiv(v, GL_COMPILE_STATUS, &okv); glGetShaderiv(s, GL_COMPILE_STATUS, &oks);
+    GLuint p = glCreateProgram();
+    glAttachShader(p, v); glAttachShader(p, s); glLinkProgram(p);
+    GLint okp = 0; glGetProgramiv(p, GL_LINK_STATUS, &okp);
+    glDeleteShader(v); glDeleteShader(s);
+    if (!okv || !oks || !okp) { fprintf(stderr, "glass: shader %s falhou\n", name); glDeleteProgram(p); return 0; }
+    return p;
+}
+
+static GLuint make_tex(int w, int h) {
+    GLuint t = 0; glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    return t;
+}
+
+static void free_targets(void) {
+    if (G.src) glDeleteTextures(1, &G.src);
+    G.src = 0;
+    for (int i = 0; i <= MAX_LEVELS; i++) { if (G.lvl[i]) glDeleteTextures(1, &G.lvl[i]); G.lvl[i] = 0; }
+}
+
+static void ensure_targets(int w, int h) {
+    if (G.src && G.w == w && G.h == h) return;
+    free_targets();
+    G.w = w; G.h = h;
+    G.src = make_tex(w, h);
+    for (int i = 1; i <= G.levels; i++) {
+        G.lw[i] = (w >> i) > 1 ? (w >> i) : 1; G.lh[i] = (h >> i) > 1 ? (h >> i) : 1;
+        G.lvl[i] = make_tex(G.lw[i], G.lh[i]);
+    }
+}
+
+static void fs_pass(GLuint prog, GLuint src_tex, int sw, int sh, GLuint dst_tex, int dw, int dh, float off, bool down) {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_tex, 0);
+    glViewport(0, 0, dw, dh);
+    glUseProgram(prog);
+    glUniform1i(down ? G.d_tex : G.u_tex, 0);
+    glUniform2f(down ? G.d_out : G.u_out, (float)dw, (float)dh);
+    glUniform2f(down ? G.d_texel : G.u_texel, 1.0f / (float)sw, 1.0f / (float)sh);
+    glUniform1f(down ? G.d_off : G.u_off, off);
+    glUniform2f(down ? G.d_vp : G.u_vp, (float)dw, (float)dh);
+    glUniform4f(down ? G.d_rect : G.u_rect, 0, 0, (float)dw, (float)dh);
+    glBindTexture(GL_TEXTURE_2D, src_tex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+/* Copia o framebuffer padrão e o desfoca; o resultado fica em lvl[1] (metade da resolução). */
+static void capture_and_blur(int w, int h, GLuint target_fb) {
+    ensure_targets(w, h);
+    glBindFramebuffer(GL_FRAMEBUFFER, target_fb);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, G.src);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+    glBindVertexArray(G.vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, G.fbo);
+    fs_pass(G.p_down, G.src, w, h, G.lvl[1], G.lw[1], G.lh[1], G.offset, true);
+    for (int i = 2; i <= G.levels; i++)
+        fs_pass(G.p_down, G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.lvl[i], G.lw[i], G.lh[i], G.offset, true);
+    for (int i = G.levels; i >= 2; i--)
+        fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset, false);
+}
+
+typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; } glass_quad;
+
+static int glass_layer(cui_color c) {
+    if (c.r == B_GLASS.r && c.g == B_GLASS.g && c.b == B_GLASS.b && c.a == B_GLASS.a) return 0;
+    if (c.r == B_GLASS_SOFT.r && c.g == B_GLASS_SOFT.g && c.b == B_GLASS_SOFT.b && c.a == B_GLASS_SOFT.a) return 0;
+    if (c.r == B_GLASS_STRONG.r && c.g == B_GLASS_STRONG.g && c.b == B_GLASS_STRONG.b && c.a == B_GLASS_STRONG.a) return 0;
+    if (c.r == B_GLASS_POPUP.r && c.g == B_GLASS_POPUP.g && c.b == B_GLASS_POPUP.b && c.a == B_GLASS_POPUP.a) return 1;
+    return -1;
+}
+
+static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, GLuint target_fb) {
+    glBindFramebuffer(GL_FRAMEBUFFER, target_fb);
+    glViewport(0, 0, W, H);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_SCISSOR_TEST);
+    int x0 = (int)(clip->x), y0 = (int)(clip->y), x1 = (int)(clip->x + clip->w + 0.999f), y1 = (int)(clip->y + clip->h + 0.999f);
+    glScissor(x0, H - y1, x1 - x0, y1 - y0);
+    glUseProgram(G.p_comp);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, G.lvl[1]);
+    glUniform1i(G.c_tex, 0);
+    glUniform2f(G.c_vp, (float)W, (float)H);
+    glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
+    glUniform4f(G.c_box, q->cx, q->cy, q->hw, q->hh);
+    glUniform4f(G.c_rad, q->r[0], q->r[1], q->r[2], q->r[3]);
+    glUniform1f(G.c_sat, 1.55f);
+    /* o CSS soma o brilho sobre a camada translúcida; aqui ele vai por baixo, então compensa a opacidade */
+    float inv = 1.0f - q->tint_a; if (inv < 0.2f) inv = 0.2f;
+    glUniform1f(G.c_hl, 0.09f / inv);
+    glBindVertexArray(G.vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisable(GL_SCISSOR_TEST);
+    glUseProgram(0);
+    glBindVertexArray(0);
+}
+
+static void render_hook(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *gl, void *user) {
+    (void)app; (void)user;
+    LARGE_INTEGER t0, t1, fq;
+    if (G.log) { QueryPerformanceCounter(&t0); QueryPerformanceFrequency(&fq); }
+    int W = dd->width_px, H = dd->height_px;
+
+    /* 1. acha os painéis de vidro: grupos de triângulos RRECT com a cor de vidro, 2 triângulos por painel */
+    int nq = 0, qcap = 0; glass_quad *qs = NULL;
+    for (int c = 0; c < dd->command_count; c++) {
+        const cui_draw_cmd *cm = &dd->commands[c];
+        int run = 0;
+        for (uint32_t i = cm->index_offset; i + 2 < cm->index_offset + cm->index_count; i += 3) {
+            const cui_vertex *v = &dd->vertices[dd->indices[i]];
+            int layer = (v->mode == CUI_SHADE_RRECT) ? glass_layer(v->color) : -1;
+            if (layer < 0) { run = 0; continue; }
+            if (run % 2 == 0) {
+                if (nq == qcap) { qcap = qcap ? qcap * 2 : 16; qs = realloc(qs, sizeof *qs * (size_t)qcap); }
+                glass_quad *q = &qs[nq++];
+                q->idx = (int)i; q->cx = v->x - v->lx; q->cy = v->y - v->ly; q->hw = v->hw; q->hh = v->hh;
+                q->r[0] = v->r_tl; q->r[1] = v->r_tr; q->r[2] = v->r_br; q->r[3] = v->r_bl;
+                q->layer = layer; q->tint_a = v->color.a / 255.0f; q->cmd = c;
+            }
+            run++;
+        }
+    }
+    if (!nq) { free(qs); cui_gl_render(gl, dd, true); goto done; }
+
+    /* 2. desenha em segmentos; em cada painel, captura/desfoca (se a camada mudou) e pinta o vidro */
+    GLint fb = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    cui_draw_cmd *out = malloc(sizeof *out * (size_t)(dd->command_count + nq * 2 + 2));
+    int nout = 0, qi = 0, cur_layer = -1; bool first = true;
+    for (int c = 0; c < dd->command_count; c++) {
+        const cui_draw_cmd *cm = &dd->commands[c];
+        uint32_t cur = cm->index_offset, end = cm->index_offset + cm->index_count;
+        while (qi < nq && qs[qi].cmd == c) {
+            const glass_quad *q = &qs[qi];
+            if ((uint32_t)q->idx > cur) { out[nout] = *cm; out[nout].index_offset = cur; out[nout].index_count = (uint32_t)q->idx - cur; nout++; }
+            cui_draw_data part = *dd; part.commands = out; part.command_count = nout;
+            cui_gl_render(gl, &part, first); first = false; nout = 0;
+            if (q->layer != cur_layer) { capture_and_blur(W, H, (GLuint)fb); cur_layer = q->layer; }
+            draw_glass(q, W, H, &cm->clip, (GLuint)fb);
+            cur = (uint32_t)q->idx;
+            qi++;
+        }
+        if (cur < end) { out[nout] = *cm; out[nout].index_offset = cur; out[nout].index_count = end - cur; nout++; }
+    }
+    { cui_draw_data part = *dd; part.commands = out; part.command_count = nout; cui_gl_render(gl, &part, first); }
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fb);
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    free(out); free(qs);
+done:
+    if (G.log) {
+        glFinish();
+        QueryPerformanceCounter(&t1);
+        double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+        G.ms_sum += ms; G.frames++;
+        fprintf(stderr, "glass: quadro %d: %.2f ms (media %.2f ms), paineis=%d\n", G.frames, ms, G.ms_sum / G.frames, nq);
+    }
+}
+
+bool briks_glass_init(cui_app *app) {
+    const char *e = getenv("BRIKS_GLASS");
+    if (e && e[0] == '0') return false;
+    if (cui_app_is_software(app)) return false;
+    if (!load_gl()) return false;
+    G.levels = 4; G.offset = 1.0f;
+    if ((e = getenv("BRIKS_GLASS_LEVELS"))) { int n = atoi(e); if (n >= 2 && n <= MAX_LEVELS) G.levels = n; }
+    if ((e = getenv("BRIKS_GLASS_OFFSET"))) { float o = (float)atof(e); if (o > 0.1f && o < 8.0f) G.offset = o; }
+    G.log = getenv("BRIKS_GLASS_LOG") != NULL;
+    G.p_down = make_prog(FS_DOWN, "down"); G.p_up = make_prog(FS_UP, "up"); G.p_comp = make_prog(FS_COMP, "comp");
+    if (!G.p_down || !G.p_up || !G.p_comp) return false;
+#define U(p, n) glGetUniformLocation(p, n)
+    G.d_tex = U(G.p_down, "u_tex"); G.d_out = U(G.p_down, "u_out"); G.d_texel = U(G.p_down, "u_texel"); G.d_off = U(G.p_down, "u_off");
+    G.d_vp = U(G.p_down, "u_vp"); G.d_rect = U(G.p_down, "u_rect");
+    G.u_tex = U(G.p_up, "u_tex"); G.u_out = U(G.p_up, "u_out"); G.u_texel = U(G.p_up, "u_texel"); G.u_off = U(G.p_up, "u_off");
+    G.u_vp = U(G.p_up, "u_vp"); G.u_rect = U(G.p_up, "u_rect");
+    G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
+    G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl");
+#undef U
+    glGenFramebuffers(1, &G.fbo);
+    glGenVertexArrays(1, &G.vao);
+    G.ok = true;
+    cui_app_set_render_override(app, render_hook, NULL);
+    return true;
+}
+
+void briks_glass_shutdown(void) { G.ok = false; }

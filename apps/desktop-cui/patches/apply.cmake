@@ -1,0 +1,11 @@
+# Aplica o patch do CUI uma única vez (roda no diretório de fontes do CUI).
+set(P "${CMAKE_CURRENT_LIST_DIR}/cui-render-override.patch")
+execute_process(COMMAND git apply --ignore-whitespace -R --check "${P}" RESULT_VARIABLE already OUTPUT_QUIET ERROR_QUIET)
+if(already EQUAL 0)
+  message(STATUS "patch do CUI já aplicado")
+else()
+  execute_process(COMMAND git apply --ignore-whitespace "${P}" RESULT_VARIABLE rc)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "falha ao aplicar cui-render-override.patch")
+  endif()
+endif()

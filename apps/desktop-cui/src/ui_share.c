@@ -24,8 +24,10 @@ static bool g_dev_open_quality;   /* gancho de captura: abre o popover de qualid
 /* ---------- qualidade ---------- */
 static const int RES_H[4] = { 720, 1080, 1440, 2160 };
 static const char *const RES_LABEL[4] = { "720p", "1080p", "1440p", "4K" };
-static const int FPS_V[3] = { 15, 30, 60 };
-static const char *const FPS_LABEL[3] = { "15", "30", "60" };
+#define FPS_N 7
+static const int FPS_V[FPS_N] = { 10, 15, 20, 24, 30, 45, 60 };
+static const char *const FPS_LABEL[FPS_N] = { "10", "15", "20", "24", "30", "45", "60" };
+#define FPS_DEFAULT 4   /* 30 */
 static const char *const BR_LABEL[4] = { "Automático", "Alto", "Máximo", "Personalizado" };
 #define BR_MAX_KBPS 50000
 
@@ -225,7 +227,8 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
     for (int i = 0; i < g_ntrash; i++) cui_image_destroy(ui, g_trash[i]);
     g_ntrash = 0;
-    if (!q->fps && !q->res && !q->br_custom) { q->res = 1; q->fps = 1; q->br_custom = 8; }   /* padrão: 1080p · 30 FPS · automático */
+    if (!q->fps && !q->res && !q->br_custom) { q->res = 1; q->fps = FPS_DEFAULT; q->br_custom = 8; }
+    if (q->fps < 0 || q->fps >= FPS_N) q->fps = FPS_DEFAULT;   /* padrão: 1080p · 30 FPS · automático */
     /* só assiste no modo Transmissão (aba Chamada): fora dele o core nem decodifica */
     bool viewing = s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0;
     for (int i = 0; i < 8; i++) {
@@ -244,7 +247,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     if (d) cui_request_redraw(ui);
     if (d && core_state() == CORE_READY && s->in_room) {
         if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }
-        if (dev == 0 && !strcmp(d, "dialog-quality")) { q->quality_open = true; q->br_mode = 3; q->br_custom = 35; q->res = 2; q->fps = 2; }
+        if (dev == 0 && !strcmp(d, "dialog-quality")) { q->quality_open = true; q->br_mode = 3; q->br_custom = 35; q->res = 2; q->fps = FPS_N - 1; }
         if (dev == 0) { dev = 1; if (!strncmp(d, "dialog", 6) || !strcmp(d, "screen") || !strcmp(d, "adapt")) share_open_dialog(s);
             if (!strcmp(d, "dialog-apps")) q->audio_mode = 1; if (!strcmp(d, "dialog-windows")) q->tab = 1;
             if (!strcmp(d, "test")) send_start(s, "test", "0", "Padrão de teste"); }
@@ -319,7 +322,7 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Quadros por segundo", .size = 13, .color = B_MUTED);
-            ch |= seg(ui, "fps", FPS_LABEL, NULL, 3, &q->fps);
+            ch |= seg(ui, "fps", FPS_LABEL, NULL, FPS_N, &q->fps);
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_column(ui, .gap = 1) {
@@ -365,9 +368,11 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
     cui_vec2 vp = cui_viewport_size(ui);
     float inner = 3 * CARD_W + 2 * 12;
     cui_dialog(ui, "Compartilhar tela", &q->dialog_open, .description = "Escolha a fonte e confirme", .width = fminf(inner + 48, fmaxf(vp.x - 48, 520))) {
-        static const char *const tabs[2] = { "Telas", "Janelas" };
-        cui_row(ui) { seg(ui, "tab", tabs, q->nsrc, 2, &q->tab); }
         int t = q->tab, n = q->nsrc[t];
+        /* com os ajustes de qualidade abertos, fontes e áudio viram uma linha de resumo: o diálogo tem de caber em 800 px de altura */
+        if (!q->quality_open) {
+        static const char *const tabs[2] = { "Telas", "Janelas" };
+        cui_row(ui) { if (seg(ui, "tab", tabs, q->nsrc, 2, &q->tab)) { t = q->tab; n = q->nsrc[t]; } }
         if (q->err[0]) cui_text(ui, q->err, .size = 13, .color = B_DANGER);
         else if (q->loading) cui_text(ui, "Procurando telas e janelas…", .size = 13, .color = B_MUTED);
         else if (!n) cui_text(ui, t == 0 ? "Nenhuma tela encontrada." : "Nenhuma janela aberta para compartilhar.", .size = 13, .color = B_MUTED);
@@ -414,6 +419,12 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
             cui_text(ui, t == 0 ? "Entra o som de tudo que toca no PC, menos o Briks e o Discord." : "Entra só o som do programa dono da janela.", .size = 12, .color = B_MUTED);
         } else cui_text(ui, "A transmissão sai sem áudio.", .size = 12, .color = B_MUTED);
         cui_separator(ui);
+        } else {
+            char sum[220];
+            snprintf(sum, sizeof sum, "Fonte: %s · Áudio: %s", n > 0 && q->sel[t] < n ? q->src[t][q->sel[t]].name : "nenhuma",
+                     q->audio_mode == 2 ? "sem áudio" : q->audio_mode == 1 ? "só os apps marcados" : "da fonte");
+            cui_text(ui, sum, .size = 13, .color = B_MUTED, .nowrap = true);
+        }
         char chip[80]; { share_state_t tmp = *q; tmp.active = false; quality_chip(&tmp, chip, sizeof chip); }
         /* qualidade recolhida por padrão (o chip resume); "Ajustar" abre resolução, FPS e bitrate */
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {

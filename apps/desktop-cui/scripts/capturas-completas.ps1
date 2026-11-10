@@ -3,7 +3,7 @@ param([string]$Out = "$PSScriptRoot\..\shots\completa")
 $root = Split-Path $PSScriptRoot -Parent
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
-$env:BRIKS_BACKEND_EXE = "A:/BRiskCall/Risk-P2P/apps/desktop/resources/backend/briks-desktop-backend.exe"
+$env:BRIKS_BACKEND_EXE = "$root/../../desktop-backend/target/release/briks-desktop-backend.exe"
 $env:BRIKS_LAYOUT_FILE = "$env:TEMP\lay-capturas.json"; $env:BRIKS_WINDOW = "1280x800"; $env:CUI_SCREENSHOT_FRAMES = "30"
 foreach ($m in @(@("social", "social", ""), @("grupo", "group", ""), @("chamada", "call", ""), @("historico", "history", ""), @("config", "social", "settings"))) {
     Remove-Item $env:BRIKS_LAYOUT_FILE -ErrorAction SilentlyContinue

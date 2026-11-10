@@ -9,6 +9,6 @@ infrastructure/coturn/.env.production
 coverage/
 *.tsbuildinfo
 release/
-apps/desktop/resources/backend/
+apps/desktop-cui/backend/
 .briks/
 .DS_Store

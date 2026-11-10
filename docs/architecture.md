@@ -241,21 +241,17 @@ sanitizado.
 
 ## Empacotamento
 
-O build de produção segue:
+O app principal é nativo (`apps/desktop-cui`); o Electron foi removido (último commit com ele: branch local `backup/electron-pre-cui`). `scripts/build-cui.ps1` faz:
 
 ```text
-cargo build --release --manifest-path desktop-backend/Cargo.toml
+cargo build --release --manifest-path desktop-backend/Cargo.toml     (backend local)
+cargo build --release --manifest-path apps/desktop-cui/briks-core/Cargo.toml
+cmake + ninja em apps/desktop-cui                                     (briks_cui.exe)
         ↓
-apps/desktop/resources/backend/briks-desktop-backend(.exe)
-        ↓
-pnpm build:web
-        ↓
-Electron TypeScript
-        ↓
-electron-builder
+apps/desktop-cui/build/{briks_cui.exe, briks-core.exe, backend/briks-desktop-backend.exe}
 ```
 
-`extraResources` coloca o sidecar em `resources/backend/`, fora do ASAR. No Linux, o script aplica permissão executável.
+Instalador, assinatura e auto-update do app nativo ainda não existem (ver `docs/plans/migracao-cui-principal.md`).
 
 ## Validação antes de release
 

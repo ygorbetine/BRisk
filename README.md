@@ -2,6 +2,8 @@
 
 **Briks** é um aplicativo desktop (Windows) para transmitir tela e conversar com amigos, pensado para conviver com o Discord: você fica na call do Discord e transmite pelo Briks sem que a voz do Discord vaze para o stream.
 
+> **O app principal agora é nativo (C99 + CUI), em `apps/desktop-cui`.** O Electron foi removido deste branch (o último commit com ele está no branch local `backup/electron-pre-cui`). A interface React de `apps/web` e os pacotes `packages/*` continuam no repositório porque o backend, o signaling e a interface web ainda os usam. Os trechos abaixo sobre Electron, instalador NSIS/AppImage e auto-update descrevem o app antigo. Plano e pendências: `docs/plans/migracao-cui-principal.md`.
+
 > Derivado do projeto aberto [Risk-P2P](https://github.com/xxsamboladiones/Risk-P2P) (AGPL-3.0). Este fork mantém a licença AGPL-3.0; veja `LICENSE` e `THIRD_PARTY_NOTICES.md`.
 
 ## O que o Briks acrescenta
@@ -16,13 +18,14 @@
 
 ## Instalar e rodar
 
-```bash
-pnpm install
-pnpm dev            # desenvolvimento (Electron + web)
-pnpm package:win    # gera o instalador em apps/desktop/release
+Requer Windows 10/11, Visual Studio (MSVC + CMake + Ninja) e Rust estável. Na raiz do repositório:
+
+```powershell
+powershell -NoProfile -File scripts/build-cui.ps1      # backend local + briks-core + app nativo -> apps/desktop-cui/build
+apps\desktop-cui\build\briks_cui.exe
 ```
 
-Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase (signaling). TURN (`infrastructure/coturn`) e SFU (`infrastructure/livekit`) são opcionais e hospedados por você. `CHECKPOINTS.md` traz o plano e o estado de cada etapa.
+O app precisa de `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (variáveis de ambiente ou `BRIKS_ENV_FILE`; copie `.env.example`). Para web/signaling: `pnpm install` e `pnpm dev:web`. Dados do app nativo: `%APPDATA%\Briks-CUI` (não migra nada do Electron automaticamente). TURN (`infrastructure/coturn`) e SFU (`infrastructure/livekit`) são opcionais e hospedados por você. `CHECKPOINTS.md` traz o plano e o estado de cada etapa.
 
 ---
 
@@ -179,8 +182,8 @@ transferências iniciados depois da alteração.
 ## Componentes
 
 ```text
-apps/web           Interface React, chat, chamadas e signaling
-apps/desktop       Electron Main + preload
+apps/web           Interface React legada (renderer do Electron antigo) e signaling web
+apps/desktop-cui   App nativo (C99 + CUI) e briks-core (Rust: sinalização, WebRTC, áudio)
 packages/rtc       WebRTC, mídia, DataChannels e file transfer
 packages/protocol  Tipos e mensagens compartilhadas
 desktop-backend    Backend local Rust/Axum + SQLite
@@ -190,19 +193,17 @@ infrastructure     Coturn, Docker e infraestrutura auxiliar
 
 ## Backend desktop local
 
-Quando o Electron inicia:
+Quando o app nativo inicia:
 
 1. gera um token local aleatório por execução;
 2. inicia `briks-desktop-backend` como processo filho;
 3. fornece o diretório de dados e configurações locais;
 4. o backend abre/cria o SQLite e executa migrations;
 5. escolhe uma porta loopback livre;
-6. o Electron valida `/health`;
-7. registra e carrega a origem persistente `briks://app`;
-8. a janela do Briks é aberta.
+6. o app valida `/health`;
+7. a janela do Briks é aberta.
 
 A API local escuta apenas em `127.0.0.1` e, exceto por `/health`, exige `X-Briks-Desktop-Token`.
-Os arquivos da interface empacotada são servidos pelo protocolo seguro `briks://app`; não existe uma segunda porta HTTP para os assets.
 
 ## Configuração
 
@@ -238,84 +239,16 @@ sobre `443`, firewall, certificados e emissor temporário, está documentada em
 
 ## Desenvolvimento
 
-Pré-requisitos:
-
-- Node.js 22+;
-- pnpm 10.15+;
-- Rust estável.
-
-Instale as dependências:
+Pré-requisitos: Windows, Visual Studio (MSVC, CMake, Ninja), Rust estável; Node.js 22+ e pnpm 10.15+ só para `apps/web` e `packages/*`.
 
 ```powershell
-pnpm install
+powershell -NoProfile -File scripts/build-cui.ps1       # compila tudo
+cd apps/desktop-cui/briks-core; cargo test --release     # testes do núcleo (loopback)
+apps\desktop-cui\build\briks_smoke.exe                 # smoke do app (backend local)
+pnpm dev:web                                             # só a interface web
 ```
 
-Inicie o desktop:
-
-```powershell
-pnpm dev:desktop
-```
-
-O comando prepara o sidecar Rust em modo debug, inicia o Vite e abre o Electron.
-
-Para trabalhar somente na interface web:
-
-```powershell
-pnpm dev:web
-```
-
-## Build desktop
-
-### Windows
-
-```powershell
-pnpm package:win
-```
-
-O Windows usa:
-
-```text
-apps/desktop/build/icon.ico
-```
-
-### Linux
-
-```bash
-pnpm package:linux
-```
-
-Ou, no Windows usando Docker:
-
-```powershell
-pnpm package:linux:docker
-```
-
-O Linux usa:
-
-```text
-apps/desktop/build/icon.png
-```
-
-Os artefatos finais ficam em:
-
-```text
-apps/desktop/release/
-```
-
-## Segurança Electron
-
-O desktop mantém:
-
-- `contextIsolation: true`;
-- `nodeIntegration: false`;
-- `sandbox: true`;
-- preload mínimo;
-- novas janelas bloqueadas;
-- navegação externa bloqueada;
-- permissões de mídia limitadas à origem local do Briks;
-- IPC validado pela origem;
-- token efêmero para a API local;
-- single-instance lock.
+Capturas e vídeos: `apps/desktop-cui/scripts/` (`capturas-completas.ps1`, `make-video.ps1`). Não há instalador, auto-update nem pipeline de release do app nativo ainda: ficam para uma autorização à parte (ver `docs/plans/migracao-cui-principal.md`).
 
 ## Testes
 
@@ -325,10 +258,10 @@ pnpm test
 pnpm verify:turn-config
 ```
 
-A CI valida TypeScript, testes Web/P2P, emissor de credenciais TURN, configuração Coturn, build Web, migração de um banco 0.1 preenchido e duas instâncias empacotadas do Electron. Cada instância precisa renderizar React, iniciar o sidecar Rust saudável e conseguir gravar `localStorage` e IndexedDB na origem persistente.
+A CI valida TypeScript, testes Web/P2P, emissor de credenciais TURN, configuração Coturn, build Web, migração de um banco 0.1 preenchido, o backend local e o briks-core (Rust), e compila o app nativo no Windows.
 O backend desktop também é verificado no Windows para cobrir os caminhos específicos de captura de áudio desse sistema.
 
-Tags `v*` executam o workflow de release para gerar NSIS, AppImage, DEB, atestados de proveniência e `SHA256SUMS.txt`. Releases Windows exigem `CSC_LINK` e `CSC_KEY_PASSWORD`: o pipeline interrompe o build se faltarem e valida a assinatura Authenticode dos executáveis antes da publicação. Builds locais continuam podendo ser não assinados. O servidor PostgreSQL antigo só é ativado explicitamente com `VITE_ENABLE_LEGACY_SERVER=true` e o profile Docker `legacy-server`.
+Não há workflow de release do app nativo ainda (o de Electron foi removido). O servidor PostgreSQL antigo só é ativado explicitamente com `VITE_ENABLE_LEGACY_SERVER=true` e o profile Docker `legacy-server`.
 
 ## Destaques da versão Alpha atual
 

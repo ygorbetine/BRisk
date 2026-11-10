@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Continue'
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
-$env:BRIKS_BACKEND_EXE = 'A:/BRiskCall/Risk-P2P/apps/desktop/resources/backend/briks-desktop-backend.exe'
+$root = Split-Path $PSScriptRoot -Parent
+$env:BRIKS_BACKEND_EXE = "$root/../../desktop-backend/target/release/briks-desktop-backend.exe"
 $env:CUI_SCREENSHOT_FRAMES = '30'; Remove-Item Env:BRIKS_WINDOW -ErrorAction SilentlyContinue
 # nome, demo, dev_open, retangulos x,y,w,h,raio
 $telas = @(

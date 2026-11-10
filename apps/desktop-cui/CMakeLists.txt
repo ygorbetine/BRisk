@@ -17,6 +17,9 @@ target_link_libraries(briks_cui PRIVATE cui winhttp bcrypt shell32 opengl32 ws2_
 
 # Copia o backend local (briks-desktop-backend.exe) para ao lado do executável.
 set(BRIKS_BACKEND_EXE "" CACHE FILEPATH "Caminho do briks-desktop-backend.exe")
+if(NOT BRIKS_BACKEND_EXE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-backend/target/release/briks-desktop-backend.exe")
+  set(BRIKS_BACKEND_EXE "${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-backend/target/release/briks-desktop-backend.exe")
+endif()
 if(BRIKS_BACKEND_EXE AND EXISTS "${BRIKS_BACKEND_EXE}")
   add_custom_command(TARGET briks_cui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:briks_cui>/backend

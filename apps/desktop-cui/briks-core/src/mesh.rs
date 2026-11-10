@@ -117,7 +117,7 @@ struct Peer {
     recv: Arc<RecvState>,
 }
 
-struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<TrackLocalStaticSample>, sender: share::Sender, info: Option<Value> }
+struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP>, sender: share::Sender, info: Option<Value> }
 
 pub struct MeshCfg {
     pub namespace: String,
@@ -177,7 +177,7 @@ struct Actor {
     share_gen: u64,
     net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT/NACK por espectador (RTCP), lidos pelo laço de adaptação
     idr: Arc<std::sync::atomic::AtomicBool>,   // pedido de quadro-chave (PLI/FIR/novo espectador), único para a sala toda
-    vtrack: Option<Arc<TrackLocalStaticSample>>,
+    vtrack: Option<share::VideoOut>,
     atrack: Option<Arc<TrackLocalStaticSample>>,   // áudio da transmissão (só do processo), também persistente   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
     sev_tx: mpsc::Sender<Value>,
     sev_rx: Option<mpsc::Receiver<Value>>,
@@ -460,12 +460,13 @@ impl Actor {
 
     async fn share_start(&mut self, cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
         self.share_stop().await;
-        let track = self.vtrack.get_or_insert_with(share::new_video_track).clone();
+        let vout = self.vtrack.get_or_insert_with(share::VideoOut::new).clone();
+        let track = vout.track.clone();
         self.share_gen += 1;
         let gen = self.share_gen;
         let amode = cfg.audio.clone();
         let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
-        match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, track.clone(), self.sev_tx.clone(), preview, dump) {
+        match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, vout, self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack)) } else { None };
@@ -505,6 +506,7 @@ impl Actor {
                                 for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
                                     e.loss = r.fraction_lost as f32 / 256.0;
                                     e.jitter_ms = r.jitter as f32 / 90.0;
+                                    if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[rr] perda {} jitter {} lsr {:x} dlsr {}", r.fraction_lost, r.jitter, r.last_sender_report, r.delay); }
                                     if r.last_sender_report != 0 {
                                         // RTT = agora − LSR − DLSR, em unidades de 1/65536 s (32 bits do meio do NTP)
                                         let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;

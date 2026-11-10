@@ -8,11 +8,11 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use webrtc::media::io::sample_builder::SampleBuilder;
-use webrtc::media::Sample;
-use webrtc::rtp::codecs::h264::H264Packet;
+use webrtc::rtp::codecs::h264::{H264Packet, H264Payloader};
+use webrtc::rtp::packetizer::{Depacketizer, Packetizer};
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_remote::TrackRemote;
 
 use crate::capture::{Capture, SourceKind};
@@ -42,12 +42,52 @@ pub struct ShareCfg {
     pub adaptive: bool,
 }
 
-pub fn new_video_track() -> Arc<TrackLocalStaticSample> {
-    Arc::new(TrackLocalStaticSample::new(
+/// Faixa de vídeo em RTP cru: o empacotamento H264 e o espaçamento dos pacotes (pacer) são nossos.
+pub fn new_video_track() -> Arc<TrackLocalStaticRTP> {
+    Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability { mime_type: "video/H264".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: H264_FMTP.into(), rtcp_feedback: vec![] },
         VIDEO_TRACK_ID.into(),
         "briks-screen".into(),
     ))
+}
+
+/// Saída de vídeo de uma sala: a faixa e o pacer, que vivem enquanto a sala existir. Parar e retomar a transmissão reaproveita
+/// os dois, para a numeração e o relógio RTP continuarem (um salto quebraria o SRTP do outro lado).
+#[derive(Clone)]
+pub struct VideoOut {
+    pub track: Arc<TrackLocalStaticRTP>,
+    tx: mpsc::UnboundedSender<(Vec<u8>, u32, u32)>,
+    queued: Arc<AtomicU64>,
+}
+impl VideoOut {
+    pub fn new() -> Self {
+        let track = new_video_track();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let queued = Arc::new(AtomicU64::new(0));
+        tokio::spawn(pacer_task(track.clone(), rx, queued.clone()));
+        VideoOut { track, tx, queued }
+    }
+}
+
+/// Pacer: empacota cada unidade de acesso e solta os pacotes espaçados a `pace_bps` em vez de despejar o quadro inteiro de uma vez
+/// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Um quadro-chave grande leva alguns períodos
+/// para sair; se a fila passar de ~0,5 s, o quadro é descartado e um quadro-chave é pedido.
+async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, queued: Arc<AtomicU64>) {
+    let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
+    let mut budget_at = tokio::time::Instant::now();
+    while let Some((au, samples, pace_bps)) = rx.recv().await {
+        let len = au.len() as u64;
+        let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
+        let late = tokio::time::Instant::now().saturating_duration_since(budget_at);
+        if late > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: não acumula crédito
+        for p in pkts {
+            let now = tokio::time::Instant::now();
+            if budget_at > now + Duration::from_millis(2) { tokio::time::sleep_until(budget_at).await; }
+            let _ = track.write_rtp(&p).await;
+            budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace_bps.max(100_000) as f64);
+        }
+        queued.fetch_sub(len, Ordering::Relaxed);
+    }
 }
 
 pub struct Sender {
@@ -71,16 +111,11 @@ pub fn cpu_ms() -> f64 {
 }
 
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
-pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, track: Arc<TrackLocalStaticSample>, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
+pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, out: VideoOut, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
     let cap = Capture::start(cfg.kind.clone(), cfg.fps, cfg.height, preview.is_some(), dump.is_some()).map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     idr.store(true, Ordering::Relaxed);
-    let (tx, mut rx) = mpsc::unbounded_channel::<(Vec<u8>, Duration)>();
-    let rt = tokio::runtime::Handle::current();
-    let t2 = track.clone();
-    rt.spawn(async move {
-        while let Some((au, d)) = rx.recv().await { let _ = t2.write_sample(&Sample { data: Bytes::from(au), duration: d, ..Default::default() }).await; }
-    });
+    let (tx, queued) = (out.tx.clone(), out.queued.clone());   // bytes esperando no pacer
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
         use crate::adapt::{Controller, Estimator};
@@ -99,6 +134,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
+        let mut pacer_drops = 0u64;
         let mut announce = false;
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
@@ -144,7 +180,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": dec.bps / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
-                    "adapting": adapting, "reason": est.reason }));
+                    "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
@@ -185,7 +221,16 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             match au {
                 Ok(list) => {
                     if list.is_empty() { skipped += 1; }
-                    for au in list { frames += 1; bytes += au.len() as u64; last_send = Instant::now(); let _ = tx.send((au, period)); }
+                    for au in list {
+                        frames += 1; bytes += au.len() as u64;
+                        let cur_bps = e.bps as u64;
+                        // fila do pacer acima de 0,5 s de bitrate: a rede (ou o pacer) não dá vazão — descarta e pede quadro-chave
+                        if queued.load(Ordering::Relaxed) * 8 > cur_bps / 2 + 400_000 { pacer_drops += 1; id2.store(true, Ordering::Relaxed); continue; }
+                        let samples = ((last_send.elapsed().as_secs_f64().min(1.0)) * 90_000.0) as u32;
+                        last_send = Instant::now();
+                        queued.fetch_add(au.len() as u64, Ordering::Relaxed);
+                        let _ = tx.send((au, samples.max(1), (cur_bps as f64 * 2.5) as u32));
+                    }
                 }
                 Err(e) => { closed_reason = e.to_string(); break; }
             }
@@ -218,8 +263,79 @@ pub struct RecvState {
     pub want_pli: AtomicBool,
 }
 
+/// Buffer de reordenação/perda do receptor. Entrega as unidades de acesso em ordem; um buraco na sequência espera a
+/// retransmissão (NACK) por até `WAIT`; passado o prazo, descarta até o próximo quadro-chave e sinaliza que é preciso pedi-lo (PLI).
+pub struct JitterBuf {
+    pkts: std::collections::BTreeMap<u64, webrtc::rtp::packet::Packet>,
+    next: Option<u64>,
+    hi: u64,
+    gap_since: Option<Instant>,
+    need_key: bool,
+    pub lost_frames: u64,
+    pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
+}
+const WAIT: Duration = Duration::from_millis(200);
+
+impl JitterBuf {
+    pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, recovered: 0 } }
+    fn ext(&mut self, seq: u16) -> u64 {
+        if self.next.is_none() && self.pkts.is_empty() { self.hi = 1 << 16 | seq as u64; return self.hi; }
+        let d = seq.wrapping_sub(self.hi as u16) as i16 as i64;
+        let e = (self.hi as i64 + d).max(0) as u64;
+        if e > self.hi { self.hi = e; }
+        e
+    }
+    pub fn push(&mut self, p: webrtc::rtp::packet::Packet) {
+        let e = self.ext(p.header.sequence_number);
+        if self.next.is_none() { self.next = Some(e); }
+        if e < self.next.unwrap() { return; }   // atrasado demais / duplicado
+        self.pkts.insert(e, p);
+    }
+    /// Unidades de acesso prontas (Annex-B). O bool diz se é preciso pedir um quadro-chave.
+    pub fn pop(&mut self, now: Instant) -> (Vec<Vec<u8>>, bool) {
+        let (mut out, mut want_pli) = (vec![], false);
+        loop {
+            let Some(next) = self.next else { break };
+            if self.pkts.contains_key(&next) {
+                // corrida contígua a partir de `next`, mesmo timestamp, até o marcador
+                let ts = self.pkts[&next].header.timestamp;
+                let mut end = None;
+                let mut k = next;
+                while let Some(p) = self.pkts.get(&k) {
+                    if p.header.timestamp != ts { end = Some(k - 1); break; }   // quadro sem marcador (perdido no fim): fecha no pacote anterior
+                    if p.header.marker { end = Some(k); break; }
+                    k += 1;
+                }
+                let Some(end) = end else { break };   // ainda chegando
+                if self.gap_since.take().is_some() { self.recovered += 1; }
+                let mut dep = H264Packet::default();
+                let mut au = Vec::new();
+                let mut ok = true;
+                for q in next..=end { if let Some(p) = self.pkts.remove(&q) { match dep.depacketize(&p.payload) { Ok(b) => au.extend_from_slice(&b), Err(_) => ok = false } } }
+                self.next = Some(end + 1);
+                let key = crate::mfenc::nals(&au).iter().any(|n| n.0 == 5);
+                if !ok || au.is_empty() { self.need_key = true; want_pli = true; self.lost_frames += 1; continue; }
+                if self.need_key && !key { continue; }   // sem referência: espera o quadro-chave
+                self.need_key = false;
+                out.push(au);
+            } else {
+                if self.pkts.is_empty() { break; }
+                let since = *self.gap_since.get_or_insert(now);
+                if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }   // dá tempo à retransmissão
+                // perda sem conserto: pula o quadro quebrado e tudo até o próximo quadro-chave
+                self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
+                let (&lo, first) = self.pkts.iter().next().unwrap();
+                let bad_ts = first.header.timestamp;
+                let start = self.pkts.iter().find(|(_, p)| p.header.timestamp != bad_ts).map(|(k, _)| *k);
+                match start { Some(st) => { self.pkts.retain(|k, _| *k >= st); self.next = Some(st); } None => { let last = *self.pkts.keys().next_back().unwrap_or(&lo); self.pkts.clear(); self.next = Some(last + 1); } }
+            }
+        }
+        (out, want_pli)
+    }
+}
+
 /// Lê o RTP da faixa de vídeo do peer. Só decodifica enquanto `watching`; sem espectador descarta os pacotes (custo ~zero).
-/// `pli` pede um quadro-chave ao emissor (início, perda).
+/// `pli` pede um quadro-chave ao emissor (início, perda sem conserto, erro de decodificação).
 pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<RecvState>, ev: mpsc::Sender<Value>, pli: Arc<dyn Fn() + Send + Sync>) {
     let (dtx, drx) = std::sync::mpsc::sync_channel::<Option<Vec<u8>>>(6);
     let (st2, ev2, peer2) = (st.clone(), ev.clone(), peer.clone());
@@ -233,7 +349,6 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
             if dec.is_none() { dec = H264Dec::new().ok(); }
             let Some(d) = dec.as_mut() else { continue };
             let r = d.decode(&au);
-            if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[rx] au {} bytes -> {}", au.len(), match &r { Ok(Some((w, h, _))) => format!("{w}x{h}"), Ok(None) => "nada".into(), Err(e) => format!("erro {e}") }); }
             if r.is_err() { st2.want_pli.store(true, Ordering::Relaxed); }
             if let Ok(Some((w, h, rgba))) = r {
                 let path = st2.sink_path.lock().unwrap().clone();
@@ -245,29 +360,71 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
             }
         }
     });
-    let mut sb = SampleBuilder::new(4096, H264Packet::default(), 90_000);
+    let mut jb = JitterBuf::new();
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
-    let mut seen = 0u64;
-    while let Ok((pkt, _)) = track.read_rtp().await {
+    let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
+    let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
+    loop {
+        // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
+        let pkt = match tokio::time::timeout(Duration::from_millis(50), track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
         let w = st.watching.load(Ordering::Relaxed);
         if !w { was = false; continue; }
         let ep = st.epoch.load(Ordering::Relaxed);
         if !was || ep != my_epoch {
-            was = true; my_epoch = ep; sb = SampleBuilder::new(4096, H264Packet::default(), 90_000);
-            st.frames.store(0, Ordering::Relaxed); seen = 0; last_frame = Instant::now();
+            was = true; my_epoch = ep; jb = JitterBuf::new();
+            st.frames.store(0, Ordering::Relaxed); frames0 = 0; last_frame = Instant::now();
             let _ = dtx.try_send(None);
-            pli(); last_pli = Instant::now();
+            ask(&mut last_pli, &mut plis, Duration::ZERO);
         }
-        sb.push(pkt);
-        while let Some(s) = sb.pop() {
-            seen += 1;
-            if dtx.try_send(Some(s.data.to_vec())).is_err() { pli(); last_pli = Instant::now(); }
-            last_frame = Instant::now();
+        if let Some(p) = pkt { jb.push(p); }
+        let (aus, want) = jb.pop(Instant::now());
+        for au in aus { if dtx.try_send(Some(au)).is_err() { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); } last_frame = Instant::now(); }
+        if want || st.want_pli.swap(false, Ordering::Relaxed) { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); }
+        // sem quadros há 2 s (o quadro-chave pedido se perdeu): pede outro
+        if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
+        if win.elapsed() >= Duration::from_secs(1) {
+            let f = st.frames.load(Ordering::Relaxed);
+            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered }));
+            frames0 = f; win = Instant::now();
         }
-        if st.want_pli.swap(false, Ordering::Relaxed) && last_pli.elapsed() > Duration::from_millis(400) { pli(); last_pli = Instant::now(); }
-        // sem quadros há 2 s (perda do quadro-chave): pede outro, no máximo a cada 2 s
-        if last_frame.elapsed() > Duration::from_secs(2) && last_pli.elapsed() > Duration::from_secs(2) { pli(); last_pli = Instant::now(); last_frame = Instant::now(); }
-        let _ = seen;
+    }
+}
+
+#[cfg(test)]
+mod jb_tests {
+    use super::*;
+    use webrtc::rtp::packet::Packet;
+
+    fn pk(seq: u16, ts: u32, marker: bool, idr: bool) -> Packet {
+        let mut p = Packet::default();
+        p.header.sequence_number = seq; p.header.timestamp = ts; p.header.marker = marker;
+        p.payload = Bytes::from(vec![if idr { 0x65 } else { 0x41 }, 1, 2, 3]);   // NAL único: 5 = IDR, 1 = P
+        p
+    }
+
+    #[test]
+    fn reorders_waits_for_retransmission_and_falls_back_to_keyframe() {
+        let mut jb = JitterBuf::new();
+        let t = Instant::now();
+        // quadro-chave em 2 pacotes fora de ordem
+        jb.push(pk(11, 100, true, true)); jb.push(pk(10, 100, false, true));
+        let (f, pli) = jb.pop(t);
+        assert!(f.len() == 1 && !pli, "reordenou e entregou o quadro-chave");
+        // quadro P com buraco (12 faltando): espera; a retransmissão chega dentro do prazo
+        jb.push(pk(13, 200, true, false));
+        assert!(jb.pop(t).0.is_empty());
+        jb.push(pk(12, 200, false, false));
+        let (f, pli) = jb.pop(t + Duration::from_millis(50));
+        assert!(f.len() == 1 && !pli && jb.recovered == 1, "NACK consertou");
+        // buraco que não fecha (14 perdido): depois do prazo descarta, pede quadro-chave e ignora os P seguintes
+        jb.push(pk(15, 300, true, false)); jb.push(pk(16, 400, true, false));
+        assert!(jb.pop(t + Duration::from_millis(60)).0.is_empty());
+        let (f, pli) = jb.pop(t + Duration::from_millis(400));
+        assert!(f.is_empty() && pli && jb.lost_frames == 1, "prazo estourou: PLI");
+        jb.push(pk(17, 500, true, false));
+        assert!(jb.pop(t + Duration::from_millis(410)).0.is_empty(), "P sem referência não é entregue");
+        jb.push(pk(18, 600, true, true));
+        assert_eq!(jb.pop(t + Duration::from_millis(420)).0.len(), 1, "volta no quadro-chave");
     }
 }

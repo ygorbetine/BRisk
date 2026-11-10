@@ -135,6 +135,7 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúd
 void dock_render(cui_ctx *ui, app_state_t *s);
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
+void dock_script_menu(float x, float y);
 void dock_script_restore(void);
 void dock_restore_default(void);   /* configurações: reaplica o layout padrão (animado) e grava layout.json */
 /* script.c: BRIKS_SCRIPT injeta mouse e salva um PNG por quadro */

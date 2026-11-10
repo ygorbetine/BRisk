@@ -1,0 +1,8 @@
+wait 3
+to header:nav 15
+wait 3
+down
+to 900 500 20
+wait 20
+up
+wait 15

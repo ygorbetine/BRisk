@@ -1,0 +1,3 @@
+wait 3
+menu 1100 760
+wait 6

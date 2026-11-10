@@ -26,6 +26,7 @@ void briks_theme_defaults(briks_theme_t *t) {
     t->a_glass = 0.50f; t->a_soft = 0.34f; t->a_strong = 0.74f; t->a_popup = 0.85f;
     t->blur_offset = 1.0f; t->saturation = 1.55f; t->highlight = 0.09f;
     t->bubble_align = 0;
+    t->bubble_refract = 14; t->bubble_disp = 0.22f; t->bubble_spec = 0.6f; t->bubble_tint = 0.10f;
     t->sheen = 0.09f; t->sheen_line = 0.14f; t->card_fill = 0.05f; t->card_sat = 1.2f;
     t->panel_radius = 22; t->control_radius = 12; t->chat_pad = 20;
     t->bubble_own = CUI_RGB(0x6d5cf6); t->bubble_big = 16; t->bubble_small = 2;
@@ -47,6 +48,8 @@ void briks_theme_validate(briks_theme_t *t) {
     t->saturation = clampf(t->saturation, 0.5f, 2.5f);
     t->highlight = clampf(t->highlight, 0.0f, 0.2f);
     t->sheen = clampf(t->sheen, 0.0f, 0.3f); t->sheen_line = clampf(t->sheen_line, 0.0f, 0.4f);
+    t->bubble_refract = clampf(t->bubble_refract, 0.0f, 30.0f); t->bubble_disp = clampf(t->bubble_disp, 0.0f, 0.6f);
+    t->bubble_spec = clampf(t->bubble_spec, 0.0f, 1.0f); t->bubble_tint = clampf(t->bubble_tint, 0.0f, 0.3f);
     t->card_fill = clampf(t->card_fill, 0.0f, 0.2f); t->card_sat = clampf(t->card_sat, 1.0f, 1.6f);
     t->panel_radius = clampf(t->panel_radius, 8.0f, 32.0f);       /* >= 8: o cabeçalho usa raio-1, sempre arredondado */
     t->control_radius = clampf(t->control_radius, 4.0f, 20.0f);
@@ -62,6 +65,8 @@ void briks_theme_validate(briks_theme_t *t) {
     t->glass_popup = scaled(t->glass_rgb, 0.70f, a8(t->a_popup));
     t->glass_card = t->glass_soft; t->glass_card.a = (uint8_t)(t->glass_soft.a < 250 ? t->glass_soft.a + 1 : t->glass_soft.a - 1);
     while (same(t->glass_card, t->glass) || same(t->glass_card, t->glass_strong) || same(t->glass_card, t->glass_popup)) t->glass_card.a++;
+    t->glass_bubble = t->glass_soft; t->glass_bubble.a = (uint8_t)(t->glass_soft.a * 0.55f);
+    while (same(t->glass_bubble, t->glass) || same(t->glass_bubble, t->glass_soft) || same(t->glass_bubble, t->glass_card) || same(t->glass_bubble, t->glass_strong) || same(t->glass_bubble, t->glass_popup)) t->glass_bubble.a++;
     while (same(t->glass_popup, t->glass) || same(t->glass_popup, t->glass_soft) || same(t->glass_popup, t->glass_strong)) t->glass_popup.a++;
 }
 
@@ -99,6 +104,7 @@ bool briks_theme_load(const char *path, briks_theme_t *t) {
     get_f(js, "glass_a", &t->a_glass); get_f(js, "soft_a", &t->a_soft); get_f(js, "strong_a", &t->a_strong); get_f(js, "popup_a", &t->a_popup);
     get_f(js, "blur_offset", &t->blur_offset); get_f(js, "saturation", &t->saturation); get_f(js, "highlight", &t->highlight);
     get_f(js, "sheen", &t->sheen); get_f(js, "sheen_line", &t->sheen_line); get_f(js, "card_fill", &t->card_fill); get_f(js, "card_sat", &t->card_sat);
+    get_f(js, "bubble_refract", &t->bubble_refract); get_f(js, "bubble_disp", &t->bubble_disp); get_f(js, "bubble_spec", &t->bubble_spec); get_f(js, "bubble_tint", &t->bubble_tint);
     get_f(js, "panel_radius", &t->panel_radius); get_f(js, "control_radius", &t->control_radius); get_f(js, "chat_pad", &t->chat_pad);
     get_c(js, "bubble_own", &t->bubble_own); get_f(js, "bubble_big", &t->bubble_big); get_f(js, "bubble_small", &t->bubble_small);
     { const char *v = find_val(js, "bubble_align"); if (v && *v == '"') t->bubble_align = (v[1] == 'm' || v[1] == 'M') ? 1 : 0; }
@@ -121,12 +127,13 @@ bool briks_theme_save(const char *path, const briks_theme_t *t) {
         "  \"sheen\": %.3f, \"sheen_line\": %.3f, \"card_fill\": %.3f, \"card_sat\": %.2f,\n"
         "  \"panel_radius\": %.1f, \"control_radius\": %.1f, \"chat_pad\": %.1f,\n"
         "  \"bubble_own\": \"#%02x%02x%02x\", \"bubble_big\": %.1f, \"bubble_small\": %.1f,\n"
-        "  \"bubble_align\": \"%s\"\n"
+        "  \"bubble_align\": \"%s\",\n"
+        "  \"bubble_refract\": %.1f, \"bubble_disp\": %.2f, \"bubble_spec\": %.2f, \"bubble_tint\": %.2f\n"
         "}\n",
         HEX(t->bg), HEX(t->blob[0]), t->blob_a[0], HEX(t->blob[1]), t->blob_a[1], HEX(t->blob[2]), t->blob_a[2],
         HEX(t->glass_rgb), t->a_glass, t->a_soft, t->a_strong, t->a_popup,
         t->blur_offset, t->saturation, t->highlight, t->sheen, t->sheen_line, t->card_fill, t->card_sat, t->panel_radius, t->control_radius, t->chat_pad,
-        HEX(t->bubble_own), t->bubble_big, t->bubble_small, t->bubble_align ? "middle" : "top");
+        HEX(t->bubble_own), t->bubble_big, t->bubble_small, t->bubble_align ? "middle" : "top", t->bubble_refract, t->bubble_disp, t->bubble_spec, t->bubble_tint);
 #undef HEX
     fclose(f);
     return true;
@@ -218,6 +225,8 @@ void briks_theme_editor(cui_ctx *ui) {
             fld(ui, "luz de borda", &ed.highlight, 0.0f, 0.2f);
             fld(ui, "reflexo (cartões)", &ed.sheen, 0.0f, 0.3f); fld(ui, "fio de luz", &ed.sheen_line, 0.0f, 0.4f);
             fld(ui, "tinta (cartões)", &ed.card_fill, 0.0f, 0.2f); fld(ui, "saturação extra", &ed.card_sat, 1.0f, 1.6f);
+            fld(ui, "bolha: refração", &ed.bubble_refract, 0.0f, 30.0f); fld(ui, "bolha: dispersão", &ed.bubble_disp, 0.0f, 0.6f);
+            fld(ui, "bolha: especular", &ed.bubble_spec, 0.0f, 1.0f); fld(ui, "bolha: tinta", &ed.bubble_tint, 0.0f, 0.3f);
             cui_text(ui, "Painéis e controles", .font = CUI_FONT_MEDIUM);
             fld(ui, "raio dos painéis", &ed.panel_radius, 8, 32); fld(ui, "raio dos controles", &ed.control_radius, 4, 20);
             fld(ui, "espaço da lista de mensagens", &ed.chat_pad, 8, 40);

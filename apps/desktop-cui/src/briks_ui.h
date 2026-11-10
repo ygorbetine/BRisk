@@ -27,7 +27,7 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
-typedef struct { char id[48]; char name[96]; char request_id[48]; } person_t;
+typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
 typedef struct { char id[48]; char name[96]; } community_t;
 
 #define MAX_GROUPS 32
@@ -51,6 +51,8 @@ typedef struct {
     char email[96], password[64], name[64], confirm[64], error[160];
     /* sessão */
     char user_id[48], user_name[96], user_email[96];
+    char user_status[64], user_presence[64];   /* status (balão) e rich presence (programa em uso); status vazio = mostra a presença */
+    bool rp_enabled; int rp_audience;           /* rich presence ligado; 0 = todos os amigos, 1 = só quem está na mesma chamada */
     person_t friends[MAX_FRIENDS]; int friend_count;
     person_t pending[MAX_FRIENDS]; int pending_count;
     community_t communities[MAX_COMMUNITIES]; int community_count;

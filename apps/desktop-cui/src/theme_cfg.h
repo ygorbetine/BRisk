@@ -28,9 +28,14 @@ typedef struct {
     /* balões */
     cui_color bubble_own;            /* balão enviado (RGB; alpha fixo 0xbd) */
     float bubble_big, bubble_small;  /* raio normal e da quina reta, 2..28 / 2..12 */
+    /* bolha de status (Liquid Glass; só ela): refração de lente na borda, dispersão cromática, realce especular, tinta */
+    float bubble_refract;            /* deslocamento máximo da amostra do fundo na borda, px, 0..30 */
+    float bubble_disp;               /* dispersão cromática (abertura entre R/G/B), 0..0.6 */
+    float bubble_spec;               /* realce especular (gota) e aro, 0..1 */
+    float bubble_tint;               /* tinta lilás/rosa/azul do interior, 0..0.3 */
     int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = pontinha (topo do balão) na altura do centro do avatar */
     /* derivados (briks_theme_apply) */
-    cui_color glass, glass_soft, glass_strong, glass_popup, glass_card;
+    cui_color glass, glass_soft, glass_strong, glass_popup, glass_card, glass_bubble;
 } briks_theme_t;
 
 extern briks_theme_t g_th;
@@ -48,5 +53,6 @@ void briks_theme_editor(cui_ctx *ui);                      /* Ctrl+Shift+T com B
 #define B_GLASS_SOFT   (g_th.glass_soft)
 #define B_GLASS_STRONG (g_th.glass_strong)
 #define B_GLASS_POPUP  (g_th.glass_popup)
+#define B_GLASS_BUBBLE (g_th.glass_bubble)   /* bolha de status: vidro com refração (glass.c) */
 #define B_GLASS_CARD   (g_th.glass_card)   /* como SOFT (mesmo RGB, alfa vizinho): glass.c acrescenta reflexo e tinta */
 #endif

@@ -159,6 +159,16 @@ void app_demo(app_state_t *s, const char *mode) {
     snprintf(s->groups[0].name, sizeof s->groups[0].name, "Noite de jogos"); s->group_count = 1;
     s->active_group = -1; s->active_friend = -1; s->chat2_friend = 1; snprintf(s->chat2_channel, sizeof s->chat2_channel, "demo");
     s->screen = SCREEN_SOCIAL;
+    if (getenv("BRIKS_DEMO_STATUS")) {   /* status em balão e rich presence de exemplo (captura) */
+        snprintf(s->user_status, sizeof s->user_status, "Focado, volto já"); snprintf(s->user_presence, sizeof s->user_presence, "Usando VS Code"); s->rp_enabled = true;
+        snprintf(s->friends[0].status, sizeof s->friends[0].status, "Chego em 10 minutos");
+        snprintf(s->friends[1].presence, sizeof s->friends[1].presence, "Jogando Valorant"); snprintf(s->friends[2].presence, sizeof s->friends[2].presence, "Ouvindo no Spotify");
+    }
+    if (getenv("BRIKS_DEMO_STATUS")) {   /* status em balão e rich presence de exemplo (captura) */
+        snprintf(s->user_status, sizeof s->user_status, "Focado, volto já"); snprintf(s->user_presence, sizeof s->user_presence, "Usando VS Code"); s->rp_enabled = true;
+        snprintf(s->friends[0].status, sizeof s->friends[0].status, "Chego em 10 minutos");
+        snprintf(s->friends[1].presence, sizeof s->friends[1].presence, "Jogando Valorant"); snprintf(s->friends[2].presence, sizeof s->friends[2].presence, "Ouvindo no Spotify");
+    }
     if (!strcmp(mode, "login")) { s->screen = SCREEN_AUTH; return; }
     if (!strcmp(mode, "call") || !strcmp(mode, "call-chat") || !strcmp(mode, "call-broadcast")) {
         s->screen = SCREEN_CALL; s->mic_on = true;

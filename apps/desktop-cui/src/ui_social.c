@@ -43,12 +43,52 @@ static void section_title(cui_ctx *ui, const char *t) {
     }
 }
 
+/* Balões de pensamento (Liquid Glass): as telas registram onde fica o avatar e o texto; o desenho vem por cima de tudo no fim do quadro. */
+typedef struct { cui_rect av; char text[64]; } bub_note_t;
+static bub_note_t g_bub[4]; static int g_bub_n;
+static void bubble_note(cui_rect av, const char *text) {
+    if (g_bub_n < 4 && av.w > 0 && text[0]) { g_bub[g_bub_n].av = av; snprintf(g_bub[g_bub_n].text, sizeof g_bub[g_bub_n].text, "%s", text); g_bub_n++; }
+}
+static void abs_glass(cui_ctx *ui, float x, float y, float w, float h, float r, bool shadow) {
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
+        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = r, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+                .elevation = shadow ? CUI_ELEVATION_RESTING : CUI_ELEVATION_NONE) {}
+    }
+}
+static void bubbles_draw(cui_ctx *ui) {
+    for (int i = 0; i < g_bub_n; i++) {
+        cui_push_id_int(ui, 9100 + i);
+        cui_rect a = g_bub[i].av; const char *t = g_bub[i].text;
+        cui_text_metrics m = cui_measure_text(ui, CUI_FONT_BODY, 13, t, (int)strlen(t));
+        float w = fminf(m.width, 190.0f) + 30, h = 32;
+        float bx = a.x + 8, by = a.y - 22 - h;
+        if (by < 6) by = 6;
+        abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior */
+        abs_glass(ui, a.x + 31, a.y - 18, 14, 14, 7, false);
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
+            cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 16, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+                    .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffffff), .nowrap = true);
+            }
+        }
+        cui_pop_id(ui);
+    }
+    g_bub_n = 0;
+}
+
 static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
     cui_push_id(ui, f->name);
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
             .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
-        cui_avatar(ui, f->name, .size = 32);
-        cui_text(ui, f->name, .nowrap = true, .width = CUI_FILL);
+        cui_box(ui, .id = "av") { cui_avatar(ui, f->name, .size = 32); }
+        const char *line = f->status[0] ? f->status : f->presence;
+        if (line[0]) {   /* rich presence: linha pequena sob o nome */
+            cui_column(ui, .gap = 0, .width = CUI_FILL) {
+                cui_text(ui, f->name, .nowrap = true);
+                cui_text(ui, line, .size = 11, .color = B_MUTED, .nowrap = true);
+            }
+        } else cui_text(ui, f->name, .nowrap = true, .width = CUI_FILL);
+        if (active && line[0]) bubble_note(cui_get_rect(ui, cui_make_id(ui, "av")), line);
     }
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
@@ -88,7 +128,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             if (nav_item(ui, CUI_ICON_PLUS, "Criar grupo", false)) { s->create_group_open = true; s->new_group[0] = 0; }
             for (int i = 0; i < s->group_count; i++) {
                 cui_push_id_int(ui, 2000 + i);
-                person_t g; snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
+                person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
                 if (person_row(ui, &g, s->active_group == i)) app_open_group(s, i);
                 cui_pop_id(ui);
             }
@@ -106,9 +146,11 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar(ui, s->user_name, .size = 36); }
                 if (briks_clicked(ui, "avatar")) s->profile_open = true;
+                const char *mine = s->user_status[0] ? s->user_status : (s->rp_enabled ? s->user_presence : "");
+                bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), mine);
                 cui_column(ui, .gap = 0, .width = CUI_FILL) {
                     cui_text(ui, s->user_name, .nowrap = true);
-                    cui_text(ui, s->user_email, .size = 11, .color = B_MUTED, .nowrap = true);
+                    cui_text(ui, mine[0] ? mine : s->user_email, .size = 11, .color = B_MUTED, .nowrap = true);
                 }
                 if (cui_icon_button(ui, CUI_ICON_SETTINGS, .tooltip = "Configurações")) s->settings_open = true;
             }
@@ -345,8 +387,11 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
                 cui_text(ui, s->user_email, .color = B_MUTED);
             }
         }
+        cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
+        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = mostra o programa em uso");
         cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
     }
+    bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 16) {
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,
@@ -373,6 +418,17 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_text(ui, briks_perf_help(g_perf), .size = 12, .color = B_MUTED);
+            cui_text(ui, "Presença", .font = CUI_FONT_MEDIUM);
+            cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
+            if (s->rp_enabled) {
+                cui_row(ui, .gap = 8) {
+                    for (int l = 0; l < 2; l++) {
+                        cui_push_id_int(ui, 760 + l);
+                        if (cui_button(ui, l ? "Só na chamada" : "Todos os amigos", .variant = s->rp_audience == l ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY)) s->rp_audience = l;
+                        cui_pop_id(ui);
+                    }
+                }
+            }
             cui_text(ui, "Painéis", .font = CUI_FONT_MEDIUM);
             cui_text(ui, "Volta a disposição original: Servidores | Menu | Conversa.", .size = 12, .color = B_MUTED);
             if (cui_button(ui, "Restaurar layout padrão", .variant = CUI_BUTTON_SECONDARY)) {

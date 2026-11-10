@@ -363,6 +363,107 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
     }
 }
 
+/* ---- Perfil e conta: diálogo vertical e compacto; cada seção é um cartão de vidro arredondado ---- */
+#define PCARD(ui, title) CUI__SCOPE((cui_box_begin((ui), CUI__OPTS(cui_box, .width = CUI_FILL, .pad = 14, .gap = 10, .radius = 16, .bg = B_GLASS_CARD, \
+    .border = 1, .border_color = B_GLASS_BORDER)), cui_text((ui), (title), .font = CUI_FONT_MEDIUM, .size = 13, .color = B_C3)), cui_box_end(ui))
+
+static void profile_dialog(cui_ctx *ui, app_state_t *s) {
+    static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
+    static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
+    static const char *CLEAR[] = { "Não limpar", "30 minutos", "1 hora", "Hoje" };
+    if (s->profile_open && !was_open) {
+        snprintf(st_draft, sizeof st_draft, "%s", s->user_status); snprintf(name_draft, sizeof name_draft, "%s", s->user_name); ig_add[0] = 0;
+    }
+    was_open = s->profile_open;
+    cui_vec2 vp = cui_viewport_size(ui);
+    cui_dialog(ui, "Perfil e conta", &s->profile_open, .width = fminf(460.0f, fmaxf(vp.x - 48.0f, 280.0f))) {
+        cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 190.0f, 160.0f), .scroll_y = true, .gap = 12) {
+            /* cabeçalho: foto grande + nome + @nick */
+            cui_box(ui, .width = CUI_FILL, .pad_y = 6, .gap = 6, .align = CUI_ALIGN_CENTER) {
+                cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 88, .image = s->user_photo });
+                cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 20, .nowrap = true);
+                char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                cui_text(ui, nick, .color = B_MUTED, .size = 13, .nowrap = true);
+            }
+            PCARD(ui, "PERFIL") {
+                cui_text(ui, "Nome exibido", .size = 12, .color = B_MUTED);
+                cui_input(ui, "pf-name", name_draft, sizeof name_draft, .placeholder = "Seu nome");
+                cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                    cui_text(ui, "Foto de perfil", .size = 12, .color = B_MUTED, .width = CUI_FILL);
+                    cui_button(ui, "Escolher foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM);   /* UI pronta: o seletor de arquivo chega com o backend de upload */
+                }
+                if (cui_button(ui, "Salvar perfil", .variant = CUI_BUTTON_PRIMARY) && name_draft[0])
+                    snprintf(s->user_name, sizeof s->user_name, "%s", name_draft);
+            }
+            PCARD(ui, "STATUS") {
+                cui_text(ui, "Aparece num balão perto da sua foto.", .size = 12, .color = B_MUTED);
+                cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                    cui_input(ui, "pf-emoji", s->user_emoji, sizeof s->user_emoji, .placeholder = ":)", .width = CUI_PX(56));
+                    cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que você está fazendo?", .width = CUI_FILL);
+                }
+                cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true) {
+                    for (int i = 0; i < 5; i++) {
+                        cui_push_id_int(ui, 4100 + i);
+                        bool sel = !strcmp(st_draft, CHIPS[i]);
+                        if (cui_chip(ui, CHIPS[i], &sel)) snprintf(st_draft, sizeof st_draft, "%s", sel ? CHIPS[i] : "");
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_text(ui, "Limpar depois de", .size = 12, .color = B_MUTED);
+                cui_segmented(ui, "pf-clear", CLEAR, 4, &s->status_clear, .full_width = true, .size = CUI_SIZE_SM);
+                cui_row(ui, .gap = 8, .width = CUI_FILL) {
+                    if (cui_button(ui, "Salvar status", .variant = CUI_BUTTON_PRIMARY)) snprintf(s->user_status, sizeof s->user_status, "%s", st_draft);
+                    if (cui_button(ui, "Limpar", .variant = CUI_BUTTON_SECONDARY)) { st_draft[0] = 0; s->user_emoji[0] = 0; s->user_status[0] = 0; }
+                }
+            }
+            PCARD(ui, "PROGRAMA EM USO") {
+                cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
+                if (s->rp_enabled) {
+                    cui_text(ui, "Quem pode ver", .size = 12, .color = B_MUTED);
+                    static const char *AUD[] = { "Todos os amigos", "Só na chamada" };
+                    cui_segmented(ui, "pf-aud", AUD, 2, &s->rp_audience, .full_width = true, .size = CUI_SIZE_SM);
+                    cui_text(ui, "Ignorar programa", .size = 12, .color = B_MUTED);
+                    for (int i = 0; i < s->rp_ignore_n; i++) {
+                        cui_push_id_int(ui, 4200 + i);
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                            cui_text(ui, s->rp_ignore[i], .width = CUI_FILL, .nowrap = true);
+                            if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Remover")) {
+                                memmove(s->rp_ignore[i], s->rp_ignore[i + 1], (size_t)(s->rp_ignore_n - i - 1) * sizeof s->rp_ignore[0]);
+                                s->rp_ignore_n--;
+                            }
+                        }
+                        cui_pop_id(ui);
+                    }
+                    cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                        cui_input(ui, "pf-ignore", ig_add, sizeof ig_add, .placeholder = "ex.: spotify", .width = CUI_FILL);
+                        if (cui_button(ui, "Ignorar", .variant = CUI_BUTTON_SECONDARY) && ig_add[0] && s->rp_ignore_n < 6) {
+                            snprintf(s->rp_ignore[s->rp_ignore_n++], sizeof s->rp_ignore[0], "%s", ig_add); ig_add[0] = 0;
+                        }
+                    }
+                }
+            }
+            PCARD(ui, "CONTA") {
+                cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "E-mail", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, s->user_email, .nowrap = true); }
+                char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "Nick", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, nick, .nowrap = true); }
+                cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+                if (cui_button(ui, "Sair", .variant = CUI_BUTTON_SECONDARY)) { s->profile_open = false; app_logout(s); }
+            }
+            PCARD(ui, "ZONA DE PERIGO") {
+                cui_text(ui, "Desconectar encerra a sessão neste computador.", .size = 12, .color = B_MUTED);
+                if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) s->logout_confirm_open = true;
+            }
+        }
+    }
+    cui_dialog(ui, "Desconectar?", &s->logout_confirm_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        cui_text(ui, "Você precisará entrar de novo para usar o Briks.", .color = B_MUTED);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) s->logout_confirm_open = false;
+            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->logout_confirm_open = false; s->profile_open = false; app_logout(s); }
+        }
+    }
+}
+
 void ui_social(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 0.85f);
     dock_render(ui, s);
@@ -381,18 +482,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             if ((cui_button(ui, "Criar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED))) app_create_group(s);
         }
     }
-    cui_dialog(ui, "Perfil", &s->profile_open) {
-        cui_row(ui, .gap = 14, .align = CUI_ALIGN_CENTER) {
-            cui_avatar(ui, s->user_name, .size = 64);
-            cui_column(ui, .gap = 2) {
-                cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 20);
-                cui_text(ui, s->user_email, .color = B_MUTED);
-            }
-        }
-        cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
-        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = sem balão");
-        cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
-    }
+    profile_dialog(ui, s);
     bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */

@@ -169,6 +169,7 @@ void app_demo(app_state_t *s, const char *mode) {
         snprintf(s->friends[0].status, sizeof s->friends[0].status, "Chego em 10 minutos");
         snprintf(s->friends[1].presence, sizeof s->friends[1].presence, "Jogando Valorant"); snprintf(s->friends[2].presence, sizeof s->friends[2].presence, "Ouvindo no Spotify");
     }
+    snprintf(s->rp_ignore[0], sizeof s->rp_ignore[0], "spotify"); snprintf(s->rp_ignore[1], sizeof s->rp_ignore[1], "discord"); s->rp_ignore_n = 2;
     if (!strcmp(mode, "login")) { s->screen = SCREEN_AUTH; return; }
     if (!strcmp(mode, "call") || !strcmp(mode, "call-chat") || !strcmp(mode, "call-broadcast")) {
         s->screen = SCREEN_CALL; s->mic_on = true;

@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 typedef struct { float x, v; } spring1;
+extern int pile_simple;   /* 0 = molas; 1/2 = prévia simples sem mola (modos Simplificado/Mínimo) */
 /* Mola amortecida (semi-implícita, em subpassos): stiff = k (1/s²), zeta = razão de amortecimento (1 = crítico, <1 = elástica). */
 void spring_step(spring1 *s, float target, float dt, float stiff, float zeta);
 /* Inclinação (graus) para a velocidade horizontal vx (px/s): proporcional, limitada a ±max_deg. */

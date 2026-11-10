@@ -228,6 +228,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         else pile_cancel(&pile, pile_ox, pile_oy);
         if (pile.phase == PILE_HELD) pile_cancel(&pile, pile_ox, pile_oy);
     } else if (pile_end == 2) pile_cancel(&pile, pile_ox, pile_oy);
+    pile_simple = g_perf >= PERF_MIN ? 2 : g_perf == PERF_SIMPLE ? 1 : 0;
     pile_step(&pile, dt);
     if (moving || drag.active || pile_active(&pile)) cui_request_redraw(ui);   /* parado = nenhum redesenho */
     last_vp_w = vp.x; last_vp_h = vp.y;

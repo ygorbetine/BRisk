@@ -16,6 +16,8 @@ static const float FOLLOW_Z[PILE_LAYERS] = { 0.62f, 0.70f, 0.78f };
 #define LIFT_Z 0.50f
 #define END_DUR 0.26f
 
+int pile_simple;   /* 0 normal (molas), 1 Simplificado, 2 Mínimo: ver dock.c */
+
 void spring_step(spring1 *s, float target, float dt, float stiff, float zeta) {
     if (dt <= 0) return;
     int n = (int)ceilf(dt / 0.004f); if (n < 1) n = 1; if (n > 64) n = 64;
@@ -71,15 +73,21 @@ void pile_step(pile_t *p, float dt) {
     if (held && fabsf(p->vx) < 1.0f) p->vx = 0;
     for (int i = 0; i < PILE_LAYERS; i++) {
         float tx = p->end_x + PILE_OFF_X[i] * (held ? 1.0f : 1.0f - ease(p->t)), ty = p->end_y + PILE_OFF_Y[i] * (held ? 1.0f : 1.0f - ease(p->t));
+        if (pile_simple) {   /* modo Simplificado/Mínimo: prévia simples, sem mola nem rastro; os cartões acompanham o cursor sem atraso */
+            p->x[i].x = tx; p->x[i].v = 0; p->y[i].x = ty; p->y[i].v = 0;
+            p->rot[i].x = PILE_REST_DEG[i] * (held ? 1.0f : 1.0f - 0.5f * ease(p->t)); p->rot[i].v = 0;
+            continue;
+        }
         spring_step(&p->x[i], tx, dt, held ? FOLLOW_K[i] : 620.0f, held ? FOLLOW_Z[i] : 0.95f);
         spring_step(&p->y[i], ty, dt, held ? FOLLOW_K[i] : 620.0f, held ? FOLLOW_Z[i] : 0.95f);
         /* camadas de trás inclinam um pouco mais (delay do rastro) */
         float k = 1.0f + 0.25f * (float)(PILE_LAYERS - 1 - i);
         spring_step(&p->rot[i], PILE_REST_DEG[i] * (held ? 1.0f : 1.0f - 0.5f * ease(p->t)) + tilt * k, dt, ROT_K, ROT_Z);
     }
-    spring_step(&p->lift, held ? 1.0f : 0.0f, dt, LIFT_K, LIFT_Z);
+    if (pile_simple) { p->lift.x = held ? 1.0f : 0.0f; p->lift.v = 0; }
+    else spring_step(&p->lift, held ? 1.0f : 0.0f, dt, LIFT_K, LIFT_Z);
     if (!held) {
-        p->t += dt / END_DUR;
+        p->t += dt / (pile_simple >= 2 ? 0.001f : pile_simple ? 0.10f : END_DUR);   /* Mínimo: some na hora */
         if (p->t >= 1.0f) { p->t = 1.0f; p->phase = PILE_IDLE; }
     }
 }

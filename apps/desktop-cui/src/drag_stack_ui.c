@@ -47,17 +47,17 @@ static void avatar(cui_ctx *ui, float cx, float cy, float r, const char *name, i
     }
 }
 
-/* balão neumórfico: sombra escura embaixo/direita, luz em cima/esquerda, fundo translúcido; quina reta no lado de quem fala */
+/* balão de vidro (sem relevo): sombra suave, fundo translúcido; quina reta no lado de quem fala */
+#define BUB_SHADOW CUI_RGBA(0x00000055)
 static void neu_bubble(cui_ctx *ui, cui_rect r, bool left_tail) {
     cui_corners c = left_tail ? (cui_corners){ 2, 8, 8, 8 } : (cui_corners){ 8, 8, 2, 8 };
-    cui_draw_shadow(ui, r, c, 5.0f, 0, (cui_vec2){ 2, 2 }, NEU_DARK);
-    cui_draw_shadow(ui, r, c, 5.0f, 0, (cui_vec2){ -2, -2 }, NEU_LIGHT);
+    cui_draw_shadow(ui, r, c, 5.0f, 0, (cui_vec2){ 0, 2 }, BUB_SHADOW);
     cui_draw_rect(ui, r, c, CUI_RGBA(0x2a1448f0));
     cui_draw_rect(ui, (cui_rect){ r.x + 6, r.y + r.h * 0.5f - 1.5f, r.w - 12, 3 }, CUI_CORNERS(1.5f), WHITE(0x38));   /* "texto" */
 }
 static void sent_bubble(cui_ctx *ui, cui_rect r) {
     cui_corners c = { 8, 8, 2, 8 };
-    cui_draw_shadow(ui, r, c, 5.0f, 0, (cui_vec2){ 2, 2 }, NEU_DARK);
+    cui_draw_shadow(ui, r, c, 5.0f, 0, (cui_vec2){ 0, 2 }, BUB_SHADOW);
     cui_draw_rect_gradient(ui, r, c, CUI_RGBA(0x9b6cf8ff), CUI_RGBA(0x6d5cf6ff));
     cui_draw_rect(ui, (cui_rect){ r.x + 6, r.y + r.h * 0.5f - 1.5f, r.w - 12, 3 }, CUI_CORNERS(1.5f), WHITE(0x70));
 }

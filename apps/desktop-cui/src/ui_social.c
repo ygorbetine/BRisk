@@ -102,7 +102,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 10) {
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 16, .bg = B_GLASS_STRONG,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 16, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar(ui, s->user_name, .size = 36); }
                 if (briks_clicked(ui, "avatar")) s->profile_open = true;
@@ -141,14 +141,17 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
             }
         } else {
             /* recebido: vidro; quina superior do lado do avatar com raio 4 */
+            /* o balão desce 10 px: a pontinha (quina reta) fica na altura da parte de cima do avatar, como se saísse da foto */
+            cui_box(ui, .pad_top = 10) {
             cui_box(ui, .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
-                    .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_SOFT,
+                    .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     cui_text(ui, m->author, .size = 12, .color = B_C3);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGB(0x8472a0));
                 }
                 cui_text(ui, m->content);
+            }
             }
         }
     }
@@ -188,7 +191,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_SOFT,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
                 cui_push_disabled(ui, true);
                 cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar (marco 3)");

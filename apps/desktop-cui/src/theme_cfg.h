@@ -16,15 +16,20 @@ typedef struct {
     float blur_offset;               /* raio do desfoque (passo do filtro Kawase), 0.5..4 */
     float saturation;                /* saturação do que passa pelo vidro, 0.5..2.5 */
     float highlight;                 /* luz de borda do vidro, 0..0.2 */
+    /* cartões de vidro (balões recebidos, cartão de perfil, caixa de escrever): reflexo e tinta, recortados pelo raio de cada elemento */
+    float sheen;                     /* brilho especular diagonal (some para baixo), 0..0.3 */
+    float sheen_line;                /* fio de luz interno na borda superior, 0..0.4 */
+    float card_fill;                 /* tinta lilás de preenchimento, 0..0.2 */
+    float card_sat;                  /* saturação extra do fundo atrás do cartão (multiplica `saturation`), 1..1.6 */
     /* painéis e controles */
-    float panel_radius;              /* raio dos painéis, 8..32 */
+    float panel_radius;             /* raio dos painéis, 8..32 */
     float control_radius;            /* raio de botões e campos, 4..20 */
     float chat_pad;                  /* espaço interno da lista de mensagens, 8..40 */
     /* balões */
     cui_color bubble_own;            /* balão enviado (RGB; alpha fixo 0xbd) */
     float bubble_big, bubble_small;  /* raio normal e da quina reta, 2..28 / 2..12 */
     /* derivados (briks_theme_apply) */
-    cui_color glass, glass_soft, glass_strong, glass_popup;
+    cui_color glass, glass_soft, glass_strong, glass_popup, glass_card;
 } briks_theme_t;
 
 extern briks_theme_t g_th;
@@ -42,4 +47,5 @@ void briks_theme_editor(cui_ctx *ui);                      /* Ctrl+Shift+T com B
 #define B_GLASS_SOFT   (g_th.glass_soft)
 #define B_GLASS_STRONG (g_th.glass_strong)
 #define B_GLASS_POPUP  (g_th.glass_popup)
+#define B_GLASS_CARD   (g_th.glass_card)   /* como SOFT (mesmo RGB, alfa vizinho): glass.c acrescenta reflexo e tinta */
 #endif

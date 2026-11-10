@@ -19,6 +19,10 @@ cargo test --release -- --ignored --nocapture loss_is_repaired_by_retransmission
 ```
 
 ```bash
+cargo test --release -- --ignored --nocapture local_overload_lowers_fps_and_recovers
+```
+
+```bash
 python ../scripts/grafico-adaptacao.py saida/adaptacao-nitidez.csv
 ```
 
@@ -173,7 +177,8 @@ a chegada do áudio (`process_audio_reaches_the_viewer`: 100 quadros Opus, pico 
 
 - **Código**: `adapt.rs` (`note_cpu`): se a conversão + codificação por quadro passa de 90% do período, ou se a captura entrega e
   o envio não acompanha, desce um degrau a cada 2 s; volta um degrau a cada 3 s de folga.
-- **Evidência** — `local_overload_lowers_fps_and_recovers` (codificador atrasado artificialmente em 60 ms por quadro):
+- **Evidência** — `local_overload_lowers_fps_and_recovers` (codificador atrasado artificialmente em 60 ms por quadro; roda
+  isolado com `--ignored`, porque em paralelo com a suíte a máquina fica de fato ocupada e o FPS não volta):
   FPS alvo 30 → 10 durante a sobrecarga (67 ms por quadro), de volta a 30 cerca de 12 s depois. Série em `provas/transmissao/sobrecarga.csv`.
 
 ## Boas práticas que os testes obrigaram a acrescentar

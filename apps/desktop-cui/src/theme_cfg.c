@@ -25,6 +25,7 @@ void briks_theme_defaults(briks_theme_t *t) {
     t->glass_rgb = CUI_RGB(0x13051e);
     t->a_glass = 0.50f; t->a_soft = 0.34f; t->a_strong = 0.74f; t->a_popup = 0.85f;
     t->blur_offset = 1.0f; t->saturation = 1.55f; t->highlight = 0.09f;
+    t->bubble_align = 0;
     t->sheen = 0.09f; t->sheen_line = 0.14f; t->card_fill = 0.05f; t->card_sat = 1.2f;
     t->panel_radius = 22; t->control_radius = 12; t->chat_pad = 20;
     t->bubble_own = CUI_RGB(0x6d5cf6); t->bubble_big = 16; t->bubble_small = 4;
@@ -100,6 +101,7 @@ bool briks_theme_load(const char *path, briks_theme_t *t) {
     get_f(js, "sheen", &t->sheen); get_f(js, "sheen_line", &t->sheen_line); get_f(js, "card_fill", &t->card_fill); get_f(js, "card_sat", &t->card_sat);
     get_f(js, "panel_radius", &t->panel_radius); get_f(js, "control_radius", &t->control_radius); get_f(js, "chat_pad", &t->chat_pad);
     get_c(js, "bubble_own", &t->bubble_own); get_f(js, "bubble_big", &t->bubble_big); get_f(js, "bubble_small", &t->bubble_small);
+    { const char *v = find_val(js, "bubble_align"); if (v && *v == '"') t->bubble_align = (v[1] == 'm' || v[1] == 'M') ? 1 : 0; }
     briks_theme_validate(t);
     return true;
 }
@@ -118,12 +120,13 @@ bool briks_theme_save(const char *path, const briks_theme_t *t) {
         "  \"blur_offset\": %.2f, \"saturation\": %.2f, \"highlight\": %.3f,\n"
         "  \"sheen\": %.3f, \"sheen_line\": %.3f, \"card_fill\": %.3f, \"card_sat\": %.2f,\n"
         "  \"panel_radius\": %.1f, \"control_radius\": %.1f, \"chat_pad\": %.1f,\n"
-        "  \"bubble_own\": \"#%02x%02x%02x\", \"bubble_big\": %.1f, \"bubble_small\": %.1f\n"
+        "  \"bubble_own\": \"#%02x%02x%02x\", \"bubble_big\": %.1f, \"bubble_small\": %.1f,\n"
+        "  \"bubble_align\": \"%s\"\n"
         "}\n",
         HEX(t->bg), HEX(t->blob[0]), t->blob_a[0], HEX(t->blob[1]), t->blob_a[1], HEX(t->blob[2]), t->blob_a[2],
         HEX(t->glass_rgb), t->a_glass, t->a_soft, t->a_strong, t->a_popup,
         t->blur_offset, t->saturation, t->highlight, t->sheen, t->sheen_line, t->card_fill, t->card_sat, t->panel_radius, t->control_radius, t->chat_pad,
-        HEX(t->bubble_own), t->bubble_big, t->bubble_small);
+        HEX(t->bubble_own), t->bubble_big, t->bubble_small, t->bubble_align ? "middle" : "top");
 #undef HEX
     fclose(f);
     return true;

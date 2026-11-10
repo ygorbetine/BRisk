@@ -169,7 +169,7 @@ void app_demo(app_state_t *s, const char *mode) {
         return;
     }
     if (!strcmp(mode, "history")) { s->screen = SCREEN_HISTORY; return; }
-    if (!strcmp(mode, "social") || !strcmp(mode, "group")) {
+    if (!strcmp(mode, "social") || !strcmp(mode, "group") || !strcmp(mode, "bubbles")) {
         const char *who = !strcmp(mode, "group") ? "Noite de jogos" : "Marina Costa";
         if (!strcmp(mode, "group")) s->active_group = 0; else s->active_friend = 0;
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
@@ -178,6 +178,11 @@ void app_demo(app_state_t *s, const char *mode) {
         add_msg2(s, "n1", "Rafael Lima", "Bora jogar hoje? Já abri a sala.", "2026-11-09T22:10:00.000Z", false);
         add_msg2(s, "n2", "Ygor", "Boa! Chego em 10 minutos.", "2026-11-09T22:12:00.000Z", true);
         add_msg2(s, "n3", "Rafael Lima", "Fechou, te espero.", "2026-11-09T22:13:00.000Z", false);
+        if (!strcmp(mode, "bubbles")) {   /* uma linha, consecutivas e várias linhas: compara o alinhamento do balão com o avatar */
+            add_msg(s, "m4", "Marina Costa", "Consegui os ingressos.", "2026-11-09T23:44:00.000Z", false);
+            add_msg(s, "m5", "Marina Costa", "Só falta combinar o horário, o local de encontro e quem leva o carro, porque a vaga na garagem do prédio é limitada e eu preciso avisar a portaria com antecedência para ninguém ficar de fora.", "2026-11-09T23:45:00.000Z", false);
+            add_msg(s, "m6", "Ygor", "Combinado.", "2026-11-09T23:46:00.000Z", true);
+        }
         (void)who;
     }
 }

@@ -126,8 +126,10 @@ static void hhmm_local(const char *iso, char *out, size_t cap) {
 
 static void bubble(cui_ctx *ui, const msg_t *m) {
     char hm[8]; hhmm_local(m->created, hm, sizeof hm);
-    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4) {
-        if (!m->mine) cui_avatar(ui, m->author, .size = 32);   /* avatar sem relevo */
+    /* bubble_align: top = topo do balão no topo do avatar; middle = centro do balão no centro do avatar */
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
+            .align = m->mine ? CUI_ALIGN_DEFAULT : (g_th.bubble_align ? CUI_ALIGN_CENTER : CUI_ALIGN_START)) {
+        if (!m->mine) { cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo */
         if (m->mine) {
             /* nosso: roxo padrão; só a quina superior direita mais reta */
             cui_box(ui, .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
@@ -141,8 +143,7 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
             }
         } else {
             /* recebido: vidro; quina superior do lado do avatar com raio 4 */
-            /* o balão desce 10 px: a pontinha (quina reta) fica na altura da parte de cima do avatar, como se saísse da foto */
-            cui_box(ui, .pad_top = 10) {
+            cui_box(ui) {
             cui_box(ui, .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
                     .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER) {

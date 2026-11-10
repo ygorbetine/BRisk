@@ -64,7 +64,7 @@ typedef struct {
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
     bool create_group_open, profile_open, logout_confirm_open;
-    char user_emoji[8]; int status_clear;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char user_emoji[8]; int status_clear, profile_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
     char new_group[96];

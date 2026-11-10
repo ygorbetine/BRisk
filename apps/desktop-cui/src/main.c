@@ -1,6 +1,7 @@
 /* Remake do Briks em CUI: login, social e chamada (dados de exemplo; sem rede/WebRTC ainda). */
 #include "briks_ui.h"
 #include "update.h"
+#include "msgui.h"
 #include "backend.h"
 #include "core.h"
 #include <stdlib.h>
@@ -39,6 +40,7 @@ static void frame(cui_ctx *ui) {
     migrate_pump(&state);
     app_pump(&state);
     rtc_pump(&state);
+    msgui_pump(&state);
     profile_tick(&state);
     settings_tick();
     themes_tick(ui);

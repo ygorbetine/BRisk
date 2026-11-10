@@ -3,6 +3,7 @@
 //!                                 e exige BRIKS_CORE_TOKEN no primeiro comando
 //!   briks-core mock-realtime [p]  servidor Phoenix/Realtime de teste em 127.0.0.1 (sem Supabase)
 mod audio;
+mod chat_events;
 mod identity;
 mod import;
 mod ipc;

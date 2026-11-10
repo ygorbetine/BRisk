@@ -1,0 +1,10 @@
+at 520 130
+wait 4
+rdown
+rup
+wait 6
+at 732 153
+wait 4
+down
+up
+wait 14

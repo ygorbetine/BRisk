@@ -333,3 +333,38 @@ async fn status_and_presence_reach_authenticated_peers_and_late_joiners_get_them
     a.cmd.send(MeshCmd::SetProfile { status: String::new(), presence: String::new() }).await.unwrap();
     assert!(wait_for(&mut b, 10, |e| matches!(e, MeshEvent::PeerState { status, presence, .. } if status.is_empty() && presence.is_empty())).await.is_some(), "B não viu o status limpo");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn signed_chat_events_travel_between_peers_and_bad_ones_are_dropped() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-eventos", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-eventos", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+
+    // reação de A chega em B (assinada, com o autor real) e A recebe o eco local para persistir
+    a.cmd.send(MeshCmd::Event { channel: "dm-x".into(), target: "msg-0001-aaaa".into(), action: "reaction.add".into(), content: None, reference: None, emoji: Some("👍".into()) }).await.unwrap();
+    let got = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::ChatEvent { .. })).await.expect("B não recebeu o evento");
+    let MeshEvent::ChatEvent { from_fp, wire, local } = got else { unreachable!() };
+    assert!(!local);
+    assert_eq!(from_fp, ia.fingerprint());
+    assert_eq!(wire["action"], "reaction.add");
+    assert_eq!(wire["actorPeerId"], ia.fingerprint());
+    assert_eq!(wire["emoji"], "👍");
+    assert!(wait_for(&mut a, 5, |e| matches!(e, MeshEvent::ChatEvent { local: true, .. })).await.is_some(), "sem eco local");
+
+    // versão desconhecida: ignorada em silêncio (sem evento, sem erro)
+    b.cmd.send(MeshCmd::RawDc { text: json!({ "version": 99, "type": "chat.event", "action": "novidade" }).to_string() }).await.unwrap();
+    // autor falsificado: assinado por B mas dizendo ser A -> rejeitado
+    let mut ts = 0u64;
+    let forged = crate::chat_events::create(&ib, "dm-x", "msg-0001-aaaa", &ia.fingerprint(), "delete", None, None, None, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64, &mut ts).unwrap();
+    b.cmd.send(MeshCmd::RawDc { text: crate::chat_events::to_wire(&forged).to_string() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("rejeitado"))).await.is_some(), "evento falsificado não foi rejeitado");
+    // depois disso, eventos válidos continuam passando
+    b.cmd.send(MeshCmd::Event { channel: "dm-x".into(), target: "msg-0001-aaaa".into(), action: "reaction.add".into(), content: None, reference: None, emoji: Some("❤️".into()) }).await.unwrap();
+    let ok = wait_for(&mut a, 15, |e| matches!(e, MeshEvent::ChatEvent { local: false, .. })).await.expect("A não recebeu o evento válido");
+    let MeshEvent::ChatEvent { wire, .. } = ok else { unreachable!() };
+    assert_eq!(wire["emoji"], "❤️");
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}

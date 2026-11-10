@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "core.h"
 #include "json.h"
+#include "msgui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,6 +111,9 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "chat.event")) {
+        const jval *lc = json_get(j, "local");
+        changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
     } else if (!strcmp(ev, "error")) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
@@ -183,4 +187,11 @@ const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap) {
     else if (!strcmp(st, "desconectado")) snprintf(buf, cap, "Desconectado");
     else snprintf(buf, cap, "Conectando…");
     return buf;
+}
+
+void rtc_chat_event(const char *fields) {
+    if (core_state() != CORE_READY) return;
+    char line[2200];
+    snprintf(line, sizeof line, "{\"cmd\":\"chat.event.send\",%s}", fields);
+    core_send(line);
 }

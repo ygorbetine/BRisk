@@ -1,0 +1,6 @@
+﻿# Botão direito no rótulo de uma pessoa na chamada (BRIKS_DEMO=call BRIKS_DEMO_PEERS=1)
+at 510 646
+wait 4
+rdown
+rup
+wait 12

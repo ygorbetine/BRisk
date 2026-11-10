@@ -10,7 +10,7 @@ const profile = release ? "release" : "debug";
 const executableName = process.platform === "win32" ? "briks-desktop-backend.exe" : "briks-desktop-backend";
 const manifestPath = path.join(root, "desktop-backend", "Cargo.toml");
 const source = path.join(root, "desktop-backend", "target", profile, executableName);
-const destinationDir = path.join(root, "apps", "desktop", "resources", "backend");
+const destinationDir = path.join(root, "apps", "desktop-cui", "backend");
 const destination = path.join(destinationDir, executableName);
 
 const args = ["build", "--manifest-path", manifestPath];

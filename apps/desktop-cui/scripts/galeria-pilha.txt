@@ -1,0 +1,46 @@
+# galeria de testes das artes (uma por tipo de painel); pega o menu e troca a arte
+at 700 400
+wait 12
+to grip:nav 10
+wait 6
+down
+wait 4
+to 640 380 8
+art chat
+wait 22
+art nav
+wait 6
+art servers
+wait 6
+art members
+wait 6
+art voice
+wait 6
+art history
+wait 6
+art friends
+wait 6
+voice 3
+art voice
+wait 6
+voice 5
+wait 6
+voice 9
+wait 6
+servers 0
+art servers
+wait 6
+servers 5
+wait 6
+servers 14
+wait 6
+art chat
+to 900 380 6
+wait 3
+to 380 380 6
+wait 3
+art
+esc
+wait 6
+up
+wait 24

@@ -24,12 +24,6 @@ jobs:
       - run: pnpm verify:turn-config
       - name: Build desktop Rust sidecar
         run: pnpm build:backend:desktop
-      - name: Validate Electron bundle with sidecar
-        run: |
-          pnpm --filter @briks/desktop exec tsc
-          pnpm --filter @briks/desktop exec electron-builder --dir
-      - name: Smoke-test packaged renderer origin
-        run: xvfb-run -a pnpm verify:packaged-two-instances apps/desktop/release/linux-unpacked/briks
 
   rust:
     runs-on: ubuntu-latest
@@ -50,6 +44,8 @@ jobs:
         run: cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
       - name: TURN credential issuer tests
         run: cargo test --manifest-path server/Cargo.toml
+      - name: briks-core tests (loopback, signaling simulado)
+        run: cargo test --release --manifest-path apps/desktop-cui/briks-core/Cargo.toml
 
   desktop-windows:
     runs-on: windows-latest
@@ -64,17 +60,10 @@ jobs:
         run: cargo clippy --manifest-path desktop-backend/Cargo.toml --all-targets -- -D warnings
       - name: Test desktop backend on Windows
         run: cargo test --manifest-path desktop-backend/Cargo.toml
-      - uses: pnpm/action-setup@v4
-        with: { version: 10.15.0 }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - name: Build Windows unpacked application
+      - name: Build native app (CUI) and smoke test
+        shell: pwsh
         env:
-          VITE_SUPABASE_URL: https://example.supabase.co
-          VITE_SUPABASE_ANON_KEY: test-anon-key-for-ci-only
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
-          pnpm build:backend:desktop
-          pnpm build:web
-          pnpm --filter @briks/desktop exec tsc
-          pnpm --filter @briks/desktop exec electron-builder --win dir
+          powershell -NoProfile -File scripts/build-cui.ps1 -SkipTests
+          apps/desktop-cui/build/briks_smoke.exe

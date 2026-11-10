@@ -3,23 +3,17 @@
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "scripts": {
-    "dev": "pnpm --filter @briks/desktop dev",
+    "dev": "pnpm --filter @briks/web dev",
     "dev:web": "pnpm --filter @briks/web dev",
-    "dev:desktop": "pnpm --filter @briks/desktop dev",
-    "build": "pnpm -r --filter '!@briks/desktop' build && pnpm build:desktop",
+    "build": "pnpm -r build",
     "build:web": "pnpm --filter @briks/web build",
     "build:backend:desktop": "node scripts/prepare-desktop-backend.mjs",
     "build:backend:desktop:debug": "node scripts/prepare-desktop-backend.mjs --debug",
-    "build:desktop": "pnpm build:backend:desktop && pnpm build:web && pnpm --filter @briks/desktop build",
     "verify:build-env": "node scripts/verify-build-env.mjs",
     "verify:turn-config": "node scripts/verify-turn-config.mjs",
     "verify:migrations": "node scripts/verify-migration-integrity.mjs",
-    "verify:packaged-origin": "node scripts/verify-packaged-renderer-origin.mjs",
-    "verify:packaged-two-instances": "node scripts/verify-packaged-two-instances.mjs",
-    "package:win": "pnpm verify:build-env && pnpm verify:migrations && pnpm build:backend:desktop && pnpm build:web && pnpm --filter @briks/desktop build:win",
-    "package:linux": "pnpm verify:build-env && pnpm verify:migrations && pnpm build:backend:desktop && pnpm build:web && pnpm --filter @briks/desktop build:linux",
-    "package:linux:docker": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-linux-docker.ps1",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "build:cui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cui.ps1"
   }
 }

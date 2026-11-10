@@ -1,0 +1,119 @@
+# Roteiro do vídeo do layout ao vivo (30 quadros por segundo). Gerar com scripts/make-video.ps1.
+# Os painéis se reajustam DURANTE o arraste: cada "wait" depois de um "to" mostra o layout já aberto, antes de soltar.
+# 1. Redimensionar (em tempo real)
+at 700 300
+caption Redimensionar: arraste a divisória entre dois painéis
+wait 20
+to divider:nav 30
+wait 10
+down
+wait 4
+to 600 398 40
+wait 8
+to 240 398 50
+wait 8
+to 420 398 30
+wait 4
+up
+wait 14
+# 2. Arrasto ao vivo: a conversa varre várias zonas e o layout acompanha antes de soltar
+to grip:chat 35
+wait 8
+caption Arraste ao vivo: segure a alça da conversa
+down
+wait 10
+caption Zona esquerda do menu: os painéis já se afastam
+to zone:nav:left 40
+wait 30
+caption Zona de baixo do menu: o layout se reorganiza antes de soltar
+to zone:nav:bottom 36
+wait 30
+caption De volta à esquerda: a prévia troca sem tremer
+to zone:nav:left 36
+wait 30
+caption Soltar confirma o encaixe
+up
+wait 30
+# 3. Esc cancela
+to grip:nav 30
+wait 6
+down
+wait 8
+caption Esc cancela: tudo volta ao layout original
+to zone:chat:top 40
+wait 28
+esc
+wait 34
+up
+wait 14
+# 4. Centro troca de lugar
+to grip:chat 30
+wait 6
+down
+wait 8
+caption Centro: troca os dois painéis de lugar, ao vivo
+to zone:nav:center 40
+wait 28
+up
+wait 26
+# 5. Topo e base
+to grip:nav 30
+wait 6
+down
+wait 8
+caption Topo: encaixa por cima, os vizinhos abrem espaço
+to zone:chat:top 40
+wait 28
+caption Base: mesmo painel, agora por baixo
+to zone:chat:bottom 34
+wait 28
+up
+wait 26
+# 6. Adicionar a segunda conversa (a prévia aparece antes do clique)
+caption Adicionar painel: botão + em qualquer painel
+to plus:chat 35
+wait 6
+down
+up
+wait 30
+caption Escolha Segunda conversa e leve o cursor a uma zona
+pick chat2
+wait 6
+to zone:chat:right 40
+wait 30
+caption O espaço já se abriu: clique para confirmar
+down
+up
+wait 30
+# 7. Sala de voz por cima
+caption Sala de voz: prévia por cima da conversa
+to plus:chat2 30
+wait 6
+down
+up
+wait 24
+pick voice
+wait 6
+to zone:chat2:top 40
+wait 30
+down
+up
+wait 30
+# 8. Fechar
+caption Fechar um painel: o vizinho cresce e absorve o espaço
+to close:voice 35
+wait 8
+down
+up
+wait 34
+# 9. Restaurar
+caption Restaurar layout padrão (animado)
+to plus:chat 40
+wait 6
+down
+up
+wait 30
+restore
+wait 40
+caption
+wait 10

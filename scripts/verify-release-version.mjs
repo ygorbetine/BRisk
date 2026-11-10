@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 
 const tag = (process.env.GITHUB_REF_NAME ?? process.argv[2] ?? "").replace(/^v/, "");
 const manifests = [
-  "apps/desktop/package.json",
   "apps/web/package.json",
   "packages/protocol/package.json",
   "packages/rtc/package.json",

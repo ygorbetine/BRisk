@@ -1,0 +1,27 @@
+# Roteiro: miniatura (bolha) no cursor só enquanto não há zona de encaixe detectada. Gerar com scripts/make-video.ps1 -Script demo-bolha.txt
+at 700 300
+wait 10
+caption Pegue a alça de um painel
+to grip:chat 35
+wait 10
+down
+wait 8
+caption Sem zona detectada: a miniatura acompanha o mouse
+to 700 790 30
+wait 10
+to 400 796 30
+wait 10
+caption Zona detectada: a miniatura some e o layout mostra onde fica
+to zone:nav:left 40
+wait 36
+caption Saiu da zona: a miniatura volta
+to 400 796 28
+wait 22
+caption Outra zona: some de novo, os vizinhos abrem espaço
+to zone:nav:bottom 40
+wait 36
+caption Soltar confirma o encaixe
+up
+wait 36
+caption
+wait 6

@@ -1,0 +1,70 @@
+diff --git a/include/cui/cui_app.h b/include/cui/cui_app.h
+index c8b8d42..273c44f 100644
+--- a/include/cui/cui_app.h
++++ b/include/cui/cui_app.h
+@@ -27,6 +27,7 @@
+ #define CUI_APP_H
+ 
+ #include "cui.h"
++#include "cui_render.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -71,6 +72,11 @@ CUI_API void cui_app_set_title(cui_app *app, const char *title);
+ CUI_API void cui_app_set_size(cui_app *app, int width, int height);
+ CUI_API cui_vec2 cui_app_size(cui_app *app);
+ CUI_API bool cui_app_is_software(cui_app *app);
++/* Briks patch: replaces the single cui_gl_render call of the OpenGL path. The function
++ * must draw dd into the current framebuffer (clearing it); the swap stays with the app. */
++typedef void (*cui_app_render_fn)(cui_app *app, const cui_draw_data *dd, cui_gl_renderer *gl, void *user);
++CUI_API void cui_app_set_render_override(cui_app *app, cui_app_render_fn fn, void *user);
++CUI_API cui_gl_renderer *cui_app_gl_renderer(cui_app *app);
+ /* HWND, NSWindow*, X11 Window (cast to uintptr_t), SDL_Window* or GLFWwindow*. */
+ CUI_API void *cui_app_native_window(cui_app *app);
+ /* Name of the active backend: "win32", "cocoa", "x11", "sdl2", "glfw". */
+diff --git a/src/platform/cui_app.c b/src/platform/cui_app.c
+index 3d9d62c..54df4d3 100644
+--- a/src/platform/cui_app.c
++++ b/src/platform/cui_app.c
+@@ -118,6 +118,8 @@ void cui_app_destroy(cui_app *app) {
+ cui_ctx *cui_app_ui(cui_app *app) { return app->ui; }
+ void cui_app_quit(cui_app *app) { app->running = false; }
+ bool cui_app_is_software(cui_app *app) { return app->software; }
++void cui_app_set_render_override(cui_app *app, cui_app_render_fn fn, void *user) { app->render_override = fn; app->render_override_user = user; }
++cui_gl_renderer *cui_app_gl_renderer(cui_app *app) { return app->gl; }
+ void *cui_app_native_window(cui_app *app) { return cui__plat_native(app); }
+ const char *cui_app_backend(cui_app *app) { (void)app; return cui__plat_name(); }
+ 
+@@ -157,7 +159,8 @@ void cui__app_render(cui_app *app) {
+     int w = dd->width_px, h = dd->height_px;
+     if (w <= 0 || h <= 0) return;
+     if (app->gl) {
+-        cui_gl_render(app->gl, dd, true);
++        if (app->render_override) app->render_override(app, dd, app->gl, app->render_override_user);
++        else cui_gl_render(app->gl, dd, true);
+         cui__plat_gl_swap(app);
+     } else {
+         if (w != app->sw_w || h != app->sw_h) {
+@@ -286,7 +289,8 @@ bool cui_app_screenshot(cui_app *app, void *rgba, int width, int height) {
+     int w = dd->width_px, h = dd->height_px;
+     if (app->gl) {
+         /* re-render without swapping so the back buffer holds the frame */
+-        cui_gl_render(app->gl, dd, true);
++        if (app->render_override) app->render_override(app, dd, app->gl, app->render_override_user);
++        else cui_gl_render(app->gl, dd, true);
+         cui_gl_read_pixels(app->gl, w, h, rgba);
+     } else {
+         cui_sw_render(app->sw, dd, rgba, w, h, width * 4, CUI_SW_RGBA);
+diff --git a/src/platform/cui_platform.h b/src/platform/cui_platform.h
+index b8d11e2..b2e8046 100644
+--- a/src/platform/cui_platform.h
++++ b/src/platform/cui_platform.h
+@@ -33,6 +33,8 @@ struct cui_app {
+     const char *screenshot_path;  /* CUI_SCREENSHOT: save a PNG and quit */
+     int screenshot_frames;
+     int frames;
++    cui_app_render_fn render_override;
++    void *render_override_user;
+ };
+ 
+ /* Implemented by each backend. */

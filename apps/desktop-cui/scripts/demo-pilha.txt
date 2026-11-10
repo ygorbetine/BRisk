@@ -1,0 +1,108 @@
+# Roteiro da prévia de arraste "pilha elástica" (30 quadros por segundo): uma arte por tipo de painel, rastro elástico, soltar e Esc.
+# Gerar: powershell -File scripts/make-video.ps1 -Script demo-pilha.txt
+at 700 300
+caption Pilha elástica: segure a alça de um painel
+wait 24
+to grip:chat 25
+wait 8
+caption Conversa: balões de vidro e o enviado em roxo
+down
+wait 6
+to 900 330 8
+to 560 380 12
+to 980 300 12
+to 520 420 12
+wait 8
+caption O giro responde à velocidade e cada camada segue com atraso
+to 760 330 14
+to 640 520 12
+to 860 220 12
+to 820 260 8
+wait 18
+caption Zona esquerda do menu: o layout abre espaço ao vivo
+to zone:nav:left 30
+wait 24
+caption Soltar: a pilha desce, encolhe e o painel se acomoda
+up
+wait 28
+caption Menu lateral: Esc cancela e a pilha volta à origem
+to grip:nav 28
+wait 8
+down
+wait 6
+to zone:chat:top 30
+wait 26
+esc
+wait 30
+up
+wait 8
+caption Servidores: grade de até 12 ícones (comunidades reais do app)
+to grip:servers 28
+wait 8
+down
+wait 6
+to 420 300 24
+wait 24
+caption Mais de 12: o último vira +N
+servers 14
+wait 26
+esc
+wait 28
+up
+servers -1
+wait 6
+caption Adicionar painel: Membros
+to plus:chat 30
+wait 6
+down
+up
+wait 16
+pick members
+wait 6
+to zone:chat:right 30
+wait 22
+down
+up
+wait 30
+caption Adicionar painel: Sala de voz com 3 pessoas
+voice 3
+to plus:chat 30
+wait 6
+down
+up
+wait 16
+pick voice
+wait 6
+to zone:nav:bottom 30
+wait 22
+down
+up
+wait 30
+caption Membros: lista com avatares e pontos de presença
+to grip:members 28
+wait 8
+down
+wait 6
+to 640 420 24
+wait 28
+esc
+wait 28
+up
+wait 6
+caption Sala de voz com 3 pessoas: blocos quadrados, quem fala em verde
+to grip:voice 28
+wait 8
+down
+wait 6
+to 700 430 24
+wait 28
+caption Com 5 pessoas a grade vira 3x2
+voice 5
+wait 30
+caption Soltar sobre o menu: a pilha pousa no encaixe
+to zone:nav:center 28
+wait 20
+up
+wait 30
+caption
+wait 8

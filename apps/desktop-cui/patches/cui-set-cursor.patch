@@ -1,0 +1,24 @@
+diff --git a/include/cui/cui.h b/include/cui/cui.h
+index f76f576..72a3031 100644
+--- a/include/cui/cui.h
++++ b/include/cui/cui.h
+@@ -286,6 +286,7 @@ typedef struct cui_platform_iface {
+ } cui_platform_iface;
+ CUI_API void cui_set_platform(cui_ctx *ui, const cui_platform_iface *platform);
+ CUI_API cui_cursor cui_get_cursor(cui_ctx *ui);
++CUI_API void cui_set_cursor(cui_ctx *ui, cui_cursor cursor);   /* Briks: o app escolhe o cursor deste quadro */
+ 
+ /* Queries, useful for app level shortcuts. */
+ CUI_API bool cui_key_pressed(cui_ctx *ui, cui_key key);          /* pressed this frame (with repeat) */
+diff --git a/src/cui_core.c b/src/cui_core.c
+index 441b94e..80fb3f4 100644
+--- a/src/cui_core.c
++++ b/src/cui_core.c
+@@ -580,6 +580,7 @@ bool cui_wants_keyboard(cui_ctx *ui) { return ui->edit != NULL; }
+ bool cui_wants_mouse(cui_ctx *ui) { return ui->hot != 0 || ui->active != 0; }
+ 
+ void cui__set_cursor(cui_ctx *ui, cui_cursor c) { ui->cursor = c; }
++void cui_set_cursor(cui_ctx *ui, cui_cursor c) { ui->cursor = c; }
+ 
+ /* ------------------------------------------------------------------------ */
+ /* Interaction                                                              */

@@ -274,7 +274,11 @@ impl Actor {
         registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder()));
         let registry = webrtc::api::interceptor_registry::configure_rtcp_reports(registry);
         let registry = webrtc::api::interceptor_registry::configure_twcc_receiver_only(registry, &mut m)?;
-        let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).build();
+        // janela anti-replay do SRTP: o padrão (64 pacotes) rejeita retransmissões — a 12 Mbps, um pacote de 100 ms atrás já está
+        // mais de 100 pacotes para trás. 8192 cobre ~1 s a 50 Mbps e continua barrando replays antigos.
+        let mut se = webrtc::api::setting_engine::SettingEngine::default();
+        se.set_srtp_replay_protection_window(8192);
+        let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
         {
             let audio = self.audio.clone();

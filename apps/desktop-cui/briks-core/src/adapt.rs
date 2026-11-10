@@ -67,7 +67,9 @@ impl Estimator {
         if rtt > 0.0 { self.rtt_hist.push(rtt); if self.rtt_hist.len() > 30 { self.rtt_hist.remove(0); } }
         let base = if self.rtt_hist.is_empty() { 0.0 } else { self.rtt_base() };
         let delayed = rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.5).max(80.0);
-        let loss_eff = loss.max(nack_ratio.min(0.5) * 0.6);   // NACK chega antes do relatório de perda
+        // os Receiver Reports contam como recebido o que a retransmissão consertou; a fração de pacotes pedidos pela primeira vez
+        // é a perda real do caminho, e chega antes do relatório
+        let loss_eff = loss.max(nack_ratio.min(1.0));
         if loss_eff > 0.10 || delayed {
             // cai rápido: parte do que realmente passou no último segundo, não da estimativa antiga
             let from = if sent > FLOOR_BPS { self.est.min(sent * 1.05) } else { self.est };

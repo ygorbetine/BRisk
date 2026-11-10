@@ -62,15 +62,17 @@ pub struct VideoOut {
     queued: Arc<AtomicU64>,
     pub rtx_sent: Arc<AtomicU64>,
     pub rtx_skipped: Arc<AtomicU64>,
+    /// pacotes pedidos pela PRIMEIRA vez (perda real antes do conserto; pedidos repetidos do mesmo pacote não contam)
+    pub nack_unique: Arc<AtomicU64>,
 }
 impl VideoOut {
     pub fn new() -> Self {
         let track = new_video_track();
         let (tx, rx) = mpsc::unbounded_channel();
         let (nack_tx, nack_rx) = mpsc::unbounded_channel();
-        let (queued, rtx_sent, rtx_skipped) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
-        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone()));
-        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped }
+        let (queued, rtx_sent, rtx_skipped, nack_unique) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone()));
+        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique }
     }
 }
 
@@ -80,11 +82,11 @@ const HISTORY: usize = 2048;
 /// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Também responde aos NACKs: guarda os últimos
 /// pacotes e retransmite pelo mesmo espaçamento, com orçamento de 25% da taxa e no máximo uma vez a cada 150 ms por pacote —
 /// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
-async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::UnboundedReceiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>) {
+async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::UnboundedReceiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>) {
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
-    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>)> = HashMap::new();
+    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido)
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
     loop {
@@ -96,7 +98,8 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                 rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.25 / 8.0).min(pace * 0.25 / 8.0 * 0.5);
                 rtx_t = Instant::now();
                 for sq in seqs {
-                    let Some((p, last)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    let Some((p, last, asked)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); }
                     let size = (p.payload.len() + 12) as f64;
                     if last.map(|t| t.elapsed() < Duration::from_millis(150)).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
@@ -117,7 +120,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     let _ = track.write_rtp(&p).await;
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
-                    if hist.insert(sq, (p, None)).is_none() { order.push_back(sq); }
+                    if hist.insert(sq, (p, None, false)).is_none() { order.push_back(sq); }
                     if order.len() > HISTORY { if let Some(old) = order.pop_front() { hist.remove(&old); } }
                 }
                 queued.fetch_sub(len, Ordering::Relaxed);
@@ -152,7 +155,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
     let stop = Arc::new(AtomicBool::new(false));
     idr.store(true, Ordering::Relaxed);
     let (tx, queued) = (out.tx.clone(), out.queued.clone());   // bytes esperando no pacer
-    let out_rtx = (out.rtx_sent.clone(), out.rtx_skipped.clone());
+    let out_rtx = (out.rtx_sent.clone(), out.rtx_skipped.clone(), out.nack_unique.clone());
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
         use crate::adapt::{Controller, Estimator};
@@ -192,7 +195,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let convn = cap.shared.conv_ns.load(Ordering::Relaxed);
                 let work_ms = if frames > 0 { ((convn - conv_ns0) as f64 + enc_ns as f64) / frames as f64 / 1e6 } else { 0.0 };
                 let (worst, (nacks, plis)) = { let n = net.lock().unwrap(); (n.worst(), n.totals()) };
-                let nack_ratio = if bytes > 0 { (nacks.saturating_sub(nacks0)) as f32 / (bytes as f32 / 1100.0).max(1.0) } else { 0.0 };
+                let lost_new = out_rtx.2.swap(0, Ordering::Relaxed);
+                let nack_ratio = if bytes > 0 { lost_new as f32 / (bytes as f32 / 1100.0).max(1.0) } else { 0.0 };
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 if cfg.adaptive {
                     est.set_ceil(ctl.top_ceil());
@@ -218,7 +222,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": dec.bps / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
-                    "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
+                    "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)

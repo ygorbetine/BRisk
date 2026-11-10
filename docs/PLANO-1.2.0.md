@@ -96,3 +96,6 @@ Já está bom: RLS ligada em `profiles` e `profile_keys` com escrita só por fun
 8. Relatar vulnerabilidades: arquivo `SECURITY.md` no repositório com canal de contato.
 
 Observação: o post do Reddit citado pelo dono (r/programacao, "vazamento de dados") não pôde ser lido nesta sessão (acesso bloqueado). Quando o resumo for colado, conferir se alguma causa daquele caso ainda não está coberta acima.
+
+## Anotado para a 1.3.0 (2026-11-09)
+- **Indicar quem está transmitindo:** no bloco da pessoa que transmite a tela, mostrar um fundo desfocado (a imagem da transmissão com desfoque) e um selo de texto "AO VIVO" (ou similar), para ver de relance quem está transmitindo, mesmo no modo Call, onde a transmissão fica oculta. A decisão do texto e do estilo (selo vermelho, posição, se o desfoque usa a imagem real da tela ou só a cor) fica para o layout com o dono. Deve ser leve: sem custo extra de banda, usando só o vídeo que o app já recebe ou um quadro reduzido.

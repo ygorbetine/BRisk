@@ -9,7 +9,7 @@
 - **Áudio só da janela:** ao transmitir uma janela, o som capturado é o do processo dela (Windows, WASAPI), nunca o do sistema inteiro. Discord e o próprio Briks são excluídos. Abas do navegador compartilham o som do navegador inteiro (limitação do Windows: o áudio é por processo, não por aba).
 - **Qualidade independente:** resolução (720p a 4K), FPS (15 a 60) e bitrate separados. O bitrate é automático por padrão; os níveis Alto, Máximo e Personalizado deixam você "forçar a barra" (até 50 Mbps), com aviso de upload.
 - **Conexão mais estável:** recuperação automática de peers, reinício de ICE ao trocar de rede e pool de candidatos.
-- **Malha P2P até 8 pessoas** e **SFU opcional (LiveKit)** para salas maiores ou várias transmissões com qualidade alta. Veja `infrastructure/livekit/README.md`.
+- **SFU (LiveKit) como padrão** nas chamadas: cada pessoa envia uma única cópia da voz, câmera e tela ao servidor, que entrega aos demais. Sem servidor configurado, ou se a conexão falhar, o app cai para a **malha P2P** (até 8 pessoas), que também pode ser escolhida manualmente. Veja `infrastructure/livekit/README.md` e `docs/ativar-sfu.md`.
 - **Microfone desligado ao entrar** (o Discord continua dono da voz).
 - **Interface** com a organização do Briks, cores inspiradas no RASTRO e glassmorfismo; lista de membros agrupa o mesmo nome e tem "Limpar duplicados".
 - Aceleração de GPU na codificação ligada por padrão no Windows (`BRIKS_DISABLE_GPU_ENCODE=1` desliga).
@@ -22,7 +22,7 @@ pnpm dev            # desenvolvimento (Electron + web)
 pnpm package:win    # gera o instalador em apps/desktop/release
 ```
 
-Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase (signaling). TURN (`infrastructure/coturn`) e SFU (`infrastructure/livekit`) são opcionais e hospedados por você. `CHECKPOINTS.md` traz o plano e o estado de cada etapa.
+Requer Node, pnpm e Rust. Copie `.env.example` para `.env` e preencha o Supabase (signaling). O SFU (`infrastructure/livekit`, ou LiveKit Cloud) é o transporte padrão das chamadas e precisa de `VITE_LIVEKIT_URL` e `VITE_LIVEKIT_TOKEN_URL`; sem eles, vale a malha P2P. O TURN (`infrastructure/coturn`) é opcional e hospedado por você. `CHECKPOINTS.md` traz o plano e o estado de cada etapa.
 
 ---
 
@@ -135,13 +135,14 @@ O desktop aplica por padrão uma quota total de 50 GiB para anexos e remove tran
 
 ## Chamadas
 
-O transporte ativo atual usa WebRTC Mesh e limita cada cliente a cinco peers
-remotos, totalizando até **seis participantes por chamada**. A camada de chamada
-agora depende do contrato `CallTransport`, não da implementação Mesh concreta.
-Uma política seleciona Mesh para até quatro participantes e recomenda SFU a
-partir do quinto ou quando RTT/jitter indicam rede degradada. Como nenhum
-provedor SFU está registrado nesta versão, o fallback continua sendo Mesh e essa
-condição aparece explicitamente no diagnóstico.
+A camada de chamada depende do contrato `CallTransport` e tem dois transportes:
+**SFU (LiveKit)**, o padrão do Briks desde a 0.9.6, e **WebRTC Mesh** (P2P), de
+até 8 participantes. A preferência fica salva no aparelho (`auto`, `mesh` ou
+`sfu`; o padrão é `sfu`). No modo automático, a política escolhe Mesh para até 8
+participantes e SFU acima disso ou quando RTT/jitter/perda indicam rede
+degradada. Se o SFU não estiver configurado (sem `VITE_LIVEKIT_URL` e
+`VITE_LIVEKIT_TOKEN_URL`), o fallback é Mesh e o motivo aparece no diagnóstico.
+Os limites estão em `packages/rtc/src/transport/selection.ts`.
 
 O código da chamada é modular: a fachada `call.ts` delega a sessão para
 `CallController`, e mídia, participantes, autenticação, recuperação,

@@ -140,6 +140,9 @@ pub struct Controller {
     up_ticks: u32,
     cpu_bad: u32,
     cpu_good: u32,
+    /// quanto o codificador passa do bitrate pedido neste conteúdo (1 = obedece). Conteúdo muito difícil (ruído, jogo caótico)
+    /// não comprime até o alvo em resolução alta; o fator encarece os níveis e faz a escada descer mais de um degrau de uma vez.
+    pub overshoot: f64,
     /// teto de bitrate do modo manual (None = automático: o teto é o "automático" do nível em uso)
     pub manual_ceil: Option<f64>,
 }
@@ -149,12 +152,19 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(self.ladder[0].h, self.ladder[0].fps) as f64) }
     fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64) }
-    fn net_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| need_bps(*l) <= budget).unwrap_or(self.ladder.len() - 1) }
+    fn net_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| need_bps(*l) * self.overshoot <= budget).unwrap_or(self.ladder.len() - 1) }
+    /// `sent`/`asked` = bps que saíram do codificador e bps pedidos a ele no último segundo (com quadros saindo).
+    pub fn note_encoder(&mut self, sent: f64, asked: f64) {
+        if asked <= 0.0 || sent <= 0.0 { return; }
+        let r = (sent / asked).clamp(0.5, 8.0);
+        // sobe rápido (o excesso congestiona já), desce devagar
+        self.overshoot = if r > self.overshoot { self.overshoot * 0.4 + r * 0.6 } else { self.overshoot * 0.85 + r * 0.15 }.clamp(1.0, 8.0);
+    }
 
     /// Sobrecarga local. `work_ms` = tempo médio de conversão + codificação por quadro; `offered`/`sent` = quadros por segundo
     /// que a captura entregou e que saíram codificados. Chamado uma vez por segundo.

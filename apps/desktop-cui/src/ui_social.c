@@ -75,17 +75,18 @@ static void bubbles_draw(cui_ctx *ui) {
         float w = fminf(m.width, 190.0f) + 30, h = 32;
         float bx = a.x + 8, by = a.y - 17 - h;
         if (by < 6) by = 6;
-        abs_glass(ui, a.x + 27, a.y - 4, 8, 8, 4, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior; glass.c as une ao balão (metaballs) */
-        abs_glass(ui, a.x + 32, a.y - 14, 12, 12, 6, false);
+        /* bolinhas de pensamento (theme.json: bubble_tail_gap/r1/r2): a 1ª fica a "gap" px da borda de baixo do balão, a 2ª a "gap" px da 1ª, rumo ao avatar; glass.c as une com o pescoço bubble_neck_k */
+        float r1 = g_th.bubble_tail_r1, r2 = g_th.bubble_tail_r2, gp = g_th.bubble_tail_gap;
+        float c1x = a.x + 38, c1y = a.y - 17 + gp + r1;
+        float ux = (a.x + 31) - c1x, uy = a.y - c1y, ul = sqrtf(ux * ux + uy * uy); if (ul < 1) ul = 1;
+        float c2x = c1x + ux / ul * (r1 + r2 + gp), c2y = c1y + uy / ul * (r1 + r2 + gp);
+        abs_glass(ui, c2x - r2, c2y - r2, r2 * 2, r2 * 2, r2, false);
+        abs_glass(ui, c1x - r1, c1y - r1, r1 * 2, r1 * 2, r1, false);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
             cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                     .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
-        }
-        if (g_perf >= PERF_MIN) {   /* sem shader: pescoços chapados para a mesma silhueta unida */
-            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 8 - (by + h - 4), 3, false);
-            abs_glass(ui, a.x + 31.5f, a.y - 6.5f, 6, 6, 3, false);
         }
         cui_pop_id(ui);
     }

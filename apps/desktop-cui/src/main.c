@@ -43,7 +43,6 @@ static void frame(cui_ctx *ui) {
     rtc_pump(&state);
     msgui_pump(&state);
     profile_tick(&state);
-    { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strcmp(o, "settings")) state.settings_open = true; if (!strcmp(o, "add")) state.add_friend_open = true; if (!strcmp(o, "profile")) state.profile_open = true; } }
     settings_tick();
     themes_tick(ui);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }

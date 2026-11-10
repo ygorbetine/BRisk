@@ -1,0 +1,8 @@
+# Integração da versão enxuta (branch cui-integracao)
+
+Ordem dos merges (todos --no-ff sobre brisk-dev 12180e1): 1) cui-instalador (limpo); 2) cui-ui-paridade (conflitos: CMakeLists, ui_social — uniu fontes e usou profile_dialog); 3) painéis (main.c, ui_social — mantido space_button responsivo e janela mínima 560x480); 4) mensagens (CMake, main.c, ui_social — msgui_tags junto de g_th.ph); 5) contas (CMake, Cargo.toml, main.rs, briks_ui.h, ui_auth.c — tela de entrada da conta; Perfil/rodapé unificados: foto e @nick vêm da conta, ui_account_editor na aba Perfil, backup/importação na aba Conta; user_photo duplicado removido).
+
+Testes: após cada merge, build via scripts/build-cui.ps1 ok; cargo test briks-core 29 → 41 → 71 passando (1 ignorado: Supabase real); smoke "tudo certo"; capturas ocultas (BRIKS_HIDDEN=1) de login, social, chamada, histórico, grupo, Perfil, Configurações (abas 0/2/3/8/9/12), balão e fluxo real com conta de mentira: sem erro de Run-Time Check; cantos arredondados conferidos por ampliação. check-cantos.ps1 está desatualizado (bitmap nulo) — não usado.
+
+NÃO feito/pendente: build Release e instalador -Test (script já copia assets/login; a execução não foi concluída), teste de instalar/desinstalar, roteiro de painéis/mensagens com BRIKS_SCRIPT, montagem final de capturas (capturas soltas no TEMP\ci\final). cui-transmissao não incluído: o botão Compartilhar da chamada segue visível e precisa ser desabilitado/escondido até o módulo existir; integrar depois mergeando o branch e resolvendo rtc.c/ui_call.c.
+Lacunas: supabase.json não vem no instalador (outros PCs ficam sem login); duas importações do Briks antigo (migrate.c e account_import) coexistem; telas de Configurações sem backend precisam de aviso "em breve".

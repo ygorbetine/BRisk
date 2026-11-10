@@ -76,7 +76,6 @@ typedef struct {
     bool create_group_open, profile_open, logout_confirm_open;
     char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
-    cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
     char new_group[96];
     /* social */
     int active_friend;             /* -1 = lista de amigos */

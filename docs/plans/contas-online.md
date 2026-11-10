@@ -1,7 +1,7 @@
 # Contas online no app nativo (CUI)
 
-Estado: **fase 1 implementada e testada sem rede** (módulo, tela, SQL escrito). **Falta o teste real** contra o projeto
-Supabase de desenvolvimento, que depende dos passos manuais da seção 4.
+Estado: **fase 1 implementada**, testada sem rede e conferida contra o projeto Supabase de desenvolvimento até o ponto
+de abrir o navegador. **Falta**: o login em si (é você quem faz), os redirects do loopback e aplicar as migrações (seção 4).
 
 ## 1. O que muda para quem usa
 
@@ -129,6 +129,30 @@ Os secrets são colados **só no painel do Supabase**. O app recusa uma chave se
    - arquivo `%APPDATA%\Briks-CUI\supabase.json`: `{"url":"https://<ref>.supabase.co","anon_key":"<chave anon/publishable>"}`
    - ou variáveis `BRIKS_SUPABASE_URL` e `BRIKS_SUPABASE_ANON_KEY`.
 7. Abra o app e faça **você** o login com Google e com Discord no navegador. Me diga o que aconteceu.
+
+### Situação do projeto de desenvolvimento (10/11/2026)
+
+Conferido pela rede, só com a chave pública e sem criar conta nem fazer login:
+
+- Google, Discord e e-mail estão ativos; confirmação de e-mail ligada.
+- O endereço de login social leva ao Google e ao Discord (o app chega até abrir o navegador).
+- Senha errada, refresh token inválido e código PKCE inválido voltam como os nossos erros em português. O formato real
+  do refresh inválido (`validation_failed: Refresh token is not valid`) era diferente do previsto e foi corrigido.
+- **As migrações ainda não foram aplicadas** (a tabela `profiles` e as funções não existem). Sem elas o login entra,
+  mas o perfil não é publicado e a lista de amigos avisa "o servidor ainda não foi preparado".
+- `%APPDATA%\Briks-CUI\supabase.json` já foi criado neste computador (fora do git), com a URL e a chave publishable.
+
+O que falta você fazer para o login completo:
+
+1. Authentication > URL Configuration > **Redirect URLs** > Add URL, uma por vez, exatamente assim:
+   `http://127.0.0.1:53682/callback`, `http://127.0.0.1:53683/callback`, `http://127.0.0.1:53684/callback`.
+   Não dá para saber de fora se já estão lá. Sintoma de que faltam: depois do login o navegador vai para outra página
+   (a "Site URL") em vez de mostrar "Tudo certo!", e o app fica em "Aguardando o navegador…".
+2. Rodar `0001`, `0002` e `0003` no SQL Editor, nessa ordem (passo 1 da lista acima).
+3. No Google, como o app está em modo Teste, entrar com um e-mail cadastrado como usuário de teste.
+
+Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_SUPABASE_URL` e
+`BRIKS_SUPABASE_ANON_KEY` no ambiente.
 
 ## 5. Testes
 

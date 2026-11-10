@@ -78,7 +78,7 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         return e("server_not_ready", "O servidor de contas ainda não foi preparado (faltam as migrações do banco).");
     }
     if code.starts_with("PGRST3") || low.contains("jwt expired") || code == "bad_jwt" || code == "session_not_found" || code == "session_expired"
-        || code == "refresh_token_not_found" || code == "refresh_token_already_used" || low.contains("invalid refresh token") || low.contains("refresh token not found") {
+        || code == "refresh_token_not_found" || code == "refresh_token_already_used" || low.contains("invalid refresh token") || low.contains("refresh token not found") || low.contains("refresh token is not valid") {
         return AccountError::session_expired();
     }
     if code == "invalid_credentials" || low.contains("invalid login credentials") {

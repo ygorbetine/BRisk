@@ -171,6 +171,8 @@ fn server_errors_become_clear_portuguese_messages() {
     assert_eq!(m(403, json!({ "error_code": "otp_expired", "msg": "Token has expired or is invalid" })).code, "invalid_code");
     assert_eq!(m(400, json!({ "error_code": "refresh_token_not_found", "msg": "Invalid Refresh Token: Refresh Token Not Found" })).code, "session_expired");
     assert_eq!(m(401, json!({ "code": "PGRST301", "message": "JWT expired" })).code, "session_expired");
+    // formato visto no Supabase real para um refresh token desconhecido
+    assert_eq!(m(400, json!({ "code": 400, "error_code": "validation_failed", "msg": "Refresh token is not valid" })).code, "session_expired");
     assert_eq!(m(404, json!({ "code": "PGRST202", "message": "Could not find the function public.friends_list" })).code, "server_not_ready");
     assert_eq!(m(400, json!({ "code": "P0001", "message": "nick_taken" })).code, "nick_taken");
     assert_eq!(m(400, json!({ "code": "P0001", "message": "not_found" })).code, "not_found");
@@ -561,4 +563,32 @@ fn legacy_import_reassigns_friends_without_old_accounts_or_keys() {
     assert_eq!(legacy::apply(&s, &d, "novo@conta.briks.local").unwrap()["state"], "already");
     assert_eq!(legacy::probe(&s, &d)["state"], "imported");
     assert!(!d.join("import-social-tmp").exists());
+}
+
+// ---------- Supabase REAL (opcional) ----------
+// Só roda com `cargo test -- --ignored real_supabase` e BRIKS_SUPABASE_URL / BRIKS_SUPABASE_ANON_KEY no ambiente.
+// Não cria conta nem faz login: confere que o projeto responde e que os erros reais viram os nossos códigos.
+#[tokio::test]
+#[ignore]
+async fn real_supabase_answers_and_errors_map() {
+    let (Ok(url), Ok(key)) = (std::env::var("BRIKS_SUPABASE_URL"), std::env::var("BRIKS_SUPABASE_ANON_KEY")) else { panic!("defina BRIKS_SUPABASE_URL e BRIKS_SUPABASE_ANON_KEY") };
+    config::check_url(&url).unwrap();
+    config::check_public_key(&key).unwrap();
+    let dir = tmpdir("real");
+    let a = Accounts::new(Arc::new(SupabaseProvider::new(&url, &key)), &dir, Arc::new(|_| Ok(())));
+    assert_eq!(a.restore().await.unwrap(), None);
+    assert_eq!(a.sign_in_password("ninguem-teste@example.com", "senha-inexistente-000").await.unwrap_err().code, "invalid_credentials");
+    let run = |f: Box<dyn FnOnce(&SupabaseProvider) -> AccountError + Send>| {
+        let p = SupabaseProvider::new(&url, &key);
+        tokio::task::spawn_blocking(move || f(&p))
+    };
+    assert_eq!(run(Box::new(|p| p.refresh("nao-existe").unwrap_err())).await.unwrap().code, "session_expired");
+    assert_eq!(run(Box::new(|p| p.exchange_code("00000000-0000-4000-8000-000000000000", &Pkce::generate().verifier).unwrap_err())).await.unwrap().code, "invalid_code");
+    assert_eq!(run(Box::new(|p| p.friends("token-invalido").unwrap_err())).await.unwrap().code, "session_expired");
+    // o endereço de login social existe e leva ao provedor (sem seguir o redirect)
+    for (prov, host) in [(OAuthProvider::Google, "accounts.google.com"), (OAuthProvider::Discord, "discord.com")] {
+        let u = SupabaseProvider::new(&url, &key).oauth_url(prov, "http://127.0.0.1:53682/callback", &Pkce::generate().challenge);
+        let loc = tokio::task::spawn_blocking(move || ureq::AgentBuilder::new().redirects(0).timeout(Duration::from_secs(15)).build().get(&u).call().ok().and_then(|r| r.header("Location").map(String::from))).await.unwrap();
+        assert!(loc.unwrap_or_default().contains(host), "{host}");
+    }
 }

@@ -261,7 +261,7 @@ void account_tick(app_state_t *s) {
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
-        if (a) cui_request_redraw(cui_app_ui(s->app));
+        if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */
         if (a && !auto_done && s->acct_state == ACCT_OUT && s->acct_configured) { auto_done = true; account_oauth(s, a); }
         if (getenv("BRIKS_DEV_IMPORT") && !import_done && s->import_state == 1) { import_done = true; account_import(s, true); }
     }

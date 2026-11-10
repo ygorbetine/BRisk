@@ -40,6 +40,8 @@ pub enum MeshEvent {
     /// Estado de um peer: "negociando" | "conectado" | "autenticado" | "falhou" | "fechado".
     Peer { peer_id: String, state: String },
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// Evento de chat assinado (reação, edição, exclusão, resposta, fixação) já verificado; `local` = criado por mim.
+    ChatEvent { from_fp: String, wire: Value, local: bool },
     /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
     Speaking { peer_id: String, level: f32 },
     /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
@@ -71,6 +73,11 @@ pub enum MeshCmd {
     MutePeer { key: String, muted: bool },
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
     Chat { to_fp: String, text: String },
+    /// Assina e envia um evento de chat (`chat.event` v3) a todos os peers autenticados da sala.
+    Event { channel: String, target: String, action: String, content: Option<String>, reference: Option<String>, emoji: Option<String> },
+    /// Só para testes: envia JSON cru a todos os peers autenticados (para provar rejeições).
+    #[cfg(test)]
+    RawDc { text: String },
     /// Só para testes: força um offer agora (colisão).
     ForceOffer { peer_id: String },
     Close,
@@ -147,6 +154,8 @@ struct Actor {
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
     seen_msgs: HashSet<String>,
+    ev_last_ts: u64,                // relógio monotônico dos meus eventos de chat
+    seen_events: HashSet<String>,
     audio: Option<Arc<Audio>>,
     audio_rx: Option<mpsc::Receiver<AudioEvent>>,
     joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
@@ -162,7 +171,7 @@ impl Actor {
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -355,6 +364,24 @@ impl Actor {
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 self.flush_outbox(&to_fp).await;
             }
+            MeshCmd::Event { channel, target, action, content, reference, emoji } => {
+                let my_fp = self.identity.fingerprint();
+                match crate::chat_events::create(&self.identity, &channel, &target, &my_fp, &action, content.as_deref(), reference.as_deref(), emoji.as_deref(), now_ms() as u64, &mut self.ev_last_ts) {
+                    Ok(e) => {
+                        let wire = crate::chat_events::to_wire(&e);
+                        self.seen_events.insert(e.id.clone());
+                        let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                        for id in ids { self.dc_send(&id, wire.clone()).await; }
+                        self.emit(MeshEvent::ChatEvent { from_fp: my_fp, wire, local: true }).await;
+                    }
+                    Err(er) => self.emit(MeshEvent::Error(format!("evento inválido: {er}"))).await,
+                }
+            }
+            #[cfg(test)]
+            MeshCmd::RawDc { text } => {
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { if let Some(dc) = self.peers.get(&id).and_then(|p| p.dc.clone()) { let _ = dc.send_text(text.clone()).await; } }
+            }
             MeshCmd::Kick { fp, reason } => {
                 if self.owner().as_deref() != Some(self.identity.fingerprint().as_str()) { self.emit(MeshEvent::Error("só o dono da sala pode expulsar".into())).await; return; }
                 self.do_kick(&fp, &reason).await;
@@ -512,6 +539,23 @@ impl Actor {
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
                 if self.seen_msgs.insert(m.id.clone()) {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
+                }
+            }
+            "chat.event" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
+                match crate::chat_events::parse_wire(text) {
+                    crate::chat_events::Parsed::Ignored(_) => {}   // versão/ação desconhecida: compatibilidade
+                    crate::chat_events::Parsed::Invalid(why) => self.emit(MeshEvent::Error(format!("evento rejeitado: {why}"))).await,
+                    crate::chat_events::Parsed::Event(e) => {
+                        let ch = e.channel_id.clone();
+                        if e.actor_peer_id != fp || crate::chat_events::verify_event(&jwk, &e, &ch, now_ms() as u64).is_err() {
+                            self.emit(MeshEvent::Error("evento rejeitado (autor/assinatura)".into())).await; return;
+                        }
+                        if self.seen_events.insert(e.id.clone()) {
+                            self.emit(MeshEvent::ChatEvent { from_fp: fp, wire: crate::chat_events::to_wire(&e), local: false }).await;
+                        }
+                    }
                 }
             }
             "room.kick" | "room.allow" => {

@@ -98,28 +98,33 @@ impl NetSim {
         maps.insert(target, port);
         let me = self.clone();
         tokio::spawn(async move {
-            // uma tomada de saída por origem: o alvo responde para ela e o proxy devolve pela porta da frente
-            let mut backs: HashMap<SocketAddr, Arc<UdpSocket>> = HashMap::new();
+            // uma tomada de saída por origem: o alvo responde para ela e o proxy devolve pela porta da frente.
+            // Cada sentido tem UMA fila com uma tarefa que solta os pacotes em ordem (um roteador não reordena).
+            let mut backs: HashMap<SocketAddr, tokio::sync::mpsc::UnboundedSender<(Instant, Vec<u8>)>> = HashMap::new();
             let (up, down) = (Arc::new(Mutex::new(Shaper { next_free: Instant::now() })), Arc::new(Mutex::new(Shaper { next_free: Instant::now() })));
             let mut buf = vec![0u8; 2048];
             while let Ok((n, src)) = front.recv_from(&mut buf).await {
-                let back = match backs.get(&src) {
-                    Some(b) => b.clone(),
+                let q = match backs.get(&src) {
+                    Some(q) => q.clone(),
                     None => {
                         let Some(b) = big_socket() else { continue };
                         let b = Arc::new(b);
-                        backs.insert(src, b.clone());
-                        let (b2, front2, me2, down2) = (b.clone(), front.clone(), me.clone(), down.clone());
+                        let (qtx, mut qrx) = tokio::sync::mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
+                        backs.insert(src, qtx.clone());
+                        let b3 = b.clone();
+                        tokio::spawn(async move { while let Some((at, pkt)) = qrx.recv().await { tokio::time::sleep_until(at.into()).await; let _ = b3.send_to(&pkt, target).await; } });
+                        let (dtx, mut drx) = tokio::sync::mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
+                        let front3 = front.clone();
+                        tokio::spawn(async move { while let Some((at, pkt)) = drx.recv().await { tokio::time::sleep_until(at.into()).await; let _ = front3.send_to(&pkt, src).await; } });
+                        let (b2, me2, down2) = (b.clone(), me.clone(), down.clone());
                         tokio::spawn(async move {
                             let mut buf = vec![0u8; 2048];
-                            while let Ok((n, _)) = b2.recv_from(&mut buf).await {
-                                if let Some(at) = me2.shape(&down2, n) { let (pkt, f) = (buf[..n].to_vec(), front2.clone()); tokio::spawn(async move { tokio::time::sleep_until(at.into()).await; let _ = f.send_to(&pkt, src).await; }); }
-                            }
+                            while let Ok((n, _)) = b2.recv_from(&mut buf).await { if let Some(at) = me2.shape(&down2, n) { let _ = dtx.send((at, buf[..n].to_vec())); } }
                         });
-                        b
+                        qtx
                     }
                 };
-                if let Some(at) = me.shape(&up, n) { let pkt = buf[..n].to_vec(); tokio::spawn(async move { tokio::time::sleep_until(at.into()).await; let _ = back.send_to(&pkt, target).await; }); }
+                if let Some(at) = me.shape(&up, n) { let _ = q.send((at, buf[..n].to_vec())); }
             }
         });
         Some(port)

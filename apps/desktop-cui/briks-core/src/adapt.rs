@@ -99,10 +99,10 @@ impl Estimator {
                 let k = if self.est < self.ceil * 0.5 { 1.25 } else { 1.08 };
                 self.est = (self.est * k + 40_000.0).min(self.ceil);
             }
-            // teto da capacidade lembrada: firme por 10 s, depois sobe 5% por segundo (sondagem lenta); some ao alcançar o teto geral
+            // teto da capacidade lembrada: firme por 6 s, depois sobe 15% por segundo (sondagem lenta); some ao alcançar o teto geral
             if let Some((c, t)) = self.cap {
                 let age = now.saturating_duration_since(t).as_secs_f64();
-                let lim = if age < 10.0 { c } else { c * 1.05f64.powf(age - 10.0) };
+                let lim = if age < 6.0 { c } else { c * 1.15f64.powf(age - 6.0) };
                 if lim >= self.ceil { self.cap = None; } else if self.est > lim { self.est = lim.max(FLOOR_BPS); }
             }
             if self.est >= self.ceil * 0.98 { self.reason = ""; }

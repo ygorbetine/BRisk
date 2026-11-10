@@ -332,7 +332,9 @@ pub struct JitterBuf {
     pkts: std::collections::BTreeMap<u64, webrtc::rtp::packet::Packet>,
     next: Option<u64>,
     hi: u64,
-    gap_since: Option<Instant>,
+    /// (pacote que falta na frente da fila, desde quando): o prazo é POR PACOTE — um quadro-chave grande leva mais que o prazo
+    /// para chegar, e um buraco que fechou não pode condenar o seguinte
+    gap_since: Option<(u64, Instant)>,
     need_key: bool,
     pub lost_frames: u64,
     /// o próximo quadro-chave entregue vem depois de uma descontinuidade: quem decodifica deve recomeçar do zero
@@ -377,7 +379,7 @@ impl JitterBuf {
                 let Some(end) = end else {
                     // k é o primeiro que falta. Se já há pacotes depois dele, é um buraco no meio do quadro: vale o mesmo prazo
                     if self.pkts.range(k..).next().is_none() { break; }   // só ainda chegando
-                    let since = *self.gap_since.get_or_insert(now);
+                    let since = match self.gap_since { Some((q, t)) if q == k => t, _ => { self.gap_since = Some((k, now)); now } };
                     if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }
                     self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
                     let start = self.pkts.range(k..).find(|(_, p)| p.header.timestamp != ts).map(|(q, _)| *q);
@@ -398,7 +400,7 @@ impl JitterBuf {
                 out.push(au);
             } else {
                 if self.pkts.is_empty() { break; }
-                let since = *self.gap_since.get_or_insert(now);
+                let since = match self.gap_since { Some((q, t)) if q == next => t, _ => { self.gap_since = Some((next, now)); now } };
                 if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }   // dá tempo à retransmissão
                 // perda sem conserto: pula o quadro quebrado e tudo até o próximo quadro-chave
                 self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;

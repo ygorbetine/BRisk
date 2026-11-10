@@ -326,6 +326,16 @@ fn frame_start(payload: &[u8]) -> bool {
     match payload.first().map(|b| b & 0x1f) { Some(28) => payload.get(1).map(|b| b & 0x80 != 0).unwrap_or(false), Some(_) => true, None => false }
 }
 
+/// O pacote começa um quadro-chave? (SPS sozinho, STAP-A começando por SPS, IDR numa NAL única ou no início de um FU-A.)
+fn key_start(p: &[u8]) -> bool {
+    match p.first().map(|b| b & 0x1f) {
+        Some(7) | Some(5) => true,
+        Some(24) => p.get(3).map(|b| b & 0x1f == 7).unwrap_or(false),
+        Some(28) => p.get(1).map(|b| b & 0x80 != 0 && b & 0x1f == 5).unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Buffer de reordenação/perda do receptor. Entrega as unidades de acesso em ordem; um buraco na sequência espera a
 /// retransmissão (NACK) por até `WAIT`; passado o prazo, descarta até o próximo quadro-chave e sinaliza que é preciso pedi-lo (PLI).
 pub struct JitterBuf {
@@ -362,6 +372,18 @@ impl JitterBuf {
     pub fn pop(&mut self, now: Instant) -> (Vec<Vec<u8>>, bool) {
         let (mut out, mut want_pli) = (vec![], false);
         loop {
+            // Esperando quadro-chave: nada antes dele serve. Salta para o quadro-chave mais recente do buffer; se não há nenhum,
+            // joga tudo fora. Sem isso, depois de uma rajada de perda o buffer gastaria um prazo inteiro em cada quadro velho e
+            // quebrado, e nunca alcançaria o presente.
+            if self.need_key {
+                let cur = self.next.unwrap_or(0);
+                match self.pkts.iter().rev().find(|(_, p)| key_start(&p.payload)).map(|(k, _)| *k) {
+                    Some(k) if k > cur => { self.pkts.retain(|q, _| *q >= k); self.next = Some(k); self.gap_since = None; }
+                    Some(_) => {}
+                    None if !self.pkts.is_empty() => { self.pkts.clear(); self.next = Some(self.hi + 1); self.gap_since = None; }
+                    None => {}
+                }
+            }
             let Some(next) = self.next else { break };
             if self.pkts.contains_key(&next) {
                 // O primeiro pacote tem de ser um INÍCIO de quadro. Quem entra no meio de um quadro (ou retoma depois de um
@@ -381,6 +403,7 @@ impl JitterBuf {
                     if self.pkts.range(k..).next().is_none() { break; }   // só ainda chegando
                     let since = match self.gap_since { Some((q, t)) if q == k => t, _ => { self.gap_since = Some((k, now)); now } };
                     if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }
+                    if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[jb] buraco no meio: falta {k}, quadro começa em {next}, ts {ts}, buffer {} pacotes [{:?}..{:?}], marcadores {:?}", self.pkts.len(), self.pkts.keys().next(), self.pkts.keys().next_back(), self.pkts.iter().filter(|(_, p)| p.header.marker).map(|(q, _)| *q).take(6).collect::<Vec<_>>()); }
                     self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
                     let start = self.pkts.range(k..).find(|(_, p)| p.header.timestamp != ts).map(|(q, _)| *q);
                     match start { Some(st) => { self.pkts.retain(|q, _| *q >= st); self.next = Some(st); } None => { let last = *self.pkts.keys().next_back().unwrap(); self.pkts.clear(); self.next = Some(last + 1); } }
@@ -403,6 +426,7 @@ impl JitterBuf {
                 let since = match self.gap_since { Some((q, t)) if q == next => t, _ => { self.gap_since = Some((next, now)); now } };
                 if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }   // dá tempo à retransmissão
                 // perda sem conserto: pula o quadro quebrado e tudo até o próximo quadro-chave
+                if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[jb] buraco na frente: falta {next}, buffer {} pacotes [{:?}..{:?}]", self.pkts.len(), self.pkts.keys().next(), self.pkts.keys().next_back()); }
                 self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
                 let (&lo, first) = self.pkts.iter().next().unwrap();
                 let bad_ts = first.header.timestamp;

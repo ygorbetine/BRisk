@@ -154,6 +154,7 @@ pub struct Controller {
     up_ticks: u32,
     cpu_bad: u32,
     cpu_good: u32,
+    cpu_relaxed: bool,
     /// enviado / pedido no último segundo (telemetria). Conteúdo muito difícil (ruído, jogo caótico) não comprime até o alvo em
     /// resolução alta; o piso de bits por pixel abaixo é o que faz a escada pular direto para a resolução que cabe.
     pub overshoot: f64,
@@ -170,7 +171,7 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(self.ladder[0].h, self.ladder[0].fps) as f64) }
@@ -212,7 +213,7 @@ impl Controller {
                 let up = self.ladder[self.cpu_idx - 1];
                 let scale = (up.h as f64 * up.fps as f64) / (cur.h as f64 * cur.fps as f64);   // custo cresce com pixels por segundo
                 if work_ms * scale.max(1.0) < (1000.0 / up.fps as f64) * 0.6 { self.cpu_good += 1; } else { self.cpu_good = 0; }
-                if self.cpu_good >= 5 { self.cpu_idx -= 1; self.cpu_good = 0; }
+                if self.cpu_good >= 3 { self.cpu_idx -= 1; self.cpu_good = 0; self.cpu_relaxed = true; }
             }
         }
     }
@@ -225,6 +226,8 @@ impl Controller {
         if net_now > self.idx { want = net_now; self.up_ticks = 0; }
         else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= 3 { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; } }   // até 3 degraus por vez
         else { self.up_ticks = 0; }
+        // a folga local voltou e era ela que segurava o nível: sobe já até onde a rede deixa (sem esperar os 3 s da rede)
+        if std::mem::take(&mut self.cpu_relaxed) && want > net_now.max(self.cpu_idx) { want = net_now.max(self.cpu_idx); }
         let cpu_limited = self.cpu_idx > want;
         self.idx = want.max(self.cpu_idx).min(self.ladder.len() - 1);
         let level = self.ladder[self.idx];
@@ -304,8 +307,7 @@ mod tests {
         c.note_cpu(25.0, 60.0, 38.0); c.note_cpu(25.0, 60.0, 38.0);
         let d = c.decide(20_000_000.0);
         assert!(d.cpu_limited && d.level == Level { h: 900, fps: 60 }, "{d:?}");
-        for _ in 0..5 { c.note_cpu(4.0, 60.0, 60.0); }
-        for _ in 0..3 { c.decide(20_000_000.0); }
+        for _ in 0..3 { c.note_cpu(4.0, 60.0, 60.0); }
         assert_eq!(c.decide(20_000_000.0).level, Level { h: 1080, fps: 60 });
     }
 }

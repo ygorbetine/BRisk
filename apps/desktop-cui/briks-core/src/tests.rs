@@ -480,7 +480,9 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B: on");
     b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
     let f = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 20).await.expect("B: 1º quadro");
-    assert_eq!((f["w"].as_u64(), f["h"].as_u64()), (Some(1280), Some(720)));
+    // com a máquina carregada o 1º quadro pode chegar depois da mudança de tamanho (2 s): os dois são válidos
+    assert!(matches!((f["w"].as_u64(), f["h"].as_u64()), (Some(1280), Some(720)) | (Some(960), Some(540))), "{f}");
+    let already = f["w"] == 960;
     // C entra com a transmissão já no ar
     let mut c = node(port, PC, "Caio", "tela4", ic);
     let on = wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "on" && v["peer_id"] == PA, 30).await.expect("C (entrou depois) não soube da transmissão");
@@ -488,8 +490,7 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
     c.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("c.bin") }).await.unwrap();
     wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("C: nenhum quadro");
     // a fonte encolhe para 960x540: os dois espectadores recebem o novo tamanho
-    let fb = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame" && v["w"] == 960, 25).await.expect("B não recebeu o novo tamanho");
-    assert_eq!(fb["h"].as_u64(), Some(540));
+    if !already { let fb = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame" && v["w"] == 960, 25).await.expect("B não recebeu o novo tamanho"); assert_eq!(fb["h"].as_u64(), Some(540)); }
     // C pode ter começado a assistir antes ou depois da mudança: confere o tamanho no próprio quadro dele
     let t0 = std::time::Instant::now();
     loop {
@@ -644,4 +645,42 @@ async fn loss_is_repaired_by_retransmission() {
         eprintln!("perda {loss}%: {:.1} qps no receptor; buracos consertados por retransmissão {}, quadros perdidos {}, pedidos de quadro-chave {}; emissor: retransmitidos/s {}, recusados/s {}, perda real/s {} pacotes",
             fps as f64 / n.max(1) as f64, d("recovered"), d("lost_frames"), d("plis"), tx["rtx"], tx["rtx_skipped"], tx["lost_pkts"]);
     }
+}
+
+/// Sobrecarga local ("a taxa de quadros cai"): o codificador é atrasado artificialmente em 60 ms por quadro — não dá para manter
+/// 30 qps. O controlador tem de baixar o FPS alvo até caber e voltar quando a folga reaparece. Sem rede no meio.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_overload_lowers_fps_and_recovers() {
+    use crate::capture::SourceKind;
+    use crate::share::{ShareCfg, SLOW_LABEL, TEST_SLOW_MS};
+    use std::sync::atomic::Ordering;
+    let port = crate::mock::start(0).await.unwrap();
+    let mut a = node(port, "aaaaaaaa-1111-4111-8111-0000000000d1", "Ana", "lento1", Arc::new(Identity::generate()));
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 20_000, label: SLOW_LABEL.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    let mut csv = String::from("t_s,atraso_ms,fps_alvo,fps_enviado,ms_por_quadro,altura,adaptando\n");
+    let mut t = 0;
+    let mut rows: Vec<(u64, u64, f64, f64, String)> = vec![];
+    for (slow, secs) in [(0u64, 5u32), (60, 12), (0, 22)] {
+        TEST_SLOW_MS.store(slow, Ordering::Relaxed);
+        for _ in 0..secs {
+            let st = wait_share(&mut a, |v| v["ev"] == "share.stats", 5).await.expect("stats");
+            t += 1;
+            csv += &format!("{t},{slow},{},{},{},{},{}\n", st["target_fps"], st["fps"], st["work_ms"], st["h"], st["adapting"].as_str().unwrap_or(""));
+            rows.push((slow, st["target_fps"].as_u64().unwrap_or(0), st["fps"].as_f64().unwrap_or(0.0), st["work_ms"].as_f64().unwrap_or(0.0), st["adapting"].as_str().unwrap_or("").to_string()));
+        }
+    }
+    TEST_SLOW_MS.store(0, Ordering::Relaxed);
+    let out = std::env::var("BRIKS_ADAPT_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("briks-adapt"));
+    let _ = std::fs::create_dir_all(&out);
+    let _ = std::fs::write(out.join("sobrecarga.csv"), &csv);
+    let before = rows[3].1;
+    let during = rows[5..17].iter().map(|r| r.1).min().unwrap();
+    let during_work = rows[14].3;
+    let cpu_flag = rows[5..17].iter().any(|r| r.4 == "cpu");
+    let after = rows.last().unwrap().1;
+    eprintln!("sobrecarga local: FPS alvo antes {before}, durante (60 ms/quadro) {during} com {during_work:.0} ms por quadro, depois {after}; marcou 'cpu': {cpu_flag}");
+    assert_eq!(before, 30);
+    assert!(during <= 15 && cpu_flag, "não reduziu o FPS sob sobrecarga: {during}");
+    assert!(after >= 20, "não voltou quando a folga reapareceu: {after}");
+    let _ = a.cmd.send(MeshCmd::Close).await;
 }

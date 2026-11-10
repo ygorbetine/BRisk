@@ -182,6 +182,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
+        let mut just_changed = false;
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
         let mut closed_reason = String::new();
@@ -208,10 +209,12 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 if cfg.adaptive {
                     est.set_ceil(ctl.top_ceil());
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
-                    if !no_cpu { ctl.note_cpu(work_ms, offered, sent_fps); }
+                    // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
+                    if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
                     if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {
+                        just_changed = true;
                         fps = d.level.fps; period = Duration::from_micros(1_000_000 / fps as u64);
                         cap.shared.retarget(fps, d.level.h);
                         if let Some(e) = enc.as_mut() { if !e.set_fps(fps) { enc = None; } }
@@ -228,7 +231,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     dec = d;
                 }
                 let (loss, rtt, jit) = worst.unwrap_or((0.0, 0.0, 0.0));
-                let adapting = if !cfg.adaptive { "" } else if dec.cpu_limited { "cpu" } else if ctl.idx > 0 || (dec.bps as f64) < ctl.top_ceil() * 0.9 { "rede" } else { "" };
+                let adapting = if !cfg.adaptive { "" } else if dec.cpu_limited || (ctl.cpu_idx > 0 && ctl.cpu_idx >= ctl.idx) { "cpu" } else if ctl.idx > 0 || (dec.bps as f64) < ctl.top_ceil() * 0.9 { "rede" } else { "" };
                 let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (sent_fps * 10.0).round() / 10.0, "kbps": (sent_bps / 1000.0).round(),
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),

@@ -135,6 +135,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
+        let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
@@ -196,11 +197,14 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 (None, Some(_)) if last_send.elapsed() >= Duration::from_millis(1000) => held.take().unwrap(),
                 _ => continue,
             };
+            // fila do pacer acima de ~0,3 s do bitrate atual: a rede não dá vazão. Pula este quadro SEM codificar (a cadeia de
+            // referência fica intacta; nada de quadro-chave, que só pioraria o congestionamento)
+            if let Some(e) = enc.as_ref() { if queued.load(Ordering::Relaxed) * 8 > (e.bps as u64 * 3 / 10).max(250_000) { pacer_drops += 1; held = Some(yuv); continue; } }
             let (tw, th) = (yuv.w, yuv.h);
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { dec.bps } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
                 match H264Enc::new(tw, th, fps as f32, bps) {
-                    Ok(e) => { id2.store(true, Ordering::Relaxed); enc = Some(e); announce = true; }
+                    Ok(e) => { id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; }   // codificador novo já começa com quadro-chave
                     Err(e) => { closed_reason = format!("codificador: {e}"); break; }
                 }
             }
@@ -211,7 +215,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             }
             if let (Some(d), Some(raw)) = (&dump, raw) { dump_png(d, &raw, src.0, src.1, tw, th); }
             since_idr += 1;
-            if id2.swap(false, Ordering::Relaxed) || since_idr >= fps * 4 { e.force_idr(); since_idr = 0; }
+            // quadro-chave: a cada 4 s, ou a pedido (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
+            // pedidos numa rede congestionada não virar uma rajada de quadros enormes
+            if since_idr >= fps * 4 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= Duration::from_millis(1000)) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
@@ -224,8 +230,6 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     for au in list {
                         frames += 1; bytes += au.len() as u64;
                         let cur_bps = e.bps as u64;
-                        // fila do pacer acima de 0,5 s de bitrate: a rede (ou o pacer) não dá vazão — descarta e pede quadro-chave
-                        if queued.load(Ordering::Relaxed) * 8 > cur_bps / 2 + 400_000 { pacer_drops += 1; id2.store(true, Ordering::Relaxed); continue; }
                         let samples = ((last_send.elapsed().as_secs_f64().min(1.0)) * 90_000.0) as u32;
                         last_send = Instant::now();
                         queued.fetch_add(au.len() as u64, Ordering::Relaxed);
@@ -306,7 +310,16 @@ impl JitterBuf {
                     if p.header.marker { end = Some(k); break; }
                     k += 1;
                 }
-                let Some(end) = end else { break };   // ainda chegando
+                let Some(end) = end else {
+                    // k é o primeiro que falta. Se já há pacotes depois dele, é um buraco no meio do quadro: vale o mesmo prazo
+                    if self.pkts.range(k..).next().is_none() { break; }   // só ainda chegando
+                    let since = *self.gap_since.get_or_insert(now);
+                    if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }
+                    self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
+                    let start = self.pkts.range(k..).find(|(_, p)| p.header.timestamp != ts).map(|(q, _)| *q);
+                    match start { Some(st) => { self.pkts.retain(|q, _| *q >= st); self.next = Some(st); } None => { let last = *self.pkts.keys().next_back().unwrap(); self.pkts.clear(); self.next = Some(last + 1); } }
+                    continue;
+                };
                 if self.gap_since.take().is_some() { self.recovered += 1; }
                 let mut dep = H264Packet::default();
                 let mut au = Vec::new();

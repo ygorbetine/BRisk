@@ -275,9 +275,12 @@ impl Actor {
             if let Some(a) = &audio { pc.add_track(a.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await?; }
             let (id, sev) = (peer_id.to_string(), self.sev_tx.clone());
             let wk = Arc::downgrade(&pc);
-            pc.on_track(Box::new(move |track, _rx, _tr| {
+            pc.on_track(Box::new(move |track, rx, _tr| {
                 let (audio, id, sev, recv, wk) = (audio.clone(), id.clone(), sev.clone(), recv.clone(), wk.clone());
                 Box::pin(async move {
+                    // o RTCP recebido só passa pelos interceptadores (Sender Reports → LSR/DLSR dos nossos Receiver Reports, base do RTT
+                    // do outro lado) se alguém o ler
+                    tokio::spawn(async move { while rx.read_rtcp().await.is_ok() {} });
                     use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
                     if track.kind() == RTPCodecType::Video {
                         let ssrc = track.ssrc();

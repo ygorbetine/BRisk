@@ -261,7 +261,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             since_idr += 1;
             // quadro-chave: só a pedido (rede de segurança a cada 30 s) (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
-            let min_gap = Duration::from_millis(if ctl.idx > 0 || est.reason != "" { 2000 } else { 1000 });   // rede apertada: espaça mais
+            let min_gap = Duration::from_millis(1000);
             if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
@@ -323,7 +323,7 @@ pub struct JitterBuf {
     pub lost_frames: u64,
     pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
 }
-const WAIT: Duration = Duration::from_millis(200);
+const WAIT: Duration = Duration::from_millis(400);
 
 impl JitterBuf {
     pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, recovered: 0 } }
@@ -478,11 +478,11 @@ mod jb_tests {
         // buraco que não fecha (14 perdido): depois do prazo descarta, pede quadro-chave e ignora os P seguintes
         jb.push(pk(15, 300, true, false)); jb.push(pk(16, 400, true, false));
         assert!(jb.pop(t + Duration::from_millis(60)).0.is_empty());
-        let (f, pli) = jb.pop(t + Duration::from_millis(400));
+        let (f, pli) = jb.pop(t + Duration::from_millis(600));
         assert!(f.is_empty() && pli && jb.lost_frames == 1, "prazo estourou: PLI");
         jb.push(pk(17, 500, true, false));
-        assert!(jb.pop(t + Duration::from_millis(410)).0.is_empty(), "P sem referência não é entregue");
+        assert!(jb.pop(t + Duration::from_millis(610)).0.is_empty(), "P sem referência não é entregue");
         jb.push(pk(18, 600, true, true));
-        assert_eq!(jb.pop(t + Duration::from_millis(420)).0.len(), 1, "volta no quadro-chave");
+        assert_eq!(jb.pop(t + Duration::from_millis(620)).0.len(), 1, "volta no quadro-chave");
     }
 }

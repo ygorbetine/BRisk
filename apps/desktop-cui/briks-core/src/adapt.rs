@@ -52,11 +52,12 @@ pub struct Estimator {
     pub ceil: f64,
     rtt_hist: Vec<f32>,        // últimas medidas (base = mínimo)
     hold_until: Instant,       // sem subir até aqui (depois de uma queda)
+    last_drop: Option<Instant>,
     pub reason: &'static str,  // "", "perda", "atraso"
 }
 
 impl Estimator {
-    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), reason: "" } }
+    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_drop: None, reason: "" } }
     pub fn set_ceil(&mut self, ceil: f64) { self.ceil = ceil; if self.est > ceil { self.est = ceil; } }
     pub fn rtt_base(&self) -> f32 { self.rtt_hist.iter().copied().fold(f32::MAX, f32::min) }
 
@@ -71,15 +72,25 @@ impl Estimator {
         // é a perda real do caminho, e chega antes do relatório
         let loss_eff = loss.max(nack_ratio.min(1.0));
         if loss_eff > 0.10 || delayed {
-            // cai rápido: parte do que realmente passou no último segundo, não da estimativa antiga
-            let from = if sent > FLOOR_BPS { self.est.min(sent) } else { self.est };
-            let factor = if loss_eff > 0.10 { (1.0 - 0.5 * loss_eff as f64).clamp(0.5, 0.9) } else { 0.8 };
-            self.est = (from * factor).max(FLOOR_BPS);
+            // Cai rápido, mas com freios: (1) os relatórios do segundo seguinte a uma queda ainda refletem o envio antigo, então
+            // só cai de novo depois de 2 s (ou com perda acima de 30%); (2) parte do que realmente passou, porém nunca abaixo de
+            // 60% da estimativa — o envio do último segundo já vem reduzido pelos nossos próprios descartes.
+            let settling = self.last_drop.map(|t| now.duration_since(t) < Duration::from_millis(1900)).unwrap_or(false);
+            if !settling || loss_eff > 0.30 {
+                let from = if sent > FLOOR_BPS { self.est.min(sent.max(self.est * 0.6)) } else { self.est };
+                let factor = if loss_eff > 0.10 { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) } else { 0.8 };
+                self.est = (from * factor).max(FLOOR_BPS);
+                self.last_drop = Some(now);
+            }
             self.hold_until = now + Duration::from_secs(3);
             self.reason = if loss_eff > 0.10 { "perda" } else { "atraso" };
         } else if loss_eff < 0.03 && now >= self.hold_until {
-            // sobe devagar, e só quando a estimativa está sendo usada (senão ela cresceria sem ser testada)
-            if sent >= self.est * 0.7 || self.est < self.ceil * 0.25 { self.est = (self.est * 1.08 + 40_000.0).min(self.ceil); }
+            // Sobe só quando a estimativa está sendo usada (senão cresceria sem ser testada): rápido (25%/s) enquanto está abaixo
+            // de metade do teto, devagar (8%/s) perto dele.
+            if sent >= self.est * 0.7 || self.est < self.ceil * 0.25 {
+                let k = if self.est < self.ceil * 0.5 { 1.25 } else { 1.08 };
+                self.est = (self.est * k + 40_000.0).min(self.ceil);
+            }
             if self.est >= self.ceil * 0.98 { self.reason = ""; }
         }
         self.est
@@ -172,7 +183,7 @@ impl Controller {
         let net_up = self.net_index(budget / 1.3);
         let mut want = self.idx;
         if net_now > self.idx { want = net_now; self.up_ticks = 0; }
-        else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= 3 { want = self.idx - 1; self.up_ticks = 0; } }
+        else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= 3 { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; } }   // até 3 degraus por vez
         else { self.up_ticks = 0; }
         let cpu_limited = self.cpu_idx > want;
         self.idx = want.max(self.cpu_idx).min(self.ladder.len() - 1);
@@ -207,16 +218,17 @@ mod tests {
         let a = e.update(t0 + Duration::from_secs(6), 6_000_000.0, Some((0.0, 260.0, 5.0)), 0.0);
         assert!(a < 6_000_000.0 && e.reason == "atraso", "{a}");
         // perda pesada: cai mais
-        let b = e.update(t0 + Duration::from_secs(7), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0);
+        let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0);
         assert!(b < 3_000_000.0 && e.reason == "perda", "{b}");
         // rede limpa: fica parado 3 s e depois sobe ~8% por segundo
-        let c = e.update(t0 + Duration::from_secs(8), b, Some((0.0, 20.0, 1.0)), 0.0);
+        let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0);
         assert_eq!(c, b);
         let mut v = c;
-        for i in 11..40 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
+        for i in 13..27 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
         assert!(v > b * 2.0 && v <= 8_000_000.0, "{v}");
         // perda leve aleatória (5%) não derruba
         let w = e.update(t0 + Duration::from_secs(41), v, Some((0.05, 20.0, 1.0)), 0.0);
+        let _ = c;
         assert_eq!(w, v);
     }
 
@@ -229,7 +241,7 @@ mod tests {
         let low = d.level;
         assert_eq!(c.decide(4_500_000.0).level, low, "não sobe no primeiro segundo");
         c.decide(4_500_000.0);
-        assert_ne!(c.decide(4_500_000.0).level, low, "sobe um degrau depois de 3 s de folga");
+        assert_ne!(c.decide(4_500_000.0).level, low, "sobe depois de 3 s de folga");
         // sobrecarga local: 2 s com o quadro custando mais que o período → desce um degrau; folga por 5 s → volta
         let mut c = Controller::new(Content::Motion, 1080, 60, 0);
         c.decide(20_000_000.0);

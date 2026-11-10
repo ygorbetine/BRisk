@@ -28,7 +28,7 @@ typedef struct {
     /* balões */
     cui_color bubble_own;            /* balão enviado (RGB; alpha fixo 0xbd) */
     float bubble_big, bubble_small;  /* raio normal e da quina reta, 2..28 / 2..12 */
-    int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = centro do balão no centro do avatar */
+    int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = pontinha (topo do balão) na altura do centro do avatar */
     /* derivados (briks_theme_apply) */
     cui_color glass, glass_soft, glass_strong, glass_popup, glass_card;
 } briks_theme_t;

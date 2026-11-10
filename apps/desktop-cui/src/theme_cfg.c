@@ -28,7 +28,7 @@ void briks_theme_defaults(briks_theme_t *t) {
     t->bubble_align = 0;
     t->sheen = 0.09f; t->sheen_line = 0.14f; t->card_fill = 0.05f; t->card_sat = 1.2f;
     t->panel_radius = 22; t->control_radius = 12; t->chat_pad = 20;
-    t->bubble_own = CUI_RGB(0x6d5cf6); t->bubble_big = 16; t->bubble_small = 4;
+    t->bubble_own = CUI_RGB(0x6d5cf6); t->bubble_big = 16; t->bubble_small = 2;
     briks_theme_validate(t);
 }
 

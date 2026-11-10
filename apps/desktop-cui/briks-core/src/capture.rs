@@ -200,20 +200,28 @@ impl Capture {
                 let (sh, st) = (shared.clone(), stop.clone());
                 std::thread::spawn(move || {
                     let (w, h) = (1920usize, 1080usize);
-                    // ruído em blocos 4x4 (determinístico) com faixas lisas: difícil de comprimir, mas parecido com vídeo real
+                    // "Área de trabalho" sintética: ladrilhos lisos com linhas finas (comprime bem, como uma interface) e, por cima,
+                    // uma janela de 960x540 com ruído que muda a cada quadro (como um vídeo/jogo numa janela: custa bits de verdade).
                     let mut base = vec![255u8; w * h * 4];
-                    let mut x = 0x2545F491u32;
-                    for by in 0..h / 4 { for bx in 0..w / 4 {
-                        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-                        let (b, g, r) = ((x & 255) as u8, ((x >> 8) & 255) as u8, ((x >> 16) & 255) as u8);
-                        for dy in 0..4 { for dx in 0..4 { let o = ((by * 4 + dy) * w + bx * 4 + dx) * 4; base[o] = b; base[o + 1] = g; base[o + 2] = r; } }
+                    for y in 0..h { for x in 0..w {
+                        let o = (y * w + x) * 4; let (tx, ty) = (x / 96, y / 96);
+                        let line = x % 96 < 2 || y % 96 < 2;
+                        base[o] = if line { 230 } else { (40 + (tx * 37 + ty * 11) % 80) as u8 };
+                        base[o + 1] = if line { 230 } else { (30 + (tx * 13 + ty * 29) % 70) as u8 };
+                        base[o + 2] = if line { 230 } else { (50 + (tx * 7 + ty * 43) % 90) as u8 };
                     } }
+                    let mut x = 0x2545F491u32;
                     let mut f = vec![255u8; w * h * 4];
                     let mut t = 0usize;
                     let mut next = std::time::Instant::now();
                     while !st.load(Ordering::Relaxed) {
-                        let shift = (t * 12 % w) * 4;
+                        let shift = (t * 2 % w) * 4;   // a "interface" rola devagar
                         for y in 0..h { let row = &base[y * w * 4..(y + 1) * w * 4]; let out = &mut f[y * w * 4..(y + 1) * w * 4]; out[..w * 4 - shift].copy_from_slice(&row[shift..]); out[w * 4 - shift..].copy_from_slice(&row[..shift]); }
+                        for by in 0..135 { for bx in 0..240 {   // janela ruidosa em blocos 4x4, nova a cada quadro
+                            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+                            let (b, g, r) = ((x & 255) as u8, ((x >> 8) & 255) as u8, ((x >> 16) & 255) as u8);
+                            for dy in 0..4 { let o = ((270 + by * 4 + dy) * w + 480 + bx * 4) * 4; for dx in 0..4 { f[o + dx * 4] = b; f[o + dx * 4 + 1] = g; f[o + dx * 4 + 2] = r; } }
+                        } }
                         stamp_ms(&mut f, w);
                         sh.push_bgra(&f, w, h, w * 4);
                         t += 1;

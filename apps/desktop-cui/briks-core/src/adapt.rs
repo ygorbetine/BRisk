@@ -53,11 +53,14 @@ pub struct Estimator {
     rtt_hist: Vec<f32>,        // últimas medidas (base = mínimo)
     hold_until: Instant,       // sem subir até aqui (depois de uma queda)
     last_drop: Option<Instant>,
+    /// capacidade observada no último congestionamento (bps) e quando: a estimativa não passa dela por um tempo, e o limite
+    /// relaxa devagar (sonda para cima com cuidado em vez de voltar a despejar o que o link já mostrou não aguentar)
+    cap: Option<(f64, Instant)>,
     pub reason: &'static str,  // "", "perda", "atraso"
 }
 
 impl Estimator {
-    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_drop: None, reason: "" } }
+    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_drop: None, cap: None, reason: "" } }
     pub fn set_ceil(&mut self, ceil: f64) { self.ceil = ceil; if self.est > ceil { self.est = ceil; } }
     pub fn rtt_base(&self) -> f32 { self.rtt_hist.iter().copied().fold(f32::MAX, f32::min) }
 
@@ -85,6 +88,7 @@ impl Estimator {
                 let factor = if delayed { 0.7 } else { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) };
                 self.est = (from * factor).max(FLOOR_BPS);
                 self.last_drop = Some(now);
+                if sent > FLOOR_BPS { self.cap = Some((sent * (1.0 - loss_eff as f64).max(0.3) * 0.85, now)); }
             }
             self.hold_until = now + Duration::from_secs(3);
             self.reason = if loss_eff > 0.10 { "perda" } else { "atraso" };
@@ -94,6 +98,12 @@ impl Estimator {
             if sent >= self.est * 0.7 || self.est < self.ceil * 0.25 {
                 let k = if self.est < self.ceil * 0.5 { 1.25 } else { 1.08 };
                 self.est = (self.est * k + 40_000.0).min(self.ceil);
+            }
+            // teto da capacidade lembrada: firme por 10 s, depois sobe 5% por segundo (sondagem lenta); some ao alcançar o teto geral
+            if let Some((c, t)) = self.cap {
+                let age = now.saturating_duration_since(t).as_secs_f64();
+                let lim = if age < 10.0 { c } else { c * 1.05f64.powf(age - 10.0) };
+                if lim >= self.ceil { self.cap = None; } else if self.est > lim { self.est = lim.max(FLOOR_BPS); }
             }
             if self.est >= self.ceil * 0.98 { self.reason = ""; }
         }
@@ -255,10 +265,10 @@ mod tests {
         let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0);
         assert_eq!(c, b);
         let mut v = c;
-        for i in 13..27 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
+        for i in 13..60 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
         assert!(v > b * 2.0 && v <= 8_000_000.0, "{v}");
         // perda leve aleatória (5%) não derruba
-        let w = e.update(t0 + Duration::from_secs(41), v, Some((0.05, 20.0, 1.0)), 0.0);
+        let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0);
         let _ = c;
         assert_eq!(w, v);
     }

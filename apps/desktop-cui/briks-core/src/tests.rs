@@ -518,7 +518,7 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
 const NA: &str = "aaaaaaaa-1111-4111-8111-0000000000a1";
 const NB: &str = "bbbbbbbb-2222-4222-8222-0000000000b1";
 
-struct Row { th: u64, t: u32, limit: f64, loss_in: f64, target: u64, est: u64, sent: u64, fps: f64, tfps: u64, h: u64, loss: f64, rtt: f64, nacks: u64, plis: u64, rfps: u32, lat: i32, gap: u128, adapting: String }
+struct Row { rx: String, th: u64, t: u32, limit: f64, loss_in: f64, target: u64, est: u64, sent: u64, fps: f64, tfps: u64, h: u64, loss: f64, rtt: f64, nacks: u64, plis: u64, rfps: u32, lat: i32, gap: u128, adapting: String }
 
 async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, steps: &[(u32, f64, f64)], out: &std::path::Path) -> Vec<Row> {
     use crate::capture::{read_stamp, SourceKind};
@@ -546,6 +546,7 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
     let mut rows = vec![];
     let (mut t, mut last_n, mut last_new) = (0u32, 0u64, std::time::Instant::now());
     let mut st = serde_json::Value::Null;
+    let mut rx = serde_json::Value::Null;
     for (secs, mbps, loss) in steps {
         sim.set(*mbps, *loss);
         for _ in 0..*secs {
@@ -553,7 +554,7 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
             let (mut nfr, mut lats, mut gap) = (0u32, vec![], 0u128);
             while std::time::Instant::now() < end {
                 while let Ok(e) = a.events.try_recv() { if let MeshEvent::Share(v) = e { if v["ev"] == "share.stats" { st = v; } } }
-                while b.events.try_recv().is_ok() {}
+                while let Ok(e) = b.events.try_recv() { if let MeshEvent::Share(v) = e { if v["ev"] == "share.rxstats" { rx = v; } } }
                 if let Some((w, _, n, rgba)) = src.read() {
                     if n != last_n { nfr += (n - last_n) as u32; last_n = n; gap = gap.max(last_new.elapsed().as_millis()); last_new = std::time::Instant::now();
                         let l = (src.ts() as u32).wrapping_sub(crate::capture::read_stamp_scaled(&rgba, w, 1920)) as i32; if (0..10_000).contains(&l) { lats.push(l); } }
@@ -563,13 +564,13 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
             gap = gap.max(last_new.elapsed().as_millis());
             lats.sort();
             t += 1;
-            rows.push(Row { th: st["target_h"].as_u64().unwrap_or(0), t, limit: *mbps, loss_in: *loss, target: st["target_kbps"].as_u64().unwrap_or(0), est: st["est_kbps"].as_f64().unwrap_or(0.0) as u64, sent: st["kbps"].as_f64().unwrap_or(0.0) as u64,
+            rows.push(Row { rx: format!("{},{},{},{},{}", rx["plis"], rx["lost_frames"], rx["fed"], rx["dec_none"], rx["dec_err"]), th: st["target_h"].as_u64().unwrap_or(0), t, limit: *mbps, loss_in: *loss, target: st["target_kbps"].as_u64().unwrap_or(0), est: st["est_kbps"].as_f64().unwrap_or(0.0) as u64, sent: st["kbps"].as_f64().unwrap_or(0.0) as u64,
                 fps: st["fps"].as_f64().unwrap_or(0.0), tfps: st["target_fps"].as_u64().unwrap_or(0), h: st["h"].as_u64().unwrap_or(0), loss: st["loss_pct"].as_f64().unwrap_or(0.0), rtt: st["rtt_ms"].as_f64().unwrap_or(0.0),
                 nacks: st["nacks"].as_u64().unwrap_or(0), plis: st["plis"].as_u64().unwrap_or(0), rfps: nfr, lat: lats.get(lats.len() / 2).copied().unwrap_or(-1), gap, adapting: st["adapting"].as_str().unwrap_or("").into() });
         }
     }
-    let mut csv = String::from("t_s,limite_mbps,perda_injetada_pct,alvo_kbps,estimativa_kbps,enviado_kbps,fps_enviado,fps_alvo,altura_alvo,altura,perda_reportada_pct,rtt_ms,nacks,plis_acum,fps_recebido,latencia_p50_ms,maior_intervalo_ms,adaptando\n");
-    for r in &rows { csv += &format!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", r.t, r.limit, r.loss_in, r.target, r.est, r.sent, r.fps, r.tfps, r.th, r.h, r.loss, r.rtt, r.nacks, r.plis, r.rfps, r.lat, r.gap, r.adapting); }
+    let mut csv = String::from("t_s,limite_mbps,perda_injetada_pct,alvo_kbps,estimativa_kbps,enviado_kbps,fps_enviado,fps_alvo,altura_alvo,altura,perda_reportada_pct,rtt_ms,nacks,plis_acum,fps_recebido,latencia_p50_ms,maior_intervalo_ms,adaptando,rx_plis,rx_quadros_perdidos,rx_entregues_dec,rx_dec_sem_saida,rx_dec_erros\n");
+    for r in &rows { csv += &format!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", r.t, r.limit, r.loss_in, r.target, r.est, r.sent, r.fps, r.tfps, r.th, r.h, r.loss, r.rtt, r.nacks, r.plis, r.rfps, r.lat, r.gap, r.adapting, r.rx); }
     std::fs::write(out.join(format!("adaptacao-{name}.csv")), csv).unwrap();
     let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
     rows

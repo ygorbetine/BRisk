@@ -159,14 +159,11 @@ bool script_capture(cui_app *app);
 static inline cui_color briks_acc(cui_color c, int a) { c.a = (uint8_t)a; return c; }
 #define B_A(c, a) briks_acc((c), (a))
 
-/* Estilo da bolha de status (liquid glass). Normal/Simplificado: o shader desenha tudo (glass.c). Mínimo: sem shader, preenchimento chapado violeta + borda. */
-static inline cui_color briks_bubble_bg(void) {
-    if (g_perf < PERF_MIN) return B_GLASS_BUBBLE;
-    static const unsigned c[6] = { 0, 0x7a56e8b0, 0xb59cff50, 0x5b2fb8d8, 0x9a64f0b0, 0xb08cff38 };
-    return CUI_RGBA(c[g_th.bubble_style]);
-}
-static inline cui_color briks_bubble_border(void) { return g_perf >= PERF_MIN ? CUI_RGBA(0xdcc8ff90) : CUI_RGBA(0x00000000); }
-static inline float briks_bubble_radius(float h) { return g_th.bubble_style == 2 ? 12.0f : g_th.bubble_style == 3 ? 10.0f : h * 0.5f; }
+/* Balão de status: Cristal violeta (glass.c). Normal = translúcido, refração nas bordas e balão + bolinhas da cauda unidos (metaballs); Simplificado = sem refração, menos desfoque,
+   mesma forma unida; Mínimo = sem shader: violeta chapado, sem borda, e pescoços desenhados em CUI para manter a silhueta unida. */
+static inline cui_color briks_bubble_bg(void) { return g_perf < PERF_MIN ? B_GLASS_BUBBLE : CUI_RGBA(0x6a48d0ff); }
+static inline cui_color briks_bubble_border(void) { return CUI_RGBA(0x00000000); }
+static inline float briks_bubble_radius(float h) { return h * 0.5f; }
 
 /* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */
 static inline void briks_status_pill(cui_ctx *ui, const char *text) {

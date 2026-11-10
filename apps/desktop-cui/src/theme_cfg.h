@@ -35,7 +35,6 @@ typedef struct {
     float bubble_disp;               /* dispersão cromática (abertura entre R/G/B), 0..0.6 */
     float bubble_spec;               /* realce especular (gota) e aro, 0..1 */
     float bubble_tint;               /* tinta lilás/rosa/azul do interior, 0..0.3 */
-    int bubble_style;                /* estilo da bolha de status (liquid glass) 1..5: Cristal violeta, Gota de orvalho, Ametista fosca, Aurora, Lente */
     int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = pontinha (topo do balão) na altura do centro do avatar */
     /* derivados (briks_theme_apply) */
     cui_color field, muted, line, ph;   /* campos de texto, texto secundario, divisores e placeholder: derivados do matiz do tema (theme.c), contraste >= 4.5:1 */

@@ -98,7 +98,7 @@ typedef struct {
     GLint t_tex, t_vp, t_rect;
     GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
     GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
-    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub, c_a1, c_a2, c_a3, c_src, c_tex2, c_bs;
+    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub, c_a1, c_a2, c_a3, c_src, c_m1, c_m2;
     double ms_last, ms_sum; int frames;
     bool log;
 } glass_t;
@@ -150,25 +150,23 @@ static const char *FS_UP =
 static const char *FS_COMP =
     "#version 330 core\n"
     "in vec2 v_px; uniform sampler2D u_tex; uniform vec2 u_vp; uniform vec4 u_box; uniform vec4 u_rad;\n"
-    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; uniform vec4 u_a1; uniform vec4 u_a2; uniform vec4 u_a3; uniform sampler2D u_src; uniform sampler2D u_tex2; uniform vec4 u_bs; out vec4 f;\n"
+    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; uniform vec4 u_a1; uniform vec4 u_a2; uniform vec4 u_a3; uniform sampler2D u_src; uniform vec4 u_m1; uniform vec4 u_m2; out vec4 f;\n"
     "float sd(vec2 p, vec2 b, vec4 r){ float rr = p.x < 0.0 ? (p.y < 0.0 ? r.x : r.w) : (p.y < 0.0 ? r.y : r.z);\n"
     "  rr = min(rr, min(b.x, b.y)); vec2 q = abs(p) - b + rr; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr; }\n"
-    "vec3 smp(vec2 uv, float bl){ vec3 sh = texture(u_src, uv).rgb, b1 = texture(u_tex, uv).rgb, b2 = texture(u_tex2, uv).rgb; return bl <= 1.0 ? mix(sh, b1, bl) : mix(b1, b2, bl - 1.0); }\n"
+    "vec3 smp(vec2 uv, float bl){ return mix(texture(u_src, uv).rgb, texture(u_tex, uv).rgb, bl); }\n"
+    "float smin(float a, float b, float k){ float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }\n"
     "void main(){ vec2 p = v_px - u_box.xy; p = vec2(u_rot.x * p.x + u_rot.y * p.y, -u_rot.y * p.x + u_rot.x * p.y); vec2 b = u_box.zw;\n"
-    "  float d = sd(p, b, u_rad); float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; if (cov <= 0.0) discard;\n"
+    "  float d = sd(p, b, u_rad);\n"
+    "  if (u_m1.w > 0.5) { d = smin(d, length(v_px - u_m1.xy) - u_m1.z, 14.0); if (u_m2.w > 0.5) d = smin(d, length(v_px - u_m2.xy) - u_m2.z, 7.0); }   /* metaballs: balao + bolinhas da cauda viram uma forma so */\n"
+    " float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; if (cov <= 0.0) discard;\n"
     "  vec2 g0 = vec2(dFdx(d), dFdy(d)); g0 = g0 / max(length(g0), 1e-4);\n"
     "  vec2 uv0 = gl_FragCoord.xy / u_vp; vec3 c;\n"
-    "  /* bolha de status: 5 estilos de liquid glass (theme.json bubble_style). bl: 0 = fundo nitido, 1 = desfoque do vidro, 2 = desfoque forte */\n"
-    "  float bl = 1.0, ssat = 1.5, br = 1.0; vec4 bgA = vec4(0.0), bgM = vec4(0.0), bgB = vec4(0.0), edgc = vec4(0.0), topc = vec4(0.0), inb = vec4(0.0), intc = vec4(0.0); int st = int(u_bs.x + 0.5); float rmul = 1.0;\n"
+    "  /* bolha de status (Cristal violeta): corpo translucido (fundo com leve desfoque), refracao so nas bordas pelo gradiente do SDF, centro limpo */\n"
+    "  float bl = 0.65, ssat = 1.5, br = 1.05;\n"
     "  if (u_card.w > 0.5) {\n"
-    "    if (st == 2) { bl = 0.35; ssat = 1.9; br = 1.12; rmul = 1.2; bgA = vec4(1.0, 1.0, 1.0, 0.10); bgB = vec4(0.745, 0.588, 1.0, 0.06); edgc = vec4(1.0, 1.0, 1.0, 0.42); topc = vec4(1.0, 1.0, 1.0, 0.35); inb = vec4(1.0, 1.0, 1.0, 0.50); intc = vec4(0.588, 0.431, 1.0, 0.30); }\n"
-    "    else if (st == 3) { bl = 2.0; ssat = 1.3; br = 0.95; bgA = vec4(0.47, 0.235, 0.863, 0.55); bgB = vec4(0.275, 0.118, 0.627, 0.42); edgc = vec4(0.745, 0.627, 1.0, 0.30); topc = vec4(0.82, 0.745, 1.0, 0.28); inb = vec4(0.745, 0.588, 1.0, 0.30); intc = vec4(1.0, 1.0, 1.0, 0.08); }\n"
-    "    else if (st == 4) { bl = 1.0; ssat = 1.7; br = 1.08; bgA = vec4(0.51, 0.353, 1.0, 0.34); bgM = vec4(0.824, 0.431, 1.0, 0.20); bgB = vec4(0.431, 0.627, 1.0, 0.26); edgc = vec4(0.86, 0.75, 1.0, 0.55); topc = vec4(1.0, 0.90, 1.0, 0.50); inb = vec4(1.0, 0.55, 0.90, 0.30); intc = vec4(0.47, 0.667, 1.0, 0.22); }\n"
-    "    else if (st == 5) { bl = 0.12; ssat = 2.2; br = 1.15; rmul = 1.5; bgA = vec4(0.667, 0.51, 1.0, 0.07); bgB = bgA; edgc = vec4(0.882, 0.804, 1.0, 0.65); topc = vec4(1.0, 1.0, 1.0, 0.70); inb = vec4(0.667, 0.51, 1.0, 0.60); intc = vec4(1.0, 1.0, 1.0, 0.22); }\n"
-    "    else { bl = 1.0; ssat = 1.5; br = 1.05; bgA = vec4(0.588, 0.392, 1.0, 0.30); bgB = vec4(0.431, 0.235, 0.902, 0.16); edgc = vec4(0.804, 0.706, 1.0, 0.50); topc = vec4(0.92, 0.86, 1.0, 0.55); inb = vec4(0.588, 0.431, 1.0, 0.45); intc = vec4(1.0, 1.0, 1.0, 0.12); }\n"
     "    vec2 o = vec2(0.0); float dsp = 0.0;\n"
-    "    if (u_card.w > 1.5) { float s = exp(-max(-d, 0.0) / 12.0); o = vec2(g0.x, -g0.y) * (-s) * u_bub.x * rmul / u_vp; dsp = u_bub.y; }   /* Normal: refracao + dispersao */\n"
-    "    else bl = min(bl, 1.0);   /* Simplificado: sem refracao, sem dispersao, sem desfoque forte */\n"
+    "    if (u_card.w > 1.5) { float s = exp(-max(-d, 0.0) / 7.0); o = vec2(g0.x, -g0.y) * (-s) * u_bub.x * 1.3 / u_vp; dsp = u_bub.y; }   /* Normal: refracao + dispersao */\n"
+    "    else bl = 0.4;   /* Simplificado: sem refracao nem dispersao, menos desfoque */\n"
     "    c = vec3(smp(uv0 + o * (1.0 - dsp), bl).r, smp(uv0 + o, bl).g, smp(uv0 + o * (1.0 + dsp), bl).b);\n"
     "    c = clamp(mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, ssat) * br, 0.0, 1.0);\n"
     "  } else c = texture(u_tex, uv0).rgb;\n"
@@ -187,18 +185,16 @@ static const char *FS_COMP =
     "    float top = max(dot(g, vec2(0.0, -1.0)), 0.0) * 0.75 + max(lit, 0.0) * 0.25;\n"
     "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.75), u_card.y * top * exp(-max(-d, 0.0) / 1.3));\n"
     "  }\n"
-    "  if (u_card.w > 0.5) {   /* bolha: cor interna, borda de 1px, luz no topo, luz acumulada embaixo. Tudo preso a borda: nunca risco sobre o texto */\n"
+    "  if (u_card.w > 0.5) {   /* bolha: tinta violeta suave, borda de 1px, luz no topo e luz acumulada embaixo; tudo preso a borda (sem risco sobre o texto) */\n"
     "    float k = u_card.x; vec2 lp = p / max(b, vec2(1.0));\n"
     "    float gt = clamp(0.5 + 0.5 * dot(lp, normalize(vec2(0.34, 0.94))), 0.0, 1.0);\n"
-    "    vec4 bg = st == 4 ? (gt < 0.55 ? mix(bgA, bgM, gt / 0.55) : mix(bgM, bgB, (gt - 0.55) / 0.45)) : mix(bgA, bgB, gt);\n"
+    "    vec4 bg = mix(vec4(0.588, 0.392, 1.0, 0.16), vec4(0.431, 0.235, 0.902, 0.08), gt);\n"
     "    c = mix(c, bg.rgb, clamp(bg.a * k, 0.0, 1.0));\n"
     "    float depth = max(-d, 0.0);\n"
-    "    vec4 ec = edgc; if (st == 4) { vec3 ir = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + atan(g0.y, g0.x) / 6.2832)); ec.rgb = mix(vec3(0.85, 0.75, 1.0), ir, 0.45); }\n"
-    "    c = mix(c, ec.rgb, clamp(ec.a * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
+    "    c = mix(c, vec3(0.804, 0.706, 1.0), clamp(0.5 * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
     "    float up = max(dot(g0, vec2(0.0, -1.0)), 0.0), dn = max(dot(g0, vec2(0.0, 1.0)), 0.0);\n"
-    "    c = mix(c, topc.rgb, clamp(topc.a * exp(-max(depth - 1.0, 0.0) / 1.2) * up * k, 0.0, 1.0));\n"
-    "    c = mix(c, inb.rgb, clamp(inb.a * exp(-depth / 5.0) * dn * k * 0.8, 0.0, 1.0));\n"
-    "    c = mix(c, intc.rgb, clamp(intc.a * exp(-depth / 6.0) * up * k * 0.7, 0.0, 1.0));\n"
+    "    c = mix(c, vec3(0.92, 0.86, 1.0), clamp(0.5 * exp(-max(depth - 1.0, 0.0) / 1.2) * up * k, 0.0, 1.0));\n"
+    "    c = mix(c, vec3(0.588, 0.431, 1.0), clamp(0.4 * exp(-depth / 4.0) * dn * k * 0.8, 0.0, 1.0));\n"
     "  }\n"
     "  f = vec4(c * cov, cov); }\n";
 
@@ -293,7 +289,7 @@ static void capture_and_blur(int w, int h, GLuint target_fb) {
         fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset * g_th.blur_offset, false);
 }
 
-typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; int grp; float rc, rs, alpha; bool card, bubble; } glass_quad;
+typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; int grp; float rc, rs, alpha; bool card, bubble, skip; float m1[4], m2[4]; } glass_quad;
 
 static int glass_layer(cui_color c) {
     if (c.r == B_GLASS.r && c.g == B_GLASS.g && c.b == B_GLASS.b && c.a == B_GLASS.a) return 0;
@@ -318,13 +314,18 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glBindTexture(GL_TEXTURE_2D, G.lvl[1]);
     glUniform1i(G.c_tex, 0);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, G.src); glUniform1i(G.c_src, 1);   /* fundo nítido (bolha de status) */
-    glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, G.levels >= 2 ? G.lvl[2] : G.lvl[1]); glUniform1i(G.c_tex2, 2);   /* desfoque forte */
     glActiveTexture(GL_TEXTURE0);
-    glUniform4f(G.c_bs, (float)g_th.bubble_style, 0, 0, 0);
     glUniform2f(G.c_vp, (float)W, (float)H);
     float ext = q->grp >= 0 ? sqrtf(q->hw * q->hw + q->hh * q->hh) + 2 : 0;   /* girado: caixa envolvente maior */
     if (ext > 0) glUniform4f(G.c_rect, q->cx - ext, q->cy - ext, ext * 2, ext * 2);
     else glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
+    glUniform4f(G.c_m1, q->m1[0], q->m1[1], q->m1[2], q->m1[3]); glUniform4f(G.c_m2, q->m2[0], q->m2[1], q->m2[2], q->m2[3]);
+    if (q->m1[3] > 0.5f) {   /* balão unido às bolinhas: o retângulo cobre a união */
+        float x0 = q->cx - q->hw, y0 = q->cy - q->hh, x1 = q->cx + q->hw, y1 = q->cy + q->hh;
+        for (int k = 0; k < 2; k++) { const float *m = k ? q->m2 : q->m1; if (m[3] < 0.5f) continue;
+            if (m[0] - m[2] < x0) x0 = m[0] - m[2]; if (m[1] - m[2] < y0) y0 = m[1] - m[2]; if (m[0] + m[2] > x1) x1 = m[0] + m[2]; if (m[1] + m[2] > y1) y1 = m[1] + m[2]; }
+        glUniform4f(G.c_rect, x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4);
+    }
     glUniform2f(G.c_rot, q->grp >= 0 ? q->rc : 1.0f, q->grp >= 0 ? q->rs : 0.0f);
     glUniform1f(G.c_alpha, q->grp >= 0 ? q->alpha : 1.0f);
     glUniform4f(G.c_box, q->cx, q->cy, q->hw, q->hh);
@@ -446,7 +447,7 @@ static void render_hook(cui_app *app, const cui_draw_data *dd_in, cui_gl_rendere
             }
             if (run % 2 == 0) {
                 if (nq == qcap) { qcap = qcap ? qcap * 2 : 16; qs = realloc(qs, sizeof *qs * (size_t)qcap); }
-                glass_quad *q = &qs[nq++];
+                glass_quad *q = &qs[nq++]; memset(q, 0, sizeof *q);
                 q->grp = pg; q->alpha = pg >= 0 ? PXF[pg].alpha : 1; q->rc = pg >= 0 ? PXF[pg].rc : 1; q->rs = pg >= 0 ? PXF[pg].rs : 0;
                 q->idx = (int)i; q->hw = v->hw; q->hh = v->hh;
                 if (pg >= 0) { q->cx = v->x - (q->rc * v->lx - q->rs * v->ly); q->cy = v->y - (q->rs * v->lx + q->rc * v->ly); }
@@ -458,6 +459,20 @@ static void render_hook(cui_app *app, const cui_draw_data *dd_in, cui_gl_rendere
             }
             run++;
         }
+    }
+    /* metaballs: cada balão de status absorve as duas bolinhas da cauda (as menores, logo abaixo dele) */
+    for (int i = 0; i < nq; i++) {
+        glass_quad *bq = &qs[i];
+        if (!bq->bubble || bq->hw <= 9.0f) continue;
+        int d1 = -1, d2 = -1;
+        for (int j = 0; j < nq; j++) {
+            const glass_quad *dq = &qs[j];
+            if (j == i || !dq->bubble || dq->hw > 9.0f || dq->skip) continue;
+            if (dq->cy < bq->cy + bq->hh - 4 || dq->cy > bq->cy + bq->hh + 40 || dq->cx < bq->cx - bq->hw - 12 || dq->cx > bq->cx + bq->hw) continue;
+            if (d1 < 0 || dq->hw > qs[d1].hw) { d2 = d1; d1 = j; } else if (d2 < 0 || dq->hw > qs[d2].hw) d2 = j;
+        }
+        if (d1 >= 0) { bq->m1[0] = qs[d1].cx; bq->m1[1] = qs[d1].cy; bq->m1[2] = qs[d1].hw; bq->m1[3] = 1; qs[d1].skip = true; }
+        if (d2 >= 0) { bq->m2[0] = qs[d2].cx; bq->m2[1] = qs[d2].cy; bq->m2[2] = qs[d2].hw; bq->m2[3] = 1; qs[d2].skip = true; }
     }
     if (!nq || nog) { free(qs); cui_gl_render(gl, dd, true); goto done; }   /* (já ligado ao alvo) */
 
@@ -473,7 +488,7 @@ static void render_hook(cui_app *app, const cui_draw_data *dd_in, cui_gl_rendere
             cui_draw_data part = *dd; part.commands = out; part.command_count = nout;
             cui_gl_render(gl, &part, first); first = false; nout = 0;
             if (q->layer != cur_layer) { capture_and_blur(W, H, tgt); cur_layer = q->layer; }
-            if (q->grp < 0 || q->alpha > 0.004f) draw_glass(q, W, H, &cm->clip, tgt);
+            if (!q->skip && (q->grp < 0 || q->alpha > 0.004f)) draw_glass(q, W, H, &cm->clip, tgt);
             cur = (uint32_t)q->idx;
             qi++;
         }
@@ -523,7 +538,7 @@ bool briks_glass_init(cui_app *app) {
     G.u_tex = U(G.p_up, "u_tex"); G.u_out = U(G.p_up, "u_out"); G.u_texel = U(G.p_up, "u_texel"); G.u_off = U(G.p_up, "u_off");
     G.u_vp = U(G.p_up, "u_vp"); G.u_rect = U(G.p_up, "u_rect");
     G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
-    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub"); G.c_a1 = U(G.p_comp, "u_a1"); G.c_a2 = U(G.p_comp, "u_a2"); G.c_a3 = U(G.p_comp, "u_a3"); G.c_src = U(G.p_comp, "u_src"); G.c_tex2 = U(G.p_comp, "u_tex2"); G.c_bs = U(G.p_comp, "u_bs");
+    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub"); G.c_a1 = U(G.p_comp, "u_a1"); G.c_a2 = U(G.p_comp, "u_a2"); G.c_a3 = U(G.p_comp, "u_a3"); G.c_src = U(G.p_comp, "u_src"); G.c_m1 = U(G.p_comp, "u_m1"); G.c_m2 = U(G.p_comp, "u_m2");
 #undef U
     if (G.p_dith) { G.t_tex = glGetUniformLocation(G.p_dith, "u_tex"); G.t_vp = glGetUniformLocation(G.p_dith, "u_vp"); G.t_rect = glGetUniformLocation(G.p_dith, "u_rect"); glGenFramebuffers(1, &G.hdr_fbo); }
     glGenFramebuffers(1, &G.fbo);

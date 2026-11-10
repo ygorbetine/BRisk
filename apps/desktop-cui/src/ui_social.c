@@ -75,8 +75,12 @@ static void bubbles_draw(cui_ctx *ui) {
         float w = fminf(m.width, 190.0f) + 30, h = 32;
         float bx = a.x + 8, by = a.y - 22 - h;
         if (by < 6) by = 6;
-        abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior */
+        abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior; glass.c as une ao balão (metaballs) */
         abs_glass(ui, a.x + 31, a.y - 18, 14, 14, 7, false);
+        if (g_perf >= PERF_MIN) {   /* sem shader: pescoços chapados para a mesma silhueta unida */
+            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 7 - by - h, 3, false);
+            abs_glass(ui, a.x + 31.5f, a.y - 8.5f, 6, 6, 3, false);
+        }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
             cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                     .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {

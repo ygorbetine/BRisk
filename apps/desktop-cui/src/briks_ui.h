@@ -9,15 +9,15 @@
 #include "perf.h"
 
 /* Paleta (--briks-*, --glass-*) */
-#define B_C1        CUI_RGB(0xb01fcf)
-#define B_C2        CUI_RGB(0x6d5cf6)
-#define B_C3        CUI_RGB(0x8b5cf6)
+#define B_C1        (g_th.c1)   /* acento: vem do gradiente do tema (themes.c) */
+#define B_C2        (g_th.c2)
+#define B_C3        (g_th.c3)
 #define B_BG        CUI_RGB(0x12041a)
 #define B_BG_DEEP   CUI_RGB(0x0f0316)
-#define B_PANEL     CUI_RGB(0x1a0a26)
-#define B_LINE      CUI_RGB(0x2f1745)
+#define B_PANEL     (g_th.field)   /* campos de texto: versao escura do matiz do tema */
+#define B_LINE      (g_th.line)
 #define B_TEXT      CUI_RGB(0xedf1f7)
-#define B_MUTED     CUI_RGB(0xa592b8)
+#define B_MUTED     (g_th.muted)
 #define B_DANGER    CUI_RGB(0xe95555)
 #define B_ONLINE    CUI_RGB(0x57d28b)
 #define B_GLASS_BORDER CUI_RGBA(0xffffff1c)  /* .11 */
@@ -63,7 +63,10 @@ typedef struct {
     bool reload_msgs;
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
-    bool create_group_open, profile_open;
+    bool create_group_open, profile_open, logout_confirm_open;
+    char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
+    cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
     char new_group[96];
     /* social */
     int active_friend;             /* -1 = lista de amigos */
@@ -114,6 +117,13 @@ void app_pump(app_state_t *s);
 /* rtc.c: ponte com o briks-core */
 void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se preciso, abre a sessão e entra na sala */
 void rtc_leave_room(app_state_t *s);
+void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
+void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
+void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+void settings_tick(void);                                  /* carrega/grava settings.cfg */
+void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
+void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
+void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
 void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
@@ -154,10 +164,20 @@ bool script_capture(cui_app *app);
 
 /* Clique de verdade num contêiner: cui_last_hovered não serve para caixas simples (o "último componente" é o canvas do fundo,
    que cobre a janela e deixava qualquer clique acionar todos os itens). `id` é o .id da caixa, no escopo de id atual. */
+/* cor do tema com alfa 0..255 (acentos, bordas, tintas): nada de roxo fixo fora do tema */
+static inline cui_color briks_acc(cui_color c, int a) { c.a = (uint8_t)a; return c; }
+#define B_A(c, a) briks_acc((c), (a))
+
+/* Balão de status: Cristal violeta (glass.c). Normal = translúcido, refração nas bordas e balão + bolinhas da cauda unidos (metaballs); Simplificado = sem refração, menos desfoque,
+   mesma forma unida; Mínimo = sem shader: violeta chapado, sem borda, e pescoços desenhados em CUI para manter a silhueta unida. */
+static inline cui_color briks_bubble_bg(void) { return g_perf < PERF_MIN ? B_GLASS_BUBBLE : CUI_RGBA(0x6a48d0ff); }
+static inline cui_color briks_bubble_border(void) { return g_perf >= PERF_MIN ? CUI_RGBA(0xdcc8ffb0) : CUI_RGBA(0x00000000); }
+static inline float briks_bubble_radius(float h) { return h * 0.5f; }
+
 /* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */
 static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     if (!text || !text[0]) return;
-    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = 14, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30), .align = CUI_ALIGN_CENTER) {
+    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = briks_bubble_radius(26), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(), .align = CUI_ALIGN_CENTER) {
         cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
     }
 }

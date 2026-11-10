@@ -15,22 +15,34 @@ static void initials(const char *name, char *out) {
 static void space_button(cui_ctx *ui, const char *label, bool active, bool dashed, int *clicked_id, int id) {
     cui_push_id_int(ui, id);
     cui_box(ui, .id = "b", .width = CUI_PX(50), .height = CUI_PX(50), .radius = active ? 13 : 17,
-            .bg = active ? B_C3 : dashed ? CUI_RGBA(0x8b5cf60b) : CUI_RGB(0x171c24),
-            .border = dashed ? 1 : 0, .border_color = CUI_RGBA(0x8b5cf666),
+            .bg = active ? B_C3 : dashed ? B_A(B_C3, 0x0b) : B_PANEL,
+            .border = dashed ? 1 : 0, .border_color = B_A(B_C3, 0x66),
             .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-        cui_text(ui, label, .size = 13, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xc9d1dc));
+        cui_text(ui, label, .size = 13, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : B_MUTED);
     }
     if (briks_clicked(ui, "b")) *clicked_id = id;
     cui_pop_id(ui);
 }
 
+/* ícone compacto (26 px) do rodapé do usuário: cabe três na largura do menu sem espremer o nome/status */
+static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip) {
+    cui_push_id(ui, id);
+    cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
+        cui_icon(ui, icon, 15, B_MUTED);
+        if (cui_last_hovered(ui)) cui_tooltip(ui, tip);
+    }
+    bool hit = briks_clicked(ui, "b");
+    cui_pop_id(ui);
+    return hit;
+}
+
 static bool nav_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_push_id(ui, label);
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 9, .gap = 10, .radius = 12,
-            .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000),
+            .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000),
             .border = active ? 1 : 0, .border_color = CUI_RGBA(0xffffff1a), .align = CUI_ALIGN_CENTER) {
-        cui_icon(ui, icon, 16, active ? B_TEXT : CUI_RGB(0x8d97a6));
-        cui_text(ui, label, .color = active ? B_TEXT : CUI_RGB(0xa592b8), .nowrap = true);
+        cui_icon(ui, icon, 16, active ? B_TEXT : B_MUTED);
+        cui_text(ui, label, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
@@ -39,7 +51,7 @@ static bool nav_item(cui_ctx *ui, const char *icon, const char *label, bool acti
 
 static void section_title(cui_ctx *ui, const char *t) {
     cui_box(ui, .pad_left = 9, .pad_top = 22, .pad_bottom = 7) {
-        cui_text(ui, t, .size = 10, .color = CUI_RGB(0x8472a0));
+        cui_text(ui, t, .size = 10, .color = g_th.ph);
     }
 }
 
@@ -51,7 +63,7 @@ static void bubble_note(cui_rect av, const char *text) {
 }
 static void abs_glass(cui_ctx *ui, float x, float y, float w, float h, float r, bool shadow) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = r, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = r, .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                 .elevation = shadow ? CUI_ELEVATION_RESTING : CUI_ELEVATION_NONE) {}
     }
 }
@@ -61,18 +73,24 @@ static void bubbles_draw(cui_ctx *ui) {
         cui_rect a = g_bub[i].av; const char *t = g_bub[i].text;
         cui_text_metrics m = cui_measure_text(ui, CUI_FONT_BODY, 13, t, (int)strlen(t));
         float w = fminf(m.width, 190.0f) + 30, h = 32;
-        float bx = a.x + 8, by = a.y - 22 - h;
+        float bx = a.x + 8, by = a.y - 17 - h;
         if (by < 6) by = 6;
-        abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior */
-        abs_glass(ui, a.x + 31, a.y - 18, 14, 14, 7, false);
+        /* bolinhas de pensamento (theme.json: bubble_tail_gap/r1/r2): a 1ª fica a "gap" px da borda de baixo do balão, a 2ª a "gap" px da 1ª, rumo ao avatar; glass.c as une com o pescoço bubble_neck_k */
+        float r1 = g_th.bubble_tail_r1, r2 = g_th.bubble_tail_r2, gp = g_th.bubble_tail_gap;
+        float c1x = a.x + 38, c1y = a.y - 17 + gp + r1;
+        float ux = (a.x + 31) - c1x, uy = a.y - c1y, ul = sqrtf(ux * ux + uy * uy); if (ul < 1) ul = 1;
+        float c2x = c1x + ux / ul * (r1 + r2 + gp), c2y = c1y + uy / ul * (r1 + r2 + gp);
+        abs_glass(ui, c2x - r2, c2y - r2, r2 * 2, r2 * 2, r2, false);
+        abs_glass(ui, c1x - r1, c1y - r1, r1 * 2, r1 * 2, r1, false);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
-            cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 16, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
+            cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                     .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
         }
         cui_pop_id(ui);
     }
+    if (g_bub_n && g_perf == PERF_NORMAL && !getenv("BRIKS_NO_BREATH")) cui_request_redraw(ui);   /* respiração lenta do balão (só no Normal) */
     g_bub_n = 0;
 }
 
@@ -80,7 +98,7 @@ static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
-            .bg = active ? CUI_RGBA(0x6d5cf638) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
+            .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
         cui_box(ui, .id = "av") { cui_avatar(ui, f->name, .size = 32); }
         const char *line = f->presence;   /* a linha sob o nome é só o rich presence; o status vai no balão */
         if (line[0]) {   /* rich presence: linha pequena sob o nome */
@@ -142,18 +160,28 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_pop_id(ui);
             }
         }
+        /* rodapé do usuário (paridade com o .account-bar do Electron): foto, nome + status/@nick, e três ícones: @ (Perfil e conta), configurações, sair */
         cui_box(ui, .width = CUI_FILL, .pad = 10) {
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 16, .bg = B_GLASS_CARD,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .gap = 2, .radius = 16, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                cui_box(ui, .id = "avatar") { cui_avatar(ui, s->user_name, .size = 36); }
-                if (briks_clicked(ui, "avatar")) s->profile_open = true;
-                const char *mine = s->rp_enabled ? s->user_presence : "";   /* linha sob o nome: só a presença */
+                cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
+                if (briks_clicked(ui, "avatar")) { s->profile_open = true; s->profile_tab = 0; }
                 bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
-                cui_column(ui, .gap = 0, .width = CUI_FILL) {
-                    cui_text(ui, s->user_name, .nowrap = true);
-                    cui_text(ui, mine[0] ? mine : s->user_email, .size = 11, .color = B_MUTED, .nowrap = true);
+                cui_box(ui, .id = "ident", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 4) {
+                    cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 14, .nowrap = true);
+                    /* linha de status: presença em uso > status digitado > "Disponível" (verde) */
+                    const char *mine = s->rp_enabled ? s->user_presence : "";
+                    if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = B_MUTED, .nowrap = true);
+                    else if (mine[0]) cui_text(ui, mine, .size = 11, .color = B_MUTED, .nowrap = true);
+                    else cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
+                        cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}
+                        cui_text(ui, "Disponível", .size = 10.5f, .color = B_ONLINE, .nowrap = true);
+                    }
                 }
-                if (cui_icon_button(ui, CUI_ICON_SETTINGS, .tooltip = "Configurações")) s->settings_open = true;
+                if (briks_clicked(ui, "ident")) { s->profile_open = true; s->profile_tab = 1; }   /* clicar no status: abre Perfil e conta na aba Status */
+                if (foot_icon(ui, "ft-at", CUI_ICON_AT_SIGN, "Perfil e conta")) { s->profile_open = true; s->profile_tab = 3; }
+                if (foot_icon(ui, "ft-cfg", CUI_ICON_SETTINGS, "Configurações")) s->settings_open = true;
+                if (foot_icon(ui, "ft-out", CUI_ICON_LOG_OUT, "Sair")) app_logout(s);
             }
         }
     }
@@ -179,7 +207,7 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                     .radius_tl = g_th.bubble_big, .radius_tr = g_th.bubble_small, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big,
                     .bg = g_th.bubble_own, .border = 1, .border_color = CUI_RGBA(0xffffff26)) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                    cui_text(ui, "Você", .size = 12, .color = CUI_RGB(0xe6dcff));
+                    cui_text(ui, "Você", .size = 12, .color = B_TEXT);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
                 }
                 cui_text(ui, m->content);
@@ -192,7 +220,7 @@ static void bubble(cui_ctx *ui, const msg_t *m) {
                     .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     cui_text(ui, m->author, .size = 12, .color = B_C3);
-                    cui_text(ui, hm, .size = 10, .color = CUI_RGB(0x8472a0));
+                    cui_text(ui, hm, .size = 10, .color = g_th.ph);
                 }
                 cui_text(ui, m->content);
             }
@@ -237,7 +265,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
-                    .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
+                    .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
                 cui_push_disabled(ui, true);
                 cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar (marco 3)");
                 cui_pop_disabled(ui);
@@ -363,6 +391,158 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
     }
 }
 
+/* ---- Perfil e conta: diálogo vertical e compacto; cada seção é um cartão de vidro arredondado ---- */
+#define PCARD(ui, title) CUI__SCOPE((cui_box_begin((ui), CUI__OPTS(cui_box, .width = CUI_FILL, .pad = 14, .gap = 10, .radius = 16, .bg = B_GLASS_CARD, \
+    .border = 1, .border_color = B_GLASS_BORDER)), cui_text((ui), (title), .font = CUI_FONT_MEDIUM, .size = 13, .color = B_C3)), cui_box_end(ui))
+
+static bool profile_nav(cui_ctx *ui, const char *icon, const char *label, bool active) {
+    bool hit = false;
+    cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
+            .bg = active ? B_A(B_C3, 0x33) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {
+        cui_icon(ui, icon, 16, active ? B_TEXT : B_MUTED);
+        cui_text(ui, label, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
+    }
+    hit = briks_clicked(ui, label);
+    return hit;
+}
+
+static void profile_dialog(cui_ctx *ui, app_state_t *s) {
+    static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
+    static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
+    static const char *CLEAR[] = { "Não limpar", "1 hora", "4 horas", "Hoje" };   /* mesmas opções do Electron (StatusEditor) */
+    /* a fonte do app não traz emoji colorido: o seletor usa os ícones do CUI (UI pronta; emoji de verdade depende de fonte) */
+    static const char *const EMOJI[] = { CUI_ICON_SMILE, CUI_ICON_MUSIC, CUI_ICON_BRIEFCASE, CUI_ICON_MOON, CUI_ICON_ROCKET, CUI_ICON_HEART, CUI_ICON_STAR, CUI_ICON_BOOKMARK };
+    static bool emoji_open;
+    if (s->profile_open && !was_open) {
+        snprintf(st_draft, sizeof st_draft, "%s", s->user_status); snprintf(name_draft, sizeof name_draft, "%s", s->user_name); ig_add[0] = 0; emoji_open = false;
+    }
+    was_open = s->profile_open;
+    cui_vec2 vp = cui_viewport_size(ui);
+    const float dw = fminf(880.0f, fmaxf(vp.x - 48.0f, 320.0f)), dh = fminf(480.0f, fmaxf(vp.y - 160.0f, 240.0f));
+    cui_dialog(ui, "Perfil e conta", &s->profile_open, .width = dw) {
+        cui_row(ui, .width = CUI_FILL, .height = CUI_PX(dh), .gap = 16) {
+            /* lateral: foto + nome + @nick, seções e o botão discreto de desconectar no rodapé */
+            cui_box(ui, .width = CUI_PX(236), .height = CUI_FILL, .pad = 12, .gap = 4, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
+                cui_row(ui, .gap = 12, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_bottom = 10) {
+                    cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 56, .image = s->user_photo });
+                    cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                        cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
+                        char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                        cui_text(ui, nick, .color = B_MUTED, .size = 12, .nowrap = true);
+                    }
+                }
+                cui_separator(ui);
+                static const char *NAMES[] = { "Perfil", "Status", "Programa em uso", "Conta" };
+                static const char *const ICONS[] = { CUI_ICON_USER, CUI_ICON_MESSAGE_SQUARE, CUI_ICON_SETTINGS, CUI_ICON_USERS };
+                for (int i = 0; i < 4; i++) { cui_push_id_int(ui, 4300 + i); if (profile_nav(ui, ICONS[i], NAMES[i], s->profile_tab == i)) s->profile_tab = i; cui_pop_id(ui); }
+                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL) {}
+                if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_GHOST, .size = CUI_SIZE_SM, .full_width = true)) s->logout_confirm_open = true;
+            }
+            /* conteúdo: uma seção por vez */
+            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 12, .scroll_y = true) {
+                switch (s->profile_tab) {
+                case 0:
+                    PCARD(ui, "PERFIL") {
+                        cui_row(ui, .gap = 18, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                            cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 96, .image = s->user_photo });
+                            cui_column(ui, .gap = 8, .width = CUI_FILL) {
+                                cui_text(ui, "Nome exibido", .size = 12, .color = B_MUTED);
+                                cui_input(ui, "pf-name", name_draft, sizeof name_draft, .placeholder = "Seu nome");
+                                cui_button(ui, "Escolher foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM);   /* UI pronta, sem backend de upload */
+                            }
+                        }
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {
+                            if (cui_button(ui, "Salvar perfil", .variant = CUI_BUTTON_PRIMARY) && name_draft[0])
+                                snprintf(s->user_name, sizeof s->user_name, "%s", name_draft);
+                        }
+                    }
+                    break;
+                case 1:
+                    PCARD(ui, "STATUS") {
+                        cui_text(ui, "Aparece num balão perto da sua foto.", .size = 12, .color = B_MUTED);
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                            if (cui_icon_button(ui, s->user_emoji[0] ? s->user_emoji : CUI_ICON_SMILE, .tooltip = "Escolher emoji")) emoji_open = !emoji_open;
+                            cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que está pensando?", .width = CUI_FILL);
+                        }
+                        if (emoji_open) {
+                            cui_row(ui, .gap = 4, .width = CUI_FILL, .wrap = true, .pad = 6, .radius = 12, .bg = CUI_RGBA(0xffffff0a)) {
+                                for (int i = 0; i < 8; i++) {
+                                    cui_push_id_int(ui, 4400 + i);
+                                    if (cui_icon_button(ui, EMOJI[i])) { snprintf(s->user_emoji, sizeof s->user_emoji, "%s", EMOJI[i]); emoji_open = false; }
+                                    cui_pop_id(ui);
+                                }
+                            }
+                        }
+                        cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true) {
+                            for (int i = 0; i < 5; i++) {
+                                cui_push_id_int(ui, 4100 + i);
+                                bool sel = !strcmp(st_draft, CHIPS[i]);
+                                if (cui_chip(ui, CHIPS[i], &sel)) snprintf(st_draft, sizeof st_draft, "%s", sel ? CHIPS[i] : "");
+                                cui_pop_id(ui);
+                            }
+                        }
+                        cui_text(ui, "Limpar depois de", .size = 12, .color = B_MUTED);
+                        cui_segmented(ui, "pf-clear", CLEAR, 4, &s->status_clear, .full_width = true, .size = CUI_SIZE_SM);
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {
+                            if (cui_button(ui, "Limpar", .variant = CUI_BUTTON_SECONDARY)) { st_draft[0] = 0; s->user_emoji[0] = 0; s->user_status[0] = 0; }
+                            if (cui_button(ui, "Salvar status", .variant = CUI_BUTTON_PRIMARY)) snprintf(s->user_status, sizeof s->user_status, "%s", st_draft);
+                        }
+                    }
+                    break;
+                case 2:
+                    PCARD(ui, "PROGRAMA EM USO") {
+                        cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
+                        if (s->rp_enabled) {
+                            static const char *AUD[] = { "Todos os amigos", "Só na chamada" };
+                            cui_text(ui, "Quem pode ver", .size = 12, .color = B_MUTED);
+                            cui_segmented(ui, "pf-aud", AUD, 2, &s->rp_audience, .full_width = true, .size = CUI_SIZE_SM);
+                            cui_text(ui, "Ignorar programa", .size = 12, .color = B_MUTED);
+                            cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                                cui_input(ui, "pf-ignore", ig_add, sizeof ig_add, .placeholder = "ex.: spotify", .width = CUI_FILL);
+                                if (cui_button(ui, "Ignorar", .variant = CUI_BUTTON_SECONDARY) && ig_add[0] && s->rp_ignore_n < 6) {
+                                    snprintf(s->rp_ignore[s->rp_ignore_n++], sizeof s->rp_ignore[0], "%s", ig_add); ig_add[0] = 0;
+                                }
+                            }
+                            cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true) {
+                                for (int i = 0; i < s->rp_ignore_n; i++) {
+                                    cui_push_id_int(ui, 4200 + i);
+                                    cui_row(ui, .gap = 6, .pad_x = 10, .pad_y = 4, .radius = 14, .bg = CUI_RGBA(0xffffff10), .align = CUI_ALIGN_CENTER) {
+                                        cui_text(ui, s->rp_ignore[i], .size = 13, .nowrap = true);
+                                        if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Remover")) {
+                                            memmove(s->rp_ignore[i], s->rp_ignore[i + 1], (size_t)(s->rp_ignore_n - i - 1) * sizeof s->rp_ignore[0]);
+                                            s->rp_ignore_n--;
+                                        }
+                                    }
+                                    cui_pop_id(ui);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    PCARD(ui, "CONTA") {
+                        cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "E-mail", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, s->user_email, .nowrap = true); }
+                        char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                        cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "Nick", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, nick, .nowrap = true); }
+                        cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+                        cui_row(ui, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {
+                            if (cui_button(ui, "Sair", .variant = CUI_BUTTON_SECONDARY)) { s->profile_open = false; app_logout(s); }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    cui_dialog(ui, "Desconectar?", &s->logout_confirm_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        cui_text(ui, "Você precisará entrar de novo para usar o Briks.", .color = B_MUTED);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) s->logout_confirm_open = false;
+            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->logout_confirm_open = false; s->profile_open = false; app_logout(s); }
+        }
+    }
+}
+
 void ui_social(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 0.85f);
     dock_render(ui, s);
@@ -381,22 +561,11 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             if ((cui_button(ui, "Criar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED))) app_create_group(s);
         }
     }
-    cui_dialog(ui, "Perfil", &s->profile_open) {
-        cui_row(ui, .gap = 14, .align = CUI_ALIGN_CENTER) {
-            cui_avatar(ui, s->user_name, .size = 64);
-            cui_column(ui, .gap = 2) {
-                cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 20);
-                cui_text(ui, s->user_email, .color = B_MUTED);
-            }
-        }
-        cui_text(ui, "Status", .size = 12, .color = B_MUTED);
-        cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "O que está pensando?");
-        cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
-    }
+    profile_dialog(ui, s);
     bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
-            cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,
+            cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = B_A(B_PANEL, 0xf2), .border = 1,
                     .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_text(ui, briks_perf_hint_text(), .size = 12);   /* frase sorteada a cada exibição (perf.c) */
                 char lab[48]; snprintf(lab, sizeof lab, "Ativar %s", briks_perf_label(briks_perf_hint_level()));
@@ -405,44 +574,8 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             }
         }
     }
-    static float restored_at = -10;
     cui_vec2 vp = cui_viewport_size(ui);
-    /* largura e altura acompanham o conteúdo, limitadas à janela; se não couber, rola na vertical */
-    cui_dialog(ui, "Configurações", &s->settings_open, .width = fminf(480.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
-        cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 200.0f, 120.0f), .scroll_y = true, .gap = 12) {
-            cui_textf(ui, "Conectado como %s", s->user_name);
-            cui_text(ui, "Voz e vídeo, rede, atalhos, atualizações e sobre chegam nos próximos marcos.", .color = B_MUTED);
-            cui_text(ui, "Desempenho", .font = CUI_FONT_MEDIUM);
-            cui_row(ui, .gap = 8) {
-                for (int l = 0; l < 3; l++) {
-                    cui_push_id_int(ui, 700 + l);
-                    if (cui_button(ui, briks_perf_label(l), .variant = g_perf == l ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY)) briks_perf_set(ui, l, true);
-                    cui_pop_id(ui);
-                }
-            }
-            cui_text(ui, briks_perf_help(g_perf), .size = 12, .color = B_MUTED);
-            cui_text(ui, "Presença", .font = CUI_FONT_MEDIUM);
-            cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
-            if (s->rp_enabled) {
-                cui_row(ui, .gap = 8) {
-                    for (int l = 0; l < 2; l++) {
-                        cui_push_id_int(ui, 760 + l);
-                        if (cui_button(ui, l ? "Só na chamada" : "Todos os amigos", .variant = s->rp_audience == l ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY)) s->rp_audience = l;
-                        cui_pop_id(ui);
-                    }
-                }
-            }
-            cui_text(ui, "Painéis", .font = CUI_FONT_MEDIUM);
-            cui_text(ui, "Volta a disposição original: Servidores | Menu | Conversa.", .size = 12, .color = B_MUTED);
-            if (cui_button(ui, "Restaurar layout padrão", .variant = CUI_BUTTON_SECONDARY)) {
-                dock_restore_default();
-                restored_at = (float)cui_time(ui);
-            }
-            if ((float)cui_time(ui) - restored_at < 3.0f)
-                cui_text(ui, "Layout restaurado.", .size = 12, .color = B_ONLINE);
-            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
-        }
-    }
+    settings_dialog(ui, s);
     /* o dono da sala expulsou você */
     cui_dialog(ui, "Chamada", &s->kicked_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_text(ui, "Você foi removido da chamada.", .font = CUI_FONT_MEDIUM);

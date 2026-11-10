@@ -19,6 +19,8 @@ static float jnum(const jval *j, const char *k) { const jval *v = json_get(j, k)
 static bool jbool(const jval *j, const char *k) { const jval *v = json_get(j, k); return v && v->type == J_BOOL && v->b; }
 static void cmd(const char *json) { if (core_state() == CORE_READY) core_send(json); }
 
+static bool g_dev_open_quality;   /* gancho de captura: abre o popover de qualidade/telemetria */
+
 /* ---------- qualidade ---------- */
 static const int RES_H[4] = { 720, 1080, 1440, 2160 };
 static const char *const RES_LABEL[4] = { "720p", "1080p", "1440p", "4K" };
@@ -48,7 +50,10 @@ static const char *res_name(int h) { return h >= 2160 ? "4K" : h >= 1440 ? "1440
 /* "1080p · 30 FPS · 4 Mbps": o que está no ar quando transmitindo; senão o que foi escolhido */
 static void quality_chip(const share_state_t *q, char *out, size_t cap) {
     char r[24];
-    if (q->active && q->h) { fmt_rate(q->kbps, r, sizeof r); snprintf(out, cap, "%s · %d FPS · %s", res_name(q->h), q->cur_fps, r); return; }
+    if (q->active && q->h) {   /* no ar: valores ATUAIS do laço de adaptação (mudam ao vivo) */
+        int h = q->live_h ? q->live_h : q->h, f = q->stat_fps > 0.5f ? (int)(q->stat_fps + 0.5f) : q->cur_fps, k = q->stat_kbps > 0 ? q->stat_kbps : q->kbps;
+        fmt_rate(k, r, sizeof r); snprintf(out, cap, "%s · %d FPS · %s", res_name(h), f, r); return;
+    }
     int k = chosen_kbps(q); if (!k) k = auto_kbps(RES_H[q->res], FPS_V[q->fps]);
     fmt_rate(k, r, sizeof r);
     snprintf(out, cap, "%s · %d FPS · %s", RES_LABEL[q->res], FPS_V[q->fps], r);
@@ -121,8 +126,8 @@ static void send_start(app_state_t *s, const char *kind, const char *id, const c
     char line[1024], lab[160], pids[400] = ""; size_t o = 0;
     json_escape(label, lab, sizeof lab);
     for (int i = 0; i < q->napps && o < sizeof pids - 16; i++) if (q->apps[i].on) o += (size_t)snprintf(pids + o, sizeof pids - o, "%s%u", o ? "," : "", q->apps[i].pid);
-    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"%s\",\"pids\":[%s]}",
-             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->audio_mode == 0 ? "source" : q->audio_mode == 1 ? "apps" : "none", pids);
+    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"%s\",\"pids\":[%s],\"content\":\"%s\"}",
+             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->audio_mode == 0 ? "source" : q->audio_mode == 1 ? "apps" : "none", pids, q->content ? "motion" : "detail");
     cmd(line);
     copy(q->last_kind, sizeof q->last_kind, kind); copy(q->last_id, sizeof q->last_id, id); copy(q->label, sizeof q->label, label);
     q->starting = true; q->err[0] = 0;
@@ -194,12 +199,15 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             q->audio_on = jbool(j, "audio"); q->hardware = jbool(j, "hardware");
             copy(q->encoder, sizeof q->encoder, json_str(j, "encoder", ""));
         } else {
-            q->active = false; q->starting = false;
+            q->active = false; q->starting = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
             copy(q->err, sizeof q->err, json_str(j, "reason", ""));
         }
     } else if (!strcmp(ev, "share.stats")) {
         q->stat_fps = jnum(j, "fps"); q->stat_kbps = jint(j, "kbps"); q->enc_ms = jnum(j, "enc_ms"); q->cpu = jint(j, "cpu_pct");
         q->audio_peak = jnum(j, "audio_peak"); q->audio_sources = jint(j, "audio_sources");
+        q->live_h = jint(j, "h"); q->target_fps = jint(j, "target_fps"); q->target_kbps = jint(j, "target_kbps"); q->est_kbps = jint(j, "est_kbps");
+        q->rtt_ms = jint(j, "rtt_ms"); q->rtx = jint(j, "rtx"); q->loss_pct = jnum(j, "loss_pct");
+        copy(q->adapting, sizeof q->adapting, json_str(j, "adapting", "")); copy(q->reason, sizeof q->reason, json_str(j, "reason", ""));
     } else if (!strcmp(ev, "share.remote")) {
         int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) return false;
         const char *st = json_str(j, "state", "");
@@ -235,11 +243,12 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     static int dev; const char *d = getenv("BRIKS_DEV_SHARE");
     if (d) cui_request_redraw(ui);
     if (d && core_state() == CORE_READY && s->in_room) {
+        if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }
         if (dev == 0 && !strcmp(d, "dialog-quality")) { q->quality_open = true; q->br_mode = 3; q->br_custom = 35; q->res = 2; q->fps = 2; }
-        if (dev == 0) { dev = 1; if (!strncmp(d, "dialog", 6) || !strcmp(d, "screen")) share_open_dialog(s);
+        if (dev == 0) { dev = 1; if (!strncmp(d, "dialog", 6) || !strcmp(d, "screen") || !strcmp(d, "adapt")) share_open_dialog(s);
             if (!strcmp(d, "dialog-apps")) q->audio_mode = 1; if (!strcmp(d, "dialog-windows")) q->tab = 1;
             if (!strcmp(d, "test")) send_start(s, "test", "0", "Padrão de teste"); }
-        else if (dev == 1 && !strcmp(d, "screen") && !q->loading && q->nsrc[0] > 0 && s->rtc_authed_count > 0) { dev = 2; q->tab = 0; q->sel[0] = 0; start_selected(s); }
+        else if (dev == 1 && (!strcmp(d, "screen") || !strcmp(d, "adapt")) && !q->loading && q->nsrc[0] > 0 && s->rtc_authed_count > 0) { dev = 2; q->tab = 0; q->sel[0] = 0; start_selected(s); }
         if (dev == 1 && !strcmp(d, "dialog-apps") && q->napps > 0) { dev = 2; q->apps[0].on = true; }
     }
 }
@@ -313,6 +322,14 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             ch |= seg(ui, "fps", FPS_LABEL, NULL, 3, &q->fps);
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+            cui_column(ui, .gap = 1) {
+                cui_text(ui, "Se a rede ou o PC apertar", .size = 13, .color = B_MUTED);
+                cui_text(ui, q->content ? "Fluidez: cede resolução antes de quadros" : "Nitidez: cede quadros antes de resolução", .size = 11, .color = CUI_RGBA(0xa592b8aa), .nowrap = true);
+            }
+            static const char *const pr[2] = { "Nitidez", "Fluidez" };
+            ch |= seg(ui, "pri", pr, NULL, 2, &q->content);
+        }
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Bitrate", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "br", BR_LABEL, NULL, 4, &q->br_mode);
         }
@@ -332,8 +349,8 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
                 cui_text(ui, line, .size = 12, .color = CUI_RGB(0xf5d9a0));
             }
         } else {
-            snprintf(line, sizeof line, q->br_mode == 0 ? "Automático: cerca de %s para esta resolução e FPS." : "Cerca de %s.", r);
-            cui_text(ui, line, .size = 12, .color = B_MUTED);
+            snprintf(line, sizeof line, q->br_mode == 0 ? "Automático: até %s; baixa e volta sozinho conforme a rede." : "Teto de %s; o ajuste automático trabalha abaixo dele.", r);
+            cui_text(ui, line, .size = 12, .color = B_MUTED, .nowrap = true);
         }
     }
     return ch;
@@ -443,17 +460,29 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         char chip[80]; quality_chip(q, chip, sizeof chip);
         bool failed = q->err[0] && !on && !q->dialog_open;   /* motivo do fim ("A janela foi fechada"...) fica no chip até a próxima ação */
         cui_box(ui, .id = "q", .dir = CUI_ROW, .gap = 6, .pad_x = 14, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            bool adapting = q->active && q->adapting[0];   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
             if (failed) cui_icon(ui, CUI_ICON_TRIANGLE_ALERT, 13, B_DANGER);
-            cui_text(ui, failed ? q->err : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : B_TEXT, .nowrap = true);
+            else if (adapting) cui_icon(ui, !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
+            cui_text(ui, failed ? q->err : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
-        if (briks_clicked(ui, "q")) { q->err[0] = 0; cui_popover_open(ui, "shq"); }
-        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 460, .pad = 16, .gap = 12) {
+        if (briks_clicked(ui, "q") || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
+        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
             static bool dirty;
             if (quality_controls(ui, q)) dirty = true;
             if (q->active) {
-                char st[200]; snprintf(st, sizeof st, "No ar: %d × %d · %.0f FPS · %d kbps · %s%s", q->w, q->h, q->stat_fps, q->stat_kbps, q->encoder[0] ? q->encoder : "H264", q->hardware ? " (GPU)" : "");
-                cui_text(ui, st, .size = 12, .color = B_MUTED);
+                /* telemetria local, ao vivo */
+                char st[240];
+                snprintf(st, sizeof st, "No ar: %s · %.0f FPS · %d kbps (alvo %d FPS · %d kbps)", res_name(q->live_h ? q->live_h : q->h), q->stat_fps, q->stat_kbps, q->target_fps, q->target_kbps);
+                cui_text(ui, st, .size = 12, .color = B_TEXT, .nowrap = true);
+                snprintf(st, sizeof st, "Rede: estimada %d kbps · perda %.1f%% · RTT %d ms · reenvios %d/s", q->est_kbps, q->loss_pct, q->rtt_ms, q->rtx);
+                cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+                snprintf(st, sizeof st, "Codificador: %s%s · %.1f ms/quadro · CPU %d%%", q->encoder[0] ? q->encoder : "H264", q->hardware ? " (GPU)" : " (software)", q->enc_ms, q->cpu);
+                cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+                if (q->adapting[0]) {
+                    snprintf(st, sizeof st, !strcmp(q->adapting, "cpu") ? "Adaptando: o PC não deu conta; qualidade reduzida até caber." : "Adaptando à rede%s%s: qualidade reduzida, volta sozinha.", q->reason[0] ? " (" : "", q->reason[0] ? (!strcmp(q->reason, "perda") ? "perda)" : "atraso)") : "");
+                    cui_text(ui, st, .size = 12, .color = CUI_RGB(0xf5d9a0), .nowrap = true);
+                }
                 if (cui_button(ui, "Aplicar na transmissão", .variant = CUI_BUTTON_PRIMARY, .disabled = !dirty)) { dirty = false; send_start(s, q->last_kind, q->last_id, q->label); cui_popover_close(ui, "shq"); }
             } else dirty = false;
         }

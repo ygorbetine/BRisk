@@ -52,10 +52,14 @@ typedef struct {
     share_app_t apps[SH_MAX_APPS]; int napps;
     int res, fps, br_mode;                     /* índices: 720p/1080p/1440p/4K; 15/30/60; automático/alto/máximo/personalizado */
     float br_custom;                           /* Mbps (1..50) quando personalizado */
+    int content;                               /* prioridade no aperto: 0 nitidez (cede FPS), 1 fluidez (cede resolução) */
     /* transmissão local */
     bool active, starting, audio_on, hardware;
     int w, h, cur_fps, kbps, cpu, audio_sources;
     float stat_fps, enc_ms, audio_peak; int stat_kbps;
+    /* laço de adaptação ao vivo (share.stats) */
+    int live_h, target_fps, target_kbps, est_kbps, rtt_ms, rtx; float loss_pct;
+    char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
     struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; char label[64], path[300]; } remote[8];

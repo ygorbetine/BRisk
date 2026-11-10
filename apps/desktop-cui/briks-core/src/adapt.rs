@@ -149,6 +149,7 @@ pub struct Controller {
     pub overshoot: f64,
     /// piso medido de bits por pixel por quadro (0 = sem piso conhecido) e proporção largura/altura do que está sendo codificado
     pub bpp_floor: f64,
+    bpp_prev: Option<f64>,
     aspect: f64,
     /// teto de bitrate do modo manual (None = automático: o teto é o "automático" do nível em uso)
     pub manual_ceil: Option<f64>,
@@ -159,7 +160,7 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, bpp_floor: 0.0, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(self.ladder[0].h, self.ladder[0].fps) as f64) }
@@ -177,8 +178,11 @@ impl Controller {
         if asked <= 0.0 || sent <= 0.0 || fps < 0.5 || w == 0 || h == 0 { return; }
         self.aspect = w as f64 / h as f64;
         let bpp = sent / fps / (w * h) as f64;
-        if sent > asked * 1.15 { self.bpp_floor = if bpp > self.bpp_floor { bpp } else { self.bpp_floor * 0.7 + bpp * 0.3 }; }
-        else { self.bpp_floor *= 0.9; }   // obedeceu: o conteúdo ficou mais fácil, esquece aos poucos
+        if sent > asked * 1.15 {
+            // vale o menor de dois segundos seguidos de excesso: um quadro-chave isolado infla a medida de um segundo só
+            if let Some(prev) = self.bpp_prev { let c = prev.min(bpp); self.bpp_floor = if c > self.bpp_floor { c } else { self.bpp_floor * 0.7 + c * 0.3 }; }
+            self.bpp_prev = Some(bpp);
+        } else { self.bpp_prev = None; self.bpp_floor *= 0.9; }   // obedeceu: o conteúdo ficou mais fácil, esquece aos poucos
         self.overshoot = (sent / asked).clamp(0.0, 8.0);
     }
 
@@ -264,6 +268,7 @@ mod tests {
         let mut c = Controller::new(Content::Detail, 1080, 30, 12_000);
         c.decide(12_000_000.0);
         // ruído em 1080p: pediu 1,5 Mbps, saíram 4,3 Mbps a 3 qps → ~0,7 bit por pixel por quadro
+        c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080);
         c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080);
         let d = c.decide(1_500_000.0);
         assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");

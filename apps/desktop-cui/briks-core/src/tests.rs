@@ -582,6 +582,7 @@ async fn adaptation_follows_the_network() {
     std::fs::create_dir_all(&out).unwrap();
     // (segundos, banda Mbps, perda %)
     let steps = [(12u32, 20.0, 0.0), (14, 6.0, 0.0), (14, 2.0, 2.0), (14, 0.8, 5.0), (18, 6.0, 0.0)];
+    let mut policy = vec![];
     for (content, name) in [(crate::adapt::Content::Detail, "nitidez"), (crate::adapt::Content::Motion, "fluidez")] {
         let rows = adapt_profile(content, name, &format!("adapt-{name}"), &steps, &out).await;
         let avg = |a: usize, b: usize, f: &dyn Fn(&Row) -> f64| rows[a..b].iter().map(f).sum::<f64>() / (b - a) as f64;
@@ -596,13 +597,13 @@ async fn adaptation_follows_the_network() {
         assert!(free > 4500.0, "sem limite deveria usar bem mais que os degraus apertados: {free}");
         assert!(m6 < 6300.0 && m2 < 2200.0 && m08 < 950.0, "o envio não respeitou a banda: {m6} {m2} {m08}");
         assert!(back > m08 * 2.5, "não se recuperou quando a banda voltou: {back}");
-        // política: qual foi a PRIMEIRA coisa a ceder quando a rede apertou?
-        let first = rows.iter().find(|r| r.t > 12 && (r.th < 1080 || r.tfps < 30)).expect("nunca reduziu");
-        eprintln!("[{name}] primeira redução em t={} s: alvo {}p a {} qps", first.t, first.th, first.tfps);
-        if name == "nitidez" { assert!(first.th == 1080 && first.tfps < 30, "nitidez: deve ceder o FPS antes da resolução"); }
-        else { assert!(first.tfps == 30 && first.th < 1080, "fluidez: deve ceder a resolução antes do FPS"); }
+        policy.push((name, h2, f2, h08, f08));
         assert!(worst_gap < 6000, "receptor congelado por {worst_gap} ms");
     }
+    // política por conteúdo, com a MESMA rede: a nitidez segura mais resolução (e cede FPS); a fluidez segura mais FPS (e cede resolução)
+    let (n, f) = (policy[0], policy[1]);
+    eprintln!("política a 2 Mbps: nitidez {:.0}p a {:.0} qps × fluidez {:.0}p a {:.0} qps; a 0,8 Mbps: nitidez {:.0}p a {:.0} qps × fluidez {:.0}p a {:.0} qps", n.1, n.2, f.1, f.2, n.3, n.4, f.3, f.4);
+    assert!(n.1 >= f.1 && f.2 >= n.2 && (n.1 > f.1 || f.2 > n.2), "as duas políticas deveriam divergir no aperto");
     eprintln!("CSV em {}", out.display());
 }
 

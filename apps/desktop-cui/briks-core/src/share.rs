@@ -335,12 +335,14 @@ pub struct JitterBuf {
     gap_since: Option<Instant>,
     need_key: bool,
     pub lost_frames: u64,
+    /// o próximo quadro-chave entregue vem depois de uma descontinuidade: quem decodifica deve recomeçar do zero
+    pub fresh: bool,
     pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
 }
 const WAIT: Duration = Duration::from_millis(400);
 
 impl JitterBuf {
-    pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, recovered: 0 } }
+    pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, fresh: false, recovered: 0 } }
     fn ext(&mut self, seq: u16) -> u64 {
         if self.next.is_none() && self.pkts.is_empty() { self.hi = 1 << 16 | seq as u64; return self.hi; }
         let d = seq.wrapping_sub(self.hi as u16) as i16 as i64;
@@ -391,6 +393,7 @@ impl JitterBuf {
                 let key = crate::mfenc::nals(&au).iter().any(|n| n.0 == 5);
                 if !ok || au.is_empty() { self.need_key = true; want_pli = true; self.lost_frames += 1; continue; }
                 if self.need_key && !key { continue; }   // sem referência: espera o quadro-chave
+                if self.need_key && self.lost_frames > 0 { self.fresh = true; }
                 self.need_key = false;
                 out.push(au);
             } else {
@@ -427,8 +430,8 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
             let r = d.decode(&au);
             st2.fed.fetch_add(1, Ordering::Relaxed);
             match &r { Err(_) => { st2.dec_err.fetch_add(1, Ordering::Relaxed); st2.want_pli.store(true, Ordering::Relaxed); } Ok(None) => { st2.dec_none.fetch_add(1, Ordering::Relaxed); dry += 1; } _ => { dry = 0; } }
-            // rede de segurança: 45 unidades seguidas sem sair quadro = decodificador perdido; recria e pede quadro-chave
-            if dry >= 45 { dry = 0; drop(r); dec = None; st2.want_pli.store(true, Ordering::Relaxed); continue; }
+            // rede de segurança: 15 unidades seguidas sem sair quadro = decodificador perdido; recria e pede quadro-chave
+            if dry >= 15 { dry = 0; drop(r); dec = None; st2.want_pli.store(true, Ordering::Relaxed); continue; }
             if let Ok(Some((w, h, rgba))) = r {
                 let path = st2.sink_path.lock().unwrap().clone();
                 let Some(path) = path else { continue };
@@ -458,6 +461,7 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
         }
         if let Some(p) = pkt { jb.push(p); }
         let (aus, want) = jb.pop(Instant::now());
+        if std::mem::take(&mut jb.fresh) { let _ = dtx.try_send(None); }   // descontinuidade: decodificador novo para o quadro-chave
         for au in aus { if dtx.try_send(Some(au)).is_err() { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); } last_frame = Instant::now(); }
         if want || st.want_pli.swap(false, Ordering::Relaxed) { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); }
         // sem quadros há 2 s (o quadro-chave pedido se perdeu): pede outro

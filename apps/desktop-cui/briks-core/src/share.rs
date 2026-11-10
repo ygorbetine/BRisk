@@ -219,7 +219,11 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     }
                     if let Some(e) = enc.as_mut() {
                         let diff = (enc_bps(d.bps) as f64 - e.bps as f64).abs() / e.bps.max(1) as f64;
-                        if diff > 0.05 && !e.set_bitrate(enc_bps(d.bps)) { enc = None; }   // sem ajuste ao vivo: recria (sai um quadro-chave)
+                        let want = enc_bps(d.bps);
+                        // Queda grande: recria o codificador. O ajuste ao vivo no NVENC leva ~2 s para valer (medido), e nesses 2 s o
+                        // envio continua acima do que a rede aguenta. Subidas e ajustes pequenos vão ao vivo, sem quadro-chave.
+                        if (want as f64) < e.bps as f64 * 0.8 { enc = None; }
+                        else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;
                 }

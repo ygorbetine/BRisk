@@ -340,32 +340,75 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     }
 }
 
+/* alfa escalado (fade de abertura dos itens/textos) */
+static cui_color fade(cui_color c, float a) { c.a = (uint8_t)(c.a * a + 0.5f); return c; }
+
+typedef struct { float a; } menu_paint_t;
+/* fundo do popup: sombra suave que segue a curva, vidro (camada 1, com desfoque do que está atrás), tinta violeta leve e borda de luz fina */
+static void menu_bg_paint(cui_ctx *ui, cui_rect r, void *user) {
+    const menu_paint_t *mp = (const menu_paint_t *)user;
+    cui_corners rad = CUI_CORNERS(22);
+    if (g_perf < PERF_MIN) {
+        cui_draw_shadow(ui, r, rad, 40.0f, -12.0f, (cui_vec2){ 0, 20.0f }, fade(CUI_RGBA(0x0a001977), mp->a));
+        cui_draw_shadow(ui, r, rad, 14.0f, -2.0f, (cui_vec2){ 0, 6.0f }, fade(CUI_RGBA(0x0a00193c), mp->a));
+    }
+    cui_draw_rect_border(ui, r, rad, B_GLASS_POPUP, fade(CUI_RGBA(0xffffff30), mp->a), 1.0f);
+    cui_draw_rect(ui, r, rad, fade(CUI_RGBA(0x8b5cf61c), mp->a));                                    /* tinta violeta */
+    cui_rect in = { r.x + 1.5f, r.y + 1.5f, r.w - 3.0f, r.h - 3.0f };
+    cui_draw_rect_border(ui, in, CUI_CORNERS(20.5f), CUI_RGBA(0x00000000), fade(CUI_RGBA(0xd9ccff26), mp->a), 1.0f);   /* rim light interno, sem listra */
+}
+
+/* item "pílula de vidro": translúcido, brilho suave ao passar o mouse */
+static bool menu_pill(cui_ctx *ui, const char *label, int id, float a) {
+    cui_push_id_int(ui, id);
+    cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "pill")); cui_vec2 m = cui_mouse_pos(ui);
+    bool hot = lr.w > 0 && m.x >= lr.x && m.y >= lr.y && m.x < lr.x + lr.w && m.y < lr.y + lr.h;
+    cui_box(ui, .id = "pill", .width = CUI_FILL, .height = CUI_PX(36), .radius = 18,
+            .bg = fade(hot ? CUI_RGBA(0xc4b0ff3a) : CUI_RGBA(0xffffff16), a), .border = 1, .border_color = fade(hot ? CUI_RGBA(0xe9e0ff77) : CUI_RGBA(0xffffff2a), a),
+            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        cui_text(ui, label, .font = CUI_FONT_MEDIUM, .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
+    }
+    if (hot) cui_set_cursor(ui, CUI_CURSOR_HAND);
+    bool hit = briks_clicked(ui, "pill");
+    cui_pop_id(ui);
+    return hit;
+}
+
 /* Menu "Adicionar painel": popup de vidro ancorado onde o usuário clicou, sempre inteiro dentro da janela. */
 static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
+    static float t;   /* abertura 0..1 */
     if (!menu_open) return;
+    if (menu_age == 0) t = g_perf >= PERF_MIN ? 1.0f : 0.0f;
+    float dur = g_perf == PERF_SIMPLE ? 0.07f : 0.16f;
+    if (t < 1.0f) { t += (dur > 0 ? 1.0f / 60.0f / dur : 1.0f); if (t > 1.0f) t = 1.0f; cui_request_redraw(ui); }
+    float e = 1.0f - (1.0f - t) * (1.0f - t), a = 0.25f + 0.75f * e;
     int shown = 0; for (int k = 0; k < P_COUNT; k++) if (layout_find(&L, k) < 0) shown++;
     cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "addmenu"));
-    float w = MENU_W, h = lr.h > 0 ? lr.h : 150.0f + 40.0f * (shown ? shown : 1);
+    float w = MENU_W, h = lr.h > 0 ? lr.h : 150.0f + 44.0f * (shown ? shown : 1);
     float x = menu_ax, y = menu_ay;
     if (x + w + 8 > vp.x) x = menu_ax - w;      /* sem espaço à direita: abre para a esquerda do clique */
     if (y + h + 8 > vp.y) y = menu_ay - h;      /* sem espaço embaixo: abre para cima */
     x = fminf(fmaxf(x, 8), fmaxf(vp.x - w - 8, 8)); y = fminf(fmaxf(y, 8), fmaxf(vp.y - h - 8, 8));
+    float lift = (1.0f - e) * 8.0f;             /* sobe 8 px ao abrir */
     bool out = menu_age > 0 && lr.w > 0 && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !(mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h);
     if (out || (menu_age > 0 && cui_key_pressed(ui, CUI_KEY_ESCAPE))) { menu_open = false; return; }
     if (menu_age < 3) cui_request_redraw(ui);   /* o 2º quadro já mede o tamanho real e reposiciona */
     menu_age++;
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-        cui_box(ui, .id = "addmenu", .width = CUI_PX(w), .pad = 14, .gap = 8, .radius = 18, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_GLASS_BORDER) {
-            cui_text(ui, "Adicionar painel", .font = CUI_FONT_MEDIUM);
-            cui_text(ui, "Escolha o painel e leve o cursor à zona onde ele deve encaixar: os outros painéis abrem espaço ao vivo. Clique para confirmar.", .color = B_MUTED, .size = 12);
-            for (int k = 0; k < P_COUNT; k++) {
-                if (layout_find(&L, k) >= 0) continue;
-                cui_push_id_int(ui, 400 + k);
-                if (cui_button(ui, panel_title(k), .width = CUI_FILL)) { drag = (drag_t){ true, k, true }; menu_open = false; }
-                cui_pop_id(ui);
+    menu_paint_t pt = { a };
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y + lift) {
+        cui_box(ui, .id = "addmenu", .dir = CUI_STACK, .width = CUI_PX(w)) {
+            cui_canvas(ui, "addmenu-bg", CUI_FILL, CUI_FILL, menu_bg_paint, &pt, sizeof pt);
+            cui_box(ui, .width = CUI_FILL, .pad = 16, .gap = 8) {
+                cui_text(ui, "Adicionar painel", .font = CUI_FONT_MEDIUM, .size = 15, .color = fade(CUI_RGB(0xfaf7ff), a));
+                cui_text(ui, "Escolha o painel e leve o cursor à zona onde ele deve encaixar: os outros painéis abrem espaço ao vivo. Clique para confirmar.",
+                         .size = 12, .color = fade(CUI_RGB(0xd3c8ee), a));
+                for (int k = 0; k < P_COUNT; k++) {
+                    if (layout_find(&L, k) >= 0) continue;
+                    if (menu_pill(ui, panel_title(k), 400 + k, a)) { drag = (drag_t){ true, k, true }; menu_open = false; }
+                }
+                if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
+                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
             }
-            if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13);
-            if (cui_button(ui, "Restaurar layout padrão", .variant = CUI_BUTTON_SECONDARY, .width = CUI_FILL)) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
         }
     }
 }

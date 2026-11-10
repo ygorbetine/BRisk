@@ -56,7 +56,8 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
             cui_text(ui, label, .size = icon * 0.3f, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xe6dcff));
         }
     }
-    cui_tooltip(ui, name);
+    { cui_rect tr = cui_get_rect(ui, cui_make_id(ui, "b")); cui_vec2 tm = cui_mouse_pos(ui);   /* tooltip só com o mouse realmente sobre o item (cui_last_hovered não serve p/ caixas simples) */
+      if (tr.w > 0 && tm.x >= tr.x && tm.y >= tr.y && tm.x < tr.x + tr.w && tm.y < tr.y + tr.h && (!wide || strlen(name) > 14)) cui_tooltip(ui, name); }
     if (briks_clicked(ui, "b")) *clicked_id = id;
     cui_pop_id(ui);
 }

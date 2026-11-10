@@ -31,9 +31,6 @@ pub struct PeerNet {
     pub updated: Instant,
     pub nacks: u64,      // pacotes pedidos de novo (acumulado)
     pub plis: u64,       // pedidos de quadro-chave (acumulado)
-    /// Retorno direto do espectador pelo DataChannel (4x por segundo): taxa que REALMENTE chegou (bps) e atraso de fila (ms)
-    /// medido pacote a pacote. None = espectador antigo ou ainda sem retorno; aí valem só os relatórios RTCP.
-    pub fb: Option<(f64, f32, Instant)>,
 }
 
 #[derive(Default)]
@@ -46,12 +43,6 @@ impl NetShared {
         if fresh.is_empty() { return None; }
         Some((fresh.iter().map(|p| p.loss).fold(0.0, f32::max), fresh.iter().map(|p| p.rtt_ms).fold(0.0, f32::max), fresh.iter().map(|p| p.jitter_ms).fold(0.0, f32::max)))
     }
-    /// Retorno fresco (< 1,2 s) do pior espectador: (menor taxa recebida, maior atraso de fila).
-    pub fn feedback(&self) -> Option<(f64, f32)> {
-        let f: Vec<(f64, f32)> = self.peers.values().filter_map(|p| p.fb).filter(|f| f.2.elapsed() < Duration::from_millis(1200)).map(|f| (f.0, f.1)).collect();
-        if f.is_empty() { return None; }
-        Some((f.iter().map(|x| x.0).fold(f64::MAX, f64::min), f.iter().map(|x| x.1).fold(0.0, f32::max)))
-    }
     pub fn totals(&self) -> (u64, u64) { (self.peers.values().map(|p| p.nacks).sum(), self.peers.values().map(|p| p.plis).sum()) }
 }
 
@@ -62,7 +53,6 @@ pub struct Estimator {
     rtt_hist: Vec<f32>,        // últimas medidas (base = mínimo)
     hold_until: Instant,       // sem subir até aqui (depois de uma queda)
     last_drop: Option<Instant>,
-    last_up: Option<Instant>,
     /// capacidade observada no último congestionamento (bps) e quando: a estimativa não passa dela por um tempo, e o limite
     /// relaxa devagar (sonda para cima com cuidado em vez de voltar a despejar o que o link já mostrou não aguentar)
     cap: Option<(f64, Instant)>,
@@ -70,65 +60,53 @@ pub struct Estimator {
 }
 
 impl Estimator {
-    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_drop: None, last_up: None, cap: None, reason: "" } }
+    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_drop: None, cap: None, reason: "" } }
     pub fn set_ceil(&mut self, ceil: f64) { self.ceil = ceil; if self.est > ceil { self.est = ceil; } }
     pub fn rtt_base(&self) -> f32 { self.rtt_hist.iter().copied().fold(f32::MAX, f32::min) }
 
-    /// `sent` = bps realmente enviados no último intervalo; `net` = pior espectador pelos relatórios RTCP (None = sem relatórios);
-    /// `nack_ratio` = pacotes pedidos de novo pela primeira vez / pacotes enviados; `fb` = retorno direto do espectador
-    /// (taxa recebida em bps, atraso de fila em ms), quando há.
-    pub fn update(&mut self, now: Instant, sent: f64, net: Option<(f32, f32, f32)>, nack_ratio: f32, fb: Option<(f64, f32)>) -> f64 {
-        if net.is_none() && fb.is_none() { self.reason = ""; return self.est; }
-        let (loss, rtt, _) = net.unwrap_or((0.0, 0.0, 0.0));
+    /// `sent` = bps realmente enviados no último segundo; `net` = pior espectador (None = sem relatórios);
+    /// `nack_ratio` = pacotes pedidos de novo / pacotes enviados no último segundo.
+    pub fn update(&mut self, now: Instant, sent: f64, net: Option<(f32, f32, f32)>, nack_ratio: f32) -> f64 {
+        let Some((loss, rtt, _)) = net else { self.reason = ""; return self.est; };
         if rtt > 0.0 { self.rtt_hist.push(rtt); if self.rtt_hist.len() > 30 { self.rtt_hist.remove(0); } }
         let base = if self.rtt_hist.is_empty() { 0.0 } else { self.rtt_base() };
-        // atraso: com retorno direto vale a fila medida pelo espectador (atual, 4x/s); sem ele, o RTT dos relatórios (1–2 s atrasado)
-        let (delayed, mild) = match fb { Some((_, q)) => (q > 80.0, q > 35.0), None => (rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.5).max(80.0), false) };
+        let delayed = rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.5).max(80.0);
         // os Receiver Reports contam como recebido o que a retransmissão consertou; a fração de pacotes pedidos pela primeira vez
         // é a perda real do caminho, e chega antes do relatório
         let loss_eff = loss.max(nack_ratio.min(1.0));
         if loss_eff > 0.10 || delayed {
-            match fb {
-                // Com a taxa recebida em mãos o corte é exato: 90% do que o caminho deixou passar. Não se acumula (a taxa recebida
-                // acompanha a capacidade), então pode ser reaplicado a cada intervalo enquanto o congestionamento durar.
-                Some((rx, _)) if rx > FLOOR_BPS => {
-                    let target = rx * 0.9;
-                    if target < self.est { self.est = target.max(FLOOR_BPS); self.last_drop = Some(now); self.cap = Some((rx, now)); }
-                }
-                _ => {
-                    // Sem retorno direto: cai rápido, mas com freios — os relatórios do segundo seguinte a uma queda ainda refletem o
-                    // envio antigo, então só cai de novo depois de 2 s (ou com perda acima de 30%), e nunca abaixo de 40–60% da estimativa.
-                    let wait = if delayed { 900 } else { 1900 };
-                    let settling = self.last_drop.map(|t| now.duration_since(t) < Duration::from_millis(wait)).unwrap_or(false);
-                    if !settling || loss_eff > 0.30 {
-                        let floor = self.est * if delayed { 0.4 } else { 0.6 };
-                        let from = if sent > FLOOR_BPS { self.est.min(sent.max(floor)) } else { self.est };
-                        let factor = if delayed { 0.7 } else { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) };
-                        self.est = (from * factor).max(FLOOR_BPS);
-                        self.last_drop = Some(now);
-                        if sent > FLOOR_BPS { self.cap = Some((sent * (1.0 - loss_eff as f64).max(0.3) * 0.85, now)); }
-                    }
-                }
+            // Cai rápido, mas com freios: (1) os relatórios do segundo seguinte a uma queda ainda refletem o envio antigo, então
+            // só cai de novo depois de 2 s (ou com perda acima de 30%); (2) parte do que realmente passou, porém nunca abaixo de
+            // 60% da estimativa — o envio do último segundo já vem reduzido pelos nossos próprios descartes.
+            // Atraso (fila enchendo) é medida atual do caminho: enquanto ele durar, corta a cada segundo para 70% do que passou —
+            // é preciso ficar ABAIXO da capacidade para a fila esvaziar. Perda é sinal mais atrasado: espera 2 s entre cortes.
+            let wait = if delayed { 900 } else { 1900 };
+            let settling = self.last_drop.map(|t| now.duration_since(t) < Duration::from_millis(wait)).unwrap_or(false);
+            if !settling || loss_eff > 0.30 {
+                let floor = self.est * if delayed { 0.4 } else { 0.6 };
+                let from = if sent > FLOOR_BPS { self.est.min(sent.max(floor)) } else { self.est };
+                let factor = if delayed { 0.7 } else { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) };
+                self.est = (from * factor).max(FLOOR_BPS);
+                self.last_drop = Some(now);
+                if sent > FLOOR_BPS { self.cap = Some((sent * (1.0 - loss_eff as f64).max(0.3) * 0.85, now)); }
             }
-            self.hold_until = now + Duration::from_millis(if fb.is_some() { 1500 } else { 3000 });
-            self.reason = if delayed { "atraso" } else { "perda" };
-        } else if loss_eff < 0.03 && !mild && now >= self.hold_until {
+            self.hold_until = now + Duration::from_secs(3);
+            self.reason = if loss_eff > 0.10 { "perda" } else { "atraso" };
+        } else if loss_eff < 0.03 && now >= self.hold_until {
             // Sobe só quando a estimativa está sendo usada (senão cresceria sem ser testada): rápido (25%/s) enquanto está abaixo
-            // de metade do teto, devagar (8%/s) perto dele. `dt` normaliza para intervalos menores que 1 s.
-            let dt = self.last_up.map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(1.0).clamp(0.1, 1.5);
-            self.last_up = Some(now);
+            // de metade do teto, devagar (8%/s) perto dele.
             if sent >= self.est * 0.7 || self.est < self.ceil * 0.25 {
-                let k: f64 = if self.est < self.ceil * 0.5 { 1.25 } else { 1.08 };
-                self.est = (self.est * k.powf(dt) + 40_000.0 * dt).min(self.ceil);
+                let k = if self.est < self.ceil * 0.5 { 1.25 } else { 1.08 };
+                self.est = (self.est * k + 40_000.0).min(self.ceil);
             }
-            // teto da capacidade lembrada: firme por 4 s, depois sobe 15% por segundo (sondagem); some ao alcançar o teto geral
+            // teto da capacidade lembrada: firme por 6 s, depois sobe 15% por segundo (sondagem lenta); some ao alcançar o teto geral
             if let Some((c, t)) = self.cap {
                 let age = now.saturating_duration_since(t).as_secs_f64();
-                let lim = if age < 4.0 { c } else { c * 1.15f64.powf(age - 4.0) };
+                let lim = if age < 6.0 { c } else { c * 1.15f64.powf(age - 6.0) };
                 if lim >= self.ceil { self.cap = None; } else if self.est > lim { self.est = lim.max(FLOOR_BPS); }
             }
             if self.est >= self.ceil * 0.98 { self.reason = ""; }
-        } else { self.last_up = Some(now); }
+        }
         self.est
     }
 }
@@ -277,43 +255,25 @@ mod tests {
     fn estimator_falls_fast_on_loss_or_delay_and_climbs_back_slowly() {
         let mut e = Estimator::new(8_000_000.0);
         let t0 = Instant::now();
-        for i in 0..5 { e.update(t0 + Duration::from_secs(i), 8_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, None); }
+        for i in 0..5 { e.update(t0 + Duration::from_secs(i), 8_000_000.0, Some((0.0, 20.0, 1.0)), 0.0); }
         assert_eq!(e.est, 8_000_000.0);
         // fila enchendo: RTT sobe muito acima da base → cai sem esperar perda
-        let a = e.update(t0 + Duration::from_secs(6), 6_000_000.0, Some((0.0, 260.0, 5.0)), 0.0, None);
+        let a = e.update(t0 + Duration::from_secs(6), 6_000_000.0, Some((0.0, 260.0, 5.0)), 0.0);
         assert!(a < 6_000_000.0 && e.reason == "atraso", "{a}");
         // perda pesada: cai mais
-        let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0, None);
+        let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0);
         assert!(b < 3_000_000.0 && e.reason == "perda", "{b}");
         let b = b.min(e.est);
         // rede limpa: fica parado 3 s e depois sobe ~8% por segundo
-        let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0, None);
+        let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0);
         assert_eq!(c, b);
         let mut v = c;
-        for i in 13..60 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0, None); }
+        for i in 13..60 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
         assert!(v > b * 2.0 && v <= 8_000_000.0, "{v}");
         // perda leve aleatória (5%) não derruba
-        let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0, None);
+        let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0);
         let _ = c;
         assert_eq!(w, v);
-    }
-
-    #[test]
-    fn direct_feedback_cuts_to_what_actually_arrived_not_to_the_floor() {
-        // rede cai de folgada para 6 Mbps: o espectador recebe 5,4 Mbps e vê a fila crescer
-        let mut e = Estimator::new(12_000_000.0);
-        let t0 = Instant::now();
-        e.update(t0, 9_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, Some((9_000_000.0, 5.0)));
-        let a = e.update(t0 + Duration::from_millis(300), 9_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, Some((5_400_000.0, 180.0)));
-        assert!((4_700_000.0..=5_000_000.0).contains(&a), "corta para ~90% do que chegou: {a}");
-        // o congestionamento ainda aparece nos intervalos seguintes: o corte não se acumula
-        let b = e.update(t0 + Duration::from_millis(600), 5_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, Some((5_300_000.0, 120.0)));
-        let c = e.update(t0 + Duration::from_millis(900), 4_800_000.0, Some((0.0, 20.0, 1.0)), 0.0, Some((5_300_000.0, 90.0)));
-        assert!(b > 4_500_000.0 && c > 4_500_000.0, "não despenca: {b} {c}");
-        // fila vazia de novo: volta a subir depois de 1,5 s, limitado pela capacidade lembrada nos primeiros segundos
-        let mut v = c;
-        for i in 0..10 { v = e.update(t0 + Duration::from_millis(1200 + i * 500), v, Some((0.0, 20.0, 1.0)), 0.0, Some((v, 4.0))); }
-        assert!(v > c && v <= 5_500_000.0 * 1.6, "{v}");
     }
 
     #[test]

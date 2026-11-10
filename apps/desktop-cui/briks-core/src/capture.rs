@@ -23,14 +23,21 @@ pub enum SourceKind {
     Screen(isize),   // HMONITOR
     Window(isize),   // HWND
     Test,            // padrão sintético
+    TestResize,      // padrão sintético que muda de 1280x720 para 960x540 depois de ~2 s (janela redimensionada)
 }
 
-/// Último quadro capturado (BGRA sem preenchimento de linha).
+/// Último quadro capturado, já convertido para I420 no tamanho de envio (a conversão sai direto do buffer da captura:
+/// nenhuma cópia do quadro BGRA inteiro, que numa tela 3440x1440 são 20 MB por quadro).
 #[derive(Default)]
 pub struct Latest {
+    /// tamanho da origem
     pub w: usize,
     pub h: usize,
-    pub data: Vec<u8>,
+    pub yuv: Option<crate::video::Yuv>,
+    /// prévia local RGBA (largura, altura, pixels), no máximo 1280 de largura, ~10 por segundo
+    pub preview: Option<(usize, usize, Vec<u8>)>,
+    /// primeiro quadro BGRA cru (só quando pedido, para provas)
+    pub raw: Option<Vec<u8>>,
     pub counter: u64,
 }
 
@@ -38,6 +45,51 @@ pub struct Shared {
     pub latest: Mutex<Latest>,
     pub closed: AtomicBool,
     pub frames: AtomicU64,
+    /// altura alvo do envio (a origem nunca é ampliada)
+    pub target_h: usize,
+    pub want_preview: bool,
+    pub want_raw: AtomicBool,
+    pub preview_every: u64,
+    /// intervalo mínimo entre quadros aceitos (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado sem converter)
+    pub min_interval: Duration,
+    pub last_accept: Mutex<Option<std::time::Instant>>,
+    pub dropped: AtomicU64,
+}
+
+impl Shared {
+    /// Recebe um quadro BGRA (sem preenchimento de linha) da captura e guarda o I420 pronto para codificar.
+    /// `stride` = bytes por linha na origem (>= w*4).
+    pub fn push_bgra(&self, data: &[u8], w: usize, h: usize, stride: usize) {
+        if w < 2 || h < 2 || stride < w * 4 || data.len() < stride * (h - 1) + w * 4 { return; }
+        {
+            let mut la = self.last_accept.lock().unwrap();
+            let now = std::time::Instant::now();
+            if let Some(t) = *la { if now.duration_since(t) < self.min_interval { self.dropped.fetch_add(1, Ordering::Relaxed); return; } }
+            *la = Some(now);
+        }
+        let (tw, th) = crate::video::fit_size(w, h, self.target_h);
+        let yuv = crate::video::bgra_to_i420_stride(data, stride, w, h, tw, th);
+        let n = self.frames.fetch_add(1, Ordering::Relaxed);
+        let preview = if self.want_preview && n % self.preview_every == 0 { Some(preview_rgba(data, stride, w, h)) } else { None };
+        let raw = if self.want_raw.swap(false, Ordering::Relaxed) { Some(data.chunks(stride).take(h).flat_map(|r| r[..w * 4].iter().copied()).collect()) } else { None };
+        let mut l = self.latest.lock().unwrap();
+        l.w = w; l.h = h; l.counter += 1; l.yuv = Some(yuv);
+        if preview.is_some() { l.preview = preview; }
+        if raw.is_some() { l.raw = raw; }
+    }
+}
+
+/// Prévia local: reduz (vizinho mais próximo) para no máximo 1280 de largura e troca BGRA → RGBA.
+fn preview_rgba(bgra: &[u8], stride: usize, w: usize, h: usize) -> (usize, usize, Vec<u8>) {
+    let sc = (w as f32 / 1280.0).max(1.0);
+    let (pw, ph) = (((w as f32 / sc) as usize).max(2) & !1, ((h as f32 / sc) as usize).max(2) & !1);
+    let mut out = vec![255u8; pw * ph * 4];
+    let xs: Vec<usize> = (0..pw).map(|x| ((x as f32 * sc) as usize).min(w - 1) * 4).collect();
+    for (y, row) in out.chunks_exact_mut(pw * 4).enumerate() {
+        let src = &bgra[((y as f32 * sc) as usize).min(h - 1) * stride..];
+        for (px, &o) in row.chunks_exact_mut(4).zip(xs.iter()) { px[0] = src[o + 2]; px[1] = src[o + 1]; px[2] = src[o]; }
+    }
+    (pw, ph, out)
 }
 
 enum Handle {
@@ -51,20 +103,38 @@ pub struct Capture {
     handle: Option<Handle>,
 }
 
-struct Handler { shared: Arc<Shared> }
+struct Handler { shared: Arc<Shared>, staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)> }
 
 impl GraphicsCaptureApiHandler for Handler {
     type Flags = Arc<Shared>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
-    fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> { Ok(Handler { shared: ctx.flags }) }
+    fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> { Ok(Handler { shared: ctx.flags, staging: None }) }
     fn on_frame_arrived(&mut self, frame: &mut Frame, _c: InternalCaptureControl) -> Result<(), Self::Error> {
-        let (w, h) = (frame.width() as usize, frame.height() as usize);
-        let mut fb = frame.buffer()?;
-        let data = fb.as_nopadding_buffer()?;
-        let mut l = self.shared.latest.lock().unwrap();
-        l.w = w; l.h = h; l.counter += 1;
-        l.data.clear(); l.data.extend_from_slice(&data[..w * h * 4]);
-        self.shared.frames.fetch_add(1, Ordering::Relaxed);
+        use windows::Win32::Graphics::Direct3D11::*;
+        let (w, h) = (frame.width(), frame.height());
+        // Uma única textura de leitura reaproveitada entre quadros (a biblioteca criaria uma nova de dezenas de MB a cada quadro);
+        // a conversão de cor lê direto da memória mapeada, respeitando o passo de linha.
+        unsafe {
+            let tex = frame.as_raw_texture().clone();
+            let dev = tex.GetDevice()?;
+            let ctx = dev.GetImmediateContext()?;
+            if self.staging.as_ref().map(|s| (s.1, s.2) != (w, h)).unwrap_or(true) {
+                let mut d = D3D11_TEXTURE2D_DESC::default();
+                tex.GetDesc(&mut d);
+                d.Usage = D3D11_USAGE_STAGING; d.BindFlags = 0; d.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32; d.MiscFlags = 0;
+                let mut st = None;
+                dev.CreateTexture2D(&d, None, Some(&mut st))?;
+                self.staging = st.map(|t| (t, w, h));
+            }
+            let Some((st, _, _)) = &self.staging else { return Ok(()) };
+            ctx.CopyResource(st, &tex);
+            let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+            ctx.Map(st, 0, D3D11_MAP_READ, 0, Some(&mut m))?;
+            let pitch = m.RowPitch as usize;
+            let data = std::slice::from_raw_parts(m.pData as *const u8, pitch * (h as usize - 1) + w as usize * 4);
+            self.shared.push_bgra(data, w as usize, h as usize, pitch);
+            ctx.Unmap(st, 0);
+        }
         Ok(())
     }
     fn on_closed(&mut self) -> Result<(), Self::Error> { self.shared.closed.store(true, Ordering::Relaxed); Ok(()) }
@@ -99,22 +169,25 @@ pub fn read_stamp(rgba: &[u8], w: usize) -> u32 {
 }
 
 impl Capture {
-    pub fn start(kind: SourceKind, fps: u32) -> Result<Capture> {
-        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0) });
+    /// `target_h` = altura de envio; `preview` = gerar a prévia local; `raw` = guardar o 1º quadro cru (provas).
+    pub fn start(kind: SourceKind, fps: u32, target_h: usize, preview: bool, raw: bool) -> Result<Capture> {
+        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0), target_h, want_preview: preview,
+            want_raw: AtomicBool::new(raw), preview_every: (fps as u64 / 10).max(1),
+            min_interval: Duration::from_micros(800_000 / fps.clamp(1, 120) as u64), last_accept: Mutex::new(None), dropped: AtomicU64::new(0) });
         let stop = Arc::new(AtomicBool::new(false));
         let interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));
         let handle = match kind {
-            SourceKind::Test => {
+            SourceKind::Test | SourceKind::TestResize => {
+                let resize = kind == SourceKind::TestResize;
                 let (sh, st) = (shared.clone(), stop.clone());
                 let (w, h) = std::env::var("BRIKS_TEST_SOURCE_SIZE").ok().and_then(|v| v.split_once('x').map(|(a, b)| (a.parse().unwrap_or(1280), b.parse().unwrap_or(720)))).unwrap_or((1280usize, 720usize));
                 std::thread::spawn(move || {
                     let mut t = 0usize;
                     while !st.load(Ordering::Relaxed) {
-                        {
-                            let mut l = sh.latest.lock().unwrap();
-                            l.w = w; l.h = h; l.counter += 1; l.data = test_pattern(w, h, t / 10); stamp_ms(&mut l.data, w);
-                        }
-                        sh.frames.fetch_add(1, Ordering::Relaxed);
+                        let (w, h) = if resize && t > fps as usize * 2 { (960, 540) } else { (w, h) };
+                        let mut f = test_pattern(w, h, t / 10);
+                        stamp_ms(&mut f, w);
+                        sh.push_bgra(&f, w, h, w * 4);
                         t += 1;
                         std::thread::sleep(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));
                     }
@@ -240,7 +313,7 @@ mod tests {
         assert!(!screens.is_empty(), "sem telas");
         let id: isize = screens[0]["id"].as_str().unwrap().parse().unwrap();
         assert!(std::path::Path::new(screens[0]["thumb"].as_str().unwrap()).exists());
-        let mut c = Capture::start(SourceKind::Screen(id), 30).unwrap();
+        let mut c = Capture::start(SourceKind::Screen(id), 30, 1080, true, false).unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         let n = c.shared.frames.load(Ordering::Relaxed);
         let (w, h) = { let l = c.shared.latest.lock().unwrap(); (l.w, l.h) };

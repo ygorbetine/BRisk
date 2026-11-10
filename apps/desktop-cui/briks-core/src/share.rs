@@ -67,7 +67,7 @@ pub fn cpu_ms() -> f64 {
 
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
 pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<TrackLocalStaticSample>, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
-    let cap = Capture::start(cfg.kind.clone(), cfg.fps).map_err(|e| e.to_string())?;
+    let cap = Capture::start(cfg.kind.clone(), cfg.fps, cfg.height, preview.is_some(), dump.is_some()).map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     idr.store(true, Ordering::Relaxed);
     let (tx, mut rx) = mpsc::unbounded_channel::<(Vec<u8>, Duration)>();
@@ -83,10 +83,11 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
         let mut cap = cap;
         let mut enc: Option<H264Enc> = None;
         let mut pv = preview.and_then(|p| FrameSink::create(&p).ok());
-        let (mut last_n, mut last_send, mut next) = (0u64, Instant::now() - Duration::from_secs(5), Instant::now());
+        let (mut last_send, mut next) = (Instant::now() - Duration::from_secs(5), Instant::now());
+        let mut held: Option<video::Yuv> = None;
         let (mut frames, mut bytes, mut enc_ns, mut skipped) = (0u64, 0u64, 0u128, 0u64);
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
-        let (mut since_idr, mut pv_n, mut dumped) = (0u32, 0u32, false);
+        let mut since_idr = 0u32;
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
             if cap.shared.closed.load(Ordering::Relaxed) { closed_reason = "A janela foi fechada".into(); break; }
@@ -94,33 +95,33 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
             if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
             next += period; if next < now { next = now + period; }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
-            let yuv = {
-                let l = cap.shared.latest.lock().unwrap();
-                if l.w == 0 || l.counter == last_n && last_send.elapsed() < Duration::from_millis(1000) { continue; }
-                last_n = l.counter;
-                let (tw, th) = video::fit_size(l.w, l.h, cfg.height);
-                let bps = if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
-                if enc.as_ref().map(|e| (e.w, e.h, e.bps) != (tw, th, bps)).unwrap_or(true) {
-                    match H264Enc::new(tw, th, fps as f32, bps) {
-                        Ok(e) => { id2.store(true, Ordering::Relaxed); let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": bps / 1000, "src_w": l.w, "src_h": l.h, "label": cfg.label, "encoder": e.name, "hardware": e.hardware })); enc = Some(e); }
-                        Err(e) => { closed_reason = format!("codificador: {e}"); break; }
-                    }
-                }
-                if let Some(p) = pv.as_mut() {
-                    pv_n += 1;
-                    if pv_n % (fps / 10).max(1) == 0 { preview_write(p, &l.data, l.w, l.h); }
-                }
-                if let Some(d) = &dump { if !dumped { dumped = true; dump_png(d, &l.data, l.w, l.h, tw, th); } }
-                let t0 = Instant::now();
-                let y = video::bgra_to_i420(&l.data, l.w, l.h, tw, th);
-                enc_ns += t0.elapsed().as_nanos();
-                y
+            let (yuv, pvw, raw, src) = {
+                let mut l = cap.shared.latest.lock().unwrap();
+                if l.w == 0 { continue; }
+                let fresh = l.yuv.take();
+                (fresh, l.preview.take(), l.raw.take(), (l.w, l.h))
             };
+            if let (Some(p), Some((pw, ph, px))) = (pv.as_mut(), pvw) { p.write(pw, ph, &px); }
+            let yuv = match (yuv, &held) {
+                (Some(y), _) => y,
+                (None, Some(_)) if last_send.elapsed() >= Duration::from_millis(1000) => held.take().unwrap(),
+                _ => continue,
+            };
+            let (tw, th) = (yuv.w, yuv.h);
+            let bps = if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
+            if enc.as_ref().map(|e| (e.w, e.h, e.bps) != (tw, th, bps)).unwrap_or(true) {
+                match H264Enc::new(tw, th, fps as f32, bps) {
+                    Ok(e) => { id2.store(true, Ordering::Relaxed); let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": bps / 1000, "src_w": src.0, "src_h": src.1, "label": cfg.label, "encoder": e.name, "hardware": e.hardware })); enc = Some(e); }
+                    Err(e) => { closed_reason = format!("codificador: {e}"); break; }
+                }
+            }
+            if let (Some(d), Some(raw)) = (&dump, raw) { dump_png(d, &raw, src.0, src.1, tw, th); }
             let e = enc.as_mut().unwrap();
             since_idr += 1;
             if id2.swap(false, Ordering::Relaxed) || since_idr >= fps * 4 { e.force_idr(); since_idr = 0; }
             let t0 = Instant::now();
             let au = e.encode(&yuv);
+            held = Some(yuv);   // guardado para o reenvio de tela parada
             enc_ns += t0.elapsed().as_nanos();
             match au {
                 Ok(list) => {
@@ -139,7 +140,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (frames as f64 / secs * 10.0).round() / 10.0, "kbps": (bytes as f64 * 8.0 / secs / 1000.0).round(),
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "skipped": skipped, "w": tw, "h": th,
-                    "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round() }));
+                    "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": cap.shared.dropped.swap(0, Ordering::Relaxed) }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu;
             }
         }
@@ -147,18 +148,6 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
         let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "off", "reason": closed_reason }));
     });
     Ok(Sender { stop, idr })
-}
-
-/// Prévia local: reduz (vizinho mais próximo) para no máximo 640 de largura e troca BGRA → RGBA.
-fn preview_write(sink: &mut FrameSink, bgra: &[u8], w: usize, h: usize) {
-    let sc = (w as f32 / 640.0).max(1.0);
-    let (pw, ph) = (((w as f32 / sc) as usize).max(2) & !1, ((h as f32 / sc) as usize).max(2) & !1);
-    let mut out = vec![255u8; pw * ph * 4];
-    for y in 0..ph { let sy = ((y as f32 * sc) as usize).min(h - 1); for x in 0..pw {
-        let o = (sy * w + ((x as f32 * sc) as usize).min(w - 1)) * 4; let d = (y * pw + x) * 4;
-        out[d] = bgra[o + 2]; out[d + 1] = bgra[o + 1]; out[d + 2] = bgra[o];
-    } }
-    sink.write(pw, ph, &out);
 }
 
 /// Só para provas: salva o primeiro quadro enviado (já no tamanho de envio) como PNG.

@@ -32,6 +32,7 @@ void rtc_leave_room(app_state_t *s) {
     copy(s->rtc_state, sizeof s->rtc_state, "");
     s->rtc_owner_me = false; s->kick_open = false;
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
+    share_reset(s);
 }
 
 void rtc_kick_peer(app_state_t *s, int slot) {
@@ -110,6 +111,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strncmp(ev, "share.", 6)) {
+        changed = share_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
@@ -166,7 +169,7 @@ void rtc_pump(app_state_t *s) {
             s->rtc_want_room = false;
         }
     }
-    char line[8192];
+    static char line[65536];   /* a lista de fontes (share.sources) passa de 8 KB */
     bool any = false;
     while (core_next_event(line, sizeof line)) any |= rtc_handle_event(s, line);
     if (any || (s->in_room && (st == CORE_STARTING))) cui_request_redraw(cui_app_ui(s->app));

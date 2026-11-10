@@ -28,10 +28,13 @@ pub struct FrameSink {
 impl FrameSink {
     pub fn create(path: &Path) -> Result<Self> {
         if let Some(d) = path.parent() { std::fs::create_dir_all(d)?; }
-        let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
-        f.set_len((HDR + MAX_W * MAX_H * 4) as u64)?;
+        // sem truncar: a UI pode estar com o arquivo mapeado (no Windows isso faria a abertura falhar)
+        let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+        let want = (HDR + MAX_W * MAX_H * 4) as u64;
+        if f.metadata()?.len() != want { f.set_len(want)?; }
         let mut map = unsafe { MmapMut::map_mut(&f)? };
         map[0..4].copy_from_slice(b"BKFR");
+        map[8..24].fill(0);   // largura/altura/nº zerados: quadro antigo de outra sessão não aparece
         Ok(FrameSink { map, n: 0 })
     }
 
@@ -126,7 +129,10 @@ fn rows_to_yuv(r0: &[u8], r1: &[u8], y0: &mut [u8], y1: &mut [u8], u: &mut [u8],
 
 /// BGRA (sw x sh, sem preenchimento de linha) → I420 dw x dh (pares). Se as dimensões diferem, cada pixel de destino é a média de
 /// 4 amostras da origem (suaviza o serrilhado de reduções moderadas, importante para texto). Usa poucas threads, por faixas de linhas.
-pub fn bgra_to_i420(src: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Yuv {
+pub fn bgra_to_i420(src: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Yuv { bgra_to_i420_stride(src, sw * 4, sw, sh, dw, dh) }
+
+/// Igual a `bgra_to_i420`, com passo de linha `stride` (bytes) na origem — lê direto de uma textura mapeada.
+pub fn bgra_to_i420_stride(src: &[u8], stride: usize, sw: usize, sh: usize, dw: usize, dh: usize) -> Yuv {
     let mut y = vec![0u8; dw * dh];
     let mut u = vec![0u8; dw * dh / 4];
     let mut v = vec![0u8; dw * dh / 4];
@@ -153,13 +159,13 @@ pub fn bgra_to_i420(src: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Y
                     let (ya, yb) = yy[pr * 2 * dw..(pr * 2 + 2) * dw].split_at_mut(dw);
                     let (uo, vo) = (&mut uu[pr * (dw / 2)..(pr + 1) * (dw / 2)], &mut vv[pr * (dw / 2)..(pr + 1) * (dw / 2)]);
                     if same {
-                        rows_to_yuv(&src[py * sw * 4..(py + 1) * sw * 4], &src[(py + 1) * sw * 4..(py + 2) * sw * 4], ya, yb, uo, vo);
+                        rows_to_yuv(&src[py * stride..py * stride + sw * 4], &src[(py + 1) * stride..(py + 1) * stride + sw * 4], ya, yb, uo, vo);
                     } else {
                         // reduz as duas linhas para `tmp` (BGRA) e converte
                         for k in 0..2 {
                             let dyr = py + k;
-                            let r0 = (((dyr as f32 + 0.25) * sy_step) as usize).min(sh - 1) * sw * 4;
-                            let r1 = (((dyr as f32 + 0.75) * sy_step) as usize).min(sh - 1) * sw * 4;
+                            let r0 = (((dyr as f32 + 0.25) * sy_step) as usize).min(sh - 1) * stride;
+                            let r1 = (((dyr as f32 + 0.75) * sy_step) as usize).min(sh - 1) * stride;
                             let (ra, rb) = (&src[r0..r0 + sw * 4], &src[r1..r1 + sw * 4]);
                             let out = &mut tmp[k * dw * 4..(k + 1) * dw * 4];
                             for (o, &(xa, xb)) in out.chunks_exact_mut(4).zip(xs.iter()) {

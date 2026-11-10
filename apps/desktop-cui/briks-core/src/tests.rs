@@ -425,7 +425,7 @@ async fn real_screen_share_stats() {
         let st = wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await.expect("stats");
         let st2 = wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await.expect("stats2");
         let src = FrameSource::open(&rpath).ok().and_then(|s| s.read()).map(|(w, h, n, _)| (w, h, n));
-        eprintln!("{height}p{fps}: enviado {}x{} {} fps {} kbps, codificação {} ms/quadro, CPU do core {}% | {} ; recebido {:?}", st2["w"], st2["h"], st2["fps"], st2["kbps"], st2["enc_ms"], st2["cpu_pct"], st["cpu_pct"], src);
+        eprintln!("{height}p{fps}: enviado {}x{} {} fps {} kbps, codificação {} ms/quadro, CPU do processo {}% | {} (quadros de captura descartados/s: {}); recebido {:?}", st2["w"], st2["h"], st2["fps"], st2["kbps"], st2["enc_ms"], st2["cpu_pct"], st["cpu_pct"], st2["cap_dropped"], src);
         a.cmd.send(MeshCmd::ShareStop).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await;
     }
@@ -458,4 +458,53 @@ async fn process_audio_reaches_the_viewer() {
     eprintln!("B recebeu da faixa de áudio da tela: {} quadros Opus, pico {:.3}; emissor: {:?}", st.frames, st.peak, stats.map(|s| (s["audio_sources"].clone(), s["audio_peak"].clone(), s["audio_frames"].clone())));
     assert!(st.frames >= 50 && st.peak > 0.01, "áudio do processo não chegou: {st:?}");
     assert_eq!(bau.rx_stat(PA).frames, 0, "a faixa da tela não pode cair no canal de voz");
+}
+
+/// Item 6: quem entra depois recebe a transmissão em andamento (3 pessoas), a fonte muda de tamanho no meio (janela
+/// redimensionada) e todos passam a receber o novo tamanho, e quem sai não derruba a transmissão dos outros.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn late_joiner_resize_and_leave_keep_the_share_alive() {
+    use crate::capture::SourceKind;
+    use crate::procaudio::AudioMode;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib, ic) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "tela4", ia);
+    let mut b = node(port, PB, "Beto", "tela4", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-share3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestResize, height: 1080, fps: 30, kbps: 0, label: "Janela".into(), audio: AudioMode::None }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B: on");
+    b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
+    let f = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 20).await.expect("B: 1º quadro");
+    assert_eq!((f["w"].as_u64(), f["h"].as_u64()), (Some(1280), Some(720)));
+    // C entra com a transmissão já no ar
+    let mut c = node(port, PC, "Caio", "tela4", ic);
+    let on = wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "on" && v["peer_id"] == PA, 30).await.expect("C (entrou depois) não soube da transmissão");
+    assert_eq!(on["label"], "Janela");
+    c.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("c.bin") }).await.unwrap();
+    wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("C: nenhum quadro");
+    // a fonte encolhe para 960x540: os dois espectadores recebem o novo tamanho
+    let fb = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame" && v["w"] == 960, 25).await.expect("B não recebeu o novo tamanho");
+    assert_eq!(fb["h"].as_u64(), Some(540));
+    // C pode ter começado a assistir antes ou depois da mudança: confere o tamanho no próprio quadro dele
+    let t0 = std::time::Instant::now();
+    loop {
+        let d = FrameSource::open(&dir.join("c.bin")).ok().and_then(|s| s.read()).map(|r| (r.0, r.1));
+        if d == Some((960, 540)) { break; }
+        assert!(t0.elapsed() < Duration::from_secs(20), "C não recebeu o novo tamanho: {d:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // B sai da sala: C continua recebendo quadros novos
+    let _ = b.cmd.send(MeshCmd::Close).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let src = FrameSource::open(&dir.join("c.bin")).unwrap();
+    let n0 = src.read().map(|r| r.2).unwrap_or(0);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let (w, h, n1, _) = src.read().expect("C: quadro");
+    eprintln!("depois de B sair: C recebeu {} quadros em 1,5 s ({w}x{h})", n1 - n0);
+    assert!(n1 > n0 + 10 && (w, h) == (960, 540), "C parou de receber: {n0} -> {n1}");
+    let _ = a.cmd.send(MeshCmd::Close).await; let _ = c.cmd.send(MeshCmd::Close).await;
 }

@@ -153,6 +153,7 @@ static void empty_state(cui_ctx *ui, const char *icon, const char *title, const 
 
 void ui_call(cui_ctx *ui, app_state_t *s) {
     (void)seg_begin_style;
+    share_tick(ui, s);
     const char *group = s->active_group >= 0 ? s->groups[s->active_group].name : (s->group_count ? s->groups[0].name : "Sala geral");
     char sub[200], st[160]; snprintf(sub, sizeof sub, "%s · %s", group, rtc_status_text(s, st, sizeof st));
     briks_ambient(ui, 0.85f);
@@ -201,12 +202,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     }
                 }
             } else if (s->call_mode == 1) {
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
-                    empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui.");
+                if (!ui_share_stage(ui, s)) {
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
+                        empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui.");
+                    }
                 }
             } else {
                 bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
-                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false, s->user_status };
+                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false, s->sh.active ? "Transmitindo a tela" : s->user_status };
                 const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false, "" };
                 cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
                     tile(ui, &me, mic_eff);
@@ -214,7 +217,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
                         const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, s->rtc_peers[i].status };
+                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, share_peer_live(s, i) ? "Transmitindo a tela" : s->rtc_peers[i].status };
                         cui_push_id_int(ui, 700 + i);
                         int act = tile(ui, &t, true);
                         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
@@ -234,11 +237,12 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 }
                 if (pill(ui, 2, CUI_ICON_VOLUME_2, "Ensurdecer", s->deaf ? 1 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
                 if (pill(ui, 3, CUI_ICON_VIDEO, "Câmera", s->cam_on ? 1 : 0)) s->cam_on = !s->cam_on;
-                if (pill(ui, 4, CUI_ICON_MONITOR, "Compartilhar", s->sharing ? 1 : 0)) s->sharing = !s->sharing;
+                ui_share_bar(ui, s);
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
             }
         }
     }
+    ui_share_dialog(ui, s);
     /* confirmação rápida antes de expulsar */
     if (s->kick_open) {
         cui_vec2 vp = cui_viewport_size(ui);

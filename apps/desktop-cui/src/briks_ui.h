@@ -38,6 +38,29 @@ typedef struct { char id[48]; char author[96]; char content[512]; char created[4
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
                OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE } op_t;
 
+/* Transmissão de tela (ui_share.c): fontes do seletor, áudio por app, qualidade e estado local/remoto */
+#define SH_MAX_SRC 24
+#define SH_MAX_APPS 16
+typedef struct { char id[24]; char name[96]; char sub[64]; char thumb[280]; int w, h; cui_texture tex; bool tex_tried; } share_src_t;
+typedef struct { unsigned pid; char name[64]; bool playing, on; } share_app_t;
+typedef struct {
+    bool dialog_open, loading, quality_open;
+    int tab;                                   /* 0 telas, 1 janelas */
+    int sel[2];                                /* fonte escolhida em cada aba */
+    share_src_t src[2][SH_MAX_SRC]; int nsrc[2];
+    int audio_mode;                            /* 0 da fonte, 1 escolher apps, 2 sem áudio */
+    share_app_t apps[SH_MAX_APPS]; int napps;
+    int res, fps, br_mode;                     /* índices: 720p/1080p/1440p/4K; 15/30/60; automático/alto/máximo/personalizado */
+    float br_custom;                           /* Mbps (1..50) quando personalizado */
+    /* transmissão local */
+    bool active, starting, audio_on, hardware;
+    int w, h, cur_fps, kbps, cpu, audio_sources;
+    float stat_fps, enc_ms, audio_peak; int stat_kbps;
+    char label[64], encoder[64], err[160], last_kind[12], last_id[24];
+    /* transmissões dos outros (índice = slot em rtc_peers) */
+    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; char label[64], path[300]; } remote[8];
+} share_state_t;
+
 typedef struct {
     screen_t screen;
     cui_app *app;
@@ -84,6 +107,7 @@ typedef struct {
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
     bool kick_open, kicked_open;   /* diálogo de confirmação; aviso "Você foi removido da chamada" */
+    share_state_t sh;
 } app_state_t;
 
 /* app.c: máquina de estados das chamadas ao backend */
@@ -112,6 +136,17 @@ void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o do
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_pump(app_state_t *s);                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */
+/* ui_share.c: transmissão de tela */
+struct jval;
+bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos share.* do core */
+void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
+void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */
+void share_stop(app_state_t *s);
+void share_reset(app_state_t *s);                             /* saiu da sala: esquece tudo */
+void ui_share_dialog(cui_ctx *ui, app_state_t *s);            /* "Compartilhar tela — Escolha a fonte e confirme" */
+void ui_share_bar(cui_ctx *ui, app_state_t *s);               /* botão Compartilhar + chips de áudio e qualidade */
+bool ui_share_stage(cui_ctx *ui, app_state_t *s);             /* palco do modo Transmissão; false = ninguém transmitindo */
+bool share_peer_live(const app_state_t *s, int slot);         /* esse participante está transmitindo? */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */
 
 /* Pilha levantada: grupos 0..2 = cartões (atrás, meio, frente), 3 = âncora de captura do vidro (alfa 0). O dock desenha cada grupo sem giro entre

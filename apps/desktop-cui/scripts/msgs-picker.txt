@@ -3,8 +3,8 @@ wait 4
 rdown
 rup
 wait 6
-at 600 184
-wait 3
+at 732 153
+wait 4
 down
 up
 wait 14

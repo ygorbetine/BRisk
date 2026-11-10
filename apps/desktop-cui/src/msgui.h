@@ -9,7 +9,8 @@ void msgui_demo_seed(void);                                /* BRIKS_DEMO=msgs: m
 void msgui_demo(bool on);                                   /* BRIKS_DEMO: não lê nem grava o arquivo */
 bool msgui_deleted(const char *id);
 const char *msgui_text(const msg_t *m);                     /* texto exibido (a versão editada, se houver) */
-void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m);/* depois da linha da mensagem (que tem .id = "row"): hover e botão direito */
+void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m);/* depois do balão (que tem .id = "bub") e da seta: hover e botão direito */
+void msgui_arrow(cui_ctx *ui, const msg_t *m);            /* setinha ao lado do balão (só aparece no hover da mensagem) */
 void msgui_tags(cui_ctx *ui, const msg_t *m);               /* "(editada)", estrela, fixada, lembrete na linha do autor */
 void msgui_quote(cui_ctx *ui, const app_state_t *s, const msg_t *m);   /* citação da resposta, acima do texto */
 void msgui_reactions(cui_ctx *ui, const msg_t *m);          /* chips de reação sob o texto */

@@ -1,6 +1,7 @@
 # Capturas da interação com mensagens (BRIKS_DEMO=msgs, sem backend). Uso: powershell -File capturas-mensagens.ps1 [-Out pasta]
 # Cada cenário roda um roteiro (scripts/msgs-*.txt) e guarda o último quadro como PNG.
 param([string]$Out = "$PSScriptRoot\..\shots-mensagens", [string[]]$Cenarios = @("hover", "menu"))
+$Cenarios = $Cenarios -split ","
 $exe = "$PSScriptRoot\..\build\briks_cui.exe"
 New-Item -ItemType Directory -Force $Out | Out-Null
 foreach ($c in $Cenarios) {

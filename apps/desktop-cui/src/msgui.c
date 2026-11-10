@@ -17,6 +17,8 @@ typedef struct {
     react_t r[NREACT]; int nr;
 } mstate_t;
 static mstate_t g_st[MAXST];
+#define NQUICK 6
+static char g_quick[NQUICK][16] = { "👍", "❤️", "😂", "😮", "😢", "🙏" };   /* barra rápida: o usuário troca arrastando da lista grande */
 static bool g_loaded, g_demo;
 
 void msgui_demo(bool on) { g_demo = on; g_loaded = true; }
@@ -50,7 +52,9 @@ static void st_save(void) {
     char p[MAX_PATH];
     if (g_demo || !state_path(p, sizeof p)) return;
     FILE *f = fopen(p, "wb"); if (!f) return;
-    fputs("{\"version\":1,\"messages\":[", f);
+    fputs("{\"version\":1,\"quick\":[", f);
+    for (int i = 0; i < NQUICK; i++) { char e[40]; json_escape(g_quick[i], e, sizeof e); fprintf(f, "%s\"%s\"", i ? "," : "", e); }
+    fputs("],\"messages\":[", f);
     bool first = true;
     for (int i = 0; i < MAXST; i++) {
         const mstate_t *m = &g_st[i];
@@ -78,6 +82,8 @@ static void st_load(void) {
     if (n <= 0 || n > 4 * 1024 * 1024) { fclose(f); return; }
     char *buf = malloc((size_t)n + 1); size_t got = fread(buf, 1, (size_t)n, f); buf[got] = 0; fclose(f);
     jval *j = json_parse(buf); free(buf); if (!j) return;
+    const jval *qk = json_get(j, "quick");
+    for (int i = 0; qk && i < json_len(qk) && i < NQUICK; i++) { const jval *e = json_at(qk, i); if (e && e->type == J_STR && e->str[0]) snprintf(g_quick[i], sizeof g_quick[i], "%s", e->str); }
     const jval *arr = json_get(j, "messages");
     for (int i = 0; arr && i < json_len(arr); i++) {
         const jval *o = json_at(arr, i);
@@ -125,18 +131,29 @@ static char g_edit_id[48];
 static cui_rect g_view;
 void msgui_set_view(cui_rect r) { g_view = r; }
 
-typedef struct { bool valid; cui_rect r; msg_t m; } hov_t;
-static hov_t g_hov;                  /* mensagem sob o mouse neste quadro */
 static bool g_menu_want;             /* pedido de abrir o menu (consumido no overlay) */
 static float g_menu_x, g_menu_y;
 static msg_t g_menu_m;               /* mensagem alvo do menu/diálogos */
 static bool g_menu_live;
-static bool g_menu_open_prev;
+static bool g_menu_open, g_emo_open, g_drag_on;
 static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic;
 static float g_emo_x, g_emo_y;
 static char g_recent[160];
 static int g_tone;
 
+
+typedef struct { const char *icon; int n; const char *e[48]; } cat_t;
+#define NCAT 8
+static const cat_t CATS[NCAT] = {
+ { "😀", 48, { "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","😉","😊","😇","🥰","😍","🤩","😘","😋","😛","😜","🤪","🤗","🤔","🤨","😐","😑","🙄","😏","😮","😯","😲","😳","🥺","😢","😭","😤","😡","🥳","😎","🤯","😴","🤮","🥵","🥶","😱","😬","🤐","😈","💀" } },
+ { "🐶", 40, { "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🦆","🦉","🦇","🐺","🐴","🦄","🐝","🦋","🐌","🐞","🐢","🐍","🐙","🦀","🐠","🐬","🐳","🦈","🌵","🌲","🌻","🌹" } },
+ { "🍕", 40, { "🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🌽","🥕","🍞","🧀","🍳","🥓","🍔","🍟","🍕","🌭","🌮","🍣","🍜","🍦","🍩","🍪","🎂","🍫","🍿","☕","🍺","🍷","🥤" } },
+ { "⚽", 32, { "⚽","🏀","🏈","⚾","🎾","🏐","🎱","🏓","🥊","🎮","🕹️","🎲","🎯","🎳","🎸","🎹","🥁","🎧","🎤","🎬","🎨","🏆","🥇","🥈","🥉","🏅","🎪","🎭","🎟️","🎰","🧩","🎻" } },
+ { "🚗", 32, { "🚗","🚕","🚌","🚑","🚒","🚓","🚲","🏍️","✈️","🚀","🛸","🚁","⛵","🚢","🏠","🏢","🏰","🗼","🗽","⛺","🌋","🏖️","🌅","🌃","🌉","🎡","🎢","⛽","🚦","🗺️","🧭","🌍" } },
+ { "💡", 32, { "⌚","📱","💻","🖥️","⌨️","🖱️","💾","📷","🎥","📺","📻","🔋","🔌","💡","🔦","📚","📖","✏️","📌","📎","✂️","🔒","🔑","🔨","🔧","💊","🧪","🔭","💰","💎","📦","🎁" } },
+ { "❤️", 40, { "❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💕","💞","💓","💗","💖","💯","💢","💥","💫","💦","💤","✨","⭐","🌟","🔥","🎉","🎊","👍","👎","👏","🙌","🙏","💪","👌","✌️","🤞","🫶","👀","🧠","👋","🤝" } },
+ { "🏳️", 24, { "🏳️","🏴","🏁","🚩","🇧🇷","🇵🇹","🇺🇸","🇬🇧","🇫🇷","🇩🇪","🇮🇹","🇪🇸","🇯🇵","🇰🇷","🇨🇳","🇦🇷","🇲🇽","🇨🇦","🇦🇺","🇮🇳","✅","❌","❓","❗" } },
+};
 static bool inside(cui_rect r, cui_vec2 p) { return r.w > 0 && p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h; }
 
 static bool is_mine(const msg_t *m) { return m->mine; }
@@ -145,13 +162,33 @@ static bool can_moderate(const app_state_t *s) { return group_open(s) && s->grou
 static bool can_delete(const app_state_t *s, const msg_t *m) { return is_mine(m) || can_moderate(s); }
 static bool can_pin(const app_state_t *s) { return !group_open(s) || can_moderate(s); }
 
+static char g_hot_now[48], g_hot_prev[48];   /* mensagem sob o mouse (balão ou seta) neste quadro / no quadro anterior */
+
+static void open_menu(const msg_t *m, float x, float y) { g_menu_m = *m; g_menu_x = x; g_menu_y = y; g_menu_want = true; }
+
+/* depois do balão e da seta: o hover vale só para o balão (e a seta); botão direito no balão abre o menu no mouse */
 void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m) {
     (void)s;
-    cui_rect r = cui_get_rect(ui, cui_make_id(ui, "row"));
+    cui_rect b = cui_get_rect(ui, cui_make_id(ui, "bub")), a = cui_get_rect(ui, cui_make_id(ui, "arw"));
     cui_vec2 mp = cui_mouse_pos(ui);
-    if (r.w <= 0 || g_menu_live) return;
-    if (r.y + r.h < g_view.y || r.y > g_view.y + g_view.h || !inside(g_view, mp)) return;
-    if (inside(r, mp)) { g_hov.valid = true; g_hov.r = r; g_hov.m = *m; }
+    if (b.w <= 0 || !inside(g_view, mp) || g_drag_on) return;
+    if (g_menu_open || g_emo_open) return;
+    bool over = inside(b, mp) || inside(a, mp);
+    if (over) snprintf(g_hot_now, sizeof g_hot_now, "%s", m->id);
+    if (inside(b, mp) && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) open_menu(m, mp.x, mp.y);
+}
+
+/* setinha ao lado do balão: o espaço é sempre reservado (o layout não pula); só aparece no hover da mensagem */
+void msgui_arrow(cui_ctx *ui, const msg_t *m) {
+    bool show = !strcmp(g_hot_prev, m->id) || (g_menu_open && !strcmp(g_menu_m.id, m->id));
+    cui_box(ui, .id = "arw", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 13, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+            .bg = show ? B_GLASS_BUBBLE : CUI_RGBA(0x00000000), .border = show ? 1 : 0, .border_color = CUI_RGBA(0xffffff30)) {
+        if (show) cui_icon(ui, CUI_ICON_CHEVRON_DOWN, 15, B_TEXT);
+    }
+    if (show && briks_clicked(ui, "arw")) {
+        cui_rect r = cui_get_rect(ui, cui_make_id(ui, "arw"));
+        open_menu(m, r.x < 640 ? r.x : r.x - 200, r.y + r.h + 4);
+    }
 }
 
 void msgui_tags(cui_ctx *ui, const msg_t *m) {
@@ -243,7 +280,6 @@ void msgui_after_send(const char *new_id) {
 }
 
 /* ---------- barra de ações, menu e diálogos ---------- */
-static const char *QUICK[] = { "👍", "❤️", "😂", "🎉", "😮", "🙏" };
 
 static bool chip(cui_ctx *ui, const char *id, const char *emoji, const char *icon, int sz) {
     cui_push_id(ui, id);
@@ -256,7 +292,6 @@ static bool chip(cui_ctx *ui, const char *id, const char *emoji, const char *ico
     return hit;
 }
 
-static bool g_menu_open, g_emo_open;
 static void act_close_menu(cui_ctx *ui) { (void)ui; g_menu_open = false; }
 
 /* linha do menu: 30px, ícone + texto + dica; o realce acompanha o mouse (retângulo do quadro anterior) */
@@ -281,28 +316,27 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     const msg_t *m = &g_menu_m;
     const mstate_t *t = st_find(m->id, false);
     bool pinned = t && t->pinned, fav = t && t->fav;
-    cui_row(ui, .gap = 4, .pad = 2, .width = CUI_FILL, .justify = CUI_JUSTIFY_CENTER) {
-        for (int i = 0; i < 5; i++) { char id[8]; snprintf(id, sizeof id, "q%d", i); if (chip(ui, id, QUICK[i], NULL, 18)) { toggle_react(m->id, QUICK[i]); act_close_menu(ui); } }
+    cui_box(ui, .dir = CUI_ROW, .gap = 1, .pad = 3, .width = CUI_FILL, .radius = 12, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        for (int i = 0; i < NQUICK; i++) { char id[8]; snprintf(id, sizeof id, "q%d", i); if (chip(ui, id, g_quick[i], NULL, 18)) { toggle_react(m->id, g_quick[i]); act_close_menu(ui); } }
+        if (chip(ui, "qplus", NULL, CUI_ICON_PLUS, 0)) { g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
     }
     msep(ui);
-    if (mrow(ui, 1, CUI_ICON_SMILE, "Adicionar reação", NULL, false)) { g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
-    if (is_mine(m) && mrow(ui, 2, CUI_ICON_PENCIL, "Editar mensagem", NULL, false)) { start_edit(s, m); act_close_menu(ui); }
     if (mrow(ui, 3, CUI_ICON_MESSAGE_SQUARE, "Responder", NULL, false)) { start_reply(m); act_close_menu(ui); }
     if (mrow(ui, 4, CUI_ICON_SHARE_2, "Encaminhar", NULL, false)) { g_dlg_forward = true; act_close_menu(ui); }
-    if (mrow(ui, 5, CUI_ICON_HASH, "Criar tópico", "sem efeito", false)) { g_dlg_topic = true; act_close_menu(ui); }
-    msep(ui);
     if (mrow(ui, 6, CUI_ICON_COPY, "Copiar texto", NULL, false)) { set_clipboard(msgui_text(m)); act_close_menu(ui); }
+    msep(ui);
+    if (is_mine(m) && mrow(ui, 2, CUI_ICON_PENCIL, "Editar mensagem", NULL, false)) { start_edit(s, m); act_close_menu(ui); }
     if (can_pin(s) && mrow(ui, 7, CUI_ICON_MAP_PIN, pinned ? "Desafixar mensagem" : "Fixar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->pinned = !pinned; st_save(); } act_close_menu(ui); }
     if (mrow(ui, 8, CUI_ICON_STAR, fav ? "Remover dos favoritos" : "Favoritar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->fav = !fav; st_save(); } act_close_menu(ui); }
     if (mrow(ui, 9, CUI_ICON_BELL, "Criar lembrete", "sem efeito", false)) { g_dlg_remind = true; act_close_menu(ui); }
     if (mrow(ui, 10, CUI_ICON_EYE_OFF, t && t->unread ? "Marcar como lida" : "Marcar como não lida", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->unread = !(t && t->unread); st_save(); } act_close_menu(ui); }
     msep(ui);
     if (mrow(ui, 11, CUI_ICON_LINK, "Copiar link da mensagem", NULL, false)) { char l[220]; snprintf(l, sizeof l, "briks://mensagem/%s/%s", s->chat_channel, m->id); set_clipboard(l); act_close_menu(ui); }
-    if (can_delete(s, m) && mrow(ui, 12, CUI_ICON_TRASH_2, "Excluir mensagem", NULL, true)) { g_dlg_delete = true; act_close_menu(ui); }
     if (mrow(ui, 13, CUI_ICON_HASH, "Copiar ID da mensagem", NULL, false)) { set_clipboard(m->id); act_close_menu(ui); }
+    if (can_delete(s, m)) { msep(ui); if (mrow(ui, 12, CUI_ICON_TRASH_2, "Excluir mensagem", NULL, true)) { g_dlg_delete = true; act_close_menu(ui); } }
 }
 
-static float menu_height(const app_state_t *s, const msg_t *m) { return 16.0f + 40.0f + 3 * 9.0f + 30.0f * (float)(9 + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
+static float menu_height(const app_state_t *s, const msg_t *m) { return 8.0f + (3.0f + (can_delete(s, m) ? 1 : 0)) * 9.0f + 30.0f * (float)(8 + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
 
 void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     int n = 0;
@@ -321,33 +355,8 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
     cui_vec2 vp = cui_viewport_size(ui), mp = cui_mouse_pos(ui);
     static bool emoji_ok; if (!emoji_ok) { emoji_ok = true; cui_emoji_font_load_system(ui); }
 
-    /* abrir o menu: botão direito na linha (g_hov) */
-    static cui_rect last_bar;
-    bool over_bar = inside(last_bar, mp);
     g_menu_live = g_menu_open || g_emo_open;
-    if (!g_menu_live && g_hov.valid && !over_bar && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) {
-        g_menu_m = g_hov.m; g_menu_x = mp.x; g_menu_y = mp.y; g_menu_want = true;
-    }
-    static cui_rect keep; static msg_t keep_m; static bool keep_valid;
-    if (!g_hov.valid && keep_valid && inside(last_bar, mp) && !g_menu_live) { g_hov.valid = true; g_hov.r = keep; g_hov.m = keep_m; }
-
-    /* barra flutuante de ações */
-    if (g_hov.valid && !g_menu_live && !g_menu_want) {
-        float bw = 5 * 30 + 12, bh = 34;
-        float x = g_hov.r.x + g_hov.r.w - bw - 6, y = g_hov.r.y - 8;
-        if (y < g_view.y + 2) y = g_view.y + 2;
-        if (y + bh > g_view.y + g_view.h) y = g_view.y + g_view.h - bh - 2;
-        last_bar = (cui_rect){ x, y, bw, bh }; keep = g_hov.r; keep_m = g_hov.m; keep_valid = true;
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-            cui_box(ui, .id = "msgbar", .dir = CUI_ROW, .gap = 2, .pad = 3, .radius = 14, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30),
-                    .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER) {
-                for (int i = 0; i < 3; i++) { char id[8]; snprintf(id, sizeof id, "b%d", i); if (chip(ui, id, QUICK[i], NULL, 16)) toggle_react(g_hov.m.id, QUICK[i]); }
-                if (chip(ui, "rep", NULL, CUI_ICON_MESSAGE_SQUARE, 0)) start_reply(&g_hov.m);
-                if (chip(ui, "more", NULL, CUI_ICON_ELLIPSIS, 0)) { g_menu_m = g_hov.m; g_menu_x = x + bw - 232; g_menu_y = y + bh + 4; g_menu_want = true; }
-            }
-        }
-    } else if (!g_menu_live) { last_bar = (cui_rect){ 0 }; keep_valid = false; }
-    g_hov.valid = false;
+    memcpy(g_hot_prev, g_hot_now, sizeof g_hot_prev); g_hot_now[0] = 0;   /* a seta de cada mensagem lê o hover do quadro anterior */
 
     /* menu de contexto ancorado no mouse (vidro próprio, absoluto): sempre dentro da janela, rola se a janela for baixa */
     if (g_menu_want) { g_menu_open = true; g_menu_want = false; g_emo_open = false; }
@@ -366,17 +375,75 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         if (cui_key_pressed(ui, CUI_KEY_ESCAPE) || (outside && (cui_mouse_clicked(ui, CUI_MOUSE_LEFT) || cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)))) g_menu_open = false;
     }
 
-    /* seletor de emoji completo (também em vidro próprio) */
+    /* seletor de emojis: barra rápida em cima (espaços que recebem emojis arrastados) e a lista grande por categorias */
     if (g_emo_open) {
-        float x = fminf(fmaxf(g_emo_x, 8), fmaxf(vp.x - 388, 8)), y = fminf(fmaxf(g_emo_y, 8), fmaxf(vp.y - 420, 8));
+        float pw = 372.0f, ph = 400.0f;
+        float x = fminf(fmaxf(g_emo_x, 8), fmaxf(vp.x - pw - 8, 8)), y = fminf(fmaxf(g_emo_y, 8), fmaxf(vp.y - ph - 8, 8));
+        static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;
+        bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-            cui_box(ui, .id = "msgemoji", .pad = 8, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40), .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
-                const char *e = cui_emoji_picker(ui, "picker", .recent = g_recent, .recent_cap = sizeof g_recent, .tone = &g_tone, .placeholder = "Buscar emoji", .width = CUI_PX(340));
-                if (e) { toggle_react(g_menu_m.id, e); g_emo_open = false; }
+            cui_box(ui, .id = "msgemoji", .width = CUI_PX(pw), .pad = 10, .gap = 8, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
+                    .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
+                cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
+                cui_row(ui, .gap = 6) {
+                    for (int i = 0; i < NQUICK; i++) {
+                        cui_push_id_int(ui, 7100 + i);
+                        cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "slot"));
+                        bool tgt = dragging && inside(sr, mp);
+                        cui_box(ui, .id = "slot", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 11, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                .bg = tgt ? CUI_RGBA(0x8b5cf655) : CUI_RGBA(0xffffff0c), .border = 1, .border_color = tgt ? CUI_RGB(0xc4b5fd) : CUI_RGBA(0xc4b5fd60)) {
+                            cui_emoji(ui, g_quick[i], 22);
+                        }
+                        if (dragging && prev_down && !down && tgt && cand[0]) { snprintf(g_quick[i], sizeof g_quick[i], "%s", cand); st_save(); }
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_row(ui, .gap = 2) {
+                    for (int c = 0; c < NCAT; c++) {
+                        cui_push_id_int(ui, 7200 + c);
+                        cui_box(ui, .id = "t", .width = CUI_PX(38), .height = CUI_PX(30), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                .bg = c == cat ? CUI_RGBA(0x8b5cf65a) : CUI_RGBA(0x00000000)) { cui_emoji(ui, CATS[c].icon, 17); }
+                        if (briks_clicked(ui, "t")) cat = c;
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(228), .scroll_y = true, .gap = 2) {
+                    int cols = 8, n = CATS[cat].n;
+                    for (int r0 = 0; r0 < n; r0 += cols) {
+                        cui_push_id_int(ui, 7300 + r0);
+                        cui_row(ui, .gap = 2) {
+                            for (int k = r0; k < r0 + cols && k < n; k++) {
+                                cui_push_id_int(ui, 7400 + k);
+                                const char *e = CATS[cat].e[k];
+                                cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "c"));
+                                bool hot = inside(cr, mp);
+                                cui_box(ui, .id = "c", .width = CUI_PX(40), .height = CUI_PX(38), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                        .bg = hot ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) { cui_emoji(ui, e, 24); }
+                                if (down && !prev_down && hot) { snprintf(cand, sizeof cand, "%s", e); p0 = mp; dragging = false; }
+                                cui_pop_id(ui);
+                            }
+                        }
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_text(ui, "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+            }
+        }
+        if (down && cand[0] && !dragging && (fabsf(mp.x - p0.x) + fabsf(mp.y - p0.y)) > 6) dragging = true;
+        g_drag_on = dragging;
+        if (dragging) {   /* o emoji acompanha o mouse */
+            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = mp.x - 18, .pad_top = mp.y - 18) {
+                cui_box(ui, .width = CUI_PX(36), .height = CUI_PX(36), .radius = 12, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff40),
+                        .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_emoji(ui, cand, 22); }
             }
         }
         cui_rect er = cui_get_rect(ui, cui_make_id(ui, "msgemoji"));
-        if (cui_key_pressed(ui, CUI_KEY_ESCAPE) || (er.w > 0 && !inside(er, mp) && cui_mouse_clicked(ui, CUI_MOUSE_LEFT))) g_emo_open = false;
+        if (prev_down && !down) {
+            if (!dragging && cand[0]) { toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
+            cand[0] = 0; dragging = false; g_drag_on = false;
+        } else if (er.w > 0 && !inside(er, mp) && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !dragging) g_emo_open = false;
+        if (cui_key_pressed(ui, CUI_KEY_ESCAPE)) { g_emo_open = false; cand[0] = 0; dragging = false; g_drag_on = false; }
+        prev_down = down;
     }
 
     float dw = fminf(400.0f, fmaxf(vp.x - 48.0f, 260.0f));

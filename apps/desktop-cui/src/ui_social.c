@@ -176,8 +176,9 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
         if (!m->mine) { cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo */
         if (m->mine) {
+            if (interactive) msgui_arrow(ui, m);   /* seta do lado de dentro, como no WhatsApp: à esquerda do nosso balão */
             /* nosso: roxo padrão; só a quina superior direita mais reta */
-            cui_box(ui, .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
+            cui_box(ui, .id = "bub", .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
                     .radius_tl = g_th.bubble_big, .radius_tr = g_th.bubble_small, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big,
                     .bg = g_th.bubble_own, .border = 1, .border_color = CUI_RGBA(0xffffff26)) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
@@ -192,7 +193,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
         } else {
             /* recebido: vidro; quina superior do lado do avatar com raio 4 */
             cui_box(ui, .pad_top = g_th.bubble_align ? 16 : 0) {   /* middle: o topo (a pontinha) do balão sai da altura do centro do avatar (32/2) */
-            cui_box(ui, .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
+            cui_box(ui, .id = "bub", .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
                     .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
@@ -205,6 +206,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                 if (interactive) msgui_reactions(ui, m);
             }
             }
+            if (interactive) msgui_arrow(ui, m);   /* à direita do balão alheio */
         }
     }
     if (interactive) msgui_row(ui, s, m);

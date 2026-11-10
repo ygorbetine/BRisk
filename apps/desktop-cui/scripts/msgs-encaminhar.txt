@@ -3,7 +3,7 @@ wait 4
 rdown
 rup
 wait 6
-at 600 306
+at 600 215
 wait 3
 down
 up

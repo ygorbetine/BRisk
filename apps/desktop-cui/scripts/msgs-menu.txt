@@ -1,4 +1,4 @@
-at 640 330
+at 520 130
 wait 4
 rdown
 rup

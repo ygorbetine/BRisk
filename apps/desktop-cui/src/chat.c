@@ -25,7 +25,7 @@ static void now_iso(char *out, size_t cap) {
 
 /* Canal da DM: igual nos dois lados porque os ids entram em ordem. */
 static void dm_channel(const app_state_t *s, const char *peer, char *out, size_t cap) {
-    const char *a = s->user_id, *b = peer;
+    const char *a = s->acct_user_id[0] ? s->acct_user_id : s->user_id, *b = peer;   /* conta online: os dois lados usam os ids das contas */
     if (strcmp(a, b) > 0) { const char *t = a; a = b; b = t; }
     snprintf(out, cap, "dm-%s-%s", a, b);
 }

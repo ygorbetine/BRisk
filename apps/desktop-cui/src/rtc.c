@@ -121,7 +121,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, "O briks-core encerrou.");
         s->rtc_session_ready = s->rtc_session_sent = false;
-    } else changed = false;
+    } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
     return changed;
 }

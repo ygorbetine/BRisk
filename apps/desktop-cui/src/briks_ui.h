@@ -36,7 +36,15 @@ typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE } op_t;
+               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+
+
+/* conta online (account.c): estado vindo do briks-core (eventos account.*) */
+enum { ACCT_UNKNOWN, ACCT_OUT, ACCT_BUSY, ACCT_EMAIL_SENT, ACCT_IN };
+enum { AV_MAIN, AV_LOGIN, AV_SIGNUP, AV_RECOVER, AV_NEWPASS };   /* telas da entrada */
+enum { BRIDGE_NONE, BRIDGE_WAIT, BRIDGE_RUNNING, BRIDGE_FAILED };   /* ligação da conta com o banco local deste PC */
+#define MAX_LEGACY 64
+enum { BKP_UNKNOWN, BKP_NONE, BKP_OK, BKP_OTHER };   /* não consultado; sem cópia; cópia desta identidade; cópia de outra identidade */
 
 typedef struct {
     screen_t screen;
@@ -51,6 +59,8 @@ typedef struct {
     char email[96], password[64], name[64], confirm[64], error[160];
     /* sessão */
     char user_id[48], user_name[96], user_email[96];
+    cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
+    char user_nick[32];                        /* @nick da conta (sem o @): o escolhido, ou um provisório derivado do nome; nunca do e-mail */
     char user_status[64], user_presence[64];   /* status (balão) e rich presence (programa em uso); status vazio = mostra a presença */
     bool rp_enabled; int rp_audience;           /* rich presence ligado; 0 = todos os amigos, 1 = só quem está na mesma chamada */
     person_t friends[MAX_FRIENDS]; int friend_count;
@@ -89,6 +99,24 @@ typedef struct {
     bool kick_open, kicked_open;   /* diálogo de confirmação; aviso "Você foi removido da chamada" */
     bool import_open, import_done;   /* diálogo "Importar seus dados do Briks antigo?" (migrate.c) */
     char import_info[200], import_result[200];
+    /* conta online */
+    int acct_state, acct_view, acct_bridge;
+    bool acct_configured, acct_mock, acct_asked, acct_demo;
+    char acct_what[16], acct_provider[16], acct_kind[12];      /* o que está em andamento; signup|recovery no e-mail enviado */
+    char acct_error[240], acct_info[240];
+    char acct_user_id[48], acct_nick[32], acct_code[12];
+    char bridge_email[96], bridge_pw[64];                      /* credencial do banco LOCAL (não é a senha da conta) */
+    bool nick_open; char nick_edit[32], nick_msg[160];
+    char name_edit[64], profile_msg[200];
+    /* cópia cifrada da identidade, recuperável por frase (o servidor nunca vê a frase nem a chave) */
+    int backup_known;                                          /* BK_UNKNOWN.. (abaixo) */
+    bool backup_phrase_open, backup_restore_open, backup_delete_open, backup_ack, backup_busy;
+    char backup_words[12][24];                                 /* frase recém-gerada: só enquanto o diálogo está aberto */
+    char backup_input[240], backup_msg[240], backup_date[16];                      /* editor do Perfil: nome em edição e o retorno da última troca */
+    int import_state;                                          /* 0 não consultado, 1 há dados, 2 importando, 3 feito, 4 nada a importar */
+    char import_msg[240];
+    person_t legacy[MAX_LEGACY]; int legacy_count;             /* contatos do Briks antigo (só nome; sem conta) */
+    bool reload_groups;
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -102,7 +130,35 @@ void update_banner(cui_ctx *ui, app_state_t *s);
 void app_submit_auth(app_state_t *s);
 void app_add_friend(app_state_t *s);
 void app_accept_friend(app_state_t *s, const char *request_id);
-void app_logout(app_state_t *s);
+void app_logout(app_state_t *s);          /* sai da conta online (se houver) e do banco local */
+void app_local_logout(app_state_t *s);    /* só limpa o estado local e volta para a entrada */
+/* account.c: contas online pelo briks-core */
+void account_tick(app_state_t *s);                          /* a cada quadro: liga o core, pede o estado da conta, conclui a ponte local */
+bool account_handle_event(app_state_t *s, const char *line); /* eventos account.*, friends.*, local.*, import.* */
+void account_oauth(app_state_t *s, const char *provider);   /* "google" | "discord": abre o navegador */
+void account_submit(app_state_t *s);                        /* envia o formulário da tela atual (entrar, criar, recuperar, nova senha) */
+void account_submit_code(app_state_t *s);                   /* código de 6 dígitos do e-mail */
+void account_cancel(app_state_t *s);
+void account_logout(app_state_t *s);
+void account_retry(app_state_t *s);                         /* pede o estado de novo (erro de rede ao abrir) */
+void account_friends(app_state_t *s);
+void account_add_friend(app_state_t *s);
+void account_respond_friend(app_state_t *s, const char *request_id, bool accept);
+void account_set_nick(app_state_t *s);
+void account_set_name(app_state_t *s);                      /* troca o nome de exibição por s->name_edit */
+void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
+void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
+void ui_account_editor(cui_ctx *ui, app_state_t *s);
+void account_backup_status(app_state_t *s);
+void account_backup_create(app_state_t *s);                 /* gera a frase (o core mostra uma vez) */
+void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e envia a cópia */
+void account_backup_cancel(app_state_t *s);                 /* descarta a frase gerada */
+void account_backup_restore(app_state_t *s);                /* usa s->backup_input */
+void account_backup_delete(app_state_t *s);
+void ui_backup_section(cui_ctx *ui, app_state_t *s);        /* bloco para Configurações */
+void ui_backup_dialogs(cui_ctx *ui, app_state_t *s);        /* diálogos: frase nova, recuperar, apagar */        /* bloco "foto, nome e @" para o diálogo de Perfil */
+void account_import(app_state_t *s, bool apply);
+void account_bridge_done(app_state_t *s, bool ok);          /* app.c avisa o fim da ligação com o banco local */
 void app_begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body);
 void app_open_friend(app_state_t *s, int idx);   /* abre a DM e carrega o histórico persistido */
 void app_open_group(app_state_t *s, int idx);

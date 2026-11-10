@@ -42,6 +42,7 @@ static unsigned __stdcall start_thread(void *unused) {
     if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) { fail("Pasta AppData indisponível."); return 0; }
     /* Pasta própria do experimento: nunca toca nos dados do Briks de produção (@briks\desktop). */
     snprintf(data, sizeof data, "%s\\Briks-CUI", appdata);
+    { const char *o = getenv("BRIKS_CUI_DATA"); if (o && o[0]) snprintf(data, sizeof data, "%s", o); }   /* testes: pasta isolada (use junto com BRIKS_CORE_DATA) */
     CreateDirectoryA(data, NULL);
 
     SetEnvironmentVariableA("BRIKS_LOCAL_TOKEN", g_token);

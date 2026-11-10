@@ -43,6 +43,7 @@ void app_submit_auth(app_state_t *s) {
 }
 
 void app_add_friend(app_state_t *s) {
+    if (s->acct_user_id[0]) { account_add_friend(s); return; }   /* conta online: pedido pelo @nick, via briks-core */
     if (s->busy || !s->add_email[0]) return;
     char e[256], b[320];
     json_escape(s->add_email, e, sizeof e);
@@ -52,6 +53,7 @@ void app_add_friend(app_state_t *s) {
 }
 
 void app_accept_friend(app_state_t *s, const char *request_id) {
+    if (s->acct_user_id[0]) { account_respond_friend(s, request_id, true); return; }
     if (s->busy) return;
     char path[128];
     snprintf(path, sizeof path, "/friends/requests/%s/accept", request_id);
@@ -59,6 +61,11 @@ void app_accept_friend(app_state_t *s, const char *request_id) {
 }
 
 void app_logout(app_state_t *s) {
+    account_logout(s);      /* invalida a sessão online e apaga o refresh token cifrado */
+    app_local_logout(s);
+}
+
+void app_local_logout(app_state_t *s) {
     if (s->token[0]) {
         bk_call *c = bk_request("POST", "/auth/logout", "{}", s->token);
         bk_free(c);
@@ -69,6 +76,20 @@ void app_logout(app_state_t *s) {
     s->password[0] = 0;
     s->screen = SCREEN_AUTH;
     s->active_friend = -1;
+    s->settings_open = s->profile_open = s->add_friend_open = s->create_group_open = s->nick_open = false;
+}
+
+/* contatos do Briks antigo (importados para /p2p/friends): só o nome; não têm conta online */
+static void load_legacy(app_state_t *s, const char *body) {
+    jval *j = json_parse(body);
+    s->legacy_count = 0;
+    for (int i = 0; i < json_len(j) && s->legacy_count < MAX_LEGACY; i++) {
+        person_t *d = &s->legacy[s->legacy_count++];
+        memset(d, 0, sizeof *d);
+        copy(d->id, sizeof d->id, json_str(json_at(j, i), "peerId", ""));
+        copy(d->name, sizeof d->name, json_str(json_at(j, i), "displayName", "?"));
+    }
+    json_free(j);
 }
 
 static void load_friends(app_state_t *s, const char *body) {
@@ -125,8 +146,22 @@ void app_pump(app_state_t *s) {
     if (!body) return;
 
     switch (op) {
+    case OP_BRIDGE_LOGIN: {   /* conta online -> usuário do banco local; se ainda não existe, cadastra com a credencial local */
+        if (ok) {
+            jval *j = json_parse(body);
+            copy(s->token, sizeof s->token, json_str(j, "accessToken", ""));
+            json_free(j);
+            if (s->token[0]) { begin(s, OP_ME, "GET", "/me", NULL); break; }
+        }
+        if (!code) { copy(s->error, sizeof s->error, "O backend local não respondeu."); account_bridge_done(s, false); break; }
+        char e[200], p[160], n[200], b[640];
+        json_escape(s->bridge_email, e, sizeof e); json_escape(s->bridge_pw, p, sizeof p); json_escape(s->user_name[0] ? s->user_name : "Você", n, sizeof n);
+        snprintf(b, sizeof b, "{\"displayName\":\"%s\",\"email\":\"%s\",\"password\":\"%s\"}", n, e, p);
+        begin(s, OP_AUTH, "POST", "/auth/register", b);
+        break;
+    }
     case OP_AUTH: {
-        if (!ok) { set_error(s, body, code ? "E-mail ou senha incorretos." : "O backend local não respondeu."); break; }
+        if (!ok) { set_error(s, body, code ? "E-mail ou senha incorretos." : "O backend local não respondeu."); if (s->acct_user_id[0]) account_bridge_done(s, false); break; }
         jval *j = json_parse(body);
         copy(s->token, sizeof s->token, json_str(j, "accessToken", ""));
         json_free(j);
@@ -135,17 +170,19 @@ void app_pump(app_state_t *s) {
         break;
     }
     case OP_ME: {
-        if (!ok) { set_error(s, body, "Não foi possível carregar a conta."); app_logout(s); break; }
+        if (!ok) { set_error(s, body, "Não foi possível carregar a conta."); if (s->acct_user_id[0]) account_bridge_done(s, false); else app_logout(s); break; }
         jval *j = json_parse(body);
         copy(s->user_id, sizeof s->user_id, json_str(j, "id", ""));
-        copy(s->user_name, sizeof s->user_name, json_str(j, "displayName", ""));
-        copy(s->user_email, sizeof s->user_email, json_str(j, "email", ""));
+        if (!s->acct_user_id[0]) {   /* com conta online, nome e e-mail são os da conta (o e-mail local é só interno) */
+            copy(s->user_name, sizeof s->user_name, json_str(j, "displayName", ""));
+            copy(s->user_email, sizeof s->user_email, json_str(j, "email", ""));
+        }
         json_free(j);
         begin(s, OP_FRIENDS, "GET", "/friends", NULL);
         break;
     }
     case OP_FRIENDS:
-        if (ok) load_friends(s, body);
+        if (ok && !s->acct_user_id[0]) load_friends(s, body);   /* com conta online os amigos vêm do servidor (account.c) */
         if (s->screen == SCREEN_AUTH) begin(s, OP_COMMUNITIES, "GET", "/communities", NULL);
         break;
     case OP_COMMUNITIES:
@@ -154,7 +191,12 @@ void app_pump(app_state_t *s) {
         break;
     case OP_GROUPS:
         if (ok) app_load_groups(s, body);
+        if (s->acct_user_id[0]) { begin(s, OP_LEGACY_FRIENDS, "GET", "/p2p/friends", NULL); break; }
         if (s->screen == SCREEN_AUTH) { s->screen = SCREEN_SOCIAL; s->password[0] = 0; s->confirm[0] = 0; s->active_group = -1; }
+        break;
+    case OP_LEGACY_FRIENDS:
+        if (ok) load_legacy(s, body);
+        if (s->screen == SCREEN_AUTH) { s->screen = SCREEN_SOCIAL; s->active_group = -1; account_bridge_done(s, true); }
         break;
     case OP_MSG_LOAD:
         if (ok) app_load_messages(s, body);

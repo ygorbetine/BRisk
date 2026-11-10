@@ -6,6 +6,8 @@
 #include <string.h>
 #include <windows.h>
 
+static void nick_text(const app_state_t *s, char *out, size_t cap);
+
 static void initials(const char *name, char *out) {
     out[0] = name[0] ? name[0] : '?';
     const char *sp = strchr(name, ' ');
@@ -182,6 +184,19 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     cui_pop_id(ui);
                 }
             }
+            if (s->legacy_count) {   /* contatos importados do Briks antigo: ainda sem conta; servem de lembrete para pedir o @nick */
+                char t[64]; snprintf(t, sizeof t, "DO BRIKS ANTIGO — %d", s->legacy_count);
+                section_title(ui, t);
+                for (int i = 0; i < s->legacy_count; i++) {
+                    cui_push_id_int(ui, 3000 + i);
+                    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 5, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER) {
+                        cui_avatar(ui, s->legacy[i].name, .size = 24);
+                        cui_text(ui, s->legacy[i].name, .nowrap = true, .width = CUI_FILL, .color = B_MUTED);
+                    }
+                    cui_pop_id(ui);
+                }
+                cui_text(ui, "Peça o @nick deles para adicionar pela conta.", .size = 11, .color = B_MUTED);
+            }
             section_title(ui, "GRUPOS");
             if (nav_item(ui, CUI_ICON_PLUS, "Criar grupo", false)) { s->create_group_open = true; s->new_group[0] = 0; }
             for (int i = 0; i < s->group_count; i++) {
@@ -212,6 +227,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     const char *mine = s->rp_enabled ? s->user_presence : "";
                     if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = B_MUTED, .nowrap = true);
                     else if (mine[0]) cui_text(ui, mine, .size = 11, .color = B_MUTED, .nowrap = true);
+                    else if (s->acct_user_id[0] && s->user_nick[0]) { char nk[48]; nick_text(s, nk, sizeof nk); cui_text(ui, nk, .size = 11, .color = B_MUTED, .nowrap = true); }   /* como no Electron: conta online mostra o @nick */
                     else cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
                         cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}
                         cui_text(ui, "Disponível", .size = 10.5f, .color = B_ONLINE, .nowrap = true);
@@ -462,6 +478,12 @@ static bool profile_nav(cui_ctx *ui, const char *icon, const char *label, bool a
     return hit;
 }
 
+/* @nick exibido: o da conta (account.c) quando há sessão online; senão deriva do e-mail local */
+static void nick_text(const app_state_t *s, char *out, size_t cap) {
+    if (s->acct_user_id[0] && s->user_nick[0]) snprintf(out, cap, "@%s", s->user_nick);
+    else snprintf(out, cap, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+}
+
 static void profile_dialog(cui_ctx *ui, app_state_t *s) {
     static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
     static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
@@ -483,7 +505,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                     cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 56, .image = s->user_photo });
                     cui_column(ui, .gap = 1, .width = CUI_FILL) {
                         cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
-                        char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                        char nick[100]; nick_text(s, nick, sizeof nick);
                         cui_text(ui, nick, .color = B_MUTED, .size = 12, .nowrap = true);
                     }
                 }
@@ -498,6 +520,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 12, .scroll_y = true) {
                 switch (s->profile_tab) {
                 case 0:
+                    if (s->acct_user_id[0]) { ui_account_editor(ui, s); break; }   /* conta online: foto, nome e @nick vêm do servidor */
                     PCARD(ui, "PERFIL") {
                         cui_row(ui, .gap = 18, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                             cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 96, .image = s->user_photo });
@@ -578,11 +601,25 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                 default:
                     PCARD(ui, "CONTA") {
                         cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "E-mail", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, s->user_email, .nowrap = true); }
-                        char nick[100]; snprintf(nick, sizeof nick, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
+                        char nick[100]; nick_text(s, nick, sizeof nick);
                         cui_row(ui, .gap = 8, .width = CUI_FILL) { cui_text(ui, "Nick", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, nick, .nowrap = true); }
-                        cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+                        if (!s->acct_user_id[0]) cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
                         cui_row(ui, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {
+                            if (s->acct_user_id[0] && cui_button(ui, "Trocar @nick", .variant = CUI_BUTTON_SECONDARY)) {
+                                s->profile_open = false; s->nick_open = true; s->nick_msg[0] = 0;
+                                snprintf(s->nick_edit, sizeof s->nick_edit, "%s", s->acct_nick);
+                            }
                             if (cui_button(ui, "Sair", .variant = CUI_BUTTON_SECONDARY)) { s->profile_open = false; app_logout(s); }
+                        }
+                    }
+                    if (s->acct_user_id[0]) {
+                        ui_backup_section(ui, s);
+                        if (s->import_state == 1 || s->import_state == 2 || s->import_state == 3) {
+                            PCARD(ui, "BRIKS ANTIGO") {
+                                if (s->import_msg[0]) cui_text(ui, s->import_msg, .size = 12, .color = B_MUTED);
+                                if (s->import_state != 3 && cui_button(ui, "Importar amigos do Briks antigo", .variant = CUI_BUTTON_SECONDARY, .loading = s->import_state == 2)) account_import(s, true);
+                                if (s->import_state != 3) cui_text(ui, "Traz contatos, grupos e mensagens. A identidade antiga não é importada e nada é alterado no Briks antigo.", .size = 12, .color = B_MUTED);
+                            }
                         }
                     }
                     break;
@@ -603,8 +640,10 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 0.85f);
     dock_render(ui, s);
     cui_dialog(ui, "Adicionar amigo", &s->add_friend_open) {
-        cui_text(ui, "Informe o e-mail da conta que você quer adicionar.", .color = B_MUTED);
-        cui_input(ui, "add-email", s->add_email, sizeof s->add_email, .placeholder = "amigo@email.com");
+        const bool online = s->acct_user_id[0] != 0;
+        cui_text(ui, online ? "Digite o @nick do seu amigo. Ele recebe o pedido e, ao aceitar, vocês passam a se achar pela conta." : "Informe o e-mail da conta que você quer adicionar.", .color = B_MUTED);
+        cui_input(ui, "add-email", s->add_email, sizeof s->add_email, .placeholder = online ? "@nick" : "amigo@email.com", .autofocus = true);
+        if (online && s->acct_nick[0]) cui_textf(ui, "O seu é @%s", s->acct_nick);
         if (s->notice[0]) cui_text(ui, s->notice, .color = B_MUTED, .size = 13);
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Enviar pedido", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy)) app_add_friend(s);
@@ -618,6 +657,14 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     profile_dialog(ui, s);
+    cui_dialog(ui, "Trocar @nick", &s->nick_open) {
+        cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
+        int nr = cui_input(ui, "nick-edit", s->nick_edit, sizeof s->nick_edit, .placeholder = "seu_nick", .autofocus = true);
+        if (s->nick_msg[0]) cui_text(ui, s->nick_msg, .color = B_MUTED, .size = 13);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Salvar", .variant = CUI_BUTTON_PRIMARY) || (nr & CUI_SUBMITTED)) account_set_nick(s);
+        }
+    }
     bubbles_draw(ui);
     msgui_overlay(ui, s);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
@@ -633,6 +680,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     }
     cui_vec2 vp = cui_viewport_size(ui);
     settings_dialog(ui, s);
+    ui_backup_dialogs(ui, s);
     /* o dono da sala expulsou você */
     cui_dialog(ui, "Chamada", &s->kicked_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_text(ui, "Você foi removido da chamada.", .font = CUI_FONT_MEDIUM);

@@ -41,7 +41,7 @@ New-Item -ItemType Directory "$stage\backend" | Out-Null
 Copy-Item "$bd\briks_cui.exe" "$stage\Briks.exe"          # mesmo nome do executavel do Electron: atalhos fixados e entradas de inicio continuam validos
 Copy-Item "$bd\briks_overlay.exe" "$stage\briks_overlay.exe"
 Copy-Item $core "$stage\briks-core.exe"
-if (Test-Path "$cuissetslogin") { New-Item -ItemType Directory "$stagessets" -Force | Out-Null; Copy-Item "$cuissetslogin" "$stagessetslogin" -Recurse }   # logos Google/Discord da tela de entrada
+if (Test-Path "$cui\assets\login") { New-Item -ItemType Directory "$stage\assets" -Force | Out-Null; Copy-Item "$cui\assets\login" "$stage\assets\login" -Recurse }
 Copy-Item $backend "$stage\backend\briks-desktop-backend.exe"
 $crt = Get-ChildItem "$vs\VC\Redist\MSVC" -Recurse -Filter vcruntime140.dll | Where-Object { $_.FullName -match '\\x64\\Microsoft\.VC\d+\.CRT\\' -and $_.FullName -notmatch 'onecore' } | Sort-Object FullName | Select-Object -Last 1
 if (-not $crt) { throw "vcruntime140.dll (redistribuivel do VC) nao encontrado." }

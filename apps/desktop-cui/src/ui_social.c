@@ -456,7 +456,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, "Aparece num balão perto da sua foto.", .size = 12, .color = B_MUTED);
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                             if (cui_icon_button(ui, s->user_emoji[0] ? s->user_emoji : CUI_ICON_SMILE, .tooltip = "Escolher emoji")) emoji_open = !emoji_open;
-                            cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que você está fazendo?", .width = CUI_FILL);
+                            cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que está pensando?", .width = CUI_FILL);
                         }
                         if (emoji_open) {
                             cui_row(ui, .gap = 4, .width = CUI_FILL, .wrap = true, .pad = 6, .radius = 12, .bg = CUI_RGBA(0xffffff0a)) {

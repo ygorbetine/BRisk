@@ -18,12 +18,13 @@ use webrtc::track::track_remote::TrackRemote;
 use crate::capture::{Capture, SourceKind};
 use crate::video::{self, FrameSink, H264Dec, H264Enc};
 
-#[cfg(test)]
-pub static DBG_TX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 pub const VIDEO_TRACK_ID: &str = "screen-video";
 pub const AUDIO_TRACK_ID: &str = "screen-audio";
 pub const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
 pub const MAX_BPS: u32 = 50_000_000;
+/// Só testes: transmissões com este rótulo dormem TEST_SLOW_MS antes de codificar cada quadro (codificador lento simulado).
+pub const SLOW_LABEL: &str = "__lento__";
+pub static TEST_SLOW_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct ShareCfg {
@@ -35,6 +36,10 @@ pub struct ShareCfg {
     pub kbps: u32,
     pub label: String,
     pub audio: crate::procaudio::AudioMode,
+    /// o que preservar quando falta banda ou CPU
+    pub content: crate::adapt::Content,
+    /// false = sem adaptação (bitrate/FPS/resolução fixos, como pedido)
+    pub adaptive: bool,
 }
 
 pub fn new_video_track() -> Arc<TrackLocalStaticSample> {
@@ -66,7 +71,7 @@ pub fn cpu_ms() -> f64 {
 }
 
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
-pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<TrackLocalStaticSample>, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
+pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, track: Arc<TrackLocalStaticSample>, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
     let cap = Capture::start(cfg.kind.clone(), cfg.fps, cfg.height, preview.is_some(), dump.is_some()).map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     idr.store(true, Ordering::Relaxed);
@@ -78,8 +83,13 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
     });
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
-        let fps = cfg.fps.clamp(5, 120);
-        let period = Duration::from_micros(1_000_000 / fps as u64);
+        use crate::adapt::{Controller, Estimator};
+        let max_fps = cfg.fps.clamp(5, 120);
+        let mut ctl = Controller::new(cfg.content, cfg.height, max_fps, cfg.kbps.min(MAX_BPS / 1000));
+        let mut est = Estimator::new(ctl.top_ceil());
+        let mut dec = ctl.decide(est.est);
+        let mut fps = dec.level.fps;
+        let mut period = Duration::from_micros(1_000_000 / fps as u64);
         let mut cap = cap;
         let mut enc: Option<H264Enc> = None;
         let mut pv = preview.and_then(|p| FrameSink::create(&p).ok());
@@ -87,13 +97,56 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
         let mut held: Option<video::Yuv> = None;
         let (mut frames, mut bytes, mut enc_ns, mut skipped) = (0u64, 0u64, 0u128, 0u64);
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
+        let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
+        let mut announce = false;
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
             if cap.shared.closed.load(Ordering::Relaxed) { closed_reason = "A janela foi fechada".into(); break; }
             let now = Instant::now();
             if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
             next += period; if next < now { next = now + period; }
+            // ---- uma vez por segundo: mede, estima a banda, decide o nível e publica a telemetria ----
+            if win_t.elapsed() >= Duration::from_secs(1) {
+                let secs = win_t.elapsed().as_secs_f64();
+                let cpu = cpu_ms();
+                let sent_bps = bytes as f64 * 8.0 / secs;
+                let sent_fps = frames as f64 / secs;
+                let capf = cap.shared.frames.load(Ordering::Relaxed);
+                let dropped = cap.shared.dropped.swap(0, Ordering::Relaxed);
+                let offered = (capf - cap_frames0 + dropped) as f64 / secs;
+                let convn = cap.shared.conv_ns.load(Ordering::Relaxed);
+                let work_ms = if frames > 0 { ((convn - conv_ns0) as f64 + enc_ns as f64) / frames as f64 / 1e6 } else { 0.0 };
+                let (worst, (nacks, plis)) = { let n = net.lock().unwrap(); (n.worst(), n.totals()) };
+                let nack_ratio = if bytes > 0 { (nacks.saturating_sub(nacks0)) as f32 / (bytes as f32 / 1100.0).max(1.0) } else { 0.0 };
+                let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
+                if cfg.adaptive {
+                    est.set_ceil(ctl.top_ceil());
+                    est.update(Instant::now(), sent_bps, worst, nack_ratio);
+                    ctl.note_cpu(work_ms, offered, sent_fps);
+                    let d = ctl.decide(est.est);
+                    if d.level != dec.level {
+                        fps = d.level.fps; period = Duration::from_micros(1_000_000 / fps as u64);
+                        cap.shared.retarget(fps, d.level.h);
+                        if let Some(e) = enc.as_mut() { if !e.set_fps(fps) { enc = None; } }
+                        announce = true;
+                    }
+                    if let Some(e) = enc.as_mut() {
+                        let diff = (d.bps as f64 - e.bps as f64).abs() / e.bps.max(1) as f64;
+                        if diff > 0.05 && !e.set_bitrate(d.bps) { enc = None; }   // sem ajuste ao vivo: recria (sai um quadro-chave)
+                    }
+                    dec = d;
+                }
+                let (loss, rtt, jit) = worst.unwrap_or((0.0, 0.0, 0.0));
+                let adapting = if !cfg.adaptive { "" } else if dec.cpu_limited { "cpu" } else if ctl.idx > 0 || (dec.bps as f64) < ctl.top_ceil() * 0.9 { "rede" } else { "" };
+                let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (sent_fps * 10.0).round() / 10.0, "kbps": (sent_bps / 1000.0).round(),
+                    "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
+                    "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
+                    "target_kbps": dec.bps / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
+                    "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
+                    "adapting": adapting, "reason": est.reason }));
+                frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
+            }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
             let (yuv, pvw, raw, src) = {
                 let mut l = cap.shared.latest.lock().unwrap();
@@ -108,40 +161,33 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, cfg: ShareCfg, track: Arc<Tr
                 _ => continue,
             };
             let (tw, th) = (yuv.w, yuv.h);
-            let bps = if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
-            if enc.as_ref().map(|e| (e.w, e.h, e.bps) != (tw, th, bps)).unwrap_or(true) {
+            if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
+                let bps = if cfg.adaptive { dec.bps } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
                 match H264Enc::new(tw, th, fps as f32, bps) {
-                    Ok(e) => { id2.store(true, Ordering::Relaxed); let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": bps / 1000, "src_w": src.0, "src_h": src.1, "label": cfg.label, "encoder": e.name, "hardware": e.hardware })); enc = Some(e); }
+                    Ok(e) => { id2.store(true, Ordering::Relaxed); enc = Some(e); announce = true; }
                     Err(e) => { closed_reason = format!("codificador: {e}"); break; }
                 }
             }
-            if let (Some(d), Some(raw)) = (&dump, raw) { dump_png(d, &raw, src.0, src.1, tw, th); }
             let e = enc.as_mut().unwrap();
+            if std::mem::take(&mut announce) {
+                let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": e.bps / 1000, "src_w": src.0, "src_h": src.1,
+                    "label": cfg.label, "encoder": e.name, "hardware": e.hardware, "max_h": cfg.height, "max_fps": max_fps }));
+            }
+            if let (Some(d), Some(raw)) = (&dump, raw) { dump_png(d, &raw, src.0, src.1, tw, th); }
             since_idr += 1;
             if id2.swap(false, Ordering::Relaxed) || since_idr >= fps * 4 { e.force_idr(); since_idr = 0; }
             let t0 = Instant::now();
+            let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
+            if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
             let au = e.encode(&yuv);
             held = Some(yuv);   // guardado para o reenvio de tela parada
             enc_ns += t0.elapsed().as_nanos();
             match au {
                 Ok(list) => {
                     if list.is_empty() { skipped += 1; }
-                    for au in list { if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { for n in crate::mfenc::nals(&au) { if n.0 == 7 { eprintln!("[tx] SPS {:02x?}", &au[n.1..n.2]); } if n.0 == 8 { eprintln!("[tx] PPS {:02x?}", &au[n.1..n.2]); } }
-                        eprintln!("[tx] {} bytes nals {:?}", au.len(), crate::mfenc::nals(&au).iter().map(|n| (n.0, n.2 - n.1)).collect::<Vec<_>>()); }
-                        #[cfg(test)]
-                        if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { DBG_TX.lock().unwrap().push(au.clone()); }
-                        frames += 1; bytes += au.len() as u64; last_send = Instant::now(); let _ = tx.send((au, period)); }
+                    for au in list { frames += 1; bytes += au.len() as u64; last_send = Instant::now(); let _ = tx.send((au, period)); }
                 }
                 Err(e) => { closed_reason = e.to_string(); break; }
-            }
-            if win_t.elapsed() >= Duration::from_secs(1) {
-                let secs = win_t.elapsed().as_secs_f64();
-                let cpu = cpu_ms();
-                let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
-                let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (frames as f64 / secs * 10.0).round() / 10.0, "kbps": (bytes as f64 * 8.0 / secs / 1000.0).round(),
-                    "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "skipped": skipped, "w": tw, "h": th,
-                    "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": cap.shared.dropped.swap(0, Ordering::Relaxed) }));
-                frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu;
             }
         }
         cap.stop();
@@ -188,12 +234,6 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
             let Some(d) = dec.as_mut() else { continue };
             let r = d.decode(&au);
             if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[rx] au {} bytes -> {}", au.len(), match &r { Ok(Some((w, h, _))) => format!("{w}x{h}"), Ok(None) => "nada".into(), Err(e) => format!("erro {e}") }); }
-            #[cfg(test)]
-            if r.is_err() && std::env::var("BRIKS_SHARE_DEBUG").is_ok() {
-                let tx = DBG_TX.lock().unwrap();
-                let best = tx.iter().rev().take(8).find(|t| t.len() == au.len() + 6);
-                match best { Some(t) => { let t = &t[6..]; let d = t.iter().zip(au.iter()).position(|(a, b)| a != b); eprintln!("[cmp] tx {:02x?} | rx {:02x?} | 1ª diferença {:?} | tx@d {:02x?} rx@d {:02x?}", &t[..8], &au[..8], d, d.map(|d| t[d.saturating_sub(6)..(d + 10).min(t.len())].to_vec()), d.map(|d| au[d.saturating_sub(6)..(d + 10).min(au.len())].to_vec())); } None => eprintln!("[cmp] sem par para {} bytes", au.len()) }
-            }
             if r.is_err() { st2.want_pli.store(true, Ordering::Relaxed); }
             if let Ok(Some((w, h, rgba))) = r {
                 let path = st2.sink_path.lock().unwrap().clone();

@@ -360,7 +360,7 @@ async fn screen_share_flows_end_to_end_in_loopback() {
     let (w, h) = (1280usize, 720usize);
     for round in 0..2 {
         let sent_png = dir.join(format!("enviado-{round}.png"));
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
         let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
         assert_eq!((on["w"].as_u64(), on["h"].as_u64(), on["fps"].as_u64()), (Some(1280), Some(720), Some(30)), "{on}");
         let rpath = dir.join(format!("recebido-{round}.bin"));
@@ -418,7 +418,7 @@ async fn real_screen_share_stats() {
     let hm: isize = crate::capture::list_sources(&dir)["screens"][0]["id"].as_str().unwrap().parse().unwrap();
     let rpath = dir.join("recebido.bin");
     for (height, fps, kbps) in [(720usize, 30u32, 0u32), (1080, 30, 0), (1080, 60, 0), (1440, 30, 0), (2160, 30, 0)] {
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
         b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
         wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await;   // descarta a 1ª janela (parcial)
@@ -446,7 +446,7 @@ async fn process_audio_reaches_the_viewer() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", r"$p = New-Object Media.SoundPlayer 'C:\Windows\Media\Alarm01.wav'; $p.PlayLooping(); Start-Sleep -Seconds 9"]).spawn().expect("powershell");
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 15, kbps: 0, label: "Teste".into(), audio: AudioMode::Tree(child.id()) }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 15, kbps: 0, label: "Teste".into(), audio: AudioMode::Tree(child.id()), content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
     let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
     assert_eq!(on["audio"], true, "{on}");
     let key = format!("{PA}#screen");
@@ -475,7 +475,7 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-share3-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestResize, height: 1080, fps: 30, kbps: 0, label: "Janela".into(), audio: AudioMode::None }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestResize, height: 1080, fps: 30, kbps: 0, label: "Janela".into(), audio: AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B: on");
     b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
     let f = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 20).await.expect("B: 1º quadro");
@@ -507,4 +507,93 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
     eprintln!("depois de B sair: C recebeu {} quadros em 1,5 s ({w}x{h})", n1 - n0);
     assert!(n1 > n0 + 10 && (w, h) == (960, 540), "C parou de receber: {n0} -> {n1}");
     let _ = a.cmd.send(MeshCmd::Close).await; let _ = c.cmd.send(MeshCmd::Close).await;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Adaptação automática com rede ruim simulada (proxy UDP no meio de todo o tráfego): banda em degraus + perda.
+// Gera um CSV por política em BRIKS_ADAPT_OUT (ou na pasta temporária). ~2,5 min: não roda por padrão.
+//   cargo test --release -- --ignored --nocapture adaptation_follows_the_network
+// ---------------------------------------------------------------------------------------------------------------------
+const NA: &str = "aaaaaaaa-1111-4111-8111-0000000000a1";
+const NB: &str = "bbbbbbbb-2222-4222-8222-0000000000b1";
+
+struct Row { t: u32, limit: f64, loss_in: f64, target: u64, est: u64, sent: u64, fps: f64, tfps: u64, h: u64, loss: f64, rtt: f64, nacks: u64, plis: u64, rfps: u32, lat: i32, gap: u128, adapting: String }
+
+async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, steps: &[(u32, f64, f64)], out: &std::path::Path) -> Vec<Row> {
+    use crate::capture::{read_stamp, SourceKind};
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    // ids em formato UUID (a sinalização valida), distintos por política
+    let tag = if name == "nitidez" { "1" } else { "2" };
+    let (pa, pb) = (format!("{}{tag}", &NA[..NA.len() - 1]), format!("{}{tag}", &NB[..NB.len() - 1]));
+    let sim = crate::netsim::register(&[&pa, &pb]);
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, &pa, "Ana", room, ia);
+    let mut b = node(port, &pb, "Beto", room, ib);
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticou pelo proxy");
+    let rpath = out.join(format!("rx-{name}.bin"));
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 12_000, label: "Adaptação".into(), audio: crate::procaudio::AudioMode::None, content, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: rpath.clone() }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("1º quadro");
+    assert!(sim.forwarded.load(std::sync::atomic::Ordering::Relaxed) > 10_000, "o tráfego não está passando pelo proxy");
+    let src = FrameSource::open(&rpath).unwrap();
+    let mut rows = vec![];
+    let (mut t, mut last_n, mut last_new) = (0u32, 0u64, std::time::Instant::now());
+    let mut st = serde_json::Value::Null;
+    for (secs, mbps, loss) in steps {
+        sim.set(*mbps, *loss);
+        for _ in 0..*secs {
+            let end = std::time::Instant::now() + Duration::from_secs(1);
+            let (mut nfr, mut lats, mut gap) = (0u32, vec![], 0u128);
+            while std::time::Instant::now() < end {
+                while let Ok(e) = a.events.try_recv() { if let MeshEvent::Share(v) = e { if v["ev"] == "share.stats" { st = v; } } }
+                while b.events.try_recv().is_ok() {}
+                if let Some((w, _, n, rgba)) = src.read() {
+                    if n != last_n { nfr += (n - last_n) as u32; last_n = n; gap = gap.max(last_new.elapsed().as_millis()); last_new = std::time::Instant::now();
+                        let l = (src.ts() as u32).wrapping_sub(read_stamp(&rgba, w)) as i32; if (0..10_000).contains(&l) { lats.push(l); } }
+                }
+                tokio::time::sleep(Duration::from_millis(12)).await;
+            }
+            gap = gap.max(last_new.elapsed().as_millis());
+            lats.sort();
+            t += 1;
+            rows.push(Row { t, limit: *mbps, loss_in: *loss, target: st["target_kbps"].as_u64().unwrap_or(0), est: st["est_kbps"].as_f64().unwrap_or(0.0) as u64, sent: st["kbps"].as_f64().unwrap_or(0.0) as u64,
+                fps: st["fps"].as_f64().unwrap_or(0.0), tfps: st["target_fps"].as_u64().unwrap_or(0), h: st["h"].as_u64().unwrap_or(0), loss: st["loss_pct"].as_f64().unwrap_or(0.0), rtt: st["rtt_ms"].as_f64().unwrap_or(0.0),
+                nacks: st["nacks"].as_u64().unwrap_or(0), plis: st["plis"].as_u64().unwrap_or(0), rfps: nfr, lat: lats.get(lats.len() / 2).copied().unwrap_or(-1), gap, adapting: st["adapting"].as_str().unwrap_or("").into() });
+        }
+    }
+    let mut csv = String::from("t_s,limite_mbps,perda_injetada_pct,alvo_kbps,estimativa_kbps,enviado_kbps,fps_enviado,fps_alvo,altura,perda_reportada_pct,rtt_ms,nacks,plis_acum,fps_recebido,latencia_p50_ms,maior_intervalo_ms,adaptando\n");
+    for r in &rows { csv += &format!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", r.t, r.limit, r.loss_in, r.target, r.est, r.sent, r.fps, r.tfps, r.h, r.loss, r.rtt, r.nacks, r.plis, r.rfps, r.lat, r.gap, r.adapting); }
+    std::fs::write(out.join(format!("adaptacao-{name}.csv")), csv).unwrap();
+    let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
+    rows
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn adaptation_follows_the_network() {
+    let out = std::env::var("BRIKS_ADAPT_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("briks-adapt"));
+    std::fs::create_dir_all(&out).unwrap();
+    // (segundos, banda Mbps, perda %)
+    let steps = [(12u32, 20.0, 0.0), (14, 6.0, 0.0), (14, 2.0, 2.0), (14, 0.8, 5.0), (18, 6.0, 0.0)];
+    for (content, name) in [(crate::adapt::Content::Detail, "nitidez"), (crate::adapt::Content::Motion, "fluidez")] {
+        let rows = adapt_profile(content, name, &format!("adapt-{name}"), &steps, &out).await;
+        let avg = |a: usize, b: usize, f: &dyn Fn(&Row) -> f64| rows[a..b].iter().map(f).sum::<f64>() / (b - a) as f64;
+        let sent = |r: &Row| r.sent as f64;
+        let (free, m6, m2, m08, back) = (avg(6, 12, &sent), avg(19, 26, &sent), avg(33, 40, &sent), avg(47, 54, &sent), avg(66, 72, &sent));
+        let worst_gap = rows.iter().map(|r| r.gap).max().unwrap();
+        let (h2, f2) = (avg(33, 40, &|r| r.h as f64), avg(33, 40, &|r| r.tfps as f64));
+        let (h08, f08) = (avg(47, 54, &|r| r.h as f64), avg(47, 54, &|r| r.tfps as f64));
+        eprintln!("[{name}] enviado (kbps): livre {free:.0} | 6 Mbps {m6:.0} | 2 Mbps+2% {m2:.0} | 0,8 Mbps+5% {m08:.0} | volta a 6 Mbps {back:.0}");
+        eprintln!("[{name}] nível: 2 Mbps → {h2:.0}p a {f2:.0} qps; 0,8 Mbps → {h08:.0}p a {f08:.0} qps; maior intervalo sem quadro novo no receptor {worst_gap} ms");
+        eprintln!("[{name}] latência p50 (ms): livre {:.0} | 6 Mbps {:.0} | 2 Mbps {:.0} | 0,8 Mbps {:.0}", avg(6, 12, &|r| r.lat as f64), avg(19, 26, &|r| r.lat as f64), avg(33, 40, &|r| r.lat as f64), avg(47, 54, &|r| r.lat as f64));
+        assert!(free > 7000.0, "sem limite deveria usar perto do teto de 12 Mbps: {free}");
+        assert!(m6 < 6300.0 && m2 < 2200.0 && m08 < 950.0, "o envio não respeitou a banda: {m6} {m2} {m08}");
+        assert!(back > m08 * 2.5, "não se recuperou quando a banda voltou: {back}");
+        if name == "nitidez" { assert!(f2 < 30.0 && h2 >= 1000.0, "nitidez: no aperto cai o FPS antes da resolução ({h2}p {f2} qps)"); }
+        else { assert!(h2 < 1080.0 && f2 >= 29.0, "fluidez: no aperto cai a resolução antes do FPS ({h2}p {f2} qps)"); }
+    }
+    eprintln!("CSV em {}", out.display());
 }

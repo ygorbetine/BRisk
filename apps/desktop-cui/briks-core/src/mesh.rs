@@ -175,6 +175,7 @@ struct Actor {
     blocked: HashSet<String>,       // peerIds de banidos: sinalização deles é ignorada
     share: Option<ActiveShare>,
     share_gen: u64,
+    net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT/NACK por espectador (RTCP), lidos pelo laço de adaptação
     idr: Arc<std::sync::atomic::AtomicBool>,   // pedido de quadro-chave (PLI/FIR/novo espectador), único para a sala toda
     vtrack: Option<Arc<TrackLocalStaticSample>>,
     atrack: Option<Arc<TrackLocalStaticSample>>,   // áudio da transmissão (só do processo), também persistente   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
@@ -189,7 +190,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -244,6 +245,7 @@ impl Actor {
             }
             RtEvent::PeerLeft(p) => {
                 self.present.remove(&p);
+                self.net.lock().unwrap().peers.remove(&p);
                 if let Some(a) = &self.audio { a.remove_peer(&p); }
                 if let Some(peer) = self.peers.remove(&p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p, state: "fechado".into() }).await; }
             }
@@ -319,6 +321,8 @@ impl Actor {
     }
 
     async fn send_signal(&self, kind: &str, target: &str, payload: Value) {
+        #[cfg(test)]
+        let payload = { let mut p = payload; if crate::netsim::for_peer(&self.cfg.local_peer).is_some() { if let Some(s) = p["sdp"]["sdp"].as_str().map(crate::netsim::strip_sdp) { p["sdp"]["sdp"] = json!(s); } } p };
         let env = Envelope { version: 1, room_id: self.room_hash.clone(), from_peer_id: self.cfg.local_peer.clone(), target_peer_id: Some(target.into()),
             message_id: uuid::Uuid::new_v4().to_string(), timestamp: now_ms(), kind: kind.into(), payload };
         if let Ok(v) = serde_json::to_value(&env) { let _ = self.rt.send_broadcast(kind, v).await; }
@@ -461,7 +465,7 @@ impl Actor {
         let gen = self.share_gen;
         let amode = cfg.audio.clone();
         let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
-        match share::start_sender(gen, self.idr.clone(), cfg, track.clone(), self.sev_tx.clone(), preview, dump) {
+        match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, track.clone(), self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack)) } else { None };
@@ -485,11 +489,36 @@ impl Actor {
         if !p.asender { if let Some(at) = self.atrack.clone() { if p.pc.add_track(at as Arc<dyn TrackLocal + Send + Sync>).await.is_ok() { p.asender = true; } } }
         match p.pc.add_track(track as Arc<dyn TrackLocal + Send + Sync>).await {
             Ok(sender) => {
-                let (s2, idr2) = (sender.clone(), idr.clone());
+                let (s2, idr2, net, pid) = (sender.clone(), idr.clone(), self.net.clone(), id.to_string());
                 tokio::spawn(async move {
+                    use webrtc::rtcp::receiver_report::ReceiverReport;
+                    use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
+                    let ssrc = s2.get_parameters().await.encodings.first().map(|e| e.ssrc).unwrap_or(0);
                     while let Ok((pkts, _)) = s2.read_rtcp().await {
-                        for pk in pkts { if pk.as_any().downcast_ref::<PictureLossIndication>().is_some() || pk.as_any().downcast_ref::<FullIntraRequest>().is_some() { idr2.store(true, std::sync::atomic::Ordering::Relaxed); } }
+                        for pk in pkts {
+                            let any = pk.as_any();
+                            let mut n = net.lock().unwrap();
+                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0 });
+                            if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
+                                e.plis += 1; idr2.store(true, std::sync::atomic::Ordering::Relaxed);
+                            } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
+                                for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
+                                    e.loss = r.fraction_lost as f32 / 256.0;
+                                    e.jitter_ms = r.jitter as f32 / 90.0;
+                                    if r.last_sender_report != 0 {
+                                        // RTT = agora − LSR − DLSR, em unidades de 1/65536 s (32 bits do meio do NTP)
+                                        let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
+                                        let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
+                                        if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; }
+                                    }
+                                    e.updated = std::time::Instant::now();
+                                }
+                            } else if let Some(nk) = any.downcast_ref::<TransportLayerNack>() {
+                                if nk.media_ssrc == ssrc { e.nacks += nk.nacks.iter().map(|p| 1 + p.lost_packets.count_ones() as u64).sum::<u64>(); }
+                            }
+                        }
                     }
+                    net.lock().unwrap().peers.remove(&pid);
                 });
                 p.vsender = Some(sender);
                 idr.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -579,6 +608,7 @@ impl Actor {
     }
 
     async fn drop_peer(&mut self, id: &str) {
+        self.net.lock().unwrap().peers.remove(id);
         if let Some(a) = &self.audio { a.remove_peer(id); }
         if let Some(p) = self.peers.remove(id) { let _ = p.pc.close().await; self.emit(MeshEvent::Peer { peer_id: id.into(), state: "fechado".into() }).await; }
     }
@@ -597,7 +627,12 @@ impl Actor {
 
     async fn on_internal(&mut self, i: Internal) {
         match i {
-            Internal::Ice { peer, gen, init } => { if self.gen_ok(&peer, gen) { self.send_signal("webrtc.ice-candidate", &peer, json!({ "candidate": init })).await; } }
+            Internal::Ice { peer, gen, init } => {
+                if !self.gen_ok(&peer, gen) { return; }
+                #[cfg(test)]
+                let init = { let mut init = init; if let Some(ns) = crate::netsim::for_peer(&self.cfg.local_peer) { match ns.rewrite(&init.candidate).await { Some(c) => init.candidate = c, None => return } } init };
+                self.send_signal("webrtc.ice-candidate", &peer, json!({ "candidate": init })).await;
+            }
             Internal::PcState { peer, gen, state } => {
                 if !self.gen_ok(&peer, gen) { return; }
                 let s = match state { RTCPeerConnectionState::Connected => "conectado", RTCPeerConnectionState::Failed => "falhou", RTCPeerConnectionState::Closed => "fechado", RTCPeerConnectionState::Disconnected => "falhou", _ => "negociando" };

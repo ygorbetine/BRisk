@@ -23,6 +23,8 @@ pub enum SourceKind {
     Screen(isize),   // HMONITOR
     Window(isize),   // HWND
     Test,            // padrão sintético
+    /// ruído rolando em 1920x1080 a 30 qps: conteúdo difícil, faz o codificador usar todo o bitrate (testes de adaptação)
+    TestMotion,
     TestResize,      // padrão sintético que muda de 1280x720 para 960x540 depois de ~2 s (janela redimensionada)
 }
 
@@ -46,17 +48,24 @@ pub struct Shared {
     pub closed: AtomicBool,
     pub frames: AtomicU64,
     /// altura alvo do envio (a origem nunca é ampliada)
-    pub target_h: usize,
+    pub target_h: std::sync::atomic::AtomicUsize,
+    /// tempo gasto convertendo cor/escala (ns, acumulado) — entra na medida de sobrecarga local
+    pub conv_ns: AtomicU64,
     pub want_preview: bool,
     pub want_raw: AtomicBool,
     pub preview_every: u64,
     /// intervalo mínimo entre quadros aceitos (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado sem converter)
-    pub min_interval: Duration,
+    pub min_interval_us: AtomicU64,
     pub last_accept: Mutex<Option<std::time::Instant>>,
     pub dropped: AtomicU64,
 }
 
 impl Shared {
+    /// Adaptação: novo FPS e nova altura de envio, valendo a partir do próximo quadro.
+    pub fn retarget(&self, fps: u32, h: usize) {
+        self.min_interval_us.store(800_000 / fps.clamp(1, 120) as u64, Ordering::Relaxed);
+        self.target_h.store(h, Ordering::Relaxed);
+    }
     /// Recebe um quadro BGRA (sem preenchimento de linha) da captura e guarda o I420 pronto para codificar.
     /// `stride` = bytes por linha na origem (>= w*4).
     pub fn push_bgra(&self, data: &[u8], w: usize, h: usize, stride: usize) {
@@ -64,11 +73,13 @@ impl Shared {
         {
             let mut la = self.last_accept.lock().unwrap();
             let now = std::time::Instant::now();
-            if let Some(t) = *la { if now.duration_since(t) < self.min_interval { self.dropped.fetch_add(1, Ordering::Relaxed); return; } }
+            if let Some(t) = *la { if now.duration_since(t) < Duration::from_micros(self.min_interval_us.load(Ordering::Relaxed)) { self.dropped.fetch_add(1, Ordering::Relaxed); return; } }
             *la = Some(now);
         }
-        let (tw, th) = crate::video::fit_size(w, h, self.target_h);
+        let t0 = std::time::Instant::now();
+        let (tw, th) = crate::video::fit_size(w, h, self.target_h.load(Ordering::Relaxed));
         let yuv = crate::video::bgra_to_i420_stride(data, stride, w, h, tw, th);
+        self.conv_ns.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
         let n = self.frames.fetch_add(1, Ordering::Relaxed);
         let preview = if self.want_preview && n % self.preview_every == 0 { Some(preview_rgba(data, stride, w, h)) } else { None };
         let raw = if self.want_raw.swap(false, Ordering::Relaxed) { Some(data.chunks(stride).take(h).flat_map(|r| r[..w * 4].iter().copied()).collect()) } else { None };
@@ -171,12 +182,40 @@ pub fn read_stamp(rgba: &[u8], w: usize) -> u32 {
 impl Capture {
     /// `target_h` = altura de envio; `preview` = gerar a prévia local; `raw` = guardar o 1º quadro cru (provas).
     pub fn start(kind: SourceKind, fps: u32, target_h: usize, preview: bool, raw: bool) -> Result<Capture> {
-        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0), target_h, want_preview: preview,
+        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0), target_h: std::sync::atomic::AtomicUsize::new(target_h), conv_ns: AtomicU64::new(0), want_preview: preview,
             want_raw: AtomicBool::new(raw), preview_every: (fps as u64 / 10).max(1),
-            min_interval: Duration::from_micros(800_000 / fps.clamp(1, 120) as u64), last_accept: Mutex::new(None), dropped: AtomicU64::new(0) });
+            min_interval_us: AtomicU64::new(800_000 / fps.clamp(1, 120) as u64), last_accept: Mutex::new(None), dropped: AtomicU64::new(0) });
         let stop = Arc::new(AtomicBool::new(false));
         let interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));
         let handle = match kind {
+            SourceKind::TestMotion => {
+                let (sh, st) = (shared.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    let (w, h) = (1920usize, 1080usize);
+                    // ruído em blocos 4x4 (determinístico) com faixas lisas: difícil de comprimir, mas parecido com vídeo real
+                    let mut base = vec![255u8; w * h * 4];
+                    let mut x = 0x2545F491u32;
+                    for by in 0..h / 4 { for bx in 0..w / 4 {
+                        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+                        let (b, g, r) = ((x & 255) as u8, ((x >> 8) & 255) as u8, ((x >> 16) & 255) as u8);
+                        for dy in 0..4 { for dx in 0..4 { let o = ((by * 4 + dy) * w + bx * 4 + dx) * 4; base[o] = b; base[o + 1] = g; base[o + 2] = r; } }
+                    } }
+                    let mut f = vec![255u8; w * h * 4];
+                    let mut t = 0usize;
+                    let mut next = std::time::Instant::now();
+                    while !st.load(Ordering::Relaxed) {
+                        let shift = (t * 12 % w) * 4;
+                        for y in 0..h { let row = &base[y * w * 4..(y + 1) * w * 4]; let out = &mut f[y * w * 4..(y + 1) * w * 4]; out[..w * 4 - shift].copy_from_slice(&row[shift..]); out[w * 4 - shift..].copy_from_slice(&row[..shift]); }
+                        stamp_ms(&mut f, w);
+                        sh.push_bgra(&f, w, h, w * 4);
+                        t += 1;
+                        next += Duration::from_micros(1_000_000 / 60);   // oferece 60 qps: quem limita é o FPS alvo
+                        let now = std::time::Instant::now();
+                        if next > now { std::thread::sleep(next - now); } else { next = now; }
+                    }
+                });
+                Handle::Thread
+            }
             SourceKind::Test | SourceKind::TestResize => {
                 let resize = kind == SourceKind::TestResize;
                 let (sh, st) = (shared.clone(), stop.clone());

@@ -232,7 +232,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         let kind = match v["kind"].as_str().unwrap_or("screen") { "window" => crate::capture::SourceKind::Window(id), "test" => crate::capture::SourceKind::Test, _ => crate::capture::SourceKind::Screen(id) };
                         let kind2 = kind.clone();
                         let scfg = crate::share::ShareCfg { kind, height: v["height"].as_u64().unwrap_or(1080).clamp(240, 2160) as usize, fps: v["fps"].as_u64().unwrap_or(30).clamp(5, 60) as u32,
-                            kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect(), audio: audio_mode(&v, &kind2) };
+                            kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect(), audio: audio_mode(&v, &kind2),
+                            content: if v["content"] == "motion" { crate::adapt::Content::Motion } else { crate::adapt::Content::Detail }, adaptive: v["adaptive"].as_bool().unwrap_or(true) };
                         let preview = cfg.data_dir.join("video").join("preview.bin");
                         let dump = std::env::var("BRIKS_SHARE_DUMP").ok().map(PathBuf::from);
                         let _ = c.send(MeshCmd::ShareStart { cfg: scfg, preview: Some(preview.clone()), dump }).await;

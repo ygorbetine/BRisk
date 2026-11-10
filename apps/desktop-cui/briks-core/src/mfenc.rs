@@ -116,6 +116,15 @@ impl MfEnc {
         Ok(MfEnc { tr, events, codec, w, h, bps, hardware: hw, name, fps, need_input: 0, have_output: 0, provides_samples: provides, out_size: info.cbSize.max((w * h * 2) as u32), n: 0, params: vec![] })
     }
 
+    /// Bitrate médio ao vivo (ICodecAPI). Devolve false se o codificador recusar.
+    pub fn set_bitrate(&mut self, bps: u32) -> bool {
+        let Some(c) = &self.codec else { return false };
+        let ok = unsafe { c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &var_u32(bps)).is_ok() };
+        if ok { self.bps = bps; }
+        ok
+    }
+    pub fn set_fps(&mut self, fps: u32) { self.fps = fps.max(1); }
+
     /// Consome eventos do MFT assíncrono. `wait` = bloqueia até chegar um.
     unsafe fn pump(&mut self, wait: bool) -> bool {
         let Some(ev) = &self.events else { return false };
@@ -175,9 +184,9 @@ impl MfEnc {
             let s = MFCreateSample()?;
             s.AddBuffer(&b)?;
             let dur = 10_000_000i64 / self.fps.max(1) as i64;
-            s.SetSampleTime(self.n * dur)?;
+            s.SetSampleTime(self.n)?;
             s.SetSampleDuration(dur)?;
-            self.n += 1;
+            self.n += dur;   // relógio acumulado: o FPS pode mudar no meio
             let mut out: Vec<Vec<u8>> = vec![];
             if self.events.is_some() {
                 let t0 = std::time::Instant::now();

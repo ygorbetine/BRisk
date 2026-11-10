@@ -1,0 +1,117 @@
+//! Só testes: rede ruim simulada entre dois nós na mesma máquina. Um proxy UDP fica no meio de TODO o tráfego WebRTC (os candidatos
+//! ICE de cada nó são trocados por portas do proxy e os `a=candidate` saem do SDP), limitando a banda (balde furado com fila de
+//! 250 ms e descarte na cauda, como um roteador), injetando perda aleatória e atraso fixo. Os limites mudam ao vivo.
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tokio::net::UdpSocket;
+
+pub struct NetSim {
+    pub peers: Vec<String>,
+    /// bits por segundo em cada sentido (0 = sem limite)
+    pub limit_bps: AtomicU64,
+    /// perda aleatória em partes por milhão
+    pub loss_ppm: AtomicU32,
+    pub delay_ms: AtomicU64,
+    maps: tokio::sync::Mutex<HashMap<SocketAddr, u16>>,
+    rng: AtomicU64,
+    pub forwarded: AtomicU64,
+    pub dropped: AtomicU64,
+}
+
+static ACTIVE: Mutex<Vec<Arc<NetSim>>> = Mutex::new(Vec::new());
+
+pub fn register(peers: &[&str]) -> Arc<NetSim> {
+    let n = Arc::new(NetSim { peers: peers.iter().map(|s| s.to_string()).collect(), limit_bps: AtomicU64::new(0), loss_ppm: AtomicU32::new(0), delay_ms: AtomicU64::new(0),
+        maps: Default::default(), rng: AtomicU64::new(0x9E3779B97F4A7C15), forwarded: AtomicU64::new(0), dropped: AtomicU64::new(0) });
+    ACTIVE.lock().unwrap().push(n.clone());
+    n
+}
+pub fn for_peer(id: &str) -> Option<Arc<NetSim>> { ACTIVE.lock().unwrap().iter().find(|n| n.peers.iter().any(|p| p == id)).cloned() }
+
+/// Tira os candidatos do SDP (senão o outro lado aprenderia o endereço direto e contornaria o proxy).
+pub fn strip_sdp(sdp: &str) -> String {
+    sdp.split("\r\n").filter(|l| !l.starts_with("a=candidate") && !l.starts_with("a=end-of-candidates")).collect::<Vec<_>>().join("\r\n")
+}
+
+struct Shaper { next_free: Instant }
+
+impl NetSim {
+    pub fn set(&self, mbps: f64, loss_pct: f64) {
+        self.limit_bps.store((mbps * 1e6) as u64, Ordering::Relaxed);
+        self.loss_ppm.store((loss_pct * 10_000.0) as u32, Ordering::Relaxed);
+    }
+    fn rand(&self) -> u32 {
+        let mut x = self.rng.load(Ordering::Relaxed);
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        self.rng.store(x, Ordering::Relaxed);
+        (x >> 32) as u32
+    }
+
+    /// Aplica perda/limite e devolve quando o pacote pode sair (None = descartado).
+    fn shape(&self, sh: &Mutex<Shaper>, len: usize) -> Option<Instant> {
+        if self.rand() % 1_000_000 < self.loss_ppm.load(Ordering::Relaxed) { self.dropped.fetch_add(1, Ordering::Relaxed); return None; }
+        let now = Instant::now();
+        let limit = self.limit_bps.load(Ordering::Relaxed);
+        let mut at = now;
+        if limit > 0 {
+            let mut s = sh.lock().unwrap();
+            at = s.next_free.max(now);
+            if at - now > Duration::from_millis(250) { self.dropped.fetch_add(1, Ordering::Relaxed); return None; }   // fila cheia
+            s.next_free = at + Duration::from_secs_f64((len as f64 + 28.0) * 8.0 / limit as f64);
+        }
+        self.forwarded.fetch_add(len as u64, Ordering::Relaxed);
+        Some(at + Duration::from_millis(self.delay_ms.load(Ordering::Relaxed)))
+    }
+
+    /// Reescreve um candidato ICE "candidate:… udp prio IP PORTA typ host …" para apontar para o proxy. None = descarte-o.
+    pub async fn rewrite(self: &Arc<Self>, cand: &str) -> Option<String> {
+        let mut f: Vec<String> = cand.split(' ').map(String::from).collect();
+        if f.len() < 8 || !f[2].eq_ignore_ascii_case("udp") || f[7] != "host" { return None; }
+        let ip: std::net::Ipv4Addr = f[4].parse().ok()?;
+        let port: u16 = f[5].parse().ok()?;
+        let target = SocketAddr::from((ip, port));
+        let p = self.map(target).await?;
+        f[5] = p.to_string();
+        Some(f.join(" "))
+    }
+
+    /// Porta do proxy que encaminha para `target` (cria na primeira vez).
+    async fn map(self: &Arc<Self>, target: SocketAddr) -> Option<u16> {
+        let mut maps = self.maps.lock().await;
+        if let Some(p) = maps.get(&target) { return Some(*p); }
+        let front = Arc::new(UdpSocket::bind("0.0.0.0:0").await.ok()?);
+        let port = front.local_addr().ok()?.port();
+        maps.insert(target, port);
+        let me = self.clone();
+        tokio::spawn(async move {
+            // uma tomada de saída por origem: o alvo responde para ela e o proxy devolve pela porta da frente
+            let mut backs: HashMap<SocketAddr, Arc<UdpSocket>> = HashMap::new();
+            let (up, down) = (Arc::new(Mutex::new(Shaper { next_free: Instant::now() })), Arc::new(Mutex::new(Shaper { next_free: Instant::now() })));
+            let mut buf = vec![0u8; 2048];
+            while let Ok((n, src)) = front.recv_from(&mut buf).await {
+                let back = match backs.get(&src) {
+                    Some(b) => b.clone(),
+                    None => {
+                        let Ok(b) = UdpSocket::bind("0.0.0.0:0").await else { continue };
+                        let b = Arc::new(b);
+                        backs.insert(src, b.clone());
+                        let (b2, front2, me2, down2) = (b.clone(), front.clone(), me.clone(), down.clone());
+                        tokio::spawn(async move {
+                            let mut buf = vec![0u8; 2048];
+                            while let Ok((n, _)) = b2.recv_from(&mut buf).await {
+                                if let Some(at) = me2.shape(&down2, n) { let (pkt, f) = (buf[..n].to_vec(), front2.clone()); tokio::spawn(async move { tokio::time::sleep_until(at.into()).await; let _ = f.send_to(&pkt, src).await; }); }
+                            }
+                        });
+                        b
+                    }
+                };
+                if let Some(at) = me.shape(&up, n) { let pkt = buf[..n].to_vec(); tokio::spawn(async move { tokio::time::sleep_until(at.into()).await; let _ = back.send_to(&pkt, target).await; }); }
+            }
+        });
+        Some(port)
+    }
+}

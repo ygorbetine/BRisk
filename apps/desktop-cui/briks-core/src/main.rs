@@ -2,6 +2,7 @@
 //!   briks-core serve-ipc          processo filho da UI: escolhe porta loopback, imprime BRIKS_CORE_READY {"port":N}
 //!                                 e exige BRIKS_CORE_TOKEN no primeiro comando
 //!   briks-core mock-realtime [p]  servidor Phoenix/Realtime de teste em 127.0.0.1 (sem Supabase)
+mod adapt;
 mod audio;
 mod capture;
 mod video;
@@ -41,5 +42,7 @@ async fn main() -> Result<()> {
     }
 }
 
+#[cfg(test)]
+mod netsim;
 #[cfg(test)]
 mod tests;

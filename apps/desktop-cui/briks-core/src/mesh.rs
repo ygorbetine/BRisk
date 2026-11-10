@@ -17,6 +17,7 @@ use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::interceptor::registry::Registry;
 use webrtc::track::track_local::TrackLocal;
+use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_server::RTCIceServer;
@@ -43,10 +44,25 @@ pub enum MeshEvent {
     Speaking { peer_id: String, level: f32 },
     /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
     PeerState { peer_id: String, microphone: bool, deafened: bool },
+    /// Identidade provada de um peer (impressão digital e nome de exibição).
+    PeerInfo { peer_id: String, fp: String, name: String },
+    /// Quem é o dono da sala segundo este nó e se sou eu (quem pode expulsar).
+    Owner { fp: String, me: bool },
+    /// Fui expulso pelo dono: o core já fechou tudo.
+    Kicked { reason: String },
+    /// Alguém foi expulso (ou eu mesmo apliquei): fp banido nesta sessão.
+    Banned { fp: String },
     Error(String),
 }
 
 pub enum MeshCmd {
+    /// Expulsa (só o dono da sala): mensagem assinada para todos os peers autenticados e banimento nesta sessão.
+    Kick { fp: String, reason: String },
+    /// Só testes: expulsa sem checar se sou o dono (para provar que os outros ignoram quem não é).
+    #[cfg(test)]
+    KickUnchecked { fp: String },
+    /// O dono permite a volta de alguém banido.
+    Allow { fp: String },
     /// Reenvia o estado local (microfone/ensurdecido) a todos os peers autenticados.
     BroadcastState,
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
@@ -79,6 +95,7 @@ struct Peer {
     my_nonce: String,
     proven: bool,   // o outro provou a identidade para mim
     sent_proof: bool,
+    name: String,
 }
 
 pub struct MeshCfg {
@@ -89,6 +106,10 @@ pub struct MeshCfg {
     pub ice_servers: Vec<RTCIceServer>,
     /// Áudio da chamada (None = só DataChannel, como nos testes de chat).
     pub audio: Option<(Arc<Audio>, mpsc::Receiver<AudioEvent>)>,
+    /// Dono da sala (impressão digital). Sem isso vale o mais antigo (joinedAt) entre os autenticados: mais fraco (joinedAt é declarado
+    /// pelo próprio peer), então o app deve passar o dono real quando o conhecer (criador do grupo/sala).
+    pub owner_fp: Option<String>,
+    pub joined_at: u64,
 }
 
 pub struct MeshHandle {
@@ -126,6 +147,10 @@ struct Actor {
     seen_msgs: HashSet<String>,
     audio: Option<Arc<Audio>>,
     audio_rx: Option<mpsc::Receiver<AudioEvent>>,
+    joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
+    banned: HashSet<String>,        // fps expulsos nesta sessão
+    dead: bool,                     // fui expulso: encerra o ator
+    blocked: HashSet<String>,       // peerIds de banidos: sinalização deles é ignorada
 }
 
 impl Actor {
@@ -134,7 +159,7 @@ impl Actor {
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), dead: false, blocked: HashSet::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -153,6 +178,7 @@ impl Actor {
                     // mensagens sem ACK são reenviadas (o receptor deduplica por id)
                     let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();
                     for fp in fps { self.flush_outbox(&fp).await; }
+                    self.retry_auth().await;
                 },
                 e = rt_events.recv() => match e {
                     Some(e) => self.on_rt(e).await,
@@ -164,6 +190,7 @@ impl Actor {
                 },
                 i = irx.recv() => if let Some(i) = i { self.on_internal(i).await },
             }
+            if self.dead { break; }
         }
         if let Some(a) = &self.audio { a.stop(); }
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
@@ -175,9 +202,10 @@ impl Actor {
     async fn on_rt(&mut self, e: RtEvent) {
         match e {
             RtEvent::Status(s) => { if let Some(msg) = s.strip_prefix("error: ") { self.emit(MeshEvent::Error(msg.to_string())).await; } }
-            RtEvent::PeerJoined { peer_id, .. } => {
+            RtEvent::PeerJoined { peer_id, meta } => {
                 self.present.insert(peer_id.clone());
-                if self.peers.len() >= MAX_PEERS || self.peers.contains_key(&peer_id) { return; }
+                self.joined.insert(peer_id.clone(), meta["joinedAt"].as_u64().unwrap_or(u64::MAX));
+                if self.blocked.contains(&peer_id) || self.peers.len() >= MAX_PEERS || self.peers.contains_key(&peer_id) { return; }
                 if let Err(e) = self.add_peer(&peer_id).await { self.emit(MeshEvent::Error(format!("peer {peer_id}: {e}"))).await; return; }
                 if is_initiator(&self.cfg.local_peer, &peer_id) { self.start_offer(&peer_id, true).await; }
             }
@@ -227,7 +255,7 @@ impl Actor {
         let gen = self.next_gen; self.next_gen += 1;
         let pc = self.new_pc(peer_id, gen).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new() });
         Ok(())
     }
 
@@ -265,6 +293,7 @@ impl Actor {
 
     async fn on_signal(&mut self, env: Envelope) {
         let from = env.from_peer_id.clone();
+        if self.blocked.contains(&from) { return; }
         if !self.peers.contains_key(&from) {
             if self.peers.len() >= MAX_PEERS || self.add_peer(&from).await.is_err() { return; }
         }
@@ -323,6 +352,22 @@ impl Actor {
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 self.flush_outbox(&to_fp).await;
             }
+            MeshCmd::Kick { fp, reason } => {
+                if self.owner().as_deref() != Some(self.identity.fingerprint().as_str()) { self.emit(MeshEvent::Error("só o dono da sala pode expulsar".into())).await; return; }
+                self.do_kick(&fp, &reason).await;
+            }
+            #[cfg(test)]
+            MeshCmd::KickUnchecked { fp } => self.do_kick(&fp, "teste").await,
+            MeshCmd::Allow { fp } => {
+                if self.banned.remove(&fp) {
+                    // propaga a permissão para que os outros também aceitem a volta (só o dono tem o direito; os demais verificam a assinatura)
+                    let ts = now_ms();
+                    let canon = self.allow_canon(&fp, ts);
+                    let sig = self.identity.sign(&canon);
+                    let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                    for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "room.allow", "target_fp": fp, "timestamp": ts, "signature": sig })).await; }
+                }
+            }
             MeshCmd::BroadcastState => {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.send_state(&id).await; }
@@ -335,6 +380,55 @@ impl Actor {
             }
             MeshCmd::Close => {}
         }
+    }
+
+    /// O desafio pode chegar antes de o outro lado ligar o on_message (corrida com 3+ peers): reenvia, com o MESMO nonce, a quem ainda não provou.
+    async fn retry_auth(&mut self) {
+        let ids: Vec<String> = self.peers.iter().filter(|(_, p)| !p.proven && p.dc.as_ref().map(|d| d.ready_state() == RTCDataChannelState::Open).unwrap_or(false)).map(|(k, _)| k.clone()).collect();
+        for id in ids {
+            let nonce = self.peers.get(&id).map(|p| p.my_nonce.clone()).unwrap_or_default();
+            if nonce.is_empty() { self.send_challenge(&id).await; }
+            else { self.dc_send(&id, json!({ "version": 2, "type": "chat.identity.challenge", "channelId": "native", "fromPeerId": self.cfg.local_peer, "nonce": nonce, "timestamp": now_ms(), "capabilities": caps() })).await; }
+        }
+    }
+
+    /// Dono da sala segundo este nó (ver `MeshCfg::owner_fp`).
+    fn owner(&self) -> Option<String> {
+        if let Some(o) = &self.cfg.owner_fp { return Some(o.clone()); }
+        let mut best: (u64, String) = (self.cfg.joined_at, self.identity.fingerprint());
+        for (id, p) in &self.peers {
+            if let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) {
+                let j = self.joined.get(id).copied().unwrap_or(u64::MAX);
+                if (j, fp.as_str()) < (best.0, best.1.as_str()) { best = (j, fp); }
+            }
+        }
+        Some(best.1)
+    }
+
+    fn kick_canon(&self, target_fp: &str, ts: i64, reason: &str) -> String { format!("briks.kick.v1|{}|{}|{}|{}", self.room_hash, target_fp, ts, reason) }
+    fn allow_canon(&self, target_fp: &str, ts: i64) -> String { format!("briks.allow.v1|{}|{}|{}", self.room_hash, target_fp, ts) }
+
+    async fn do_kick(&mut self, fp: &str, reason: &str) {
+        let reason: String = reason.chars().take(120).collect();
+        let ts = now_ms();
+        let sig = self.identity.sign(&self.kick_canon(fp, ts, &reason));
+        let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+        for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "room.kick", "target_fp": fp, "reason": reason, "timestamp": ts, "signature": sig })).await; }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;   // dá tempo de a mensagem sair antes de fechar a conexão com o alvo
+        self.ban(fp).await;
+    }
+
+    /// Bane o fp nesta sessão e fecha a(s) conexão(ões) com ele.
+    async fn ban(&mut self, fp: &str) {
+        self.banned.insert(fp.to_string());
+        let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.fp.as_deref() == Some(fp)).map(|(k, _)| k.clone()).collect();
+        for id in ids { self.blocked.insert(id.clone()); self.drop_peer(&id).await; }
+        self.emit(MeshEvent::Banned { fp: fp.to_string() }).await;
+    }
+
+    async fn drop_peer(&mut self, id: &str) {
+        if let Some(a) = &self.audio { a.remove_peer(id); }
+        if let Some(p) = self.peers.remove(id) { let _ = p.pc.close().await; self.emit(MeshEvent::Peer { peer_id: id.into(), state: "fechado".into() }).await; }
     }
 
     async fn send_state(&self, peer: &str) {
@@ -399,6 +493,7 @@ impl Actor {
                 let canon = identity::canonical_identity_proof(v["channelId"].as_str().unwrap_or("native"), v["fromPeerId"].as_str().unwrap_or(""), v["toPeerId"].as_str().unwrap_or(""), nonce, v["timestamp"].as_u64().unwrap_or(0), &v["capabilities"]);
                 if !identity::verify(&jwk, &canon, sig) { self.emit(MeshEvent::Error("prova de identidade inválida".into())).await; return; }
                 p.fp = Some(identity::fingerprint(&jwk)); p.jwk = Some(jwk); p.proven = true; p.my_nonce.clear();
+                p.name = v["displayName"].as_str().unwrap_or("").chars().take(64).collect();
                 self.after_auth(peer).await;
             }
             "chat.message" => {
@@ -411,6 +506,27 @@ impl Actor {
                 if self.seen_msgs.insert(m.id.clone()) {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
+            }
+            "room.kick" | "room.allow" => {
+                let kick = v["type"] == "room.kick";
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(jwk), Some(from_fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
+                let (Some(target), Some(sig), Some(ts)) = (v["target_fp"].as_str(), v["signature"].as_str(), v["timestamp"].as_i64()) else { return };
+                if self.owner().as_deref() != Some(from_fp.as_str()) { self.emit(MeshEvent::Error("comando de sala ignorado: remetente não é o dono".into())).await; return; }
+                if (now_ms() - ts).abs() > 5 * 60 * 1000 { return; }   // antigo demais (replay)
+                let reason: String = v["reason"].as_str().unwrap_or("").chars().take(120).collect();
+                let canon = if kick { self.kick_canon(target, ts, &reason) } else { self.allow_canon(target, ts) };
+                if !identity::verify(&jwk, &canon, sig) { self.emit(MeshEvent::Error("assinatura de comando de sala inválida".into())).await; return; }
+                let target = target.to_string();
+                if !kick { self.banned.remove(&target); return; }
+                if target == self.identity.fingerprint() {
+                    // fui expulso: fecha tudo e encerra o ator; a UI mostra "Você foi removido da chamada"
+                    self.banned.insert(target);
+                    let ids: Vec<String> = self.peers.keys().cloned().collect();
+                    for id in ids { self.drop_peer(&id).await; }
+                    self.emit(MeshEvent::Kicked { reason }).await;
+                    self.dead = true;
+                } else { self.ban(&target).await; }
             }
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
@@ -425,8 +541,12 @@ impl Actor {
     }
 
     async fn after_auth(&mut self, peer: &str) {
-        let (ok, fp) = match self.peers.get(peer) { Some(p) => (p.sent_proof && p.proven, p.fp.clone()), None => return };
+        let (ok, fp, name) = match self.peers.get(peer) { Some(p) => (p.sent_proof && p.proven, p.fp.clone(), p.name.clone()), None => return };
+        if let Some(f) = &fp { if self.banned.contains(f) { self.blocked.insert(peer.to_string()); self.drop_peer(peer).await; return; } }   // banido tentando voltar na mesma sessão
         if ok {
+            if let Some(f) = &fp { self.emit(MeshEvent::PeerInfo { peer_id: peer.into(), fp: f.clone(), name }).await; }
+            let me = self.identity.fingerprint();
+            if let Some(o) = self.owner() { let mine = o == me; self.emit(MeshEvent::Owner { fp: o, me: mine }).await; }
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
             if let Some(fp) = fp { self.flush_outbox(&fp).await; }
             self.send_state(peer).await;

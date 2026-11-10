@@ -109,6 +109,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
     let mut mesh_ev: Option<mpsc::Receiver<MeshEvent>> = None;
     let mut rt_status: Option<mpsc::Receiver<String>> = None;
     let mut audio: Option<Arc<Audio>> = None;
+    let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
+    let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
 
     loop {
@@ -142,6 +144,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "sala inválida" })).await?;
                             continue;
                         }
+                        if kicked_rooms.contains(&format!("{ns}:{room}")) {
+                            out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "você foi removido desta sala nesta sessão" })).await?;
+                            continue;
+                        }
+                        cur_room = format!("{ns}:{room}");
                         if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
                         local_peer = uuid::Uuid::new_v4().to_string();
                         let topic = topic_name(&ns, &secure_room_id(&ns, &room));
@@ -159,7 +166,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
                         if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
                         audio = au.clone();
-                        let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: vec![], audio: au.zip(au_rx) }, id, rt, fw_rx);
+                        let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: vec![], audio: au.zip(au_rx), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at }, id, rt, fw_rx);
                         mesh_cmd = Some(h.cmd);
                         mesh_ev = Some(h.events);
                         rt_status = Some(st_rx);
@@ -186,6 +193,14 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         // deafen implica mic mudo: o estado efetivo é o que a UI mostra
                         out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
                     }
+                    "peer.kick" => {
+                        let fp = v["fp"].as_str().unwrap_or("").to_string();
+                        if let (false, Some(c)) = (fp.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::Kick { fp, reason: v["reason"].as_str().unwrap_or("").to_string() }).await; }
+                    }
+                    "room.allow" => {
+                        let fp = v["fp"].as_str().unwrap_or("").to_string();
+                        if let (false, Some(c)) = (fp.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::Allow { fp }).await; }
+                    }
                     "peer.mute" => {
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
@@ -198,6 +213,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
+                    Some(MeshEvent::PeerInfo { peer_id, fp, name }) => out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await?,
+                    Some(MeshEvent::Owner { fp, me }) => out(&mut wr, json!({ "ev": "room.owner", "fp": fp, "me": me })).await?,
+                    Some(MeshEvent::Banned { fp }) => out(&mut wr, json!({ "ev": "peer.banned", "fp": fp })).await?,
+                    Some(MeshEvent::Kicked { reason }) => {
+                        kicked_rooms.insert(cur_room.clone());
+                        out(&mut wr, json!({ "ev": "kicked", "reason": reason })).await?;
+                    }
                     Some(MeshEvent::Speaking { peer_id, level }) => out(&mut wr, json!({ "ev": "speaking", "peer": peer_id, "level": level })).await?,
                     Some(MeshEvent::PeerState { peer_id, microphone, deafened }) => out(&mut wr, json!({ "ev": "peer.state", "peer_id": peer_id, "microphone": microphone, "deafened": deafened })).await?,
                     Some(MeshEvent::Error(m)) => out(&mut wr, json!({ "ev": "error", "where": "mesh", "message": m })).await?,

@@ -20,7 +20,7 @@ fn node(port: u16, peer: &str, name: &str, room: &str, id: Arc<Identity>) -> Mes
     cfg.leave_grace = Duration::from_millis(200);
     let topic = topic_name("room", &secure_room_id("room", room));
     let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": 1, "clientVersion": "teste" }));
-    mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None }, id, rt, rx)
+    mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: None, joined_at: 1 }, id, rt, rx)
 }
 
 fn node_audio(port: u16, peer: &str, name: &str, room: &str, id: Arc<Identity>) -> (MeshHandle, Arc<Audio>) {
@@ -29,8 +29,85 @@ fn node_audio(port: u16, peer: &str, name: &str, room: &str, id: Arc<Identity>) 
     let topic = topic_name("room", &secure_room_id("room", room));
     let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": 1, "clientVersion": "teste" }));
     let (au, au_rx) = Audio::new(true); // tom de 440 Hz no lugar do microfone, sem dispositivo
-    let h = mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: Some((au.clone(), au_rx)) }, id, rt, rx);
+    let h = mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: Some((au.clone(), au_rx)), owner_fp: None, joined_at: 1 }, id, rt, rx);
     (h, au)
+}
+
+const PC: &str = "cccccccc-3333-4333-8333-000000000003";
+const PB2: &str = "bbbbbbbb-2222-4222-8222-0000000000b2";
+
+fn node_owner(port: u16, peer: &str, name: &str, room: &str, id: Arc<Identity>, owner: &str) -> MeshHandle {
+    let mut cfg = RealtimeCfg::new(&format!("ws://127.0.0.1:{port}"), "chave-de-teste");
+    cfg.leave_grace = Duration::from_millis(200);
+    let topic = topic_name("room", &secure_room_id("room", room));
+    let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": 1, "clientVersion": "teste" }));
+    mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: Some(owner.into()), joined_at: 1 }, id, rt, rx)
+}
+
+async fn authed(h: &mut MeshHandle, n: usize, secs: u64) -> bool {
+    let mut got = std::collections::HashSet::new();
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    while got.len() < n {
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        match timeout(left, h.events.recv()).await { Ok(Some(MeshEvent::Peer { peer_id, state })) if state == "autenticado" => { got.insert(peer_id); } Ok(Some(e)) => { eprintln!("authed: {e:?}"); } r => { eprintln!("authed: fim {r:?}"); return false } }
+    }
+    true
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn owner_kick_removes_target_bans_it_and_blocks_return_with_three_peers() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib, ic) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let owner = ia.fingerprint();
+    let mut a = node_owner(port, PA, "Ana", "sala-kick", ia.clone(), &owner);
+    let mut b = node_owner(port, PB, "Beto", "sala-kick", ib.clone(), &owner);
+    let mut c = node_owner(port, PC, "Cida", "sala-kick", ic.clone(), &owner);
+    assert!(authed(&mut a, 2, 40).await, "A não autenticou os dois");
+    assert!(authed(&mut b, 2, 40).await, "B não autenticou os dois");
+    assert!(authed(&mut c, 2, 40).await, "C não autenticou os dois");
+
+    // quem não é dono não consegue: Kick de B é recusado localmente
+    b.cmd.send(MeshCmd::Kick { fp: ic.fingerprint(), reason: "x".into() }).await.unwrap();
+    assert!(wait_for(&mut b, 5, |e| matches!(e, MeshEvent::Error(m) if m.contains("dono"))).await.is_some(), "não-dono deveria receber erro");
+
+    // o dono expulsa B
+    a.cmd.send(MeshCmd::Kick { fp: ib.fingerprint(), reason: "spam".into() }).await.unwrap();
+    let k = wait_for(&mut b, 10, |e| matches!(e, MeshEvent::Kicked { .. })).await;
+    assert!(matches!(k, Some(MeshEvent::Kicked { reason }) if reason == "spam"), "B não foi avisado da expulsão");
+    // C fecha a conexão com B e registra o banimento; A também
+    assert!(wait_for(&mut c, 10, |e| matches!(e, MeshEvent::Banned { fp } if *fp == ib.fingerprint())).await.is_some(), "C não baniu B");
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Banned { fp } if *fp == ib.fingerprint())).await.is_some(), "A não baniu B");
+
+    // B volta com a mesma identidade e outro peerId: ninguém autentica
+    let mut b2 = node_owner(port, PB2, "Beto", "sala-kick", ib.clone(), &owner);
+    assert!(!authed(&mut a, 1, 8).await, "A aceitou o banido de volta");
+    assert!(!authed(&mut c, 1, 2).await, "C aceitou o banido de volta");
+    // do lado do banido a conexão é derrubada pelos outros (ele pode ver "autenticado" por instantes: o dono só sabe quem é ao receber a prova dele)
+    assert!(wait_for(&mut b2, 10, |e| matches!(e, MeshEvent::Peer { state, .. } if state == "fechado" || state == "falhou")).await.is_some(), "a conexão do banido não foi derrubada");
+
+    // o dono permite: agora volta
+    a.cmd.send(MeshCmd::Allow { fp: ib.fingerprint() }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut b3 = node_owner(port, "bbbbbbbb-2222-4222-8222-0000000000b3", "Beto", "sala-kick", ib.clone(), &owner);
+    assert!(authed(&mut b3, 2, 40).await, "B não voltou depois de permitido");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn kick_from_non_owner_is_ignored_by_everyone() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib, ic) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let owner = ia.fingerprint();
+    let mut a = node_owner(port, PA, "Ana", "sala-kick2", ia.clone(), &owner);
+    let mut b = node_owner(port, PB, "Beto", "sala-kick2", ib.clone(), &owner);
+    let mut c = node_owner(port, PC, "Cida", "sala-kick2", ic.clone(), &owner);
+    assert!(authed(&mut a, 2, 40).await && authed(&mut b, 2, 40).await && authed(&mut c, 2, 40).await, "malha incompleta");
+    // B forja a expulsão de C (o comando de teste pula a checagem local de dono)
+    b.cmd.send(MeshCmd::KickUnchecked { fp: ic.fingerprint() }).await.unwrap();
+    assert!(wait_for(&mut c, 6, |e| matches!(e, MeshEvent::Kicked { .. })).await.is_none(), "C foi expulso por quem não é dono");
+    assert!(wait_for(&mut a, 3, |e| matches!(e, MeshEvent::Banned { .. })).await.is_none(), "A baniu por ordem de não-dono");
+    // e a conversa A -> C continua funcionando
+    a.cmd.send(MeshCmd::Chat { to_fp: ic.fingerprint(), text: "ainda aqui".into() }).await.unwrap();
+    assert!(wait_for(&mut c, 15, |e| matches!(e, MeshEvent::Chat { content, .. } if content == "ainda aqui")).await.is_some(), "A não consegue falar com C depois da tentativa");
 }
 
 async fn until<F: Fn() -> bool>(secs: u64, f: F) -> bool {

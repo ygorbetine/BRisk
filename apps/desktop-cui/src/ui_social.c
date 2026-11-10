@@ -383,4 +383,10 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
         }
     }
+    /* o dono da sala expulsou você */
+    cui_dialog(ui, "Chamada", &s->kicked_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        cui_text(ui, "Você foi removido da chamada.", .font = CUI_FONT_MEDIUM);
+        cui_text(ui, "Você não pode voltar a esta sala nesta sessão até o dono permitir.", .size = 13, .color = B_MUTED);
+        if (cui_button(ui, "Entendi", .variant = CUI_BUTTON_PRIMARY)) s->kicked_open = false;
+    }
 }

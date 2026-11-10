@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; } tile_t;
+typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; bool can_kick; } tile_t;
+enum { TILE_NONE = 0, TILE_MUTE = 1, TILE_KICK = 2 };
 static float g_lvl[10];   /* nível de fala por tile, lido pelo canvas do avatar na hora de pintar */
 
 
@@ -41,8 +42,9 @@ static void paint_avatar(cui_ctx *ui, cui_rect r, void *user) {
     cui_draw_rect_gradient(ui, (cui_rect){ r.x + 3, r.y + 3, r.w - 6, r.h - 6 }, CUI_CORNERS((r.w - 6) * 0.5f), CUI_RGB(0x8f5cf6), CUI_RGB(0xa826d0));
 }
 
-/* devolve true quando o rótulo de outra pessoa foi clicado (alterna "silenciar para mim") */
-static bool tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
+/* devolve a ação pedida: clicar no rótulo ou "Silenciar" no menu de contexto (botão direito) alterna o silêncio; "Expulsar" (só o dono) pede confirmação */
+static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
+    int act = TILE_NONE;
     bool muted = t->muted || (t->me && !mic_on);
     bool speaking = t->level > 0;
     int gi = t->slot < 0 ? 0 : t->slot > 9 ? 9 : t->slot;   /* 0..7 peers, 8 prévia, 9 eu */
@@ -51,7 +53,7 @@ static bool tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : CUI_RGBA(0x6d5cf655),
             .dir = CUI_STACK) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-            cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(420), .height = CUI_PX(420), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+            cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(300), .height = CUI_PX(300), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_push_id_int(ui, (int)(t->level * 8));   /* o canvas é reaproveitado por id: muda o id quando o nível muda */
                 cui_canvas(ui, "av", CUI_FILL, CUI_FILL, paint_avatar, &g_lvl[gi], 0);
                 cui_pop_id(ui);
@@ -62,17 +64,29 @@ static bool tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = 14) {
-            cui_box(ui, .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = 12, .pad_y = 8, .radius = 10, .bg = CUI_RGBA(0x14052099),
-                    .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
+            cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .hoverable = true, .dir = CUI_ROW, .gap = 7, .pad_x = 12, .pad_y = 8, .align = CUI_ALIGN_CENTER });
+            {
                 if (muted) cui_icon(ui, CUI_ICON_VOLUME_X, 14, B_DANGER);
                 if (t->by_me) cui_icon(ui, CUI_ICON_VOLUME_X, 14, B_MUTED);
                 char lab[160];
                 if (t->me) snprintf(lab, sizeof lab, "Você · %s", t->name); else snprintf(lab, sizeof lab, "%s%s", t->name, t->by_me ? " (silenciado por você)" : "");
                 cui_text(ui, lab, .size = 14);
             }
+            cui_card_end(ui);
+            if (!t->me) {
+                if (briks_clicked(ui, "lab")) act = TILE_MUTE;
+                cui_context_menu(ui, "pmenu") {
+                    cui_menu_label(ui, t->name);
+                    if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
+                    if (t->can_kick) {
+                        cui_menu_separator(ui);
+                        if (cui_menu_item(ui, "Expulsar da chamada…", .icon = CUI_ICON_PHONE, .danger = true)) act = TILE_KICK;
+                    }
+                }
+            }
         }
     }
-    return !t->me && briks_clicked(ui, "lab");
+    return act;
 }
 
 /* aba de um segmented control: ativa = pílula em degradê com texto branco; inativa = texto muted */
@@ -172,16 +186,19 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 }
             } else {
                 bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
-                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false };
-                const tile_t other = { "Marina Costa", false, false, false, 0, 8, false };
+                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false };
+                const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false };
                 cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
                     tile(ui, &me, mic_eff);
                     if (!s->in_room) tile(ui, &other, s->mic_on);   /* prévia local sem sala */
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
-                        char nm[64]; snprintf(nm, sizeof nm, "Participante %d", i + 1);
-                        const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me };
+                        char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
+                        const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
+                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0 };
                         cui_push_id_int(ui, 700 + i);
-                        if (tile(ui, &t, true)) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
+                        int act = tile(ui, &t, true);
+                        if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
+                        else if (act == TILE_KICK) { s->kick_slot = i; s->kick_open = true; }
                         cui_pop_id(ui);
                     }
                 }
@@ -199,6 +216,19 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 if (pill(ui, 3, CUI_ICON_VIDEO, "Câmera", s->cam_on ? 1 : 0)) s->cam_on = !s->cam_on;
                 if (pill(ui, 4, CUI_ICON_MONITOR, "Compartilhar", s->sharing ? 1 : 0)) s->sharing = !s->sharing;
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
+            }
+        }
+    }
+    /* confirmação rápida antes de expulsar */
+    if (s->kick_open) {
+        cui_vec2 vp = cui_viewport_size(ui);
+        const char *who = (s->kick_slot >= 0 && s->kick_slot < 8 && s->rtc_peers[s->kick_slot].name[0]) ? s->rtc_peers[s->kick_slot].name : "esta pessoa";
+        cui_dialog(ui, "Expulsar da chamada", &s->kick_open, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+            cui_textf(ui, "Expulsar %s da chamada?", who);
+            cui_text(ui, "Ela será desconectada e não poderá voltar a esta sala nesta sessão até você permitir.", .size = 13, .color = B_MUTED);
+            cui_row(ui, .gap = 10) {
+                if (cui_button(ui, "Cancelar")) s->kick_open = false;
+                if (cui_button(ui, "Expulsar", .variant = CUI_BUTTON_DANGER)) { rtc_kick_peer(s, s->kick_slot); s->kick_open = false; }
             }
         }
     }

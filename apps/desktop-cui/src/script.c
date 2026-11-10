@@ -71,6 +71,8 @@ void script_tick(cui_ctx *ui) {
         if (!strcmp(cmd, "caption")) { char *r = strtok(NULL, ""); snprintf(caption, sizeof caption, "%s", r ? r : ""); }
         else if (!strcmp(cmd, "at")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); } }
         else if (!strcmp(cmd, "down")) { cui_input_mouse_move(ui, cx, cy); cui_input_mouse_button(ui, CUI_MOUSE_LEFT, true); mdown = true; }
+        else if (!strcmp(cmd, "rdown")) { cui_input_mouse_move(ui, cx, cy); cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, true); }
+        else if (!strcmp(cmd, "rup")) { cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, false); }
         else if (!strcmp(cmd, "up")) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, false); mdown = false; }
         else if (!strcmp(cmd, "pick")) { char *k = strtok(NULL, " "); if (k) dock_script_pick(k); }
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }

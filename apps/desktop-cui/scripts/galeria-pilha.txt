@@ -34,6 +34,11 @@ servers 5
 wait 6
 servers 14
 wait 6
+art chat
+to 900 380 6
+wait 3
+to 380 380 6
+wait 3
 art
 esc
 wait 6

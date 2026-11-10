@@ -109,6 +109,12 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), CUI_RGBA(0xc4b0ffcc), 1.5f);
 }
 
+static float servers_target_w(float vw) {
+    float t = fminf(fmaxf((vw - 560.0f) / 340.0f, 0.0f), 1.0f), icon_w = 36.0f + 20.0f * t + 20.0f;   /* só ícones: 56..76 */
+    if (vw <= 900.0f) return icon_w;
+    float u = fminf((vw - 900.0f) / 40.0f, 1.0f), big = 180.0f + 90.0f * fminf((vw - 900.0f) / 500.0f, 1.0f);   /* larga: 180..270 */
+    return 76.0f + (big - 76.0f) * u;
+}
 static bool inside(lrect r, float x, float y) { return x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h; }
 
 static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
@@ -139,6 +145,7 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
     cui_push_id_int(ui, 100 + kind);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = r.x, .pad_top = r.y) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
+            g_panel_w = r.w;
             ui_panel(ui, c->s, kind);
             if (hot || tools) {   /* alça de arrasto no topo + leve destaque do cabeçalho (cantos de cima acompanham o painel) */
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START) {
@@ -148,7 +155,7 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
                     }
                 }
             }
-            if (tools) {
+            if (tools && !(kind == P_SERVERS && r.w < 76)) {
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 6) {
                     cui_box(ui, .dir = CUI_ROW, .gap = 4) {
                         bool g = false, p = false, x = false;
@@ -187,6 +194,12 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     rc_t c = { ui, s, {{0}}, mp.x, mp.y, down };
     lrect area = { 10, 10, vp.x - 20, vp.y - 3 - 20 };
     layout_compute(&L, area, c.r);
+    /* barra de grupos responsiva: a largura acompanha a janela (ícones 36..56 px; larga, ~180..270 px com nome) */
+    { int si = layout_find(&L, P_SERVERS), sp = si >= 0 ? L.n[si].parent : -1;
+      if (sp >= 0 && !L.n[sp].vertical && L.n[sp].a == si && c.r[sp].w > LAYOUT_GAP + 100) {
+          float want = servers_target_w(vp.x), nr = want / (c.r[sp].w - LAYOUT_GAP);
+          if (nr > 0.02f && nr < 0.6f && fabsf(nr - L.n[sp].ratio) > 1e-4f) { L.n[sp].ratio = nr; layout_compute(&L, area, c.r); }
+      } }
 
     /* redimensionar: acompanha o mouse enquanto o botão está apertado (sem animação) */
     if (resizing >= 0) {

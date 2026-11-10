@@ -12,14 +12,51 @@ static void initials(const char *name, char *out) {
     out[2] = 0;
 }
 
-static void space_button(cui_ctx *ui, const char *label, bool active, bool dashed, int *clicked_id, int id) {
-    cui_push_id_int(ui, id);
-    cui_box(ui, .id = "b", .width = CUI_PX(50), .height = CUI_PX(50), .radius = active ? 13 : 17,
-            .bg = active ? B_C3 : dashed ? CUI_RGBA(0x8b5cf60b) : CUI_RGB(0x171c24),
-            .border = dashed ? 1 : 0, .border_color = CUI_RGBA(0x8b5cf666),
-            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-        cui_text(ui, label, .size = 13, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xc9d1dc));
+/* Barra de grupos responsiva: só ícones (36..56 px conforme a largura) ou, com folga, ícone + nome + "N membros".
+ * g_panel_w é a largura atual do painel (dock.c). Texto sempre medido com a fonte real e cortado com reticências antes da borda. */
+float g_panel_w = 76;
+
+static void fit_text(cui_ctx *ui, cui_font font, float size, const char *src, float maxw, char *out, size_t cap, bool *cut) {
+    snprintf(out, cap, "%s", src); *cut = false;
+    if (cui_measure_text(ui, font, size, out, (int)strlen(out)).width <= maxw) return;
+    *cut = true;
+    size_t n = strlen(src);
+    while (n > 0) {
+        n--; while (n > 0 && (src[n] & 0xC0) == 0x80) n--;   /* não corta no meio de um caractere UTF-8 */
+        char t[160]; snprintf(t, sizeof t, "%.*s\xE2\x80\xA6", (int)n, src);
+        if (cui_measure_text(ui, font, size, t, (int)strlen(t)).width <= maxw) { snprintf(out, cap, "%s", t); return; }
     }
+    snprintf(out, cap, "\xE2\x80\xA6");
+}
+
+static void space_button(cui_ctx *ui, const char *label, const char *name, const char *sub, bool active, bool dashed, int *clicked_id, int id) {
+    float W = g_panel_w, icon = fminf(fmaxf(W - 20.0f, 36.0f), 56.0f), rad = icon * 0.3f;
+    bool wide = W >= 110.0f;
+    cui_push_id_int(ui, id);
+    cui_color bg = active ? B_C3 : dashed ? CUI_RGBA(0x8b5cf60b) : CUI_RGBA(0xffffff16);
+    cui_color bd = active ? CUI_RGBA(0xffffff40) : dashed ? CUI_RGBA(0x8b5cf666) : CUI_RGBA(0xffffff26);
+    float itemw = wide ? W - 20.0f : icon;
+    cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_PX(itemw), .height = CUI_PX(icon), .gap = 10, .radius = rad,
+            .bg = wide ? CUI_RGBA(0x00000000) : bg, .border = wide ? 0 : 1, .border_color = bd, .clip = true,
+            .align = CUI_ALIGN_CENTER, .justify = wide ? CUI_JUSTIFY_START : CUI_JUSTIFY_CENTER) {
+        if (wide) {
+            cui_box(ui, .width = CUI_PX(icon), .height = CUI_PX(icon), .radius = rad, .bg = bg, .border = 1, .border_color = bd,
+                    .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                cui_text(ui, label, .size = icon * 0.26f, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xe6dcff));
+            }
+            float tw = itemw - icon - 10.0f - 8.0f;   /* folga interna: o texto nunca encosta na borda */
+            char nm[160], sb[64]; bool cn, cs;
+            fit_text(ui, CUI_FONT_MEDIUM, 13.0f, name, tw, nm, sizeof nm, &cn);
+            fit_text(ui, CUI_FONT_BODY, 11.0f, sub, tw, sb, sizeof sb, &cs);
+            cui_box(ui, .width = CUI_PX(tw), .gap = 2, .clip = true) {
+                cui_text(ui, nm, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true, .color = active ? B_TEXT : CUI_RGB(0xe6dcff));
+                if (sb[0]) cui_text(ui, sb, .size = 11, .nowrap = true, .color = B_MUTED);
+            }
+        } else {
+            cui_text(ui, label, .size = icon * 0.3f, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xe6dcff));
+        }
+    }
+    cui_tooltip(ui, name);
     if (briks_clicked(ui, "b")) *clicked_id = id;
     cui_pop_id(ui);
 }
@@ -250,17 +287,21 @@ static void content(cui_ctx *ui, app_state_t *s) {
 }
 
 static void panel_servers(cui_ctx *ui, app_state_t *s) {
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad_x = 8, .pad_y = 12, .gap = 10, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
-                .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER) {
+    bool wide = g_panel_w >= 110.0f;
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad_x = 10, .pad_y = 12, .gap = 10, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
+                .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = wide ? CUI_ALIGN_START : CUI_ALIGN_CENTER) {
             int click = -1;
-            space_button(ui, "B", s->active_space == 0, false, &click, 0);
-            if (s->community_count) cui_box(ui, .width = CUI_PX(32), .height = CUI_PX(1), .bg = CUI_RGBA(0xffffff14)) {}
+            space_button(ui, "B", "Briks", "Início", s->active_space == 0, false, &click, 0);
+            if (s->community_count) cui_box(ui, .width = CUI_PX(wide ? g_panel_w - 20.0f : 32), .height = CUI_PX(1), .bg = CUI_RGBA(0xffffff14)) {}
             for (int i = 0; i < s->community_count; i++) {
                 char ini[3]; initials(s->communities[i].name, ini);
-                space_button(ui, ini, s->active_space == i + 1, false, &click, i + 1);
+                char sub[32]; int mm = s->communities[i].members > 0 ? s->communities[i].members : 1;
+                snprintf(sub, sizeof sub, mm == 1 ? "1 membro" : "%d membros", mm);
+                space_button(ui, ini, s->communities[i].name, sub, s->active_space == i + 1, false, &click, i + 1);
             }
-            space_button(ui, "+", false, true, &click, 999);
-            if (click >= 0 && click != 999) s->active_space = click;
+            space_button(ui, "+", "Criar grupo", "", false, true, &click, 999);
+            if (click == 999) { s->create_group_open = true; click = -1; }
+            if (click >= 0) s->active_space = click;
         }
 }
 

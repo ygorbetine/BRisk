@@ -183,6 +183,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
+        let mut last_urgent = Instant::now();
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
         let mut closed_reason = String::new();
@@ -192,7 +193,11 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
             next += period; if next < now { next = now + period; }
             // ---- uma vez por segundo: mede, estima a banda, decide o nível e publica a telemetria ----
-            if win_t.elapsed() >= Duration::from_secs(1) {
+            // O laço roda a cada segundo — ou já, se o espectador acabou de avisar que a fila encheu (retorno direto, 4x/s)
+            let fb = net.lock().unwrap().feedback();
+            let urgent = cfg.adaptive && fb.map(|f| f.1 > 80.0).unwrap_or(false) && win_t.elapsed() >= Duration::from_millis(300) && last_urgent.elapsed() >= Duration::from_millis(500);
+            if win_t.elapsed() >= Duration::from_secs(1) || urgent {
+                if urgent { last_urgent = Instant::now(); }
                 let secs = win_t.elapsed().as_secs_f64();
                 let cpu = cpu_ms();
                 let sent_bps = bytes as f64 * 8.0 / secs;
@@ -208,10 +213,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 if cfg.adaptive {
                     est.set_ceil(ctl.top_ceil());
-                    est.update(Instant::now(), sent_bps, worst, nack_ratio);
+                    est.update(Instant::now(), sent_bps, worst, nack_ratio, fb);
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
-                    if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
-                    if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
+                    if !no_cpu && secs >= 0.9 && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
+                    if let Some(e) = enc.as_ref() { if frames >= 1 && secs >= 0.9 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {
                         just_changed = true;
@@ -237,7 +242,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
-                    "adapting": adapting, "reason": est.reason, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
+                    "adapting": adapting, "reason": est.reason, "rx_kbps": fb.map(|f| (f.0 / 1000.0).round()), "queue_ms": fb.map(|f| f.1.round()), "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
@@ -479,10 +484,33 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
+    let (mut fb_bytes, mut fb_min, mut fb_t, mut fb_had) = (0u64, f64::INFINITY, Instant::now(), false);
+    let mut fb_origin: Option<(Instant, u32)> = None;
+    let mut fb_bases: std::collections::VecDeque<f64> = Default::default();
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
         // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
         let pkt = match tokio::time::timeout(Duration::from_millis(50), track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
+        // Retorno direto ao emissor (vale mesmo sem assistir: a rede congestiona do mesmo jeito): taxa recebida e atraso de fila.
+        // Atraso relativo = (chegada − 1ª chegada) − (relógio RTP − 1º relógio RTP); a base é o menor valor dos últimos 20 s; a fila
+        // do intervalo é o menor atraso visto nele (filtra o jitter) menos a base.
+        if let Some(p) = &pkt {
+            fb_bytes += (p.payload.len() + 12) as u64;
+            let (t0, ts0) = *fb_origin.get_or_insert((Instant::now(), p.header.timestamp));
+            let owd = t0.elapsed().as_secs_f64() * 1000.0 - (p.header.timestamp.wrapping_sub(ts0) as i32) as f64 / 90.0;
+            fb_min = fb_min.min(owd);
+        }
+        if fb_t.elapsed() >= Duration::from_millis(250) {
+            let secs = fb_t.elapsed().as_secs_f64();
+            if fb_min.is_finite() {
+                fb_bases.push_back(fb_min); if fb_bases.len() > 80 { fb_bases.pop_front(); }
+                let base = fb_bases.iter().copied().fold(f64::MAX, f64::min);
+                let _ = ev.try_send(json!({ "ev": "share.fb", "peer_id": peer, "kbps": (fb_bytes as f64 * 8.0 / secs / 1000.0).round(), "queue_ms": (fb_min - base).max(0.0).round() }));
+            } else if fb_bytes == 0 && fb_had {
+                let _ = ev.try_send(json!({ "ev": "share.fb", "peer_id": peer, "kbps": 0, "queue_ms": 0 }));   // parou de chegar
+            }
+            fb_had = fb_bytes > 0; fb_bytes = 0; fb_min = f64::INFINITY; fb_t = Instant::now();
+        }
         let w = st.watching.load(Ordering::Relaxed);
         if !w { was = false; continue; }
         let ep = st.epoch.load(Ordering::Relaxed);

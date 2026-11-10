@@ -209,7 +209,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     est.set_ceil(ctl.top_ceil());
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
                     if !no_cpu { ctl.note_cpu(work_ms, offered, sent_fps); }
-                    if let Some(e) = enc.as_ref() { if frames >= 2 { ctl.note_encoder(sent_bps, e.bps as f64); } }
+                    if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {
                         fps = d.level.fps; period = Duration::from_micros(1_000_000 / fps as u64);

@@ -144,9 +144,12 @@ pub struct Controller {
     up_ticks: u32,
     cpu_bad: u32,
     cpu_good: u32,
-    /// quanto o codificador passa do bitrate pedido neste conteúdo (1 = obedece). Conteúdo muito difícil (ruído, jogo caótico)
-    /// não comprime até o alvo em resolução alta; o fator encarece os níveis e faz a escada descer mais de um degrau de uma vez.
+    /// enviado / pedido no último segundo (telemetria). Conteúdo muito difícil (ruído, jogo caótico) não comprime até o alvo em
+    /// resolução alta; o piso de bits por pixel abaixo é o que faz a escada pular direto para a resolução que cabe.
     pub overshoot: f64,
+    /// piso medido de bits por pixel por quadro (0 = sem piso conhecido) e proporção largura/altura do que está sendo codificado
+    pub bpp_floor: f64,
+    aspect: f64,
     /// teto de bitrate do modo manual (None = automático: o teto é o "automático" do nível em uso)
     pub manual_ceil: Option<f64>,
 }
@@ -156,18 +159,27 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, overshoot: 1.0, bpp_floor: 0.0, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(self.ladder[0].h, self.ladder[0].fps) as f64) }
     fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64) }
-    fn net_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| need_bps(*l) * self.overshoot <= budget).unwrap_or(self.ladder.len() - 1) }
-    /// `sent`/`asked` = bps que saíram do codificador e bps pedidos a ele no último segundo (com quadros saindo).
-    pub fn note_encoder(&mut self, sent: f64, asked: f64) {
-        if asked <= 0.0 || sent <= 0.0 { return; }
-        let r = (sent / asked).clamp(0.5, 8.0);
-        // sobe rápido (o excesso congestiona já), desce devagar
-        self.overshoot = if r > self.overshoot { self.overshoot * 0.4 + r * 0.6 } else { self.overshoot * 0.85 + r * 0.15 }.clamp(1.0, 8.0);
+    /// Bitrate necessário para o nível: o mínimo de qualidade ou, se maior, o que o codificador comprovadamente não consegue
+    /// baixar neste conteúdo (piso medido de bits por pixel).
+    fn need(&self, l: Level) -> f64 {
+        let pixels = l.h as f64 * l.h as f64 * self.aspect;
+        need_bps(l).max(self.bpp_floor * pixels * l.fps as f64 * 1.1)
+    }
+    fn net_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| self.need(*l) <= budget).unwrap_or(self.ladder.len() - 1) }
+    /// Chamado uma vez por segundo com quadros saindo: `sent`/`asked` = bps que saíram do codificador e bps pedidos; `fps` = quadros
+    /// codificados por segundo; `w`x`h` = tamanho codificado. Se o codificador passa do pedido, aprende o piso de bits por pixel.
+    pub fn note_encoder(&mut self, sent: f64, asked: f64, fps: f64, w: usize, h: usize) {
+        if asked <= 0.0 || sent <= 0.0 || fps < 0.5 || w == 0 || h == 0 { return; }
+        self.aspect = w as f64 / h as f64;
+        let bpp = sent / fps / (w * h) as f64;
+        if sent > asked * 1.15 { self.bpp_floor = if bpp > self.bpp_floor { bpp } else { self.bpp_floor * 0.7 + bpp * 0.3 }; }
+        else { self.bpp_floor *= 0.9; }   // obedeceu: o conteúdo ficou mais fácil, esquece aos poucos
+        self.overshoot = (sent / asked).clamp(0.0, 8.0);
     }
 
     /// Sobrecarga local. `work_ms` = tempo médio de conversão + codificação por quadro; `offered`/`sent` = quadros por segundo
@@ -245,6 +257,20 @@ mod tests {
         let w = e.update(t0 + Duration::from_secs(41), v, Some((0.05, 20.0, 1.0)), 0.0);
         let _ = c;
         assert_eq!(w, v);
+    }
+
+    #[test]
+    fn incompressible_content_jumps_straight_to_a_resolution_that_fits() {
+        let mut c = Controller::new(Content::Detail, 1080, 30, 12_000);
+        c.decide(12_000_000.0);
+        // ruído em 1080p: pediu 1,5 Mbps, saíram 4,3 Mbps a 3 qps → ~0,7 bit por pixel por quadro
+        c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080);
+        let d = c.decide(1_500_000.0);
+        assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");
+        // conteúdo fácil de novo: o piso some e a resolução volta
+        for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360); }
+        for _ in 0..8 { c.decide(1_500_000.0); }
+        assert!(c.decide(1_500_000.0).level.h >= 1080, "voltou a 1080p");
     }
 
     #[test]

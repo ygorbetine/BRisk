@@ -568,45 +568,8 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             }
         }
     }
-    static float restored_at = -10;
     cui_vec2 vp = cui_viewport_size(ui);
-    /* largura e altura acompanham o conteúdo, limitadas à janela; se não couber, rola na vertical */
-    cui_dialog(ui, "Configurações", &s->settings_open, .width = fminf(480.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
-        cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 200.0f, 120.0f), .scroll_y = true, .gap = 12) {
-            cui_textf(ui, "Conectado como %s", s->user_name);
-            if (s->user_email[0]) cui_text(ui, s->user_email, .size = 12, .color = B_MUTED);   /* e-mail só como texto secundário: o rodapé funciona com foto/nome de qualquer conta */
-            cui_text(ui, "Voz e vídeo, rede, atalhos, atualizações e sobre chegam nos próximos marcos.", .color = B_MUTED);
-            cui_text(ui, "Desempenho", .font = CUI_FONT_MEDIUM);
-            cui_row(ui, .gap = 8) {
-                for (int l = 0; l < 3; l++) {
-                    cui_push_id_int(ui, 700 + l);
-                    if (cui_button(ui, briks_perf_label(l), .variant = g_perf == l ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY)) briks_perf_set(ui, l, true);
-                    cui_pop_id(ui);
-                }
-            }
-            cui_text(ui, briks_perf_help(g_perf), .size = 12, .color = B_MUTED);
-            cui_text(ui, "Presença", .font = CUI_FONT_MEDIUM);
-            cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
-            if (s->rp_enabled) {
-                cui_row(ui, .gap = 8) {
-                    for (int l = 0; l < 2; l++) {
-                        cui_push_id_int(ui, 760 + l);
-                        if (cui_button(ui, l ? "Só na chamada" : "Todos os amigos", .variant = s->rp_audience == l ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY)) s->rp_audience = l;
-                        cui_pop_id(ui);
-                    }
-                }
-            }
-            cui_text(ui, "Painéis", .font = CUI_FONT_MEDIUM);
-            cui_text(ui, "Volta a disposição original: Servidores | Menu | Conversa.", .size = 12, .color = B_MUTED);
-            if (cui_button(ui, "Restaurar layout padrão", .variant = CUI_BUTTON_SECONDARY)) {
-                dock_restore_default();
-                restored_at = (float)cui_time(ui);
-            }
-            if ((float)cui_time(ui) - restored_at < 3.0f)
-                cui_text(ui, "Layout restaurado.", .size = 12, .color = B_ONLINE);
-            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
-        }
-    }
+    settings_dialog(ui, s);
     /* o dono da sala expulsou você */
     cui_dialog(ui, "Chamada", &s->kicked_open, .width = fminf(380.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_text(ui, "Você foi removido da chamada.", .font = CUI_FONT_MEDIUM);

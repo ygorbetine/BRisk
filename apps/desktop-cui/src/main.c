@@ -36,7 +36,8 @@ static void frame(cui_ctx *ui) {
     app_pump(&state);
     rtc_pump(&state);
     profile_tick(&state);
-    { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strcmp(o, "settings")) state.settings_open = true; if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
+    settings_tick();
+    { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
         briks_gradient_bar(ui);
         cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {

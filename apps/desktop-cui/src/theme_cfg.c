@@ -202,12 +202,16 @@ static bool col(cui_ctx *ui, const char *label, cui_color *c) {
     return ch;
 }
 
+void briks_theme_editor_open(void) { ed_open = true; ed = g_th; }
+void briks_theme_reset(void) { briks_theme_t d; briks_theme_defaults(&d); briks_theme_validate(&d); g_th = d; briks_theme_save(briks_theme_path(), &g_th); }
+
 void briks_theme_editor(cui_ctx *ui) {
     static int dev = -1;
     if (dev < 0) { const char *e = getenv("BRIKS_DEV"); dev = e && e[0] == '1'; }
-    if (!dev) return;
+    if (dev) {
     { static bool once; if (!once) { once = true; const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "theme")) { ed_open = true; ed = g_th; } } }
     if (cui_shortcut(ui, CUI_MOD_CTRL | CUI_MOD_SHIFT, CUI_KEY_T)) { ed_open = !ed_open; if (ed_open) ed = g_th; }
+    }
     if (!ed_open) return;
     briks_theme_t before = g_th;
     cui_sheet(ui, "Tema (desenvolvimento)", &ed_open, .side = CUI_SIDE_RIGHT, .size = 380) {

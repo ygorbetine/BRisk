@@ -64,7 +64,7 @@ typedef struct {
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
     bool create_group_open, profile_open, logout_confirm_open;
-    char user_emoji[8]; int status_clear, profile_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     cui_texture user_photo;                    /* foto de perfil (0 = só iniciais) */
     char new_group[96];
@@ -108,6 +108,11 @@ void app_pump(app_state_t *s);
 /* rtc.c: ponte com o briks-core */
 void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se preciso, abre a sessão e entra na sala */
 void rtc_leave_room(app_state_t *s);
+void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+void settings_tick(void);                                  /* carrega/grava settings.cfg */
+void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
+void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
+void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
 void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);

@@ -77,15 +77,15 @@ static void bubbles_draw(cui_ctx *ui) {
         if (by < 6) by = 6;
         abs_glass(ui, a.x + 27, a.y - 4, 8, 8, 4, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior; glass.c as une ao balão (metaballs) */
         abs_glass(ui, a.x + 32, a.y - 14, 12, 12, 6, false);
-        if (g_perf >= PERF_MIN) {   /* sem shader: pescoços chapados para a mesma silhueta unida */
-            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 8 - (by + h - 4), 3, false);
-            abs_glass(ui, a.x + 31.5f, a.y - 6.5f, 6, 6, 3, false);
-        }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
             cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
                     .elevation = CUI_ELEVATION_RESTING, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
+        }
+        if (g_perf >= PERF_MIN) {   /* sem shader: pescoços chapados para a mesma silhueta unida */
+            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 8 - (by + h - 4), 3, false);
+            abs_glass(ui, a.x + 31.5f, a.y - 6.5f, 6, 6, 3, false);
         }
         cui_pop_id(ui);
     }

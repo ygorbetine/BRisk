@@ -160,20 +160,22 @@ static const char *FS_COMP =
     "  float d = sd(p, b, u_rad);\n"
     "  if (u_card.w > 0.5) {   /* bolha organica: harmonicos de baixa frequencia, fase fixa por balao (u_m3.x), respiracao lenta (u_m3.y/z) so no Normal */\n"
     "    float ph = u_m3.x, br = u_m3.z * sin(u_m3.y);\n"
-    "    d += (0.075 * b.y) * wob(p, ph) + 0.35 * br;\n"
+    "    d += (0.075 * b.y) * wob(p, ph) + 0.35 * br + 1.6 * (p.x / max(b.x, 1.0)) * (p.y / max(b.y, 1.0));   /* feijao: um lado mais cheio */\n"
     "    if (u_m1.w > 0.5) { vec2 v1 = v_px - u_m1.xy, v2 = v_px - u_m2.xy; float d1 = length(v1 * vec2(0.9, 1.1)) - u_m1.z + 0.6 * wob(v1, ph + 1.3) - 0.3 * br;\n"
     "      d = smin(d, d1, 19.0 + 2.0 * br);\n"
     "      if (u_m2.w > 0.5) { float d2 = length(v2 * vec2(1.1, 0.92)) - u_m2.z + 0.5 * wob(v2, ph + 2.6); d = smin(d, d2, 11.0 + 1.5 * br); } }\n"
     "  }\n"
-    " float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; if (cov <= 0.0) discard;\n"
+    " float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; float sa = 0.0;\n"
+    "  if (u_card.w > 0.5) { vec2 gs = vec2(dFdx(d), dFdy(d)); gs = gs / max(length(gs), 1e-4); float dS = d - 3.5 * gs.y; sa = 0.30 * exp(-max(dS, 0.0) / 4.5) * (1.0 - clamp(0.5 - d, 0.0, 1.0)) * u_alpha; }   /* sombra violeta curta embaixo */\n"
+    "  if (cov <= 0.0 && sa < 0.004) discard;\n"
     "  vec2 g0 = vec2(dFdx(d), dFdy(d)); g0 = g0 / max(length(g0), 1e-4);\n"
     "  vec2 uv0 = gl_FragCoord.xy / u_vp; vec3 c;\n"
-    "  /* bolha de status (Cristal violeta): corpo translucido (fundo com leve desfoque), refracao so nas bordas pelo gradiente do SDF, centro limpo */\n"
-    "  float bl = 0.65, ssat = 1.5, br = 1.05;\n"
+    "  /* bolha de status (Liquid Glass 2026): corpo quase transparente, refracao + aberracao cromatica concentradas na borda, desfoque so para legibilidade */\n"
+    "  float bl = 0.3, ssat = 1.15, br = 1.04;\n"
     "  if (u_card.w > 0.5) {\n"
     "    vec2 o = vec2(0.0); float dsp = 0.0;\n"
-    "    if (u_card.w > 1.5) { float s = exp(-max(-d, 0.0) / 7.0); o = vec2(g0.x, -g0.y) * (-s) * u_bub.x * 1.3 / u_vp; dsp = u_bub.y; }   /* Normal: refracao + dispersao */\n"
-    "    else bl = 0.4;   /* Simplificado: sem refracao nem dispersao, menos desfoque */\n"
+    "    if (u_card.w > 1.5) { float s = exp(-max(-d, 0.0) / 9.0); o = vec2(g0.x, -g0.y) * (-s) * u_bub.x * 1.8 / u_vp; dsp = 0.35 + u_bub.y * 1.5; }   /* Normal: lente + dispersao R/G/B */\n"
+    "    else bl = 0.4;   /* Simplificado: sem refracao nem aberracao */\n"
     "    c = vec3(smp(uv0 + o * (1.0 - dsp), bl).r, smp(uv0 + o, bl).g, smp(uv0 + o * (1.0 + dsp), bl).b);\n"
     "    c = clamp(mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, ssat) * br, 0.0, 1.0);\n"
     "  } else c = texture(u_tex, uv0).rgb;\n"
@@ -192,18 +194,23 @@ static const char *FS_COMP =
     "    float top = max(dot(g, vec2(0.0, -1.0)), 0.0) * 0.75 + max(lit, 0.0) * 0.25;\n"
     "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.75), u_card.y * top * exp(-max(-d, 0.0) / 1.3));\n"
     "  }\n"
-    "  if (u_card.w > 0.5) {   /* bolha: tinta violeta suave, borda de 1px, luz no topo e luz acumulada embaixo; tudo preso a borda (sem risco sobre o texto) */\n"
-    "    float k = u_card.x; vec2 lp = p / max(b, vec2(1.0));\n"
-    "    float gt = clamp(0.5 + 0.5 * dot(lp, normalize(vec2(0.34, 0.94))), 0.0, 1.0);\n"
-    "    vec4 bg = mix(vec4(0.588, 0.392, 1.0, 0.16), vec4(0.431, 0.235, 0.902, 0.08), gt);\n"
-    "    c = mix(c, bg.rgb, clamp(bg.a * k, 0.0, 1.0));\n"
-    "    float depth = max(-d, 0.0);\n"
-    "    c = mix(c, vec3(0.804, 0.706, 1.0), clamp(0.5 * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
-    "    float up = max(dot(g0, vec2(0.0, -1.0)), 0.0), dn = max(dot(g0, vec2(0.0, 1.0)), 0.0);\n"
-    "    c = mix(c, vec3(0.92, 0.86, 1.0), clamp(0.5 * exp(-max(depth - 1.0, 0.0) / 1.2) * up * k, 0.0, 1.0));\n"
-    "    c = mix(c, vec3(0.588, 0.431, 1.0), clamp(0.4 * exp(-depth / 4.0) * dn * k * 0.8, 0.0, 1.0));\n"
+    "  if (u_card.w > 0.5) {   /* bolha: tinta violeta leve no centro (mais forte sobre fundo claro, para o texto manter contraste), bisel iridescente por angulo, brilho largo no canto superior esquerdo, caustic no inferior direito */\n"
+    "    float k = u_card.x; float depth = max(-d, 0.0);\n"
+    "    float bgl = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    float tA = (0.10 + 0.42 * smoothstep(0.25, 0.75, bgl)) * mix(1.0, 0.5, exp(-depth / 6.0));\n"
+    "    c = mix(c, vec3(0.30, 0.16, 0.62), clamp(tA * k, 0.0, 1.0));\n"
+    "    float w = 1.0 - smoothstep(0.0, 4.5, depth); w = w * w * (3.0 - 2.0 * w);\n"
+    "    float tt = 0.5 + 0.5 * sin(atan(g0.y, g0.x) + 0.6 + u_m3.x * 0.1);\n"
+    "    vec3 cy = vec3(0.35, 0.85, 1.0), vi = vec3(0.62, 0.42, 1.0), pk = vec3(1.0, 0.45, 0.82);\n"
+    "    vec3 ir = tt < 0.5 ? mix(cy, vi, tt * 2.0) : mix(vi, pk, (tt - 0.5) * 2.0);\n"
+    "    float curv = clamp(length(fwidth(g0)) * 7.0, 0.0, 1.0);\n"
+    "    c = mix(c, ir, clamp(w * (0.50 + 0.45 * curv) * 0.8 * k, 0.0, 1.0));\n"
+    "    c = mix(c, vec3(0.95, 0.92, 1.0), clamp(0.35 * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
+    "    float tl = max(dot(g0, normalize(vec2(-0.7, -0.7))), 0.0), brc = max(dot(g0, normalize(vec2(0.7, 0.7))), 0.0);\n"
+    "    c = mix(c, vec3(1.0), clamp(0.55 * tl * tl * exp(-depth / 6.5) * k, 0.0, 1.0));\n"
+    "    c = mix(c, vec3(0.80, 0.90, 1.0), clamp(0.45 * pow(brc, 1.5) * exp(-max(depth - 1.5, 0.0) / 7.0) * k, 0.0, 1.0));\n"
     "  }\n"
-    "  f = vec4(c * cov, cov); }\n";
+    "  f = vec4(c * cov + vec3(0.27, 0.12, 0.55) * sa, cov + sa); }\n";
 
 /* Dither final: ruído triangular (2 amostras de ruído de gradiente intercalado) de +-1 LSB somado antes de gravar em 8 bits. */
 static const char *FS_DITH =
@@ -325,7 +332,7 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glUniform2f(G.c_vp, (float)W, (float)H);
     float ext = q->grp >= 0 ? sqrtf(q->hw * q->hw + q->hh * q->hh) + 2 : 0;   /* girado: caixa envolvente maior */
     if (ext > 0) glUniform4f(G.c_rect, q->cx - ext, q->cy - ext, ext * 2, ext * 2);
-    else glUniform4f(G.c_rect, q->cx - q->hw - 3, q->cy - q->hh - 3, q->hw * 2 + 6, q->hh * 2 + 6);
+    else glUniform4f(G.c_rect, q->cx - q->hw - 8, q->cy - q->hh - 8, q->hw * 2 + 16, q->hh * 2 + 16);
     glUniform4f(G.c_m1, q->m1[0], q->m1[1], q->m1[2], q->m1[3]); glUniform4f(G.c_m2, q->m2[0], q->m2[1], q->m2[2], q->m2[3]);
     {   /* fase fixa por balão (derivada da largura = texto), respiração lenta só no Normal */
         static int nobreath = -1; if (nobreath < 0) nobreath = getenv("BRIKS_NO_BREATH") != NULL;
@@ -336,7 +343,7 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
         float x0 = q->cx - q->hw, y0 = q->cy - q->hh, x1 = q->cx + q->hw, y1 = q->cy + q->hh;
         for (int k = 0; k < 2; k++) { const float *m = k ? q->m2 : q->m1; if (m[3] < 0.5f) continue;
             if (m[0] - m[2] < x0) x0 = m[0] - m[2]; if (m[1] - m[2] < y0) y0 = m[1] - m[2]; if (m[0] + m[2] > x1) x1 = m[0] + m[2]; if (m[1] + m[2] > y1) y1 = m[1] + m[2]; }
-        glUniform4f(G.c_rect, x0 - 4, y0 - 4, x1 - x0 + 8, y1 - y0 + 8);
+        glUniform4f(G.c_rect, x0 - 8, y0 - 8, x1 - x0 + 16, y1 - y0 + 16);
     }
     glUniform2f(G.c_rot, q->grp >= 0 ? q->rc : 1.0f, q->grp >= 0 ? q->rs : 0.0f);
     glUniform1f(G.c_alpha, q->grp >= 0 ? q->alpha : 1.0f);

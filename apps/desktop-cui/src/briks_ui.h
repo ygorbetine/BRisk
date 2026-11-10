@@ -162,7 +162,7 @@ static inline cui_color briks_acc(cui_color c, int a) { c.a = (uint8_t)a; return
 /* Balão de status: Cristal violeta (glass.c). Normal = translúcido, refração nas bordas e balão + bolinhas da cauda unidos (metaballs); Simplificado = sem refração, menos desfoque,
    mesma forma unida; Mínimo = sem shader: violeta chapado, sem borda, e pescoços desenhados em CUI para manter a silhueta unida. */
 static inline cui_color briks_bubble_bg(void) { return g_perf < PERF_MIN ? B_GLASS_BUBBLE : CUI_RGBA(0x6a48d0ff); }
-static inline cui_color briks_bubble_border(void) { return CUI_RGBA(0x00000000); }
+static inline cui_color briks_bubble_border(void) { return g_perf >= PERF_MIN ? CUI_RGBA(0xdcc8ffb0) : CUI_RGBA(0x00000000); }
 static inline float briks_bubble_radius(float h) { return h * 0.5f; }
 
 /* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */

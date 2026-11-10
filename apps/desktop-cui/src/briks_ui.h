@@ -9,9 +9,9 @@
 #include "perf.h"
 
 /* Paleta (--briks-*, --glass-*) */
-#define B_C1        CUI_RGB(0xb01fcf)
-#define B_C2        CUI_RGB(0x6d5cf6)
-#define B_C3        CUI_RGB(0x8b5cf6)
+#define B_C1        (g_th.c1)   /* acento: vem do gradiente do tema (themes.c) */
+#define B_C2        (g_th.c2)
+#define B_C3        (g_th.c3)
 #define B_BG        CUI_RGB(0x12041a)
 #define B_BG_DEEP   CUI_RGB(0x0f0316)
 #define B_PANEL     CUI_RGB(0x1a0a26)
@@ -108,6 +108,8 @@ void app_pump(app_state_t *s);
 /* rtc.c: ponte com o briks-core */
 void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se preciso, abre a sessão e entra na sala */
 void rtc_leave_room(app_state_t *s);
+void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
+void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */

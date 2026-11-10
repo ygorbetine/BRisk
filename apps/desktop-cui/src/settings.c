@@ -163,7 +163,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
     }
     was_open = s->settings_open;
     cui_vec2 vp = cui_viewport_size(ui);
-    const float dw = fminf(900.0f, fmaxf(vp.x - 48.0f, 340.0f)), dh = fminf(540.0f, fmaxf(vp.y - 150.0f, 260.0f));
+    const float dw = fminf(900.0f, fmaxf(vp.x - 48.0f, 340.0f)), dh = fminf(900.0f, fmaxf(vp.y - 150.0f, 260.0f));
     cui_dialog(ui, "Configurações", &s->settings_open, .width = dw) {
         cui_row(ui, .width = CUI_FILL, .height = CUI_PX(dh), .gap = 16) {
             cui_box(ui, .width = CUI_PX(220), .height = CUI_FILL, .pad = 10, .gap = 2, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
@@ -229,14 +229,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break; }
                 case 2: /* Temas */
-                    SCARD(ui, "TEMA") {
-                        sub(ui, "A mudança vale na hora e fica salva neste computador (theme.json).");
-                        if (cui_button(ui, "Personalizar cores e vidro", .variant = CUI_BUTTON_PRIMARY)) briks_theme_editor_open();
-                        sub(ui, "Abre o editor (também em Ctrl+Shift+T com BRIKS_DEV=1).");
-                        if (cui_button(ui, "Restaurar tema Briks", .variant = CUI_BUTTON_SECONDARY)) { briks_theme_reset(); restored_at = (float)cui_time(ui); }
-                        if ((float)cui_time(ui) - restored_at < 3.0f) cui_text(ui, "Tema restaurado.", .size = 12, .color = B_ONLINE);
-                        sub(ui, "Temas predefinidos (Oceano, Pôr do sol, Floresta, Rosa neon) e temas salvos com nome: falta.");
-                    }
+                    themes_tab(ui);
                     break;
                 case 3: { /* Armazenamento */
                     SCARD(ui, "USO NESTE COMPUTADOR") {

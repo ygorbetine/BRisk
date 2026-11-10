@@ -18,6 +18,7 @@ static bool same(cui_color a, cui_color b) { return a.r == b.r && a.g == b.g && 
 
 void briks_theme_defaults(briks_theme_t *t) {
     memset(t, 0, sizeof *t);
+    t->c1 = CUI_RGB(0xb01fcf); t->c2 = CUI_RGB(0x6d5cf6); t->c3 = CUI_RGB(0x8b5cf6);
     t->bg = CUI_RGB(0x0f0316);
     t->blob[0] = CUI_RGB(0xb01fcf); t->blob_a[0] = 0.40f;
     t->blob[1] = CUI_RGB(0x3b34d8); t->blob_a[1] = 0.55f;
@@ -54,7 +55,7 @@ void briks_theme_validate(briks_theme_t *t) {
     t->panel_radius = clampf(t->panel_radius, 8.0f, 32.0f);       /* >= 8: o cabeçalho usa raio-1, sempre arredondado */
     t->control_radius = clampf(t->control_radius, 4.0f, 20.0f);
     t->chat_pad = clampf(t->chat_pad, 8.0f, 40.0f);
-    t->bubble_own.a = 0xbd;
+    t->bubble_own.a = 0xbd; t->c1.a = t->c2.a = t->c3.a = 255;
     t->bubble_big = clampf(t->bubble_big, 2.0f, 28.0f);
     t->bubble_small = clampf(t->bubble_small, 2.0f, 12.0f);
     if (t->bubble_small > t->bubble_big) t->bubble_small = t->bubble_big;
@@ -97,6 +98,7 @@ bool briks_theme_load(const char *path, briks_theme_t *t) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
     static char js[8192]; size_t n = fread(js, 1, sizeof js - 1, f); js[n] = 0; fclose(f);
+    get_c(js, "c1", &t->c1); get_c(js, "c2", &t->c2); get_c(js, "c3", &t->c3);
     get_c(js, "bg", &t->bg);
     get_c(js, "blob1", &t->blob[0]); get_c(js, "blob2", &t->blob[1]); get_c(js, "blob3", &t->blob[2]);
     get_f(js, "blob1_a", &t->blob_a[0]); get_f(js, "blob2_a", &t->blob_a[1]); get_f(js, "blob3_a", &t->blob_a[2]);
@@ -118,6 +120,11 @@ bool briks_theme_save(const char *path, const briks_theme_t *t) {
     if (!f) return false;
 #define HEX(c) (c).r, (c).g, (c).b
     fprintf(f, "{\n"
+        "  \"recipe\": 2,\n"
+        "  \"_receita_vidro\": \"v2 violeta: tinta nos baloes (bubble_tint), rim light fino e continuo na borda (bubble_spec, sheen_line), sem risco especular\",\n"
+        "  \"_sheen\": \"reflexo difuso dos cartoes, baixo contraste\", \"_bubble_refract\": \"lente do balao de status; bubble_disp = separacao de cor, minima\",\n"
+        "  \"_c1_c2_c3\": \"acento derivado do gradiente (aba Temas); c3 legivel sobre o fundo\",\n"
+        "  \"c1\": \"#%02x%02x%02x\", \"c2\": \"#%02x%02x%02x\", \"c3\": \"#%02x%02x%02x\",\n"
         "  \"bg\": \"#%02x%02x%02x\",\n"
         "  \"blob1\": \"#%02x%02x%02x\", \"blob1_a\": %.2f,\n"
         "  \"blob2\": \"#%02x%02x%02x\", \"blob2_a\": %.2f,\n"
@@ -131,7 +138,7 @@ bool briks_theme_save(const char *path, const briks_theme_t *t) {
         "  \"bubble_align\": \"%s\",\n"
         "  \"bubble_refract\": %.1f, \"bubble_disp\": %.2f, \"bubble_spec\": %.2f, \"bubble_tint\": %.2f\n"
         "}\n",
-        HEX(t->bg), HEX(t->blob[0]), t->blob_a[0], HEX(t->blob[1]), t->blob_a[1], HEX(t->blob[2]), t->blob_a[2],
+        HEX(t->c1), HEX(t->c2), HEX(t->c3), HEX(t->bg), HEX(t->blob[0]), t->blob_a[0], HEX(t->blob[1]), t->blob_a[1], HEX(t->blob[2]), t->blob_a[2],
         HEX(t->glass_rgb), t->a_glass, t->a_soft, t->a_strong, t->a_popup,
         t->blur_offset, t->saturation, t->highlight, t->sheen, t->sheen_line, t->card_fill, t->card_sat, t->panel_radius, t->control_radius, t->chat_pad,
         HEX(t->bubble_own), t->bubble_big, t->bubble_small, t->bubble_align ? "middle" : "top", t->bubble_refract, t->bubble_disp, t->bubble_spec, t->bubble_tint);

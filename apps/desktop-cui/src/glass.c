@@ -96,7 +96,7 @@ typedef struct {
     GLint t_tex, t_vp, t_rect;
     GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
     GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
-    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub;
+    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub, c_a1, c_a2, c_a3;
     double ms_last, ms_sum; int frames;
     bool log;
 } glass_t;
@@ -148,7 +148,7 @@ static const char *FS_UP =
 static const char *FS_COMP =
     "#version 330 core\n"
     "in vec2 v_px; uniform sampler2D u_tex; uniform vec2 u_vp; uniform vec4 u_box; uniform vec4 u_rad;\n"
-    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; out vec4 f;\n"
+    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; uniform vec4 u_a1; uniform vec4 u_a2; uniform vec4 u_a3; out vec4 f;\n"
     "float sd(vec2 p, vec2 b, vec4 r){ float rr = p.x < 0.0 ? (p.y < 0.0 ? r.x : r.w) : (p.y < 0.0 ? r.y : r.z);\n"
     "  rr = min(rr, min(b.x, b.y)); vec2 q = abs(p) - b + rr; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr; }\n"
     "void main(){ vec2 p = v_px - u_box.xy; p = vec2(u_rot.x * p.x + u_rot.y * p.y, -u_rot.y * p.x + u_rot.x * p.y); vec2 b = u_box.zw;\n"
@@ -165,24 +165,24 @@ static const char *FS_COMP =
     "  float lit = dot(g, normalize(vec2(-0.7, -0.7)));                         /* +1 virado para a luz (y cresce para baixo) */\n"
     "  float edge = exp(-max(-d, 0.0) / 3.0);                                   /* caimento ~3px */\n"
     "  float rimL = max(lit, 0.0) * edge, rimD = max(-lit, 0.0) * edge;\n"
-    "  c = mix(c, vec3(0.92, 0.86, 1.0), u_hl * 1.6 * rimL);\n"
+    "  c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.8), u_hl * 1.6 * rimL);\n"
     "  c *= 1.0 - u_hl * 1.1 * rimD;\n"
     "  if (u_card.w < 0.5 && u_card.x + u_card.y + u_card.z > 0.0) {   /* cartão de vidro: reflexo diagonal + fio de luz no alto + tinta lilás; tudo dentro do SDF do próprio elemento */\n"
     "    vec2 lp = p / max(b, vec2(1.0));\n"
     "    float gd = clamp(0.5 - 0.5 * (lp.x * 0.6 + lp.y * 0.8), 0.0, 1.0);\n"
-    "    c = mix(c, vec3(0.62, 0.50, 1.0), u_card.z);\n"
-    "    c = mix(c, vec3(0.90, 0.84, 1.0), u_card.x * gd * gd);\n"
+    "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.25), u_card.z);\n"
+    "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.75), u_card.x * gd * gd);\n"
     "    float top = max(dot(g, vec2(0.0, -1.0)), 0.0) * 0.75 + max(lit, 0.0) * 0.25;\n"
-    "    c = mix(c, vec3(0.90, 0.84, 1.0), u_card.y * top * exp(-max(-d, 0.0) / 1.3));\n"
+    "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.75), u_card.y * top * exp(-max(-d, 0.0) / 1.3));\n"
     "  }\n"
     "  if (u_card.w > 0.5) {   /* bolha: tinta VIOLETA + rim light fino e continuo na borda (mais forte no alto). Sem gota/risco especular nem franja arco-iris */\n"
     "    float k = u_card.x; vec2 lp = p / max(b, vec2(1.0));\n"
-    "    vec3 tA = vec3(0.55, 0.36, 1.0), tB = vec3(0.72, 0.34, 0.96), tC = vec3(0.40, 0.34, 0.95);\n"
+    "    vec3 tA = u_a3.rgb, tB = u_a1.rgb, tC = u_a2.rgb;\n"
     "    vec3 tint = mix(mix(tA, tB, clamp(0.5 + 0.5 * lp.x, 0.0, 1.0)), tC, clamp(0.5 + 0.5 * lp.y, 0.0, 1.0) * 0.6);\n"
     "    c = mix(c, tint, clamp(u_bub.w * k, 0.0, 0.6));\n"
     "    float depth = max(-d, 0.0);\n"
     "    float rim = exp(-depth / 1.4) * (0.30 + 0.70 * max(dot(g0, normalize(vec2(-0.25, -1.0))), 0.0));\n"
-    "    c = mix(c, vec3(0.86, 0.78, 1.0), clamp(rim * u_bub.z * k * 0.55, 0.0, 0.6));\n"
+    "    c = mix(c, mix(u_a3.rgb, vec3(1.0), 0.7), clamp(rim * u_bub.z * k * 0.55, 0.0, 0.6));\n"
     "  }\n"
     "  f = vec4(c * cov, cov); }\n";
 
@@ -309,6 +309,7 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glUniform1f(G.c_alpha, q->grp >= 0 ? q->alpha : 1.0f);
     glUniform4f(G.c_box, q->cx, q->cy, q->hw, q->hh);
     glUniform4f(G.c_rad, q->r[0], q->r[1], q->r[2], q->r[3]);
+    glUniform4f(G.c_a1, g_th.c1.r / 255.0f, g_th.c1.g / 255.0f, g_th.c1.b / 255.0f, 1); glUniform4f(G.c_a2, g_th.c2.r / 255.0f, g_th.c2.g / 255.0f, g_th.c2.b / 255.0f, 1); glUniform4f(G.c_a3, g_th.c3.r / 255.0f, g_th.c3.g / 255.0f, g_th.c3.b / 255.0f, 1);
     glUniform1f(G.c_sat, g_th.saturation * (q->card ? g_th.card_sat : 1.0f));
     {   /* reflexo dos cartões: compensa a tinta que o CUI desenha por cima; Simplificado = metade, sem tinta extra */
         float inv2 = 1.0f - q->tint_a; if (inv2 < 0.2f) inv2 = 0.2f;
@@ -502,7 +503,7 @@ bool briks_glass_init(cui_app *app) {
     G.u_tex = U(G.p_up, "u_tex"); G.u_out = U(G.p_up, "u_out"); G.u_texel = U(G.p_up, "u_texel"); G.u_off = U(G.p_up, "u_off");
     G.u_vp = U(G.p_up, "u_vp"); G.u_rect = U(G.p_up, "u_rect");
     G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
-    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub");
+    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub"); G.c_a1 = U(G.p_comp, "u_a1"); G.c_a2 = U(G.p_comp, "u_a2"); G.c_a3 = U(G.p_comp, "u_a3");
 #undef U
     if (G.p_dith) { G.t_tex = glGetUniformLocation(G.p_dith, "u_tex"); G.t_vp = glGetUniformLocation(G.p_dith, "u_vp"); G.t_rect = glGetUniformLocation(G.p_dith, "u_rect"); glGenFramebuffers(1, &G.hdr_fbo); }
     glGenFramebuffers(1, &G.fbo);

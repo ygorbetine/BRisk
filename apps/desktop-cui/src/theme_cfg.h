@@ -6,6 +6,8 @@
 #include <stdbool.h>
 
 typedef struct {
+    /* acento (derivado do gradiente escolhido): c1 início, c2 meio (escuro, base do balão enviado), c3 destaque (legível sobre o fundo) */
+    cui_color c1, c2, c3;
     /* fundo */
     cui_color bg;                    /* base atrás das manchas */
     cui_color blob[3];               /* manchas: topo-esquerdo, topo-direito, base */

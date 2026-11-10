@@ -2,6 +2,8 @@
 #include <math.h>
 #include <stdlib.h>
 
+static cui_color with_a(cui_color c, uint8_t a) { c.a = a; return c; }
+
 void briks_apply_theme(cui_ctx *ui) {
     cui_set_theme(ui, CUI_THEME_DARK);
     cui_set_accent(ui, CUI_ACCENT_VIOLET);
@@ -15,10 +17,10 @@ void briks_apply_theme(cui_ctx *ui) {
     t->colors[CUI_TOKEN_TEXT_MUTED]     = CUI_RGB(0x8472a0);
     t->colors[CUI_TOKEN_BORDER]         = B_LINE;
     t->colors[CUI_TOKEN_BORDER_SUBTLE]  = CUI_RGBA(0xffffff12);
-    t->colors[CUI_TOKEN_BORDER_STRONG]  = CUI_RGBA(0x8b5cf666);
+    t->colors[CUI_TOKEN_BORDER_STRONG]  = with_a(B_C3, 0x66);
     t->colors[CUI_TOKEN_ACCENT]         = B_C3;
     t->colors[CUI_TOKEN_ACCENT_STRONG]  = B_C2;
-    t->colors[CUI_TOKEN_ACCENT_SUBTLE]  = CUI_RGBA(0x8b5cf622);
+    t->colors[CUI_TOKEN_ACCENT_SUBTLE]  = with_a(B_C3, 0x22);
     t->colors[CUI_TOKEN_ACCENT_FOREGROUND] = CUI_RGB(0xffffff);
     t->colors[CUI_TOKEN_DANGER]         = B_DANGER;
     t->colors[CUI_TOKEN_SUCCESS]        = B_ONLINE;

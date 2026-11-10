@@ -552,7 +552,7 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
                 while b.events.try_recv().is_ok() {}
                 if let Some((w, _, n, rgba)) = src.read() {
                     if n != last_n { nfr += (n - last_n) as u32; last_n = n; gap = gap.max(last_new.elapsed().as_millis()); last_new = std::time::Instant::now();
-                        let l = (src.ts() as u32).wrapping_sub(read_stamp(&rgba, w)) as i32; if (0..10_000).contains(&l) { lats.push(l); } }
+                        let l = (src.ts() as u32).wrapping_sub(crate::capture::read_stamp_scaled(&rgba, w, 1920)) as i32; if (0..10_000).contains(&l) { lats.push(l); } }
                 }
                 tokio::time::sleep(Duration::from_millis(12)).await;
             }

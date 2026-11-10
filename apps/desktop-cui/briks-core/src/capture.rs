@@ -173,9 +173,12 @@ pub fn stamp_ms(f: &mut [u8], w: usize) {
         for y in 0..16 { for x in 0..16 { let o = (y * w + i * 16 + x) * 4; f[o] = v; f[o + 1] = v; f[o + 2] = v; } } }
 }
 /// Lê o carimbo de um quadro RGBA (inverso de `stamp_ms`).
-pub fn read_stamp(rgba: &[u8], w: usize) -> u32 {
+pub fn read_stamp(rgba: &[u8], w: usize) -> u32 { read_stamp_scaled(rgba, w, w) }
+/// Igual, para um quadro recebido em tamanho diferente do original (`src_w` = largura em que o carimbo foi desenhado).
+pub fn read_stamp_scaled(rgba: &[u8], w: usize, src_w: usize) -> u32 {
+    let k = w as f32 / src_w as f32;
     let mut ms = 0u32;
-    for i in 0..32 { let o = (8 * w + i * 16 + 8) * 4; ms = (ms << 1) | (rgba[o + 1] > 127) as u32; }
+    for i in 0..32 { let (x, y) = (((i * 16 + 8) as f32 * k) as usize, (8.0 * k) as usize); let o = (y * w + x.min(w - 1)) * 4; ms = (ms << 1) | (rgba[o + 1] > 127) as u32; }
     ms
 }
 

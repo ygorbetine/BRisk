@@ -72,8 +72,8 @@ impl Estimator {
         let loss_eff = loss.max(nack_ratio.min(1.0));
         if loss_eff > 0.10 || delayed {
             // cai rápido: parte do que realmente passou no último segundo, não da estimativa antiga
-            let from = if sent > FLOOR_BPS { self.est.min(sent * 1.05) } else { self.est };
-            let factor = if loss_eff > 0.10 { (1.0 - 0.5 * loss_eff as f64).clamp(0.5, 0.9) } else { 0.85 };
+            let from = if sent > FLOOR_BPS { self.est.min(sent) } else { self.est };
+            let factor = if loss_eff > 0.10 { (1.0 - 0.5 * loss_eff as f64).clamp(0.5, 0.9) } else { 0.8 };
             self.est = (from * factor).max(FLOOR_BPS);
             self.hold_until = now + Duration::from_secs(3);
             self.reason = if loss_eff > 0.10 { "perda" } else { "atraso" };

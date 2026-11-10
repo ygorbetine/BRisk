@@ -81,7 +81,9 @@ impl MfEnc {
         let set = |g: &GUID, v: u32| { if let Some(c) = &codec { let _ = c.SetValue(g, &var_u32(v)); } };
         set(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR.0 as u32);
         set(&CODECAPI_AVEncCommonMeanBitRate, bps);
-        set(&CODECAPI_AVEncMPVGOPSize, fps * 4);
+        // balde furado (VBV) de 0,5 s: sem isso um quadro-chave pode sair com várias vezes o bitrate de um segundo e virar rajada
+        set(&CODECAPI_AVEncCommonBufferSize, bps / 16);
+        set(&CODECAPI_AVEncMPVGOPSize, fps * 30);   // quadro-chave só a pedido (PLI/FIR); o GOP longo é só rede de segurança
         set(&CODECAPI_AVEncMPVDefaultBPictureCount, 0);
         if let Some(c) = &codec { let _ = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(true)); let _ = c.SetValue(&CODECAPI_AVEncCommonRealTime, &var_bool(true)); }
 
@@ -119,7 +121,7 @@ impl MfEnc {
     /// Bitrate médio ao vivo (ICodecAPI). Devolve false se o codificador recusar.
     pub fn set_bitrate(&mut self, bps: u32) -> bool {
         let Some(c) = &self.codec else { return false };
-        let ok = unsafe { c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &var_u32(bps)).is_ok() };
+        let ok = unsafe { let _ = c.SetValue(&CODECAPI_AVEncCommonBufferSize, &var_u32(bps / 16)); c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &var_u32(bps)).is_ok() };
         if ok { self.bps = bps; }
         ok
     }

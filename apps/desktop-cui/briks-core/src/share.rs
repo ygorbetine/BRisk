@@ -149,6 +149,9 @@ pub fn cpu_ms() -> f64 {
     v(k) + v(u)
 }
 
+/// Bitrate do codificador para um orçamento de rede: desconta cabeçalhos RTP/UDP/IP e a folga das retransmissões.
+fn enc_bps(budget: u32) -> u32 { (budget as f64 * 0.85) as u32 }
+
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
 pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, out: VideoOut, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
     let cap = Capture::start(cfg.kind.clone(), cfg.fps, cfg.height, preview.is_some(), dump.is_some()).map_err(|e| e.to_string())?;
@@ -210,8 +213,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         announce = true;
                     }
                     if let Some(e) = enc.as_mut() {
-                        let diff = (d.bps as f64 - e.bps as f64).abs() / e.bps.max(1) as f64;
-                        if diff > 0.05 && !e.set_bitrate(d.bps) { enc = None; }   // sem ajuste ao vivo: recria (sai um quadro-chave)
+                        let diff = (enc_bps(d.bps) as f64 - e.bps as f64).abs() / e.bps.max(1) as f64;
+                        if diff > 0.05 && !e.set_bitrate(enc_bps(d.bps)) { enc = None; }   // sem ajuste ao vivo: recria (sai um quadro-chave)
                     }
                     dec = d;
                 }
@@ -220,7 +223,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (sent_fps * 10.0).round() / 10.0, "kbps": (sent_bps / 1000.0).round(),
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
-                    "target_kbps": dec.bps / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
+                    "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
                     "adapting": adapting, "reason": est.reason, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
@@ -243,7 +246,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             if let Some(e) = enc.as_ref() { if queued.load(Ordering::Relaxed) * 8 > (e.bps as u64 * 3 / 10).max(250_000) { pacer_drops += 1; held = Some(yuv); continue; } }
             let (tw, th) = (yuv.w, yuv.h);
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
-                let bps = if cfg.adaptive { dec.bps } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
+                let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
                 match H264Enc::new(tw, th, fps as f32, bps) {
                     Ok(e) => { id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; }   // codificador novo já começa com quadro-chave
                     Err(e) => { closed_reason = format!("codificador: {e}"); break; }
@@ -256,9 +259,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             }
             if let (Some(d), Some(raw)) = (&dump, raw) { dump_png(d, &raw, src.0, src.1, tw, th); }
             since_idr += 1;
-            // quadro-chave: a cada 4 s, ou a pedido (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
+            // quadro-chave: só a pedido (rede de segurança a cada 30 s) (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
-            if since_idr >= fps * 4 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= Duration::from_millis(1000)) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
+            let min_gap = Duration::from_millis(if ctl.idx > 0 || est.reason != "" { 2000 } else { 1000 });   // rede apertada: espaça mais
+            if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento

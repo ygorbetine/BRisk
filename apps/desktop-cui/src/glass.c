@@ -98,7 +98,7 @@ typedef struct {
     GLint t_tex, t_vp, t_rect;
     GLint d_tex, d_out, d_texel, d_off, d_vp, d_rect;
     GLint u_tex, u_out, u_texel, u_off, u_vp, u_rect;
-    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub, c_a1, c_a2, c_a3, c_src, c_m1, c_m2;
+    GLint c_tex, c_vp, c_rect, c_box, c_rad, c_sat, c_hl, c_rot, c_alpha, c_card, c_bub, c_a1, c_a2, c_a3, c_src, c_m1, c_m2, c_m3;
     double ms_last, ms_sum; int frames;
     bool log;
 } glass_t;
@@ -150,14 +150,21 @@ static const char *FS_UP =
 static const char *FS_COMP =
     "#version 330 core\n"
     "in vec2 v_px; uniform sampler2D u_tex; uniform vec2 u_vp; uniform vec4 u_box; uniform vec4 u_rad;\n"
-    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; uniform vec4 u_a1; uniform vec4 u_a2; uniform vec4 u_a3; uniform sampler2D u_src; uniform vec4 u_m1; uniform vec4 u_m2; out vec4 f;\n"
+    "uniform float u_sat; uniform float u_hl; uniform vec2 u_rot; uniform float u_alpha; uniform vec4 u_card; uniform vec4 u_bub; uniform vec4 u_a1; uniform vec4 u_a2; uniform vec4 u_a3; uniform sampler2D u_src; uniform vec4 u_m1; uniform vec4 u_m2; uniform vec4 u_m3; out vec4 f;\n"
     "float sd(vec2 p, vec2 b, vec4 r){ float rr = p.x < 0.0 ? (p.y < 0.0 ? r.x : r.w) : (p.y < 0.0 ? r.y : r.z);\n"
     "  rr = min(rr, min(b.x, b.y)); vec2 q = abs(p) - b + rr; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr; }\n"
     "vec3 smp(vec2 uv, float bl){ return mix(texture(u_src, uv).rgb, texture(u_tex, uv).rgb, bl); }\n"
+    "float wob(vec2 v, float ph){ float a = atan(v.y, v.x); return sin(2.0 * a + ph) * 0.6 + sin(3.0 * a + ph * 1.7 + 1.0) * 0.4; }\n"
     "float smin(float a, float b, float k){ float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }\n"
     "void main(){ vec2 p = v_px - u_box.xy; p = vec2(u_rot.x * p.x + u_rot.y * p.y, -u_rot.y * p.x + u_rot.x * p.y); vec2 b = u_box.zw;\n"
     "  float d = sd(p, b, u_rad);\n"
-    "  if (u_m1.w > 0.5) { d = smin(d, length(v_px - u_m1.xy) - u_m1.z, 14.0); if (u_m2.w > 0.5) d = smin(d, length(v_px - u_m2.xy) - u_m2.z, 7.0); }   /* metaballs: balao + bolinhas da cauda viram uma forma so */\n"
+    "  if (u_card.w > 0.5) {   /* bolha organica: harmonicos de baixa frequencia, fase fixa por balao (u_m3.x), respiracao lenta (u_m3.y/z) so no Normal */\n"
+    "    float ph = u_m3.x, br = u_m3.z * sin(u_m3.y);\n"
+    "    d += (0.075 * b.y) * wob(p, ph) + 0.35 * br;\n"
+    "    if (u_m1.w > 0.5) { vec2 v1 = v_px - u_m1.xy, v2 = v_px - u_m2.xy; float d1 = length(v1 * vec2(0.9, 1.1)) - u_m1.z + 0.6 * wob(v1, ph + 1.3) - 0.3 * br;\n"
+    "      d = smin(d, d1, 19.0 + 2.0 * br);\n"
+    "      if (u_m2.w > 0.5) { float d2 = length(v2 * vec2(1.1, 0.92)) - u_m2.z + 0.5 * wob(v2, ph + 2.6); d = smin(d, d2, 11.0 + 1.5 * br); } }\n"
+    "  }\n"
     " float cov = clamp(0.5 - d, 0.0, 1.0) * u_alpha; if (cov <= 0.0) discard;\n"
     "  vec2 g0 = vec2(dFdx(d), dFdy(d)); g0 = g0 / max(length(g0), 1e-4);\n"
     "  vec2 uv0 = gl_FragCoord.xy / u_vp; vec3 c;\n"
@@ -318,13 +325,18 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
     glUniform2f(G.c_vp, (float)W, (float)H);
     float ext = q->grp >= 0 ? sqrtf(q->hw * q->hw + q->hh * q->hh) + 2 : 0;   /* girado: caixa envolvente maior */
     if (ext > 0) glUniform4f(G.c_rect, q->cx - ext, q->cy - ext, ext * 2, ext * 2);
-    else glUniform4f(G.c_rect, q->cx - q->hw - 1, q->cy - q->hh - 1, q->hw * 2 + 2, q->hh * 2 + 2);
+    else glUniform4f(G.c_rect, q->cx - q->hw - 3, q->cy - q->hh - 3, q->hw * 2 + 6, q->hh * 2 + 6);
     glUniform4f(G.c_m1, q->m1[0], q->m1[1], q->m1[2], q->m1[3]); glUniform4f(G.c_m2, q->m2[0], q->m2[1], q->m2[2], q->m2[3]);
+    {   /* fase fixa por balão (derivada da largura = texto), respiração lenta só no Normal */
+        static int nobreath = -1; if (nobreath < 0) nobreath = getenv("BRIKS_NO_BREATH") != NULL;
+        float tsec = (float)(GetTickCount64() % 600000ULL) / 1000.0f;
+        glUniform4f(G.c_m3, q->hw * 1.713f, tsec * 1.4f, (g_perf == PERF_NORMAL && !nobreath) ? 1.0f : 0.0f, 0);
+    }
     if (q->m1[3] > 0.5f) {   /* balão unido às bolinhas: o retângulo cobre a união */
         float x0 = q->cx - q->hw, y0 = q->cy - q->hh, x1 = q->cx + q->hw, y1 = q->cy + q->hh;
         for (int k = 0; k < 2; k++) { const float *m = k ? q->m2 : q->m1; if (m[3] < 0.5f) continue;
             if (m[0] - m[2] < x0) x0 = m[0] - m[2]; if (m[1] - m[2] < y0) y0 = m[1] - m[2]; if (m[0] + m[2] > x1) x1 = m[0] + m[2]; if (m[1] + m[2] > y1) y1 = m[1] + m[2]; }
-        glUniform4f(G.c_rect, x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4);
+        glUniform4f(G.c_rect, x0 - 4, y0 - 4, x1 - x0 + 8, y1 - y0 + 8);
     }
     glUniform2f(G.c_rot, q->grp >= 0 ? q->rc : 1.0f, q->grp >= 0 ? q->rs : 0.0f);
     glUniform1f(G.c_alpha, q->grp >= 0 ? q->alpha : 1.0f);
@@ -538,7 +550,7 @@ bool briks_glass_init(cui_app *app) {
     G.u_tex = U(G.p_up, "u_tex"); G.u_out = U(G.p_up, "u_out"); G.u_texel = U(G.p_up, "u_texel"); G.u_off = U(G.p_up, "u_off");
     G.u_vp = U(G.p_up, "u_vp"); G.u_rect = U(G.p_up, "u_rect");
     G.c_tex = U(G.p_comp, "u_tex"); G.c_vp = U(G.p_comp, "u_vp"); G.c_rect = U(G.p_comp, "u_rect"); G.c_box = U(G.p_comp, "u_box");
-    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub"); G.c_a1 = U(G.p_comp, "u_a1"); G.c_a2 = U(G.p_comp, "u_a2"); G.c_a3 = U(G.p_comp, "u_a3"); G.c_src = U(G.p_comp, "u_src"); G.c_m1 = U(G.p_comp, "u_m1"); G.c_m2 = U(G.p_comp, "u_m2");
+    G.c_rot = U(G.p_comp, "u_rot"); G.c_alpha = U(G.p_comp, "u_alpha"); G.c_rad = U(G.p_comp, "u_rad"); G.c_sat = U(G.p_comp, "u_sat"); G.c_hl = U(G.p_comp, "u_hl"); G.c_card = U(G.p_comp, "u_card"); G.c_bub = U(G.p_comp, "u_bub"); G.c_a1 = U(G.p_comp, "u_a1"); G.c_a2 = U(G.p_comp, "u_a2"); G.c_a3 = U(G.p_comp, "u_a3"); G.c_src = U(G.p_comp, "u_src"); G.c_m1 = U(G.p_comp, "u_m1"); G.c_m2 = U(G.p_comp, "u_m2"); G.c_m3 = U(G.p_comp, "u_m3");
 #undef U
     if (G.p_dith) { G.t_tex = glGetUniformLocation(G.p_dith, "u_tex"); G.t_vp = glGetUniformLocation(G.p_dith, "u_vp"); G.t_rect = glGetUniformLocation(G.p_dith, "u_rect"); glGenFramebuffers(1, &G.hdr_fbo); }
     glGenFramebuffers(1, &G.fbo);

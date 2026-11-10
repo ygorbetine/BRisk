@@ -73,13 +73,13 @@ static void bubbles_draw(cui_ctx *ui) {
         cui_rect a = g_bub[i].av; const char *t = g_bub[i].text;
         cui_text_metrics m = cui_measure_text(ui, CUI_FONT_BODY, 13, t, (int)strlen(t));
         float w = fminf(m.width, 190.0f) + 30, h = 32;
-        float bx = a.x + 8, by = a.y - 22 - h;
+        float bx = a.x + 8, by = a.y - 17 - h;
         if (by < 6) by = 6;
-        abs_glass(ui, a.x + 26, a.y - 4, 9, 9, 4.5f, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior; glass.c as une ao balão (metaballs) */
-        abs_glass(ui, a.x + 31, a.y - 18, 14, 14, 7, false);
+        abs_glass(ui, a.x + 27, a.y - 4, 8, 8, 4, false);           /* bolinhas de pensamento, da menor (junto do avatar) à maior; glass.c as une ao balão (metaballs) */
+        abs_glass(ui, a.x + 32, a.y - 14, 12, 12, 6, false);
         if (g_perf >= PERF_MIN) {   /* sem shader: pescoços chapados para a mesma silhueta unida */
-            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 7 - by - h, 3, false);
-            abs_glass(ui, a.x + 31.5f, a.y - 8.5f, 6, 6, 3, false);
+            abs_glass(ui, a.x + 35, by + h - 4, 6, a.y - 8 - (by + h - 4), 3, false);
+            abs_glass(ui, a.x + 31.5f, a.y - 6.5f, 6, 6, 3, false);
         }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = bx, .pad_top = by) {
             cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = briks_bubble_radius(h), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(),
@@ -89,6 +89,7 @@ static void bubbles_draw(cui_ctx *ui) {
         }
         cui_pop_id(ui);
     }
+    if (g_bub_n && g_perf == PERF_NORMAL && !getenv("BRIKS_NO_BREATH")) cui_request_redraw(ui);   /* respiração lenta do balão (só no Normal) */
     g_bub_n = 0;
 }
 

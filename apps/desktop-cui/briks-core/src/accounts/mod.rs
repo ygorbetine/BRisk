@@ -1,0 +1,331 @@
+//! Contas online do Briks. Camada própria: o resto do core fala com `Accounts` e com os tipos de `provider.rs`;
+//! a API do Supabase fica isolada em `supabase.rs`.
+//!
+//! O que fica onde:
+//!  - refresh token: em disco, cifrado com a DPAPI do Windows (`account-session.bin`); nunca em texto aberto;
+//!  - access token: só na memória deste processo, renovado sozinho antes de vencer;
+//!  - chave privada da identidade P2P: NUNCA vai ao servidor; só a chave pública e a impressão digital são publicadas no perfil.
+pub mod config;
+pub mod fake;
+pub mod legacy;
+pub mod loopback;
+pub mod pkce;
+pub mod provider;
+pub mod service;
+pub mod store;
+pub mod supabase;
+#[cfg(test)]
+mod tests;
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use loopback::Loopback;
+use pkce::Pkce;
+pub use provider::*;
+use store::SecretFile;
+
+pub type Opener = Arc<dyn Fn(String) -> AResult<()> + Send + Sync>;
+
+#[derive(Serialize, Deserialize)]
+struct Stored {
+    version: u32,
+    refresh_token: String,
+    user: AccountUser,
+}
+
+pub struct Accounts {
+    provider: Arc<dyn AuthProvider>,
+    store: SecretFile,
+    bridge: SecretFile,
+    session: Mutex<Option<Session>>,
+    refresh_lock: tokio::sync::Mutex<()>,
+    opener: Opener,
+    pub oauth_timeout: Duration,
+    pub email_timeout: Duration,
+}
+
+/// Espera pelo clique no link do e-mail (confirmação de cadastro ou recuperação de senha) aberto neste computador.
+pub struct EmailWait {
+    lb: Loopback,
+    verifier: String,
+}
+
+pub enum SignUpOutcome {
+    SignedIn(AccountUser),
+    ConfirmEmail(EmailWait),
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+async fn blk<T: Send + 'static>(f: impl FnOnce() -> AResult<T> + Send + 'static) -> AResult<T> {
+    tokio::task::spawn_blocking(f).await.unwrap_or_else(|_| Err(AccountError::new("server", "Falha interna no módulo de contas.")))
+}
+
+/// Abre a URL no navegador padrão do Windows. Sem shell no meio: a URL vai como argumento único.
+pub fn system_browser() -> Opener {
+    Arc::new(|url: String| {
+        if !(url.starts_with("https://") || url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost")) {
+            return Err(AccountError::new("browser", "Endereço de login inválido."));
+        }
+        std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &url]).spawn().map(|_| ())
+            .map_err(|_| AccountError::new("browser", "Não foi possível abrir o navegador."))
+    })
+}
+
+pub fn valid_email(e: &str) -> bool {
+    let e = e.trim();
+    match e.split_once('@') {
+        Some((a, b)) => !a.is_empty() && b.contains('.') && !b.starts_with('.') && !b.ends_with('.') && e.len() <= 254 && !e.contains(char::is_whitespace),
+        None => false,
+    }
+}
+
+fn check_email(e: &str) -> AResult<String> {
+    if valid_email(e) { Ok(e.trim().to_lowercase()) } else { Err(AccountError::new("invalid_email", "Digite um e-mail válido, como voce@exemplo.com.")) }
+}
+fn check_password(p: &str) -> AResult<()> {
+    if p.chars().count() < 8 {
+        return Err(AccountError::new("weak_password", "A senha precisa ter pelo menos 8 caracteres."));
+    }
+    if p.len() > 72 {
+        return Err(AccountError::new("weak_password", "A senha pode ter no máximo 72 caracteres."));
+    }
+    Ok(())
+}
+
+impl Accounts {
+    pub fn new(provider: Arc<dyn AuthProvider>, data_dir: &Path, opener: Opener) -> Self {
+        Self::with_stores(provider, SecretFile::dpapi(data_dir.join("account-session.bin")), SecretFile::dpapi(data_dir.join("local-bridge.bin")), opener)
+    }
+    pub fn with_stores(provider: Arc<dyn AuthProvider>, store: SecretFile, bridge: SecretFile, opener: Opener) -> Self {
+        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), opener,
+            oauth_timeout: Duration::from_secs(300), email_timeout: Duration::from_secs(900) }
+    }
+
+    pub fn user(&self) -> Option<AccountUser> {
+        self.session.lock().unwrap().as_ref().map(|s| s.user.clone())
+    }
+
+    fn adopt(&self, s: Session) -> AccountUser {
+        // falha ao cifrar/gravar não impede o uso: a sessão fica só na memória (e nunca vai para o disco em texto aberto)
+        let _ = self.store.save(&Stored { version: 1, refresh_token: s.refresh_token.clone(), user: s.user.clone() });
+        let u = s.user.clone();
+        *self.session.lock().unwrap() = Some(s);
+        u
+    }
+
+    fn drop_session(&self) {
+        *self.session.lock().unwrap() = None;
+        self.store.clear();
+    }
+
+    /// Retoma a sessão guardada (se houver). `Ok(None)` = ninguém logado. Falha de rede NÃO apaga a sessão guardada.
+    pub async fn restore(&self) -> AResult<Option<AccountUser>> {
+        if let Some(u) = self.user() {
+            return Ok(Some(u));
+        }
+        let Some(st) = self.store.load::<Stored>() else { return Ok(None) };
+        let p = self.provider.clone();
+        match blk(move || p.refresh(&st.refresh_token)).await {
+            Ok(s) => Ok(Some(self.adopt(s))),
+            Err(e) if e.is_auth() => {
+                self.drop_session();
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Login social: abre o navegador padrão e espera o retorno no loopback. Cancelar = abortar esta future.
+    pub async fn sign_in_oauth(&self, provider: OAuthProvider) -> AResult<AccountUser> {
+        let lb = loopback::bind().await?;
+        let pk = Pkce::generate();
+        let url = self.provider.oauth_url(provider, &lb.redirect_uri, &pk.challenge);
+        (self.opener)(url)?;
+        let code = lb.wait_code(self.oauth_timeout).await?;
+        let (p, verifier) = (self.provider.clone(), pk.verifier);
+        let s = blk(move || p.exchange_code(&code, &verifier)).await?;
+        Ok(self.adopt(s))
+    }
+
+    pub async fn sign_in_password(&self, email: &str, password: &str) -> AResult<AccountUser> {
+        let email = check_email(email)?;
+        if password.is_empty() {
+            return Err(AccountError::new("invalid_credentials", "Digite sua senha."));
+        }
+        let (p, pw) = (self.provider.clone(), password.to_string());
+        let s = blk(move || p.sign_in_password(&email, &pw)).await?;
+        Ok(self.adopt(s))
+    }
+
+    pub async fn sign_up(&self, email: &str, password: &str, display_name: &str) -> AResult<SignUpOutcome> {
+        let email = check_email(email)?;
+        check_password(password)?;
+        let name: String = display_name.trim().chars().take(64).collect();
+        if name.is_empty() {
+            return Err(AccountError::new("invalid_name", "Diga como devemos chamar você."));
+        }
+        let lb = loopback::bind().await?;
+        let pk = Pkce::generate();
+        let (p, pw, redirect, challenge) = (self.provider.clone(), password.to_string(), lb.redirect_uri.clone(), pk.challenge.clone());
+        match blk(move || p.sign_up(&email, &pw, &name, &redirect, &challenge)).await? {
+            SignUp::Session(s) => Ok(SignUpOutcome::SignedIn(self.adopt(s))),
+            SignUp::ConfirmEmail => Ok(SignUpOutcome::ConfirmEmail(EmailWait { lb, verifier: pk.verifier })),
+        }
+    }
+
+    /// Pede o e-mail de recuperação. A resposta é a mesma exista ou não a conta.
+    pub async fn recover(&self, email: &str) -> AResult<EmailWait> {
+        let email = check_email(email)?;
+        let lb = loopback::bind().await?;
+        let pk = Pkce::generate();
+        let (p, redirect, challenge) = (self.provider.clone(), lb.redirect_uri.clone(), pk.challenge.clone());
+        blk(move || p.recover(&email, &redirect, &challenge)).await?;
+        Ok(EmailWait { lb, verifier: pk.verifier })
+    }
+
+    /// Espera o link do e-mail ser aberto neste computador e entra.
+    pub async fn finish_email(&self, w: EmailWait) -> AResult<AccountUser> {
+        let code = w.lb.wait_code(self.email_timeout).await?;
+        let (p, verifier) = (self.provider.clone(), w.verifier);
+        let s = blk(move || p.exchange_code(&code, &verifier)).await?;
+        Ok(self.adopt(s))
+    }
+
+    /// Alternativa ao link: o código de 6 dígitos que vem no e-mail.
+    pub async fn verify_code(&self, email: &str, code: &str, kind: CodeKind) -> AResult<AccountUser> {
+        let email = check_email(email)?;
+        let code: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
+        if code.len() < 6 || code.len() > 10 {
+            return Err(AccountError::new("invalid_code", "Digite o código que chegou no e-mail."));
+        }
+        let p = self.provider.clone();
+        let s = blk(move || p.verify_code(&email, &code, kind)).await?;
+        Ok(self.adopt(s))
+    }
+
+    pub async fn set_password(&self, new_password: &str) -> AResult<()> {
+        check_password(new_password)?;
+        let tok = self.access_token().await?;
+        let (p, pw) = (self.provider.clone(), new_password.to_string());
+        blk(move || p.update_password(&tok, &pw)).await
+    }
+
+    /// Sai da conta: invalida a sessão no servidor (melhor esforço) e apaga a sessão guardada neste computador.
+    /// A chave do banco local (`local-bridge.bin`) fica: não é credencial da conta e sem ela o histórico local se perderia.
+    pub async fn sign_out(&self) {
+        let tok = self.session.lock().unwrap().as_ref().map(|s| s.access_token.clone());
+        self.drop_session();
+        if let Some(tok) = tok {
+            let p = self.provider.clone();
+            let _ = tokio::time::timeout(Duration::from_secs(5), blk(move || p.sign_out(&tok))).await;
+        }
+    }
+
+    /// Segundos até a próxima renovação (60 s antes do vencimento). `None` sem sessão.
+    pub fn refresh_in(&self) -> Option<u64> {
+        self.session.lock().unwrap().as_ref().map(|s| s.expires_at.saturating_sub(now() + 60))
+    }
+
+    /// Access token válido; renova com o refresh token se faltar menos de 60 s. Erro `session_expired` = sessão derrubada.
+    pub async fn access_token(&self) -> AResult<String> {
+        let fresh = |s: &Session| s.expires_at > now() + 60;
+        {
+            let g = self.session.lock().unwrap();
+            match g.as_ref() {
+                None => return Err(AccountError::session_expired()),
+                Some(s) if fresh(s) => return Ok(s.access_token.clone()),
+                _ => {}
+            }
+        }
+        let _one = self.refresh_lock.lock().await;   // uma renovação por vez: o refresh token é de uso único
+        let rt = {
+            let g = self.session.lock().unwrap();
+            match g.as_ref() {
+                None => return Err(AccountError::session_expired()),
+                Some(s) if fresh(s) => return Ok(s.access_token.clone()),
+                Some(s) => s.refresh_token.clone(),
+            }
+        };
+        let p = self.provider.clone();
+        match blk(move || p.refresh(&rt)).await {
+            Ok(s) => {
+                let t = s.access_token.clone();
+                self.adopt(s);
+                Ok(t)
+            }
+            Err(e) => {
+                if e.is_auth() {
+                    self.drop_session();
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Publica no perfil a chave pública e a impressão digital da identidade P2P deste aparelho.
+    pub async fn publish_identity(&self, public_key: Value, fingerprint: &str) -> AResult<Profile> {
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let tok = self.access_token().await?;
+        let (p, fp) = (self.provider.clone(), fingerprint.to_string());
+        blk(move || p.sync_profile(&tok, &u.display_name, &u.avatar_url, &public_key, &fp)).await
+    }
+    pub async fn set_nick(&self, nick: &str) -> AResult<Profile> {
+        let tok = self.access_token().await?;
+        let (p, n) = (self.provider.clone(), nick.trim().trim_start_matches('@').to_lowercase());
+        blk(move || p.set_nick(&tok, &n)).await
+    }
+    pub async fn friends(&self) -> AResult<Vec<Friend>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.friends(&tok)).await
+    }
+    pub async fn friend_request(&self, nick: &str) -> AResult<()> {
+        let n = nick.trim().trim_start_matches('@').to_lowercase();
+        if n.len() < 3 || n.len() > 20 || !n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+            return Err(AccountError::new("invalid_nick", "Digite o @nick do seu amigo (3 a 20 caracteres: letras, números e _)."));
+        }
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.friend_request(&tok, &n)).await
+    }
+    pub async fn friend_respond(&self, request_id: &str, accept: bool) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, r) = (self.provider.clone(), request_id.to_string());
+        blk(move || p.friend_respond(&tok, &r, accept)).await
+    }
+    pub async fn friend_remove(&self, user_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, u) = (self.provider.clone(), user_id.to_string());
+        blk(move || p.friend_remove(&tok, &u)).await
+    }
+
+    /// Credencial do banco LOCAL deste computador para a conta logada (ponte de transição: mensagens e grupos ainda são
+    /// guardados pelo backend local, que exige um usuário local). Senha aleatória por conta, cifrada com a DPAPI; não é a
+    /// senha da conta online e nunca sai do computador.
+    pub fn local_credentials(&self) -> AResult<(String, String)> {
+        let u = self.user().ok_or_else(AccountError::session_expired)?;
+        let mut map: HashMap<String, String> = self.bridge.load().unwrap_or_default();
+        let pw = match map.get(&u.id) {
+            Some(p) => p.clone(),
+            None => {
+                use rand_core::{OsRng, RngCore};
+                let mut raw = [0u8; 24];
+                OsRng.fill_bytes(&mut raw);
+                let p: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+                map.insert(u.id.clone(), p.clone());
+                self.bridge.save(&map).map_err(|_| AccountError::new("storage", "Não foi possível guardar os dados locais com segurança."))?;
+                p
+            }
+        };
+        Ok((format!("{}@conta.briks.local", u.id), pw))
+    }
+}

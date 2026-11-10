@@ -77,9 +77,11 @@ pub async fn bind() -> Result<(TcpListener, u16)> {
 }
 
 pub async fn serve(l: TcpListener, token: String, cfg: Config) -> Result<()> {
+    let realtime = cfg.realtime_url.clone().zip(cfg.realtime_key.clone());
+    let accounts = crate::accounts::service::Runtime::build(cfg.data_dir.clone(), realtime).await;
     loop {
         let (s, _) = l.accept().await?;
-        let _ = handle(s, &token, &cfg).await; // uma UI por vez; ao cair, aceita a próxima
+        let _ = handle(s, &token, &cfg, accounts.clone()).await; // uma UI por vez; ao cair, aceita a próxima
     }
 }
 
@@ -90,7 +92,7 @@ async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
     Ok(())
 }
 
-async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
+async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     s.set_nodelay(true).ok();
     let (rd, mut wr) = s.into_split();
     let mut lines = BufReader::new(rd).lines();
@@ -102,6 +104,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
     }
     out(&mut wr, json!({ "ev": "hello.ok", "version": 1 })).await?;
 
+    let (acct_tx, mut acct_rx) = mpsc::channel::<Value>(64);
+    let mut account = crate::accounts::service::Service::new(accounts, acct_tx);   // contas online: account.*, friends.*, import.*
     let mut identity: Option<Arc<Identity>> = None;
     let mut name = String::from("Usuário");
     let mut local_peer = uuid::Uuid::new_v4().to_string();
@@ -212,9 +216,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
                     }
                     "ping" => out(&mut wr, json!({ "ev": "pong" })).await?,
-                    _ => {}
+                    other => { account.command(other, &v); }
                 }
             }
+            Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,

@@ -125,6 +125,19 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                     cui_pop_id(ui);
                 }
             }
+            if (s->legacy_count) {   /* contatos importados do Briks antigo: ainda sem conta; servem de lembrete para pedir o @nick */
+                char t[64]; snprintf(t, sizeof t, "DO BRIKS ANTIGO — %d", s->legacy_count);
+                section_title(ui, t);
+                for (int i = 0; i < s->legacy_count; i++) {
+                    cui_push_id_int(ui, 3000 + i);
+                    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 5, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER) {
+                        cui_avatar(ui, s->legacy[i].name, .size = 24);
+                        cui_text(ui, s->legacy[i].name, .nowrap = true, .width = CUI_FILL, .color = B_MUTED);
+                    }
+                    cui_pop_id(ui);
+                }
+                cui_text(ui, "Peça o @nick deles para adicionar pela conta.", .size = 11, .color = B_MUTED);
+            }
             section_title(ui, "GRUPOS");
             if (nav_item(ui, CUI_ICON_PLUS, "Criar grupo", false)) { s->create_group_open = true; s->new_group[0] = 0; }
             for (int i = 0; i < s->group_count; i++) {
@@ -367,8 +380,10 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 0.85f);
     dock_render(ui, s);
     cui_dialog(ui, "Adicionar amigo", &s->add_friend_open) {
-        cui_text(ui, "Informe o e-mail da conta que você quer adicionar.", .color = B_MUTED);
-        cui_input(ui, "add-email", s->add_email, sizeof s->add_email, .placeholder = "amigo@email.com");
+        const bool online = s->acct_user_id[0] != 0;
+        cui_text(ui, online ? "Digite o @nick do seu amigo. Ele recebe o pedido e, ao aceitar, vocês passam a se achar pela conta." : "Informe o e-mail da conta que você quer adicionar.", .color = B_MUTED);
+        cui_input(ui, "add-email", s->add_email, sizeof s->add_email, .placeholder = online ? "@nick" : "amigo@email.com", .autofocus = true);
+        if (online && s->acct_nick[0]) cui_textf(ui, "O seu é @%s", s->acct_nick);
         if (s->notice[0]) cui_text(ui, s->notice, .color = B_MUTED, .size = 13);
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Enviar pedido", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy)) app_add_friend(s);
@@ -391,7 +406,21 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
         cui_text(ui, "Status (aparece num balão perto da sua foto)", .size = 12, .color = B_MUTED);
         cui_input(ui, "status-edit", s->user_status, sizeof s->user_status, .placeholder = "Vazio = sem balão");
-        cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+        if (s->acct_user_id[0]) {
+            cui_row(ui, .gap = 10, .align = CUI_ALIGN_CENTER) {
+                cui_textf(ui, "@%s", s->acct_nick[0] ? s->acct_nick : "…");
+                if (cui_button(ui, "Trocar @nick", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { s->profile_open = false; s->nick_open = true; s->nick_msg[0] = 0; snprintf(s->nick_edit, sizeof s->nick_edit, "%s", s->acct_nick); }
+            }
+            cui_text(ui, "Seus amigos acham você pelo @nick. Mensagens e grupos ficam guardados neste computador.", .size = 12, .color = B_MUTED);
+        } else cui_text(ui, "Conta local: os dados ficam só neste computador.", .size = 12, .color = B_MUTED);
+    }
+    cui_dialog(ui, "Trocar @nick", &s->nick_open) {
+        cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
+        int nr = cui_input(ui, "nick-edit", s->nick_edit, sizeof s->nick_edit, .placeholder = "seu_nick", .autofocus = true);
+        if (s->nick_msg[0]) cui_text(ui, s->nick_msg, .color = B_MUTED, .size = 13);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Salvar", .variant = CUI_BUTTON_PRIMARY) || (nr & CUI_SUBMITTED)) account_set_nick(s);
+        }
     }
     bubbles_draw(ui);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
@@ -410,7 +439,24 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     /* largura e altura acompanham o conteúdo, limitadas à janela; se não couber, rola na vertical */
     cui_dialog(ui, "Configurações", &s->settings_open, .width = fminf(480.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 200.0f, 120.0f), .scroll_y = true, .gap = 12) {
-            cui_textf(ui, "Conectado como %s", s->user_name);
+            if (s->acct_user_id[0]) {
+                cui_text(ui, "Conta", .font = CUI_FONT_MEDIUM);
+                cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 10, .gap = 12, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                    cui_avatar(ui, s->user_name, .size = 40);
+                    cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                        cui_text(ui, s->user_name, .font = CUI_FONT_MEDIUM, .nowrap = true);
+                        cui_textf(ui, "@%s · %s", s->acct_nick[0] ? s->acct_nick : "…", s->user_email);
+                    }
+                    if (cui_button(ui, "Sair", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { s->settings_open = false; rtc_leave_room(s); app_logout(s); }
+                }
+                cui_text(ui, "Sair apaga a sessão guardada neste computador. Suas mensagens locais continuam aqui para a próxima vez.", .size = 12, .color = B_MUTED);
+                if (s->import_state == 1 || s->import_state == 2 || s->import_state == 3) {
+                    cui_text(ui, "Briks antigo", .font = CUI_FONT_MEDIUM);
+                    if (s->import_msg[0]) cui_text(ui, s->import_msg, .size = 12, .color = B_MUTED);
+                    if (s->import_state != 3 && cui_button(ui, "Importar amigos do Briks antigo", .variant = CUI_BUTTON_SECONDARY, .loading = s->import_state == 2)) account_import(s, true);
+                    if (s->import_state != 3) cui_text(ui, "Traz contatos, grupos e mensagens. A identidade antiga não é importada e nada é alterado no Briks antigo.", .size = 12, .color = B_MUTED);
+                }
+            } else cui_textf(ui, "Conectado como %s", s->user_name);
             cui_text(ui, "Voz e vídeo, rede, atalhos, atualizações e sobre chegam nos próximos marcos.", .color = B_MUTED);
             cui_text(ui, "Desempenho", .font = CUI_FONT_MEDIUM);
             cui_row(ui, .gap = 8) {
@@ -440,7 +486,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             }
             if ((float)cui_time(ui) - restored_at < 3.0f)
                 cui_text(ui, "Layout restaurado.", .size = 12, .color = B_ONLINE);
-            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
+            if (!s->acct_user_id[0] && cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) { s->settings_open = false; app_logout(s); }
         }
     }
     /* o dono da sala expulsou você */

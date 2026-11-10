@@ -36,7 +36,13 @@ typedef struct { char id[48]; char name[96]; char channel[64]; } group_t;
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE } op_t;
+               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+
+/* conta online (account.c): estado vindo do briks-core (eventos account.*) */
+enum { ACCT_UNKNOWN, ACCT_OUT, ACCT_BUSY, ACCT_EMAIL_SENT, ACCT_IN };
+enum { AV_MAIN, AV_LOGIN, AV_SIGNUP, AV_RECOVER, AV_NEWPASS };   /* telas da entrada */
+enum { BRIDGE_NONE, BRIDGE_WAIT, BRIDGE_RUNNING, BRIDGE_FAILED };   /* ligação da conta com o banco local deste PC */
+#define MAX_LEGACY 64
 
 typedef struct {
     screen_t screen;
@@ -84,13 +90,41 @@ typedef struct {
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
     bool kick_open, kicked_open;   /* diálogo de confirmação; aviso "Você foi removido da chamada" */
+    /* conta online */
+    int acct_state, acct_view, acct_bridge;
+    bool acct_configured, acct_mock, acct_asked, acct_demo;
+    char acct_what[16], acct_provider[16], acct_kind[12];      /* o que está em andamento; signup|recovery no e-mail enviado */
+    char acct_error[240], acct_info[240];
+    char acct_user_id[48], acct_nick[32], acct_code[12];
+    char bridge_email[96], bridge_pw[64];                      /* credencial do banco LOCAL (não é a senha da conta) */
+    bool nick_open; char nick_edit[32], nick_msg[160];
+    int import_state;                                          /* 0 não consultado, 1 há dados, 2 importando, 3 feito, 4 nada a importar */
+    char import_msg[240];
+    person_t legacy[MAX_LEGACY]; int legacy_count;             /* contatos do Briks antigo (só nome; sem conta) */
+    bool reload_groups;
 } app_state_t;
 
 /* app.c: máquina de estados das chamadas ao backend */
 void app_submit_auth(app_state_t *s);
 void app_add_friend(app_state_t *s);
 void app_accept_friend(app_state_t *s, const char *request_id);
-void app_logout(app_state_t *s);
+void app_logout(app_state_t *s);          /* sai da conta online (se houver) e do banco local */
+void app_local_logout(app_state_t *s);    /* só limpa o estado local e volta para a entrada */
+/* account.c: contas online pelo briks-core */
+void account_tick(app_state_t *s);                          /* a cada quadro: liga o core, pede o estado da conta, conclui a ponte local */
+bool account_handle_event(app_state_t *s, const char *line); /* eventos account.*, friends.*, local.*, import.* */
+void account_oauth(app_state_t *s, const char *provider);   /* "google" | "discord": abre o navegador */
+void account_submit(app_state_t *s);                        /* envia o formulário da tela atual (entrar, criar, recuperar, nova senha) */
+void account_submit_code(app_state_t *s);                   /* código de 6 dígitos do e-mail */
+void account_cancel(app_state_t *s);
+void account_logout(app_state_t *s);
+void account_retry(app_state_t *s);                         /* pede o estado de novo (erro de rede ao abrir) */
+void account_friends(app_state_t *s);
+void account_add_friend(app_state_t *s);
+void account_respond_friend(app_state_t *s, const char *request_id, bool accept);
+void account_set_nick(app_state_t *s);
+void account_import(app_state_t *s, bool apply);
+void account_bridge_done(app_state_t *s, bool ok);          /* app.c avisa o fim da ligação com o banco local */
 void app_begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body);
 void app_open_friend(app_state_t *s, int idx);   /* abre a DM e carrega o histórico persistido */
 void app_open_group(app_state_t *s, int idx);

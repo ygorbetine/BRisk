@@ -33,6 +33,7 @@ static void frame(cui_ctx *ui) {
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
     { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */
+    account_tick(&state);
     app_pump(&state);
     rtc_pump(&state);
     profile_tick(&state);

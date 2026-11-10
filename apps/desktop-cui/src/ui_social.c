@@ -398,9 +398,10 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = CUI_RGBA(0x180726f2), .border = 1,
                     .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                cui_text(ui, "Seu computador parece lento. Ativar o modo Simplificado?", .size = 12);
-                if (cui_button(ui, "Ativar", .variant = CUI_BUTTON_PRIMARY)) briks_perf_set(ui, PERF_SIMPLE, true);
-                if (cui_button(ui, "Agora não", .variant = CUI_BUTTON_SECONDARY)) g_perf_hint = false;
+                cui_text(ui, briks_perf_hint_text(), .size = 12);   /* frase sorteada a cada exibição (perf.c) */
+                char lab[48]; snprintf(lab, sizeof lab, "Ativar %s", briks_perf_label(briks_perf_hint_level()));
+                if (cui_button(ui, lab, .variant = CUI_BUTTON_PRIMARY)) briks_perf_set(ui, briks_perf_hint_level(), true);
+                if (cui_button(ui, "Agora não", .variant = CUI_BUTTON_SECONDARY)) briks_perf_hint_dismiss();
             }
         }
     }

@@ -9,6 +9,9 @@ enum { PERF_NORMAL = 0, PERF_SIMPLE = 1, PERF_MIN = 2 };
 extern int g_perf;          /* nível atual */
 extern bool g_perf_hint;    /* o app detectou hardware fraco e sugere o Simplificado (aviso discreto) */
 
+int briks_perf_hint_level(void);                    /* nível sugerido pelo aviso: PERF_SIMPLE, ou PERF_MIN quando está muito lento */
+const char *briks_perf_hint_text(void);             /* frase sorteada para esta exibição (lista em %APPDATA%\Briks-CUI\perf-frases.txt) */
+void briks_perf_hint_dismiss(void);                 /* "Agora não": some e não volta nesta sessão */
 void briks_perf_init(void);                         /* lê BRIKS_PERF, settings.json e a preferência de animações do Windows */
 void briks_perf_set(cui_ctx *ui, int level, bool save);
 void briks_perf_note_frame(double ms, int index);   /* glass.c: tempo dos primeiros quadros, para a detecção automática */

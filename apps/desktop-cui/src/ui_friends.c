@@ -120,8 +120,10 @@ static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, 
     }
 }
 
+static float g_hub_h;   /* altura da área rolável do hub (quadro anterior): centraliza o estado vazio na vertical */
 static void empty_state(cui_ctx *ui, const char *icon, const char *title, const char *sub) {
-    cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 56, .gap = 8) {
+    float top = g_hub_h > 0 ? fmaxf(24.0f, (g_hub_h - 230.0f) * 0.5f - 18.0f) : 56.0f;
+    cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = top, .gap = 8) {
         cui_icon(ui, icon, 34, B_C3);
         cui_text(ui, title, .font = CUI_FONT_MEDIUM);
         cui_text(ui, sub, .size = 12, .color = B_MUTED);
@@ -234,15 +236,25 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
     blocked_load(s);
     static const char *const tabs[] = { "Todos", "Online", "Pendentes", "Bloqueados", "Adicionar" };
     char pend[24]; snprintf(pend, sizeof pend, "Pendentes %d", s->pending_count);
+    static const char *const shorts[] = { "Todos", "Online", "Pend.", "Bloq.", "Novo" };
+    const bool mid = g_panel_w >= 600, tiny = g_panel_w < 400;   /* largo: nomes inteiros; estreito: nomes curtos */
     const char *items[5] = { tabs[0], tabs[1], s->pending_count ? pend : tabs[2], tabs[3], tabs[4] };
-    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 14, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
+    if (!mid) { items[0] = shorts[0]; items[1] = shorts[1]; items[2] = s->pending_count ? pend : shorts[2]; items[3] = shorts[3]; items[4] = shorts[4]; }
+    g_hub_h = cui_get_rect(ui, cui_make_id(ui, "friends-hub")).h;
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 18, .gap = 10, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
             .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1) {
         cui_icon(ui, CUI_ICON_USERS, 18, B_MUTED);
-        cui_text(ui, "Amigos", .font = CUI_FONT_MEDIUM);
-        cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL);
+        cui_text(ui, "Amigos", .font = CUI_FONT_MEDIUM, .nowrap = true);
+    }
+    cui_box(ui, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .bg = CUI_RGBA(0xffffff0a)) {   /* abas em linha própria: ocupam a largura toda, sem corte nem degradê */
+        static const char *const tab_icons[5] = { CUI_ICON_USERS, CUI_ICON_WIFI, CUI_ICON_CLOCK, CUI_ICON_SHIELD, CUI_ICON_USER_PLUS };
+        static const char *const no_text[5] = { " ", "  ", "   ", "    ", "     " };
+        if (tiny) {   /* muito estreito: só ícones (o nome completo fica na dica) */
+            cui_tabs(ui, "friends-tabs-i", no_text, 5, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true, .icons = tab_icons);
+        } else cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true);
     }
     cui_separator(ui);
-    if (s->friends_tab != 4) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* botão sempre visível no topo da seção, em linha própria (não espreme as abas) */
+    if (s->friends_tab != 4 && s->friend_count > 0) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* botão sempre visível no topo da seção, em linha própria (não espreme as abas) */
         if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .full_width = true)) s->friends_tab = 4;
     }
     if (s->friends_tab <= 3 && s->friends_tab != 2) {

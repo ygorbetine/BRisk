@@ -231,9 +231,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             char t[48]; snprintf(t, sizeof t, "AMIGOS — %d", s->friend_count);
             section_title(ui, t);
-            if (!s->friend_count) {
-                if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .width = CUI_FILL)) { app_open_friend(s, -1); s->friends_tab = 4; }
-            }
+            if (!s->friend_count) cui_text(ui, "Você ainda não tem amigos.", .size = 12, .color = B_MUTED);   /* a ação é o item "Adicionar amigo" lá em cima: um ponto só */
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
                 if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);
@@ -325,9 +323,13 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
 }
 
 static void content(cui_ctx *ui, app_state_t *s) {
+    if (s->active_friend < 0 && s->active_group < 0) {   /* tela Amigos: abas, busca, pedidos, bloqueados. SEM return dentro do cui_box: deixava a caixa aberta e os controles do painel (grip, + e ×) caíam no meio do conteúdo e empurravam o layout */
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
+                .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) { friends_hub(ui, s); }
+        return;
+    }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
             .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
-        if (s->active_friend < 0 && s->active_group < 0) { friends_hub(ui, s); return; }   /* tela Amigos: abas, busca, pedidos, bloqueados */
         const bool group = s->active_group >= 0;
         const char *title = group ? s->groups[s->active_group].name : s->friends[s->active_friend].name;
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 10,

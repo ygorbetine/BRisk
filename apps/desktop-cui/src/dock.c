@@ -134,6 +134,13 @@ static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
     cui_pop_id(ui);
 }
 
+typedef struct { bool hot; } grip_t;
+static void paint_grip(cui_ctx *ui, cui_rect r, void *user) {
+    const grip_t *g = (const grip_t *)user;
+    cui_rect b = { r.x + r.w * 0.5f - 17.0f, r.y + 8.0f, 34.0f, 4.0f };
+    cui_draw_rect(ui, b, CUI_CORNERS(2), g->hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24));
+}
+
 typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float mx, my; bool down; } rc_t;
 
 /* Painel na posição absoluta r dentro do contêiner de pilha. */
@@ -154,13 +161,9 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
             g_panel_w = r.w;
             ui_panel(ui, c->s, kind);
-            if (kind != P_SERVERS) {   /* alça de arrasto: SEMPRE presente, mesma altura/posição em todo layout (só a cor muda ao passar o mouse; nada se move) */
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START) {
-                    cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(header_h(kind)), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 5,
-                            .radius_tl = (int)g_th.panel_radius, .radius_tr = (int)g_th.panel_radius) {
-                        cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(4), .radius = 2, .bg = hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24)) {}
-                    }
-                }
+            if (kind != P_SERVERS) {   /* alça de arrasto: pintada em coordenadas do painel (sempre centralizada no topo, nunca no meio do conteúdo) */
+                grip_t gp = { hot };
+                cui_canvas(ui, "grip", CUI_FILL, CUI_FILL, paint_grip, &gp, sizeof gp);
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {
                 { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + 8, 28 * nb, 28); }

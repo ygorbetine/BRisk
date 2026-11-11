@@ -459,7 +459,9 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             cui_icon(ui, CUI_ICON_MONITOR, 18, fg);
             cui_text(ui, q->starting ? "Iniciando…" : q->active ? "Parar transmissão" : "Compartilhar", .font = CUI_FONT_DISPLAY, .size = 15, .color = fg);
         }
-        if (briks_clicked(ui, "b")) { if (on) share_stop(s); else share_open_dialog(s); }
+        /* com o seletor aberto a barra fica por baixo dele: um clique no diálogo não pode valer também aqui */
+        bool modal = q->dialog_open || s->kick_open;
+        if (!modal && briks_clicked(ui, "b")) { if (on) share_stop(s); else share_open_dialog(s); }
         if (q->active) {
             vsep(ui);
             cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
@@ -476,7 +478,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             else if (adapting) cui_icon(ui, !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
             cui_text(ui, failed ? q->err : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
-        if (briks_clicked(ui, "q") || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
+        if ((!modal && briks_clicked(ui, "q")) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
             static bool dirty;

@@ -177,12 +177,13 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 if (briks_clicked(ui, "b")) s->screen = SCREEN_SOCIAL;
                 cui_pop_id(ui);
                 cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
-                    if (tab(ui, 1, CUI_ICON_PHONE, "Call", s->call_mode == 0)) s->call_mode = 0;
-                    if (tab(ui, 2, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1)) s->call_mode = 1;
+                    /* ids 11..14: as pílulas da barra usam 1..5 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
+                    if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0)) s->call_mode = 0;
+                    if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1)) s->call_mode = 1;
                 }
                 cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
-                    if (tab(ui, 3, CUI_ICON_VIDEO, "Chamada", s->call_view == 0)) s->call_view = 0;
-                    if (tab(ui, 4, CUI_ICON_MESSAGE_SQUARE, "Chat", s->call_view == 1)) s->call_view = 1;
+                    if (tab(ui, 13, CUI_ICON_VIDEO, "Chamada", s->call_view == 0)) s->call_view = 0;
+                    if (tab(ui, 14, CUI_ICON_MESSAGE_SQUARE, "Chat", s->call_view == 1)) s->call_view = 1;
                 }
             }
         }

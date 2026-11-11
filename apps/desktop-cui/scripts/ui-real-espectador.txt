@@ -1,0 +1,12 @@
+# espectador: fotografa em cada fase do emissor
+waitms 24000
+shot espectador-1
+waitms 8000
+shot espectador-2-qualidade
+waitms 4000
+shot espectador-3-redimensionada
+waitms 4000
+shot espectador-4-minimizada
+waitms 7500
+shot espectador-5-fechada
+waitms 500

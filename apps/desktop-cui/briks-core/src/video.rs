@@ -408,6 +408,24 @@ mod tests {
         }
     }
 
+    /// A janela transmitida muda de tamanho no meio: o decodificador tem de entregar o quadro novo inteiro, no tamanho novo.
+    #[test]
+    fn decoder_follows_a_mid_stream_resolution_change() {
+        let mut dec = H264Dec::new().unwrap();
+        for (w, h) in [(626usize, 392usize), (886, 512), (1280, 720), (626, 392)] {
+            let mut enc = H264Enc::new(w, h, 30.0, 3_000_000).unwrap();
+            let f = pattern(w, h, 2);
+            let mut expect = f.clone(); for p in expect.chunks_mut(4) { p.swap(0, 2); }
+            let mut last = None;
+            for _ in 0..6 { for au in enc.encode(&bgra_to_i420(&f, w, h, w, h)).unwrap() { if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() { last = Some((dw, dh, rgba.to_vec())); } } }
+            let (dw, dh, rgba) = last.expect("nenhum quadro depois da troca de tamanho");
+            assert_eq!((dw, dh), (w, h), "tamanho errado depois da troca");
+            let p = psnr(&expect, &rgba);
+            eprintln!("{w}x{h}: PSNR {p:.1} dB ({})", dec.name);
+            assert!(p > 22.0, "{w}x{h}: quadro errado depois da troca de tamanho (PSNR {p:.1})");
+        }
+    }
+
     #[test]
     fn downscale_produces_requested_size() {
         let f = pattern(1920, 1080, 0);

@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_RATIONAL, DX
 use crate::video::Yuv;
 
 struct Chain {
-    key: (u32, u32, u32, u32),   // origem e destino
+    key: (u32, u32, u32, u32, u32, u32),   // área visível, destino e tamanho real da textura da captura (muda quando a janela é redimensionada)
     input: ID3D11Texture2D,      // cópia da textura da captura (com as permissões que o processador exige)
     out: ID3D11Texture2D,
     staging: ID3D11Texture2D,
@@ -30,7 +30,10 @@ impl GpuConv {
             let dev = tex.GetDevice()?;
             let ctx = dev.GetImmediateContext()?;
             let vctx: ID3D11VideoContext = ctx.cast()?;
-            if self.chain.as_ref().map(|c| c.key != (sw, sh, dw, dh)).unwrap_or(true) {
+            let mut td = D3D11_TEXTURE2D_DESC::default();
+            tex.GetDesc(&mut td);
+            let key = (sw, sh, dw, dh, td.Width, td.Height);
+            if self.chain.as_ref().map(|c| c.key != key).unwrap_or(true) {
                 self.chain = None;
                 self.chain = Some(Self::build(&dev, &vctx, tex, sw, sh, dw, dh)?);
             }
@@ -95,7 +98,7 @@ impl GpuConv {
         // entrada RGB faixa total; saída BT.601 faixa limitada (16–235), igual ao caminho por CPU e ao que o receptor espera
         vctx.VideoProcessorSetStreamColorSpace(&vp, 0, &D3D11_VIDEO_PROCESSOR_COLOR_SPACE { _bitfield: 0 });
         vctx.VideoProcessorSetOutputColorSpace(&vp, &D3D11_VIDEO_PROCESSOR_COLOR_SPACE { _bitfield: 1 << 4 });
-        Ok(Chain { key: (sw, sh, dw, dh), input, out, staging, vp, iv: iv.ok_or_else(|| anyhow!("vista de entrada"))?, ov: ov.ok_or_else(|| anyhow!("vista de saída"))? })
+        Ok(Chain { key: (sw, sh, dw, dh, tex_w, tex_h), input, out, staging, vp, iv: iv.ok_or_else(|| anyhow!("vista de entrada"))?, ov: ov.ok_or_else(|| anyhow!("vista de saída"))? })
     }
 }
 

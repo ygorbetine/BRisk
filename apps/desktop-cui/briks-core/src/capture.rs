@@ -144,28 +144,32 @@ pub struct Capture {
     handle: Option<Handle>,
 }
 
-struct Handler { shared: Arc<Shared>, gpu: Option<crate::gpuconv::GpuConv>, staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)> }
+struct Handler { logged_start: bool, staging_dbg: (u32, u32, u32, u32), shared: Arc<Shared>, gpu: Option<crate::gpuconv::GpuConv>, staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)> }
 
 impl GraphicsCaptureApiHandler for Handler {
     type Flags = Arc<Shared>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> { // conversão na GPU por padrão; BRIKS_CONVERT=cpu força o caminho antigo (diagnóstico / isolar problema de driver)
         let gpu = if std::env::var("BRIKS_CONVERT").as_deref() == Ok("cpu") { None } else { Some(crate::gpuconv::GpuConv::default()) };
-        Ok(Handler { shared: ctx.flags, gpu, staging: None }) }
+        Ok(Handler { logged_start: false, staging_dbg: (0, 0, 0, 0), shared: ctx.flags, gpu, staging: None }) }
     fn on_frame_arrived(&mut self, frame: &mut Frame, _c: InternalCaptureControl) -> Result<(), Self::Error> {
         use windows::Win32::Graphics::Direct3D11::*;
         let (w, h) = (frame.width(), frame.height());
         // Uma única textura de leitura reaproveitada entre quadros (a biblioteca criaria uma nova de dezenas de MB a cada quadro);
         // a conversão de cor lê direto da memória mapeada, respeitando o passo de linha.
+        if let Ok(f) = std::env::var("BRIKS_CAPTURE_LOG") { if !self.logged_start { self.logged_start = true; use std::io::Write; if let Ok(mut o) = std::fs::OpenOptions::new().create(true).append(true).open(f) { let _ = writeln!(o, "captura iniciada {w}x{h}, GPU {}", self.gpu.is_some()); } } }
         if let Some(g) = self.gpu.as_mut() {
             // GPU: escala + BGRA→NV12 no processador de vídeo; só o quadro reduzido volta para a memória
             let (tw, th) = crate::video::fit_size(w as usize, h as usize, self.shared.target_h.load(Ordering::Relaxed));
             if !self.shared.accept() { return Ok(()); }
+            if let Ok(f) = std::env::var("BRIKS_CAPTURE_LOG") { use std::io::Write; let mut d = D3D11_TEXTURE2D_DESC::default(); unsafe { frame.as_raw_texture().GetDesc(&mut d); }
+                if self.staging_dbg != (w, h, d.Width, d.Height) { self.staging_dbg = (w, h, d.Width, d.Height); if let Ok(mut o) = std::fs::OpenOptions::new().create(true).append(true).open(f) { let _ = writeln!(o, "quadro {w}x{h} textura {}x{} -> envio {tw}x{th}", d.Width, d.Height); } } }
             let t0 = std::time::Instant::now();
             let tex = unsafe { frame.as_raw_texture().clone() };
             match g.convert(&tex, w, h, tw as u32, th as u32) {
                 Ok(yuv) => { self.shared.push_yuv(yuv, w as usize, h as usize, t0.elapsed()); return Ok(()); }
-                Err(e) => { eprintln!("conversão na GPU indisponível ({e}); usando a CPU"); self.gpu = None; *self.shared.last_accept.lock().unwrap() = None; }
+                Err(e) => { eprintln!("conversão na GPU indisponível ({e}); usando a CPU");
+                    if let Ok(f) = std::env::var("BRIKS_CAPTURE_LOG") { use std::io::Write; if let Ok(mut o) = std::fs::OpenOptions::new().create(true).append(true).open(f) { let _ = writeln!(o, "GPU falhou em {w}x{h}: {e}"); } } self.gpu = None; *self.shared.last_accept.lock().unwrap() = None; }
             }
         }
         unsafe {

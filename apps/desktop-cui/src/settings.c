@@ -6,6 +6,9 @@
 #include "update.h"
 #include "core.h"
 #include "hotkeys.h"
+#include "storage.h"
+#include "json.h"
+void data_refresh(void); void data_ui(cui_ctx *ui, app_state_t *s); int data_probe(const char *n);   /* settings_data.c */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,22 +108,6 @@ static void enum_devices(void) {
     if (g_set.out >= out_n || strcmp(g_set.out ? out_names[g_set.out] : "", g_set.out ? g_set.out_name : "")) g_set.out = 0;
 }
 
-/* ---- armazenamento: tamanho real da pasta de dados ---- */
-static unsigned long long dir_size(const char *dir, int depth) {
-    char pat[MAX_PATH]; snprintf(pat, sizeof pat, "%s\\*", dir);
-    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd); if (h == INVALID_HANDLE_VALUE) return 0;
-    unsigned long long t = 0;
-    do {
-        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (depth < 4) { char sub[MAX_PATH]; snprintf(sub, sizeof sub, "%s\\%s", dir, fd.cFileName); t += dir_size(sub, depth + 1); } }
-        else t += ((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-    } while (FindNextFileA(h, &fd));
-    FindClose(h); return t;
-}
-static void fmt_bytes(unsigned long long b, char *o, size_t cap) {
-    if (b < 1024) snprintf(o, cap, "%llu B", b); else if (b < 1048576) snprintf(o, cap, "%.1f KB", b / 1024.0); else snprintf(o, cap, "%.1f MB", b / 1048576.0);
-}
-
 /* ---- avisos (erros/avisos do app) ---- */
 static char notices[8][120]; static int notice_n;
 void settings_notice(const char *text) {
@@ -203,9 +190,20 @@ static void key_row(cui_ctx *ui, app_state_t *s, int i) {
     }
 }
 
+/* ajustes para a exportação de dados: só preferências, nunca senha, token ou chave */
+void settings_export_json(FILE *f) {
+    for (int i = 0; i < NF; i++) {
+        fprintf(f, "%s\"%s\": ", i ? ", " : "", F[i].k);
+        if (F[i].t == 'i') fprintf(f, "%d", *(int *)F[i].p); else if (F[i].t == 'f') fprintf(f, "%.2f", *(float *)F[i].p);
+        else if (F[i].t == 'b') fputs(*(bool *)F[i].p ? "true" : "false", f);
+        else { char b[200]; json_escape((char *)F[i].p, b, sizeof b); fprintf(f, "\"%s\"", b); }
+    }
+}
+
 /* sondas dos roteiros de teste (script.c: expect <nome> <valor>); -9999 = nome desconhecido */
 int settings_probe(const char *n, app_state_t *s) {
     unsigned m; int v;
+    { int dp = data_probe(n); if (dp != -9999) return dp; }
     if (!strcmp(n, "rec_slot")) return rec_slot;
     if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
     if (!strcmp(n, "mic_test_on")) return s->mic_test_on;
@@ -233,9 +231,9 @@ void settings_tick(void) {
 
 void settings_dialog(cui_ctx *ui, app_state_t *s) {
     static float restored_at = -10, cleared_at = -10; static bool was_open, confirm_hist, confirm_all;
-    static unsigned long long store_bytes; static float level_sim;
+    static float level_sim;
     if (s->settings_open && !was_open) {
-        char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) == S_OK) { strcat(ad, "\\Briks-CUI"); store_bytes = dir_size(ad, 0); }
+        data_refresh();
         enum_devices(); confirm_hist = confirm_all = false; rec_slot = -1; key_msg[0] = 0; key_msg_slot = -1;
     }
     was_open = s->settings_open;
@@ -392,24 +390,9 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     themes_tab(ui);
                     break;
-                case 3: { /* Armazenamento */
-                    SCARD(ui, "USO NESTE COMPUTADOR") {
-                        char b[32]; fmt_bytes(store_bytes, b, sizeof b);
-                        cui_row(ui, .width = CUI_FILL) { cui_text(ui, "Dados do Briks", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, b); }
-                        sub(ui, "Tudo fica neste dispositivo: mensagens, grupos e anexos permanecem somente neste computador.");
-                        sub(ui, "O detalhe por tipo (mensagens, grupos, anexos) ainda não está disponível.");
-                    }
-                    SCARD(ui, "LIMPEZA") {
-                        cui_push_disabled(ui, true);
-                        cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
-                            cui_button(ui, "Limpar anexos", .variant = CUI_BUTTON_SECONDARY);
-                            cui_button(ui, "Apagar histórico de mensagens", .variant = CUI_BUTTON_SECONDARY);
-                            cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY);
-                        }
-                        cui_pop_disabled(ui);
-                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados; os botões ficam desligados até lá");
-                    }
-                    break; }
+                case 3: /* Armazenamento */
+                    data_ui(ui, s);
+                    break;
                 case 4: /* Sobreposição */
                     SCARD(ui, "SOBREPOSIÇÃO EM JOGOS") {
                         sw(ui, "Mostrar sobreposição em jogos", "Mostra a live e quem está na sala por cima do jogo, sem tirar você dele.", &g_set.ov_on);

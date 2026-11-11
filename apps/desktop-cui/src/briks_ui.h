@@ -264,6 +264,7 @@ void settings_keys(const char **mute, const char **deafen, const char **stream, 
 void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
 int settings_probe(const char *n, app_state_t *s);          /* settings.c: sondas dos roteiros de teste */
+void settings_data_pump(app_state_t *s);                  /* settings_data.c: recolhe os pedidos de apagar histórico */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
 void briks_theme_reset(void);                              /* restaura o tema Briks e grava */

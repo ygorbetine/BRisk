@@ -1,4 +1,5 @@
 #include "attach.h"
+#include "storage.h"
 #include "core.h"
 #include "richtext.h"
 #include "msgui.h"
@@ -501,4 +502,13 @@ bool attach_grouped(const app_state_t *s, int idx) {
     if (idx <= 0 || idx >= s->msg_count) return false;
     const msg_t *p = &s->msgs[idx - 1], *m = &s->msgs[idx];
     return rich_group_with_prev(p->author, rich_iso_ms(p->created), m->author, rich_iso_ms(m->created), msgui_has_reply(m));
+}
+
+/* Configurações > Armazenamento > Limpar anexos: tira das conversas os cartões dos arquivos que estavam na pasta apagada (os que o usuário salvou em outro lugar ficam). */
+int attach_forget_under(const char *dir) {
+    tl_load();
+    int n = 0;
+    for (int i = 0; i < NTL; i++) if (g_tl[i].used && storage_inside(dir, g_tl[i].path)) { g_tl[i].used = false; n++; }
+    if (n) tl_save();
+    return n;
 }

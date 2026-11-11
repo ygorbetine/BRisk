@@ -18,7 +18,7 @@ param(
     [string]$Filtro = "",
     [switch]$SoInventario,
     [string]$Exe = "",
-    [int]$TimeoutSeg = 60,
+    [int]$TimeoutSeg = 120,
     [int]$Dy = 39        # deslocamento vertical dos cliques dos roteiros (escritos antes da barra de título própria: 36 px + filete de 3 px)
 )
 $ErrorActionPreference = "Stop"
@@ -112,7 +112,7 @@ if (-not $SoInventario) {
         $scr = Join-Path $w "roteiro.txt"
         Expand-Roteiro (Join-Path $dir $c.roteiro) $scr
         $psi = New-Object Diagnostics.ProcessStartInfo
-        $psi.FileName = $Exe; $psi.WorkingDirectory = $buildDir; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.FileName = $Exe; $psi.WorkingDirectory = $buildDir; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardError = $true   # stderr do roteiro (linhas "FALHOU linha N") vai para stderr.txt do caso
         $e = $psi.EnvironmentVariables
         $e["BRIKS_NET_LOOPBACK_ONLY"] = "1"; $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = $c.demo; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
         $e["BRIKS_SCRIPT"] = $scr; $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
@@ -127,10 +127,10 @@ if (-not $SoInventario) {
         for ($tent = 1; $tent -le 2; $tent++) {
             $proc = $null; $motivo = ""
             try {
-                $proc = [Diagnostics.Process]::Start($psi)
+                $proc = [Diagnostics.Process]::Start($psi); $errTask = $proc.StandardError.ReadToEndAsync()
                 if (-not $proc.WaitForExit($TimeoutSeg * 1000)) { $motivo = "tempo esgotado ($TimeoutSeg s)"; try { $proc.Kill() } catch {} }
                 elseif ($proc.ExitCode -ne 0) { $motivo = "saiu com código $($proc.ExitCode)" }
-            } finally { Stop-Filhos }
+            } finally { Stop-Filhos; try { if ($errTask.Wait(3000)) { [IO.File]::WriteAllText((Join-Path $w "stderr.txt"), $errTask.Result) } } catch {} }
             if (-not $motivo) { break }
             if ($tent -eq 1) { Write-Host ("caso {0,-18} {1}; repetindo" -f $c.id, $motivo); Get-ChildItem (Join-Path $w "capturas") -ErrorAction SilentlyContinue | Remove-Item -Force }
         }

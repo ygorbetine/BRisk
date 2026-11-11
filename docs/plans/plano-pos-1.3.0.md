@@ -22,7 +22,7 @@ Base: `brisk-dev` em db2c4ee (release v1.3.0). Cada frente trabalha no próprio 
 - status personalizado (texto no perfil);
 - Modo Jogo (plano já escrito em docs/plans/modo-jogo-e-desempenho.md).
 
-## Integração e lançamento (1.3.1 / 1.4.0)
+## Integração e lançamento (UMA só versão, decisão do usuário: publica quando paridade + melhorias estiverem prontas; hotfix grave fura a fila)
 1. Cada frente entrega "pronto para integrar" (hash, testes, lista honesta).
 2. cui-integracao mescla em ordem A, E, D, B, C; build Release, cargo test, smoke, roteiro oculto, instalador -Test (instalar, atualizar, desinstalar sem processo vivo, Electron intacto).
 3. Hotfix urgente (se os testes do usuário com a 1.3.0 acharem algo grave) fura a fila: 1.3.1 só com a correção.

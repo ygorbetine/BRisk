@@ -322,3 +322,12 @@ logout, credencial vencida não entregue, erro sem token/endereço.
 nesta etapa: não há Deno nem Vitest neste computador. A lacuna de "ser membro da sala" continua como documentada no
 cabeçalho da função: as salas vêm de um segredo do grupo que só os dispositivos conhecem; fechar isso exige uma tabela de
 membros por sala (decisão de produto + migration 0006, não feita).
+
+## 10. Paridade: "Sair dos outros computadores"
+
+Perfil e conta > Conta > "Outros computadores" (com confirmação). O core chama `POST /auth/v1/logout?scope=others`: o
+servidor derruba as sessões dos outros aparelhos e a atual continua (`account.logout_others` → evento `account.others`).
+Sem migration. Testado com o servidor falso (dois "computadores" na mesma conta: o outro perde a sessão ao reabrir, este
+segue). **Não feito:** lista de computadores com nome e revogação individual, e data de nascimento/idade mínima no
+cadastro (o Briks antigo tinha). Ambos pedem tabela nova (migration `0006_*.sql`, a aplicar só com ok do usuário) e
+decisão de produto (guardar nascimento é dado pessoal).

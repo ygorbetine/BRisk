@@ -318,6 +318,16 @@ impl Service {
                     let _ = tx.send(base(&rt, "signed_out")).await;
                 });
             }
+            "account.logout_others" => {
+                tokio::spawn(async move {
+                    let ev = match acc.sign_out_others().await {
+                        Ok(()) => json!({ "ev": "account.others", "ok": true, "message": "Pronto: a conta foi desconectada dos outros computadores. Este continua conectado." }),
+                        Err(e) if e.is_auth() => failed(&rt, &e),
+                        Err(e) => json!({ "ev": "account.others", "ok": false, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
             "account.password" => {
                 let pw = s("password");
                 tokio::spawn(async move {

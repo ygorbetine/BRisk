@@ -247,6 +247,13 @@ impl Accounts {
         }
     }
 
+    /// "Sair dos outros computadores": o servidor derruba as outras sessões desta conta; esta continua.
+    pub async fn sign_out_others(&self) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.sign_out_others(&tok)).await
+    }
+
     /// Segundos até a próxima renovação (60 s antes do vencimento). `None` sem sessão.
     pub fn refresh_in(&self) -> Option<u64> {
         self.session.lock().unwrap().as_ref().map(|s| s.expires_at.saturating_sub(now() + 60))

@@ -29,6 +29,7 @@ pub struct FakeState {
     codes: HashMap<String, (String, String)>,      // code -> (challenge, user_id)
     access: HashMap<String, String>,               // access token -> user_id
     refresh: HashMap<String, String>,              // refresh token -> user_id (uso único)
+    pairs: HashMap<String, String>,                // access token -> refresh token da mesma sessão (aparelho)
     otps: HashMap<String, String>,                 // "tipo:email" -> código
     pub profiles: HashMap<String, Value>,
     pub objects: HashMap<String, Vec<u8>>,
@@ -185,6 +186,7 @@ fn issue(st: &mut FakeState, user_id: &str) -> Value {
     let (a, r) = (format!("at-{}", uid()), format!("rt-{}", uid()));
     st.access.insert(a.clone(), user_id.to_string());
     st.refresh.insert(r.clone(), user_id.to_string());
+    st.pairs.insert(a.clone(), r.clone());
     let u = st.users.iter().find(|u| u.id == user_id).cloned().expect("usuário");
     json!({ "access_token": a, "refresh_token": r, "token_type": "bearer", "expires_in": st.expires_in, "user": user_json(&u) })
 }
@@ -249,6 +251,8 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
             }
             "refresh_token" => match st.refresh.remove(&s("refresh_token")) {
                 Some(user) => {
+                    let old = s("refresh_token");
+                    if let Some(a) = st.pairs.iter().find(|(_, r)| **r == old).map(|(a, _)| a.clone()) { st.pairs.remove(&a); st.access.remove(&a); }
                     st.refresh_count += 1;
                     ok(issue(st, &user))
                 }
@@ -304,6 +308,14 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
             u.password = Some(s("password"));
             u.confirmed = true;
             ok(user_json(u))
+        }
+        ("POST", "/auth/v1/logout") if qs("scope") == "others" => {
+            let Some(user) = st.access.get(bearer).cloned() else { return err("401 Unauthorized", "bad_jwt", "invalid JWT") };
+            let keep = st.pairs.get(bearer).cloned();
+            let others: Vec<String> = st.access.iter().filter(|(a, u)| **u == user && a.as_str() != bearer).map(|(a, _)| a.clone()).collect();
+            for a in others { st.access.remove(&a); if let Some(r) = st.pairs.remove(&a) { st.refresh.remove(&r); } }
+            st.refresh.retain(|r, u| *u != user || Some(r) == keep.as_ref());
+            ("204 No Content", String::new(), Value::Null)
         }
         ("POST", "/auth/v1/logout") => {
             if let Some(user) = st.access.remove(bearer) {

@@ -206,6 +206,10 @@ impl AuthProvider for SupabaseProvider {
         self.call("POST", "/auth/v1/logout?scope=local", Some(access_token), Some(json!({}))).map(|_| ())
     }
 
+    fn sign_out_others(&self, access_token: &str) -> AResult<()> {
+        self.call("POST", "/auth/v1/logout?scope=others", Some(access_token), Some(json!({}))).map(|_| ())
+    }
+
     fn sync_profile(&self, access_token: &str, display_name: &str, avatar_url: &str, public_key: &Value, fingerprint: &str) -> AResult<Profile> {
         let v = self.rpc(access_token, "account_sync_profile", json!({
             "p_display_name": display_name, "p_avatar_url": if avatar_url.is_empty() { Value::Null } else { json!(avatar_url) },

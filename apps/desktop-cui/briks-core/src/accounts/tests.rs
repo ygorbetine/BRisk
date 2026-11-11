@@ -1120,3 +1120,41 @@ fn account_turn_renewal_is_early_and_responses_are_validated() {
     let e = turn::fetch("http://127.0.0.1:9", "k", "token-secreto-123").unwrap_err();
     assert!(!e.contains("token-secreto") && !e.contains("127.0.0.1"), "{e}");
 }
+
+#[tokio::test]
+async fn sign_out_of_other_computers_keeps_this_one_and_kills_the_rest() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let (d1, d2) = (tmpdir("others-a"), tmpdir("others-b"));
+    // dois "computadores" na mesma conta
+    let (a, b) = (accounts(&f, &d1), accounts(&f, &d2));
+    let ua = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let ub = b.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(ua.id, ub.id);
+    a.sign_out_others().await.unwrap();
+    // o outro computador perdeu a sessão (a renovação falha como sessão derrubada); este segue funcionando
+    let c = accounts(&f, &d2);
+    assert_eq!(c.restore().await.unwrap(), None, "o outro computador foi desconectado");
+    assert!(!d2.join("account-session.bin").exists());
+    assert!(a.access_token().await.is_ok());
+    let again = accounts(&f, &d1);
+    assert_eq!(again.restore().await.unwrap().unwrap().id, ua.id, "este computador reabre normalmente");
+    // sem sessão: erro de sessão, não pânico
+    assert!(accounts(&f, &tmpdir("others-c")).sign_out_others().await.unwrap_err().is_auth());
+}
+
+#[tokio::test]
+async fn service_reports_the_result_of_signing_out_the_others() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("svc-others");
+    let rt = service::Runtime::for_tests(Some(Arc::new(accounts(&f, &dir))), dir.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut svc = service::Service::new(rt, tx);
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }
+    svc.command("account.logout_others", &json!({}));
+    let e = next(&mut rx).await;
+    assert_eq!((e["ev"].as_str(), e["ok"].as_bool()), (Some("account.others"), Some(true)));
+    assert!(e["message"].as_str().unwrap().contains("Este continua conectado"));
+}

@@ -37,6 +37,10 @@ Fica só neste computador (`call_history.json` na pasta de dados do app; `BRIKS_
 ### Cabeçalho dos painéis do dock não recebe botões do CUI
 O cabeçalho (56 px) é a alça de arrasto do painel e, com o mouse em cima, um canvas cobre o painel. Por isso as opções do Histórico ficam numa faixa abaixo do cabeçalho.
 
+### Janela estreita e texto grande
+Os limites do cabeçalho e da barra usam a largura dividida pela escala do texto: abaixo de ~1120 px "de texto" as abas viram só ícone (com dica), abaixo de ~900 as pílulas também. A barra de controles quebra em duas ou três linhas em vez de passar da largura, e o palco desconta a altura real dela. O palco é medido pela janela, nunca por uma caixa do layout (os blocos têm tamanho fixo em px e realimentavam o tamanho antigo). Em bloco pequeno o avatar fica acima do rótulo. Com o palco baixo demais o Foco cai para a Grade. Conferido por captura em 560x480, 900x600 e 1280x800, com texto Normal e Máximo: nada cortado nem para fora. Em 560x480 com texto Máximo a barra ocupa três linhas e os blocos ficam pequenos (legíveis).
+Atenção nos roteiros: `at 2 790` (macro `snap`/`tap` do paridade.ps1) põe o cursor de teste fora de uma janela menor que 800 px de altura e o desenho do cursor empurra o layout inteiro; em janela pequena use um ponto dentro dela.
+
 ## Não feito / limites conhecidos
 - CHM-04 e CHM-24 (acima).
 - Grade/Foco e tela cheia valem para os participantes e para a tela da chamada. O palco da transmissão (`ui_share_stage`) não foi tocado: zoom, tela cheia do vídeo e várias telas lado a lado são do pacote de transmissão.

@@ -56,7 +56,7 @@ void call_request_in(const char *peer_id, const char *name) {
 }
 
 /* ---------- tela cheia ---------- */
-static struct { bool applied; LONG_PTR style; WINDOWPLACEMENT wp; } g_fsw;
+static struct { bool applied; LONG_PTR style; RECT rc; } g_fsw;   /* estilo e retângulo de antes (janela maximizada volta maximizada: o estilo guarda isso) */
 void call_set_fullscreen(app_state_t *s, bool on) {
     if (g_call.fullscreen == on) return;
     g_call.fullscreen = on; g_call.last_move = -1;
@@ -66,9 +66,7 @@ void call_set_fullscreen(app_state_t *s, bool on) {
     const bool vis = IsWindowVisible(h) != 0;
     if (on && (vis || getenv("BRIKS_TEST_FULLSCREEN"))) {
         MONITORINFO mi = { sizeof mi };
-        g_fsw.wp.length = sizeof g_fsw.wp;
-        if (!GetWindowPlacement(h, &g_fsw.wp) || !GetMonitorInfoA(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi)) return;
-        if (!vis) g_fsw.wp.showCmd = SW_HIDE;
+        if (!GetWindowRect(h, &g_fsw.rc) || !GetMonitorInfoA(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi)) return;
         g_fsw.style = GetWindowLongPtrA(h, GWL_STYLE);
         SetWindowLongPtrA(h, GWL_STYLE, g_fsw.style & ~(LONG_PTR)WS_OVERLAPPEDWINDOW);
         SetWindowPos(h, NULL, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
@@ -77,8 +75,7 @@ void call_set_fullscreen(app_state_t *s, bool on) {
     } else if (!on && g_fsw.applied) {
         g_fsw.applied = false;
         SetWindowLongPtrA(h, GWL_STYLE, g_fsw.style);
-        SetWindowPlacement(h, &g_fsw.wp);
-        SetWindowPos(h, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+        SetWindowPos(h, NULL, g_fsw.rc.left, g_fsw.rc.top, g_fsw.rc.right - g_fsw.rc.left, g_fsw.rc.bottom - g_fsw.rc.top, SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
     }
 }
 
@@ -155,19 +152,21 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     int act = TILE_NONE;
     const bool muted = t->muted || (t->me && !mic_on), speaking = t->level > 0;
     const int gi = t->slot < 0 ? 0 : t->slot > 9 ? 9 : t->slot;
-    const float side = fminf(w, h), d = fminf(fmaxf(side * 0.40f, 40.0f), 128.0f), cv = fminf(d * 2.34f, side - 4.0f);
     const bool sm = w < 260.0f || h < 200.0f;
+    /* bloco pequeno: o avatar fica na área acima do rótulo (que cresce com o tamanho do texto), nunca atrás dele */
+    const float lab_h = sm ? 12.0f * cui_theme_get(ui)->font_scale + 10.0f + 8.0f + 4.0f : 0.0f;
+    const float side = fminf(w, h - lab_h), d = fminf(fmaxf(side * (sm ? 0.62f : 0.40f), 22.0f), 128.0f), cv = fmaxf(fminf(d * 2.34f, side - 4.0f), d);
     g_av[gi].lvl = t->level; g_av[gi].d = d;
     cui_box(ui, .id = "tile", .width = CUI_PX(w), .height = CUI_PX(h), .radius = sm ? 16 : 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad_bottom = lab_h) {
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(cv), .height = CUI_PX(cv), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_push_id_int(ui, (int)(t->level * 8) + ((int)d << 4));   /* o canvas é reaproveitado por id: muda o id quando o nível ou o tamanho muda */
                 cui_canvas(ui, "av", CUI_FILL, CUI_FILL, paint_avatar, &g_av[gi], 0);
                 cui_pop_id(ui);
                 char in[4]; initials2(t->name, in);
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                    cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(14.0f, d * 0.31f), .color = CUI_RGB(0xffffff));
+                    cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
                 }
             }
         }
@@ -448,7 +447,7 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
                            s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL };
     }
     const float gap = 14.0f;
-    if (g_call.layout == 1 && n > 1) {
+    if (g_call.layout == 1 && n > 1 && (W >= 720.0f ? H >= 150.0f : H >= 260.0f)) {   /* palco baixo demais para um bloco grande + faixa: fica a grade */
         /* Foco: um bloco grande (fixado por clique ou quem está falando) e os demais numa faixa */
         static int auto_slot = -1;
         int mi = -1; float best = 0.02f;
@@ -497,8 +496,10 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
 /* ---------- barra de controles ---------- */
 static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
     if (g_call.fullscreen) { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "ctlbar")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* flutuando sobre o palco: o clique na barra não destaca o bloco de baixo */
-    cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = 10, .pad = 14, .radius = 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
-            .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER) {
+    /* janela estreita ou texto grande: os controles quebram em duas linhas em vez de passar da largura */
+    const float vw = cui_viewport_size(ui).x;
+    cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = compact ? 8 : 10, .pad = compact ? 10 : 14, .radius = compact ? 30 : 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
+            .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .wrap = true, .max_width = vw - 16.0f) {
         const bool mic_eff = s->mic_on && !s->deaf;
         if (pill(ui, 1, CUI_ICON_MIC, compact ? NULL : "Microfone", mic_eff ? 1 : 0, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {
             if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); }   /* ligar o mic sai do modo ensurdecido */
@@ -537,7 +538,11 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
         if (g_call.fullscreen && g_bar_visible) cui_request_wakeup(ui, 0.5f);
     }
     char title[120], st[160]; call_room_title(s, title, sizeof title); rtc_status_text(s, st, sizeof st);
-    const bool compact = vp.x < 1240.0f, tiny = vp.x < 820.0f, bar_compact = vp.x < 1000.0f;
+    /* os limites usam a largura "em texto": com o texto no Máximo (x1,4) os rótulos saem mais cedo */
+    const float fscale = fmaxf(cui_theme_get(ui)->font_scale, 1.0f), ew = vp.x / fscale;
+    const bool compact = ew < 1120.0f, tiny = ew < 740.0f, bar_compact = ew < 900.0f;   /* 1280 px com o texto padrão (x1,12) ainda mostra os rótulos */
+    const cui_rect barr = cui_get_rect(ui, cui_make_id(ui, "ctlbar"));
+    const float bar_h = fmaxf(104.0f, barr.h > 0 ? barr.h + 26.0f : 104.0f);   /* a barra pode ter duas linhas; ela não depende do palco, então medir é seguro */
     briks_ambient(ui, 0.85f);
     cui_box(ui, .id = "callroot", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
         cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
@@ -545,14 +550,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 /* cabeçalho */
                 cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(70), .pad_x = tiny ? 12 : 20, .gap = 12, .bg = B_GLASS_SOFT,
                         .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER, .clip = true) {
-                    cui_row(ui, .gap = 18, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .clip = true) {
+                    cui_row(ui, .gap = 18, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .min_width = 60, .clip = true) {
                         if (!tiny) briks_brand(ui, 20);
                         cui_column(ui, .gap = 1, .width = CUI_FILL, .clip = true) {
                             cui_text(ui, title, .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
                             cui_text(ui, st, .size = 13, .color = B_MUTED, .nowrap = true);
                         }
                     }
-                    cui_row(ui, .gap = tiny ? 6 : 10, .align = CUI_ALIGN_CENTER) {
+                    cui_row(ui, .gap = tiny ? 5 : 10, .align = CUI_ALIGN_CENTER) {
                         net_chip(ui, s, compact);
                         if (head_icon(ui, 900, CUI_ICON_MINIMIZE_2, "Voltar ao menu sem sair da chamada")) s->screen = SCREEN_SOCIAL;
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
@@ -590,16 +595,16 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     /* tamanho do palco a partir da janela (menos a faixa de 3 px do topo), nunca de uma caixa medida: os blocos têm tamanho fixo em px,
                        então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
                     const float rw = vp.x, rh = vp.y - 4.0f;
-                    float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + 104.0f) - pad * 2;
+                    float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + bar_h) - pad * 2;
                     if (W < 120) W = 120; if (H < 90) H = 90;
                     stage_people(ui, s, W, H);
                 }
             }
             /* barra de controles (fora da tela cheia ocupa a sua faixa; em tela cheia flutua sobre o palco) */
-            if (!g_call.fullscreen) cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(104), .justify = CUI_JUSTIFY_CENTER, .align = CUI_ALIGN_CENTER) { control_bar(ui, s, bar_compact); }
+            if (!g_call.fullscreen) cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(bar_h), .justify = CUI_JUSTIFY_CENTER, .align = CUI_ALIGN_CENTER) { control_bar(ui, s, bar_compact); }
         }
         if (g_call.fullscreen && g_bar_visible) {
-            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .justify = CUI_JUSTIFY_END, .align = CUI_ALIGN_CENTER, .pad_bottom = 22) { control_bar(ui, s, bar_compact); }
+            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .justify = CUI_JUSTIFY_END, .align = CUI_ALIGN_CENTER, .pad_bottom = 16) { control_bar(ui, s, bar_compact); }
         }
         call_banner(ui, s);
     }

@@ -907,7 +907,15 @@ async fn soak_no_leaks_no_latency_drift() {
             let mut m = PROCESS_MEMORY_COUNTERS::default();
             let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut m, std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32);
             let mut h = 0u32; let _ = GetProcessHandleCount(GetCurrentProcess(), &mut h);
-            let threads = std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0);
+            // threads do processo pelo instantâneo do sistema (o /proc/self/task que estava aqui não existe no Windows: dava sempre 0)
+            use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
+            let mut threads = 0usize;
+            if let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+                let mut e = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };
+                let me = std::process::id();
+                if Thread32First(snap, &mut e).is_ok() { loop { if e.th32OwnerProcessID == me { threads += 1; } if Thread32Next(snap, &mut e).is_err() { break; } } }
+                let _ = windows::Win32::Foundation::CloseHandle(snap);
+            }
             (m.WorkingSetSize as f64 / 1048576.0, h, threads)
         }
     }

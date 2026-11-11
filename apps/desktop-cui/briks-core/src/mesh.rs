@@ -554,7 +554,7 @@ impl Actor {
                                     for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
                                     seqs.truncate(512);   // um RTCP legítimo não passa de ~1 MTU; o limite evita inundar o pacer
                                     e.nacks += seqs.len() as u64;
-                                    if let Some(t) = &nack_tx { let _ = t.send(seqs); }
+                                    if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
                                 }
                             }
                         }

@@ -16,6 +16,8 @@ fn mf_startup() -> Result<()> {
 }
 
 pub struct MfEnc {
+    /// o objeto de ativação que criou o MFT: precisa de ShutdownObject no fim, senão o MFT de hardware deixa handles para trás
+    act: Option<IMFActivate>,
     tr: IMFTransform,
     events: Option<IMFMediaEventGenerator>,
     codec: Option<ICodecAPI>,
@@ -121,7 +123,7 @@ impl MfEnc {
         tr.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0).ok();
         tr.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
         tr.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
-        Ok(MfEnc { tr, events, codec, w, h, bps, hardware: hw, name, fps, need_input: 0, have_output: 0, provides_samples: provides, out_size: info.cbSize.max((w * h * 2) as u32), n: 0, params: vec![] })
+        Ok(MfEnc { act: Some(act.clone()), tr, events, codec, w, h, bps, hardware: hw, name, fps, need_input: 0, have_output: 0, provides_samples: provides, out_size: info.cbSize.max((w * h * 2) as u32), n: 0, params: vec![] })
     }
 
     /// Bitrate médio ao vivo (ICodecAPI). Devolve false se o codificador recusar.
@@ -226,7 +228,16 @@ impl MfEnc {
 }
 
 impl Drop for MfEnc {
-    fn drop(&mut self) { unsafe { let _ = self.tr.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0); let _ = self.tr.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0); if let Ok(s) = self.tr.cast::<IMFShutdown>() { let _ = s.Shutdown(); } } }
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.tr.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
+            let _ = self.tr.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+            let _ = self.tr.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+            self.events = None; self.codec = None;
+            if let Ok(s) = self.tr.cast::<IMFShutdown>() { let _ = s.Shutdown(); }
+            if let Some(a) = self.act.take() { let _ = a.ShutdownObject(); }
+        }
+    }
 }
 
 /// NALs de um fluxo Annex-B: (tipo, início, fim) do corpo de cada uma.

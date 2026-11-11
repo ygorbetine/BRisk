@@ -184,6 +184,18 @@ O que falta você fazer para o login completo:
 2. Rodar `0001`, `0002` e `0003` no SQL Editor, nessa ordem (passo 1 da lista acima).
 3. No Google, como o app está em modo Teste, entrar com um e-mail cadastrado como usuário de teste.
 
+Atualização (mesmo dia, mais tarde):
+
+- As migrações `0001` a `0005` estão aplicadas no projeto (rodadas pelo usuário no SQL Editor) e os redirects do
+  loopback foram adicionados.
+- **Login social real funcionou** (feito pelo usuário no navegador): sessão guardada cifrada, foto da conta em cache,
+  e o app reabre já dentro da conta.
+- Conferido de fora, sem login: as funções da 0003, 0004 e 0005 existem e recusam quem não está logado; as tabelas
+  `profiles` e `identity_backups` recusam leitura direta; o bucket `avatars` existe e recusa envio sem login.
+- **Ainda não exercitado no projeto real**: trocar foto e nome (0004), criar/recuperar/apagar a cópia da identidade
+  (0005), cadastro por e-mail, pedido de amizade entre duas contas. Esses caminhos exigem uma sessão logada; o teste
+  é do usuário no app, porque esta sessão de trabalho não usa as credenciais dele.
+
 Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_SUPABASE_URL` e
 `BRIKS_SUPABASE_ANON_KEY` no ambiente.
 

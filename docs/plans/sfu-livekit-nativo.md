@@ -188,3 +188,48 @@ A máquina de teste (16 threads) estava sendo usada por outras sessões; a carga
 Teste com LiveKit Cloud (sem credenciais); embutir `livekit.json` no instalador; chamada completa pela UI C no SFU; UI para mais de
 8 pessoas; 10% de perda; TWCC/REMB e simulcast; anunciar o modo da sala no Realtime; app chamando `livekit-kick`; dono fixo no servidor.
 Como ligar: `docs/ativar-sfu.md` (seção do app nativo).
+
+---
+
+# Rodada 2 de 2026-11-11 (decisões do coordenador)
+
+## Falha do SFU: erro claro + "Entrar em modo P2P" (UI C)
+Continua sem reserva silenciosa. Quando `net.mode` vem com `mode:"none"`, a tela da chamada mostra uma faixa com o motivo,
+"Tentar de novo" e "Entrar em modo P2P" (reentra na mesma sala com `"net":"p2p"`, só para quem clicou, até sair da chamada).
+O texto avisa que em P2P só se fala com quem também entrou em P2P. Sem anúncio de modo pelo Realtime.
+Conferido por captura oculta (`BRIKS_DEMO_PEERS=9 BRIKS_DEMO_NETFAIL=1`). NÃO feito: clique real no botão num roteiro de teste.
+
+## Expulsão chama a função `livekit-kick`
+No SFU puro, `peer.kick` do dono manda o aviso assinado (como antes) e também pede à função para derrubar a conexão:
+POST `{room, identity}` com `Authorization: Bearer <sessão da conta>`. URL: `BRIKS_LIVEKIT_KICK_URL`, `kick_url` no `livekit.json`
+ou a irmã da função de tokens (`…/livekit-token` → `…/livekit-kick`). Só é chamada se sou o dono e conheço a identidade do alvo.
+Falha (função não publicada, 500, sem rede) não vira erro para o usuário: sai só o evento de diagnóstico `net.kick`.
+Teste com a função simulada em `tests_sfuipc` (Bearer da dona, sala do LiveKit, identidade; não-dono não chama; 500 tratado).
+
+## UI para mais de 8 pessoas
+`BRIKS_MAX_PEERS = 32` (antes 8 fixo em `rtc_peers`, nas transmissões remotas e nos níveis de fala). A chamada virou grade
+(linhas × colunas conforme o total; avatar, iniciais e rótulo encolhem juntos; com 1 a 3 pessoas fica igual a antes).
+Capturas ocultas conferidas com 2, 9, 25 (1280×800) e 32 pessoas (900×600: cabe, mas o rótulo cobre o avatar pequeno).
+Sem rolagem: acima de 32 remotos os excedentes não aparecem (o áudio deles toca). NÃO conferido: transmissões de tela com muitos
+participantes, menu de contexto nos quadros pequenos, zoom/escala do sistema diferente de 100%.
+
+## 10% de perda no envio: melhorou, NÃO resolvido
+- Mudança: com perda alta no relatório do SFU (liga em 3,5%, desliga abaixo de 1,5%; o relatório mostrou cerca de metade da perda
+  real), cada retransmissão pedida sai em dobro, dentro do mesmo orçamento de retransmissão. Só no modo SFU.
+- Bitrate fixo, 720p30, `mf-soft`, 10% no envio: antes 0,2 / 3,4 / 4,4 / 5,5 / 11 qps em cinco rodadas; depois **17,2 / 16,1 / 10,2 qps**
+  em três rodadas, ainda com congelamentos de 1,6 a 5 s. 5% segue em 28–30 qps. Uma rodada com o limiar antigo (7%) deu 24,6 e outra 5,5.
+- Com a adaptação ligada (como no app; `sfu-perda-envio-adaptativo.csv`, medido ANTES da retransmissão em dobro): não desaba de vez,
+  mas o estimador trata perda aleatória como congestionamento e desce sem parar (1316 → 575 → 223 kbps, 360p a 10 qps; recebido
+  7,2 / 9,5 / 3,5 qps, com congelamentos de 4 s).
+- Limite registrado: enlace de envio com 10% de perda aleatória fica ruim no SFU. O que falta tentar: FEC de verdade (FlexFEC/RED),
+  quadro-chave menor/intra-refresh, piso no estimador para perda que não responde a corte de taxa, TWCC. O CSV da matriz no
+  repositório é da rodada anterior a esta mudança.
+
+## Contrato da função `livekit-token` (branch `claude/cui-contas-b3d4c3`)
+A função nesse branch é idêntica à deste worktree (diff vazio). O cliente casa com ela:
+- pedido: POST, `Authorization: Bearer <sessão>`, corpo `{"room": "<ns>:<32 hex>"}` (cabe no padrão `^[A-Za-z0-9:_.\-]{1,160}$`);
+- resposta: usa `token`; identidade = id do usuário (o cliente não manda `peerId`).
+Divergências/atenções: (1) o cliente ignora o campo `url` da resposta e usa a URL do `livekit.json`: se as duas diferirem, o token
+é de um servidor e a conexão vai para outro (erro de entrada, sem aviso específico); (2) limite de 30 tokens por usuário a cada
+10 min: uma queda longa com o servidor recusando pode gastar isso, porque cada recusa pede token novo; resposta 429 hoje aparece
+só como "serviço de tokens recusou (429)"; (3) a função não confere se o usuário pertence à sala (limitação já descrita nela).

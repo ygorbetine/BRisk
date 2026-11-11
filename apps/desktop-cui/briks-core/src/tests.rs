@@ -1029,3 +1029,87 @@ async fn black_source_is_detected_and_reported() {
     a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test), preview: None, dump: None }).await.unwrap();
     assert!(wait_share(&mut a, |v| v["ev"] == "share.hint" && v["hint"] == "black", 6).await.is_none(), "aviso falso com conteúdo normal");
 }
+
+/// Queda LONGA (acima do tempo em que o ICE desiste, 40 s): o que o espectador vê quando a rede volta? Mede em quanto tempo o 1º quadro
+/// novo aparece. O emissor continua transmitindo o tempo todo; a conexão precisa se refazer sozinha (ou ser refeita pela malha).
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn survives_a_long_network_outage_and_resumes() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let secs: u64 = std::env::var("BRIKS_OUTAGE_S").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000a8", "bbbbbbbb-2222-4222-8222-0000000000b8");
+    let sim = crate::netsim::register(&[pa, pb]);
+    let mut a = node(port, pa, "Ana", "quedalonga", Arc::new(Identity::generate()));
+    let mut b = node(port, pb, "Beto", "quedalonga", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+    let dir = std::env::temp_dir().join(format!("briks-quedalonga-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longa".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
+    let src = FrameSource::open(&dir.join("rx.bin")).unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    sim.set(0.0, 100.0);
+    let t_all = std::time::Instant::now();
+    // esvazia os eventos durante a queda (o app faz o mesmo; um canal cheio travaria a malha) e registra os estados de conexão
+    let log = |who: &str, e: MeshEvent, t: &std::time::Instant| match e {
+        MeshEvent::Peer { state, .. } => eprintln!("  [{:>5.1} s] {who}: conexão {state}", t.elapsed().as_secs_f64()),
+        MeshEvent::Error(m) => eprintln!("  [{:>5.1} s] {who}: erro {m}", t.elapsed().as_secs_f64()),
+        _ => {}
+    };
+    while t_all.elapsed() < Duration::from_secs(secs) {
+        while let Ok(e) = a.events.try_recv() { log("A", e, &t_all); }
+        while let Ok(e) = b.events.try_recv() { log("B", e, &t_all); }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let n0 = src.read().map(|r| r.2).unwrap_or(0);
+    sim.set(0.0, 0.0);
+    eprintln!("  [{:>5.1} s] rede de volta", t_all.elapsed().as_secs_f64());
+    let t0 = std::time::Instant::now();
+    let mut first = None;
+    while t0.elapsed() < Duration::from_secs(60) {
+        while let Ok(e) = b.events.try_recv() { log("B", e, &t_all); }
+        while let Ok(e) = a.events.try_recv() { log("A", e, &t_all); }
+        if src.read().map(|r| r.2).unwrap_or(0) > n0 + 5 { first = Some(t0.elapsed().as_millis()); break; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    eprintln!("queda de {secs} s: imagem voltou {} ms depois da rede", first.map(|v| v as i64).unwrap_or(-1));
+    assert!(first.is_some(), "a imagem não voltou em 60 s depois de uma queda de {secs} s");
+}
+
+/// Espectador que sai e volta (mesma identidade) com a transmissão no ar: quanto tempo até o 1º quadro, e o quadro-chave é imediato?
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn viewer_that_leaves_and_comes_back_gets_a_picture_fast() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000a9", "bbbbbbbb-2222-4222-8222-0000000000a9");
+    let ib = Arc::new(Identity::generate());
+    let mut a = node(port, pa, "Ana", "volta1", Arc::new(Identity::generate()));
+    let mut b = node(port, pb, "Beto", "volta1", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+    let dir = std::env::temp_dir().join(format!("briks-volta-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Volta".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b1.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("1º quadro");
+    let _ = b.cmd.send(MeshCmd::Close).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    for round in 0..3 {
+        let t0 = std::time::Instant::now();
+        let mut b2 = node(port, pb, "Beto", "volta1", ib.clone());
+        wait_share(&mut b2, |v| v["ev"] == "share.remote" && v["state"] == "on" && v["peer_id"] == pa, 30).await.expect("voltou: sem aviso da transmissão");
+        let t_on = t0.elapsed().as_millis();
+        b2.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join(format!("b{}.bin", round + 2)) }).await.unwrap();
+        wait_share(&mut b2, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("voltou: sem quadro");
+        eprintln!("volta {round}: aviso da transmissão {t_on} ms, 1º quadro {} ms depois de entrar na sala", t0.elapsed().as_millis());
+        assert!(t0.elapsed() < Duration::from_secs(12), "demorou demais para o espectador que voltou ver a imagem");
+        let _ = b2.cmd.send(MeshCmd::Close).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}

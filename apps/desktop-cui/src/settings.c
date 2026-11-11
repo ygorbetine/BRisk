@@ -138,6 +138,7 @@ static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efei
 }
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay) { *mute = g_set.key_mute; *deafen = g_set.key_deafen; *stream = g_set.key_stream; *ptt = g_set.key_ptt; *ptt_on = g_set.ptt_on; *delay = g_set.ptt_delay; }
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
+void settings_audio_set(float in_vol, float out_vol, bool gate_on, float gate_db) { g_set.in_vol = in_vol < 0 ? 0 : in_vol > 100 ? 100 : in_vol; g_set.out_vol = out_vol < 0 ? 0 : out_vol > 100 ? 100 : out_vol; g_set.gate_on = gate_on; g_set.gate_db = gate_db < -70 ? -70 : gate_db > -20 ? -20 : gate_db; }   /* ajustes de áudio da chamada (ui_call.c): settings_tick grava */
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
 }

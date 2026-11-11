@@ -114,7 +114,7 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }
         else if (!strcmp(cmd, "type")) { char *r = strtok(NULL, ""); if (r) cui_input_text(ui, r); }
         else if (!strcmp(cmd, "key")) {
-            char *k = strtok(NULL, " "); int kc = !k ? -1 : !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE : -1;
+            char *k = strtok(NULL, " "); int kc = !k ? -1 : !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE : !strcmp(k, "f11") ? CUI_KEY_F11 : -1;
             if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, 0); key_up = kc; }
         }
         else if (!strcmp(cmd, "restore")) dock_script_restore();

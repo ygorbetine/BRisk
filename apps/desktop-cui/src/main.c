@@ -41,6 +41,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "friends_tab")) return state.friends_tab;
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
+    { extern int call_probe(const char *name); int v = call_probe(n); if (v != -2) return v; }   /* chamada e histórico (call.h) */
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
     return dock_probe(n);
 }

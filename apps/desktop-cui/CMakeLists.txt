@@ -12,7 +12,7 @@ FetchContent_Declare(cui
   PATCH_COMMAND  ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply.cmake")
 FetchContent_MakeAvailable(cui)
 
-add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c src/ui_friends.c src/ui_groups.c)
+add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c src/ui_friends.c src/ui_groups.c src/callhist.c)
 if(WIN32)
   target_sources(briks_cui PRIVATE src/briks.rc)
 endif()
@@ -59,6 +59,9 @@ target_link_libraries(briks_profile_test PRIVATE cui bcrypt shell32 user32 gdi32
 # briks_smoke fica na mesma pasta do briks_cui e ja enxerga backend/ ao lado (sem copia)
 
 add_executable(briks_richtext_test tests/richtext_test.c src/richtext.c)   # texto das mensagens: sem janela
+
+add_executable(briks_call_test tests/call_test.c src/callhist.c src/json.c)   # logica pura da chamada (historico, grade, rede): sem janela
+target_compile_options(briks_call_test PRIVATE /utf-8)
 
 # Overlay: janela sempre no topo, sem foco, cliques passando (segundo executável, sem dependências).
 add_executable(briks_overlay WIN32 src/overlay.c)

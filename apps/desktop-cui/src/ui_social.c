@@ -4,6 +4,7 @@
 #include "msgui.h"
 #include "attach.h"
 #include "richtext.h"
+#include "call.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -203,9 +204,9 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
         cui_separator(ui);
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "nav-scroll"));
         cui_scroll(ui, .id = "nav-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            if (nav_item(ui, CUI_ICON_USERS, "Amigos", s->active_friend < 0 && s->active_group < 0)) app_open_friend(s, -1);
+            if (nav_item(ui, CUI_ICON_USERS, "Amigos", s->active_friend < 0 && s->active_group < 0 && !history_is_open())) app_open_friend(s, -1);
             if (nav_item(ui, CUI_ICON_USER_PLUS, "Adicionar amigo", false)) { app_open_friend(s, -1); s->friends_tab = 4; s->notice[0] = 0; }
-            if (nav_item(ui, CUI_ICON_HISTORY, "Histórico de chamadas", false)) s->screen = SCREEN_HISTORY;
+            if (nav_item(ui, CUI_ICON_HISTORY, "Histórico de chamadas", history_is_open())) history_open(s);   /* abre no painel central (ui_history.c) */
             section_title(ui, "SALAS DE VOZ");
             /* Sala de teste: a chamada real chega com o briks-core (marco 3). */
             if (nav_item(ui, CUI_ICON_VOLUME_2, "Sala geral", false)) { s->screen = SCREEN_CALL; s->mic_on = true; if (!s->in_room) rtc_join_room(s, "voz-geral"); }
@@ -267,6 +268,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_pop_id(ui);
             }
         }
+        ui_voice_mini(ui, s);   /* "Voz conectada": só aparece dentro de uma sala (ui_voice.c) */
         /* rodapé do usuário (paridade com o .account-bar do Electron): foto, nome + status/@nick, e três ícones: @ (Perfil e conta), configurações, sair */
         cui_box(ui, .width = CUI_FILL, .pad = 10, .pad_top = s->user_status[0] ? 58 : 10) {   /* com status: o rodapé reserva a altura do balão, que nunca cobre a lista */
             const bool f_compact = g_panel_w < 220.0f;   /* painel estreito: sai o texto (nome/status), ficam a foto e os três ícones, sem nada cortado */
@@ -362,8 +364,11 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
     }
     if (interactive) msgui_row(ui, s, m);
 }
+/* o mesmo balão para outras telas (chat da sala na chamada: ui_call.c) */
+void briks_bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive, bool grouped) { g_grouped = grouped; bubble(ui, s, m, interactive); g_grouped = false; }
 
 static void content(cui_ctx *ui, app_state_t *s) {
+    if (history_is_open()) { ui_history_panel(ui, s, HIST_CENTER); return; }   /* Histórico de chamadas no lugar da conversa (trilho e menu continuam) */
     if (s->active_friend < 0 && s->active_group < 0) {   /* sem conversa aberta. SEM return dentro do cui_box (deixava a caixa aberta e quebrava os painéis seguintes) */
         const bool hub_here = !dock_has_panel(P_FRIENDS);   /* a tela Amigos (abas, busca, pedidos) fica aqui só quando não há o painel Amigos no layout */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
@@ -497,14 +502,7 @@ static void panel_voice(cui_ctx *ui, app_state_t *s) {
 }
 
 static void panel_history(cui_ctx *ui, app_state_t *s) {
-    (void)s;
-    cui_box(ui, GLASS_PANEL) {
-        panel_shell(ui, "Histórico de chamadas", CUI_ICON_HISTORY);
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 8, .pad = 16) {
-            cui_icon(ui, CUI_ICON_HISTORY, 34, B_C3);
-            cui_text(ui, "Nenhuma chamada ainda", .font = CUI_FONT_DISPLAY, .size = 18);
-        }
-    }
+    ui_history_panel(ui, s, HIST_DOCK);   /* a mesma lista real do painel central (ui_history.c) */
 }
 
 
@@ -764,6 +762,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     bubbles_draw(ui);
+    call_banner(ui, s);   /* "pediu para você transmitir" também com a chamada minimizada */
     msgui_overlay(ui, s);
     attach_overlay(ui, s);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */

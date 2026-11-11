@@ -1,0 +1,13 @@
+cenario,qps_recebido,quadros,lat_p50_ms,lat_p95_ms,lat_p99_ms,maior_intervalo_ms,congelamentos_250ms,nacks_unicos,retransmitidos,retransmissoes_recusadas,pacotes_perdidos_real,plis,quadros_perdidos_rx
+"base",28.2,226,66,79,87,95,0,0,0,0,0,0,0
+"perda 1%",30.1,241,58,92,98,107,0,159,73,86,73,0,0
+"perda 2%",27.6,221,68,178,237,229,0,293,128,165,124,1,0
+"perda 5%",27.6,221,98,251,295,292,1,751,312,439,296,2,0
+"perda 10%",27.0,216,232,474,581,384,4,1938,674,1265,608,5,0
+"jitter 0-30 ms (em ordem)",29.9,239,86,101,103,63,0,0,0,0,0,0,0
+"jitter 0-80 ms (em ordem)",29.2,234,134,147,151,75,0,0,0,0,0,0,0
+"jitter 0-40 ms reordenando",22.0,176,285,308,321,77,0,2513,1916,588,2094,0,0
+"perda 2% + jitter 0-40 ms",30.5,244,229,280,357,215,0,991,151,840,131,1,0
+"perda 5% + jitter 0-40 ms reordenando",21.8,174,422,545,578,322,2,3687,1894,1793,1899,0,0
+"queda total 3 s (6 s após a volta; 1º quadro em 1585 ms; p50 8-12 s depois 50 ms)",22.0,132,48,55,56,1585,1,555539,244,555295,1993,3,1
+"queda total 5 s (6 s após a volta; 1º quadro em 1535 ms; p50 8-12 s depois 57 ms)",22.2,133,54,62,69,1535,1,1027332,250,1027082,2015,3,1

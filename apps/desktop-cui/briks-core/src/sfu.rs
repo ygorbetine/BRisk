@@ -235,12 +235,14 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                 for _ in 0..30 { meta = shared.lock().unwrap().tracks.get(&sid).cloned(); if meta.is_some() { break; } tokio::time::sleep(Duration::from_millis(100)).await; }
                 let Some(meta) = meta else { let _ = etx.send(MeshEvent::Error(format!("faixa {sid} sem dono"))).await; return; };
                 if track.kind() == RTPCodecType::Video {
-                    let recv = shared.lock().unwrap().recv.entry(meta.identity.clone()).or_default().clone();
+                    let slot = if meta.source == lk::TrackSource::ScreenShare as i32 { share::slot_of_name(&meta.name) } else { 0 };   // 2ª tela da mesma pessoa
+                    let rkey = share::recv_key(&meta.identity, slot);
+                    let recv = shared.lock().unwrap().recv.entry(rkey.clone()).or_default().clone();
                     let ssrc = track.ssrc();
                     let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                         if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                     });
-                    tokio::spawn(share::run_remote_video(meta.identity.clone(), track, recv, sev, pli));
+                    tokio::spawn(share::run_remote_video(rkey, track, recv, sev, pli));
                 } else if let Some(a) = audio {
                     let key = if meta.source == lk::TrackSource::ScreenShareAudio as i32 { format!("{}#screen", meta.identity) } else { meta.identity.clone() };
                     tokio::spawn(a.run_remote(key, track));
@@ -285,7 +287,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
-        pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
+        pend_ice: [vec![], vec![]], share: [None, None], share_gens: [0, 0], vout: [None, None], atrack: None, share_gen: 0, net: Default::default(), idr: [Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(true))], mic_sid: None, last_mic_open: true,
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
     actor.handle_join(join, false).await;
@@ -373,12 +375,13 @@ struct Actor {
     pub_offering: bool,
     pub_dirty: bool,
     pend_ice: [Vec<RTCIceCandidateInit>; 2],
-    share: Option<ActiveShare>,
-    vout: Option<share::VideoOut>,
+    share: [Option<ActiveShare>; 2],   // por slot: até duas telas ao mesmo tempo (0 = 1ª, 1 = 2ª)
+    share_gens: [u64; 2],
+    vout: [Option<share::VideoOut>; 2],
     atrack: Option<Arc<webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample>>,
     share_gen: u64,
-    net: Arc<Mutex<crate::adapt::NetShared>>,
-    idr: Arc<AtomicBool>,
+    net: [Arc<Mutex<crate::adapt::NetShared>>; 2],
+    idr: [Arc<AtomicBool>; 2],
     mic_sid: Option<String>,
     last_mic_open: bool,
     ping_ms: u64,
@@ -404,7 +407,7 @@ struct Actor {
 }
 
 #[derive(Default, Clone)]
-struct KnownPeer { sid: String, mic: Option<bool>, share: Option<(String, u32, u32)>, name: String }
+struct KnownPeer { sid: String, mic: Option<bool>, share: [Option<(String, u32, u32)>; 2], name: String }
 
 impl Actor {
     async fn emit(&self, e: MeshEvent) {
@@ -439,11 +442,14 @@ impl Actor {
         }
         if rejoin {
             // transmissão em curso: republica as mesmas faixas (o codificador e o pacer nem pararam)
-            let sh = self.share.as_ref().map(|s| (s.label.clone(), s.h, s.audio.is_some()));
-            if let (Some((label, h, has_audio)), Some(vout)) = (sh, self.vout.clone()) {
-                self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
-                if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
-                    self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
+            for slot in 0..2usize {
+                let sh = self.share[slot].as_ref().map(|s| (s.label.clone(), s.h, s.audio.is_some()));
+                if let (Some((label, h, has_audio)), Some(vout)) = (sh, self.vout[slot].clone()) {
+                    let name = track_name(&label, slot);
+                    self.publish(share::video_cid(slot), vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
+                    if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
+                        self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
+                    }
                 }
             }
             // meu estado (microfone/status) de novo para todos: quem voltou depois de mim pode ter perdido a última mudança
@@ -549,7 +555,7 @@ impl Actor {
     async fn peer_gone(&mut self, identity: &str, sid: &str) {
         self.known.remove(identity);
         self.stale.remove(identity);
-        { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); }
+        { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); sh.recv.remove(&share::recv_key(identity, 1)); }
         if let Some(a) = &self.audio { a.remove_peer(identity); }
         let gone_fp = self.data.as_ref().and_then(|l| l.peer_key(identity)).map(|k| k.0);
         if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
@@ -564,12 +570,14 @@ impl Actor {
         let due: Vec<String> = self.stale.iter().filter(|(_, t)| **t <= now).map(|(k, _)| k.clone()).collect();
         for id in due {
             self.stale.remove(&id);
-            let (here, sharing) = { let sh = self.shared.lock().unwrap(); (sh.part_ident.values().any(|v| *v == id), sh.tracks.values().any(|t| t.identity == id && t.source == lk::TrackSource::ScreenShare as i32 && !t.muted)) };
+            let (here, sharing) = { let sh = self.shared.lock().unwrap(); (sh.part_ident.values().any(|v| *v == id), [0usize, 1].map(|s| sh.tracks.values().any(|t| t.identity == id && t.source == lk::TrackSource::ScreenShare as i32 && !t.muted && share::slot_of_name(&t.name) == s))) };
             if !here { self.peer_gone(&id, "").await; continue; }
-            if !sharing && self.known.get(&id).map(|k| k.share.is_some()).unwrap_or(false) {
-                if let Some(k) = self.known.get_mut(&id) { k.share = None; }
-                let r = self.shared.lock().unwrap().recv.get(&id).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); }
-                self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "state": "off" }))).await;
+            for slot in 0..2usize {
+                if !sharing[slot] && self.known.get(&id).map(|k| k.share[slot].is_some()).unwrap_or(false) {
+                    if let Some(k) = self.known.get_mut(&id) { k.share[slot] = None; }
+                    let r = self.shared.lock().unwrap().recv.get(&share::recv_key(&id, slot)).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); }
+                    self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "slot": slot, "state": "off" }))).await;
+                }
             }
         }
     }
@@ -619,9 +627,10 @@ impl Actor {
         match pc.add_track(p.track.clone()).await {
             Ok(sender) => {
                 if p.video {
-                    self.idr.store(true, Ordering::Relaxed);
-                    let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
-                    spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
+                    let slot = if r.cid == share::VIDEO_TRACK_ID_2 { 1 } else { 0 };   // cada tela tem pacer, estimador e pedido de quadro-chave próprios
+                    self.idr[slot].store(true, Ordering::Relaxed);
+                    let nack = self.vout[slot].as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
+                    spawn_rtcp_reader(sender.clone(), self.net[slot].clone(), self.idr[slot].clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {
                     self.mic_sid = Some(sid.clone());
                     // o estado de mudo pode ter mudado antes da publicação sair
@@ -764,24 +773,28 @@ impl Actor {
                 if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
             }
             // transmissão que eu estava assistindo (antes de uma reconexão, minha ou dele): assina de novo sozinho
-            if self.shared.lock().unwrap().recv.get(&p.identity).map(|r| r.watching.load(Ordering::Relaxed)).unwrap_or(false) {
-                for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::ScreenShare as i32 || t.source == lk::TrackSource::ScreenShareAudio as i32) {
-                    if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
+            for slot in 0..2usize {
+                if self.shared.lock().unwrap().recv.get(&share::recv_key(&p.identity, slot)).map(|r| r.watching.load(Ordering::Relaxed)).unwrap_or(false) {
+                    for t in p.tracks.iter().filter(|t| (t.source == lk::TrackSource::ScreenShare as i32 && share::slot_of_name(&t.name) == slot) || (slot == 0 && t.source == lk::TrackSource::ScreenShareAudio as i32)) {
+                        if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
+                    }
                 }
             }
             // tela
-            let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32 && !t.muted);
             let has_audio = p.tracks.iter().any(|t| t.source == lk::TrackSource::ScreenShareAudio as i32);
-            let now = scr.map(|t| (t.name.clone(), t.width, t.height));
-            // dentro do prazo pós-reconexão, "sem tela" pode ser só "ainda não republicou": espera (expire_stale decide)
-            if now != k.share && !(now.is_none() && self.stale.contains_key(&p.identity)) {
-                k.share = now.clone();
-                if now.is_none() { let r = self.shared.lock().unwrap().recv.get(&p.identity).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); } }
-                let ev = match &now {
-                    Some((label, w, h)) => json!({ "ev": "share.remote", "peer_id": p.identity, "state": "on", "w": w, "h": h, "fps": 0, "kbps": 0, "label": label, "audio": has_audio }),
-                    None => json!({ "ev": "share.remote", "peer_id": p.identity, "state": "off" }),
-                };
-                self.emit(MeshEvent::Share(ev)).await;
+            for slot in 0..2usize {   // até duas telas por pessoa: a 2ª é a faixa ScreenShare cujo nome começa com o prefixo de slot
+                let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32 && !t.muted && share::slot_of_name(&t.name) == slot);
+                let now = scr.map(|t| (share::strip_slot_name(&t.name).to_string(), t.width, t.height));
+                // dentro do prazo pós-reconexão, "sem tela" pode ser só "ainda não republicou": espera (expire_stale decide)
+                if now != k.share[slot] && !(now.is_none() && self.stale.contains_key(&p.identity)) {
+                    k.share[slot] = now.clone();
+                    if now.is_none() { let r = self.shared.lock().unwrap().recv.get(&share::recv_key(&p.identity, slot)).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); } }
+                    let ev = match &now {
+                        Some((label, w, h)) => json!({ "ev": "share.remote", "peer_id": p.identity, "slot": slot, "state": "on", "w": w, "h": h, "fps": 0, "kbps": 0, "label": label, "audio": has_audio && slot == 0 }),
+                        None => json!({ "ev": "share.remote", "peer_id": p.identity, "slot": slot, "state": "off" }),
+                    };
+                    self.emit(MeshEvent::Share(ev)).await;
+                }
             }
             self.known.insert(p.identity.clone(), k);
         }
@@ -856,7 +869,7 @@ impl Actor {
         self.send(rq::Message::Leave(lk::LeaveRequest { can_reconnect: false, reason: lk::DisconnectReason::ClientInitiated as i32, action: lk::leave_request::Action::Disconnect as i32, ..Default::default() })).await;
         let _ = self.tx.close().await;
         if let Some(a) = &self.audio { a.stop(); }
-        if let Some(sh) = self.share.take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } }
+        for s in 0..2 { if let Some(sh) = self.share[s].take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } } }
         if let Some(p) = self.publisher.take() { let _ = p.close().await; }
         let _ = self.sub.close().await;
     }
@@ -918,10 +931,13 @@ impl Actor {
             MeshCmd::SetProfile { .. } => {}   // status/presença ainda não viajam pelo SFU
             MeshCmd::MutePeer { key, muted } => { if let Some(a) = &self.audio { a.mute_peer(&key, muted); } }
             MeshCmd::ShareVolume { key, gain } => { if let Some(a) = &self.audio { a.set_screen_gain(&key, gain); } }
-            MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
-            MeshCmd::ShareStop => self.share_stop().await,
-            MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
-            MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
+            MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump, 0).await,
+            MeshCmd::ShareStop => self.share_stop(0).await,
+            MeshCmd::Share2Start { cfg, preview, dump } => self.share_start(cfg, preview, dump, 1).await,
+            MeshCmd::Share2Stop => self.share_stop(1).await,
+            MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share[0].as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
+            MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path, 0).await,
+            MeshCmd::Share2Watch { key, on, path } => self.watch(&key, on, path, 1).await,
             MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
             MeshCmd::PeerVolume { key, gain } => {
                 // a UI manda a impressão digital (ou o id do participante): no SFU o áudio é indexado pela identidade
@@ -1014,12 +1030,14 @@ impl Actor {
         }
     }
 
-    async fn watch(&mut self, key: &str, on: bool, path: std::path::PathBuf) {
+    async fn watch(&mut self, key: &str, on: bool, path: std::path::PathBuf, slot: usize) {
         let (recv, sids): (Option<Arc<RecvState>>, Vec<(String, String)>) = {
-            let sh = self.shared.lock().unwrap();
-            let sids = sh.tracks.iter().filter(|(_, t)| t.identity == key && (t.source == lk::TrackSource::ScreenShare as i32 || t.source == lk::TrackSource::ScreenShareAudio as i32))
+            let mut sh = self.shared.lock().unwrap();
+            let sids = sh.tracks.iter().filter(|(_, t)| t.identity == key && ((t.source == lk::TrackSource::ScreenShare as i32 && share::slot_of_name(&t.name) == slot) || (slot == 0 && t.source == lk::TrackSource::ScreenShareAudio as i32)))
                 .map(|(sid, _)| (self.known.get(key).map(|k| k.sid.clone()).unwrap_or_default(), sid.clone())).collect();
-            (sh.recv.get(key).cloned(), sids)
+            // a recepção da 2ª tela só nasce quando a faixa chega, e ela só chega depois de assinada: cria aqui para quem é conhecido
+            let recv = if sh.recv.contains_key(key) { Some(sh.recv.entry(share::recv_key(key, slot)).or_default().clone()) } else { None };
+            (recv, sids)
         };
         let Some(r) = recv else { self.emit(MeshEvent::Error("assistir: peer desconhecido".into())).await; return };
         if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, Ordering::Relaxed); r.frames.store(0, Ordering::Relaxed); }
@@ -1027,35 +1045,39 @@ impl Actor {
         // só baixa o vídeo (e o áudio da transmissão) de quem está sendo assistido
         let todo: Vec<(String, String)> = sids.into_iter().filter(|(_, s)| if on { self.subscribed.insert(s.clone()) } else { self.subscribed.remove(s) }).collect();
         self.subscribe(todo, on).await;
-        self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": key, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": key, "slot": slot, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
     }
 
     /// A faixa de vídeo (e a de áudio da tela) é publicada uma vez e reaproveitada: parar = silenciar a faixa no servidor, retomar = reabrir.
     /// (Remover o transceiver e publicar de novo não funciona no webrtc-rs 0.12: o transceiver parado perde as codificações e o
     /// `add_track` seguinte falha com "same envelope as previous".) Os outros veem a faixa `muted` e tratam como "parou".
-    async fn share_start(&mut self, cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
-        self.share_stop().await;
+    async fn share_start(&mut self, mut cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>, slot: usize) {
+        self.share_stop(slot).await;
+        if slot == 1 { cfg.audio = crate::procaudio::AudioMode::None; }   // o áudio da transmissão é um só, no slot 0
         self.share_gen += 1;
         let gen = self.share_gen;
-        let first = !self.published.contains_key(share::VIDEO_TRACK_ID) && !self.pending.contains_key(share::VIDEO_TRACK_ID);
-        let vout = self.vout.get_or_insert_with(share::VideoOut::new).clone();
+        self.share_gens[slot] = gen;
+        let cid = share::video_cid(slot);
+        let first = !self.published.contains_key(cid) && !self.pending.contains_key(cid);
+        let vout = self.vout[slot].get_or_insert_with(|| share::VideoOut::new_slot(slot)).clone();
         let (amode, label, h) = (cfg.audio.clone(), cfg.label.clone(), cfg.height as u32);
-        match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, vout.clone(), self.sev_tx.clone(), preview, dump) {
+        match share::start_sender(gen, self.idr[slot].clone(), self.net[slot].clone(), cfg, vout.clone(), self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
                 let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack.clone())) } else { None };
-                self.share = Some(ActiveShare { gen, sender, audio, info: None, label: label.clone(), h });
+                self.share[slot] = Some(ActiveShare { gen, sender, audio, info: None, label: label.clone(), h });
                 if first {
-                    self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
-                } else { self.set_muted(share::VIDEO_TRACK_ID, false).await; }
+                    let name = track_name(&label, slot);
+                    self.publish(cid, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
+                } else { self.set_muted(cid, false).await; }
                 if has_audio {
                     if !self.published.contains_key(share::AUDIO_TRACK_ID) && !self.pending.contains_key(share::AUDIO_TRACK_ID) {
                         self.publish(share::AUDIO_TRACK_ID, atrack as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
                     } else { self.set_muted(share::AUDIO_TRACK_ID, false).await; }
                 }
             }
-            Err(e) => self.emit(MeshEvent::Share(json!({ "ev": "share.local", "state": "off", "reason": e }))).await,
+            Err(e) => self.emit(MeshEvent::Share(json!({ "ev": "share.local", "slot": slot, "state": "off", "reason": e }))).await,
         }
     }
 
@@ -1063,23 +1085,33 @@ impl Actor {
         if let Some(sid) = self.published.get(cid).map(|p| p.sid.clone()) { self.send(rq::Message::Mute(lk::MuteTrackRequest { sid, muted })).await; }
     }
 
-    async fn share_stop(&mut self) {
-        let Some(sh) = self.share.take() else { return };
+    async fn share_stop(&mut self, slot: usize) {
+        let Some(sh) = self.share[slot].take() else { return };
         sh.sender.stop();
         if let Some(a) = &sh.audio { a.stop(); }
-        self.set_muted(share::VIDEO_TRACK_ID, true).await;
-        self.set_muted(share::AUDIO_TRACK_ID, true).await;
+        self.set_muted(share::video_cid(slot), true).await;
+        if slot == 0 { self.set_muted(share::AUDIO_TRACK_ID, true).await; }
     }
 
     async fn on_share_event(&mut self, mut v: Value) {
-        if let Some(g) = v["gen"].as_u64() { if self.share.as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share.is_none()) { return; } }
+        let slot = match v["gen"].as_u64() { Some(g) if g == self.share_gens[1] && self.share_gens[1] != 0 => 1, Some(_) => 0, None => v["slot"].as_u64().unwrap_or(0).min(1) as usize };
+        if let Some(g) = v["gen"].as_u64() {
+            if self.share[slot].as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share[slot].is_none()) { return; }
+            v["slot"] = json!(slot);
+        }
         if v["ev"] == "share.local" {
             if v["state"] == "on" {
-                if let Some(sh) = self.share.as_mut() { v["audio"] = json!(sh.audio.is_some()); sh.info = Some(v.clone()); }
-            } else { self.share_stop().await; }
+                if let Some(sh) = self.share[slot].as_mut() { v["audio"] = json!(sh.audio.is_some()); sh.info = Some(v.clone()); }
+            } else { self.share_stop(slot).await; }
         }
         self.emit(MeshEvent::Share(v)).await;
     }
+}
+
+/// Nome da faixa de tela no SFU: o rótulo, com o prefixo que marca a 2ª tela.
+fn track_name(label: &str, slot: usize) -> String {
+    let base = if label.is_empty() { "tela" } else { label };
+    if slot == 1 { format!("{}{}", share::SLOT2_NAME, base) } else { base.to_string() }
 }
 
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports

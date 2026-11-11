@@ -19,6 +19,18 @@ use crate::capture::{Capture, SourceKind};
 use crate::video::{self, FrameSink, H264Dec, H264Enc};
 
 pub const VIDEO_TRACK_ID: &str = "screen-video";
+/// 2ª transmissão simultânea da mesma pessoa (segundo monitor): faixa própria, com pacer, codificador e estimador próprios.
+pub const VIDEO_TRACK_ID_2: &str = "screen-video-2";
+/// Quantas transmissões de tela uma pessoa pode ter ao mesmo tempo.
+pub const SHARE_SLOTS: usize = 2;
+/// Identificador de quem transmite nos eventos do receptor: a 2ª tela leva o sufixo "#2" (vira `"slot": 1` no evento).
+pub fn recv_key(peer: &str, slot: usize) -> String { if slot == 1 { format!("{peer}#2") } else { peer.to_string() } }
+/// No SFU a 2ª tela de uma pessoa é outra faixa ScreenShare; o que a distingue é este prefixo no nome da faixa.
+pub const SLOT2_NAME: &str = "[2] ";
+pub fn slot_of_name(name: &str) -> usize { if name.starts_with(SLOT2_NAME) { 1 } else { 0 } }
+pub fn strip_slot_name(name: &str) -> &str { name.strip_prefix(SLOT2_NAME).unwrap_or(name) }
+pub fn video_cid(slot: usize) -> &'static str { if slot == 1 { VIDEO_TRACK_ID_2 } else { VIDEO_TRACK_ID } }
+fn split_key(k: &str) -> (&str, u64) { match k.strip_suffix("#2") { Some(p) => (p, 1), None => (k, 0) } }
 pub const AUDIO_TRACK_ID: &str = "screen-audio";
 pub const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
 pub const MAX_BPS: u32 = 50_000_000;
@@ -43,11 +55,12 @@ pub struct ShareCfg {
 }
 
 /// Faixa de vídeo em RTP cru: o empacotamento H264 e o espaçamento dos pacotes (pacer) são nossos.
-pub fn new_video_track() -> Arc<TrackLocalStaticRTP> {
+pub fn new_video_track() -> Arc<TrackLocalStaticRTP> { new_video_track_slot(0) }
+pub fn new_video_track_slot(slot: usize) -> Arc<TrackLocalStaticRTP> {
     Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability { mime_type: "video/H264".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: H264_FMTP.into(), rtcp_feedback: vec![] },
-        VIDEO_TRACK_ID.into(),
-        "briks-screen".into(),
+        (if slot == 1 { VIDEO_TRACK_ID_2 } else { VIDEO_TRACK_ID }).into(),
+        (if slot == 1 { "briks-screen-2" } else { "briks-screen" }).into(),
     ))
 }
 
@@ -80,8 +93,9 @@ impl VideoOut {
         self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
         let _ = self.tx.send((au, samples.max(1), pace_bps));
     }
-    pub fn new() -> Self {
-        let track = new_video_track();
+    pub fn new() -> Self { Self::new_slot(0) }
+    pub fn new_slot(slot: usize) -> Self {
+        let track = new_video_track_slot(slot);
         let (tx, rx) = mpsc::unbounded_channel();
         // limitado: um espectador que despeja NACKs não pode encher a memória do emissor; com a fila cheia o pedido é
         // descartado (try_send) e o receptor pede de novo ou pede quadro-chave
@@ -548,7 +562,7 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
                 if sink.as_ref().map(|s| s.0 != path).unwrap_or(true) { sink = FrameSink::create(&path).ok().map(|s| (path, s)); }
                 if let Some((_, s)) = sink.as_mut() { s.write(w, h, rgba); }
                 let n = st2.frames.fetch_add(1, Ordering::Relaxed) + 1;
-                if dims != (w, h) || n == 1 { dims = (w, h); let _ = ev2.try_send(json!({ "ev": "share.remote", "peer_id": peer2, "state": "frame", "w": w, "h": h })); }
+                if dims != (w, h) || n == 1 { dims = (w, h); let (pid, slot) = split_key(&peer2); let _ = ev2.try_send(json!({ "ev": "share.remote", "peer_id": pid, "slot": slot, "state": "frame", "w": w, "h": h })); }
             }
         }
     });
@@ -578,7 +592,8 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
-            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+            let (pid, slot) = split_key(&peer);
+            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": pid, "slot": slot, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
             frames0 = f; win = Instant::now();
         }

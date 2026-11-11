@@ -6,6 +6,7 @@ mod adapt;
 mod audio;
 mod capture;
 mod video;
+mod gpuconv;
 mod identity;
 mod ipc;
 mod mesh;

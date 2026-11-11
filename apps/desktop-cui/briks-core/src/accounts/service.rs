@@ -429,6 +429,17 @@ impl Service {
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
             }
+            "friends.lookup" => {
+                // busca exata por @nick (0008) para convidar para grupo; evento friends.lookup {ok, hit | error_code, message, nick}
+                let nick = s("nick");
+                tokio::spawn(async move {
+                    let ev = match acc.nick_lookup(&nick).await {
+                        Ok(h) => json!({ "ev": "friends.lookup", "ok": true, "nick": nick, "hit": h }),
+                        Err(e) => json!({ "ev": "friends.lookup", "ok": false, "nick": nick, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
             "presence.beat" | "presence.friends" | "presence.clear" => {
                 // batimento de presença (0007): o app manda a cada ~60 s; sem a RPC (`server_not_ready`) remote=false e a UI usa só "na chamada"
                 let (cmd, invisible) = (cmd.to_string(), v["invisible"].as_bool().unwrap_or(false));

@@ -386,6 +386,11 @@ impl Accounts {
         let (p, u) = (self.provider.clone(), user_id.to_string());
         blk(move || p.friend_remove(&tok, &u)).await
     }
+    pub async fn nick_lookup(&self, nick: &str) -> AResult<NickHit> {
+        let tok = self.access_token().await?;
+        let (p, n) = (self.provider.clone(), nick.to_string());
+        blk(move || p.nick_lookup(&tok, &n)).await
+    }
     pub async fn presence_beat(&self, invisible: bool) -> AResult<()> {
         let tok = self.access_token().await?;
         let p = self.provider.clone();

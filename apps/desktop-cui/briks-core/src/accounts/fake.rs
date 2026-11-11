@@ -40,6 +40,9 @@ pub struct FakeState {
     /// presença (0007): user_id -> (último batimento em segundos, invisível)
     presence: HashMap<String, (u64, bool)>,
     pub no_presence_rpc: bool,
+    /// buscas por @nick feitas por conta (0008: máximo 30 por hora) e servidor sem a 0008
+    lookups: HashMap<String, u32>,
+    pub no_lookup_rpc: bool,
     /// segundos "passados" para os testes envelhecerem os batimentos sem esperar
     pub clock_skew: u64,
     /// validade do access token em segundos (testes de renovação usam valores baixos)
@@ -429,6 +432,19 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some(i) = st.requests.iter().position(|r| r.0 == id && r.2 == me && !r.3) else { return pg("not_found") };
             if b["p_accept"].as_bool().unwrap_or(false) { st.requests[i].3 = true } else { st.requests.remove(i); }
             ok(Value::Null)
+        }
+        "nick_lookup" if st.no_lookup_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "nick_lookup" => {
+            let n = b["p_nick"].as_str().unwrap_or("").trim().trim_start_matches('@').to_lowercase();
+            let used = st.lookups.entry(me.to_string()).or_insert(0);
+            if *used >= 30 { return pg("rate_limited"); }
+            *used += 1;
+            let found = st.profiles.iter().find(|(_, p)| p["nick"] == n.as_str()).map(|(id, p)| (id.clone(), p.clone()));
+            let Some((other, p)) = found else { return pg("not_found") };
+            if other == me || p["fingerprint"].is_null() || st.blocks.iter().any(|x| (x.0 == me && x.1 == other) || (x.0 == other && x.1 == me)) { return pg("not_found"); }
+            ok(json!({ "user_id": other, "nick": p["nick"], "display_name": p["display_name"], "fingerprint": p["fingerprint"] }))
         }
         "presence_beat" | "presence_friends" | "presence_clear" if st.no_presence_rpc => {
             ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))

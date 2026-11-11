@@ -506,6 +506,41 @@ async fn presence_shows_only_accepted_unblocked_visible_friends_and_expires() {
 }
 
 #[tokio::test]
+async fn nick_lookup_is_exact_hides_blocked_and_rate_limited() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("nl-a")), accounts(&f, &tmpdir("nl-b")));
+    let SignUpOutcome::SignedIn(_) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let (ida, idb) = (crate::identity::Identity::generate(), crate::identity::Identity::generate());
+    let pa = a.publish_identity(serde_json::to_value(ida.public_jwk()).unwrap(), &ida.fingerprint()).await.unwrap();
+    let pb = b.publish_identity(serde_json::to_value(idb.public_jwk()).unwrap(), &idb.fingerprint()).await.unwrap();
+    a.set_nick("ana_01").await.unwrap();
+    b.set_nick("bia_01").await.unwrap();
+    let hit = a.nick_lookup("@Bia_01").await.unwrap();
+    assert_eq!((hit.user_id.as_str(), hit.nick.as_str(), hit.fingerprint.as_str()), (pb.user_id.as_str(), "bia_01", idb.fingerprint().as_str()));
+    // exato: prefixo, inexistente e a própria pessoa respondem igual
+    assert_eq!(a.nick_lookup("bia").await.unwrap_err().code, "not_found");
+    assert_eq!(a.nick_lookup("ninguem_x").await.unwrap_err().code, "not_found");
+    assert_eq!(a.nick_lookup("ana_01").await.unwrap_err().code, "not_found");
+    // bloqueio nos dois sentidos esconde
+    b.friend_block(&pa.user_id).await.unwrap();
+    assert_eq!(a.nick_lookup("bia_01").await.unwrap_err().code, "not_found");
+    b.friend_unblock(&pa.user_id).await.unwrap();
+    a.friend_block(&pb.user_id).await.unwrap();
+    assert_eq!(a.nick_lookup("bia_01").await.unwrap_err().code, "not_found");
+    a.friend_unblock(&pb.user_id).await.unwrap();
+    // anti-enumeração: 30 buscas por hora
+    let mut last = String::new();
+    for _ in 0..30 { if let Err(e) = a.nick_lookup("ninguem_x").await { last = e.code; } }
+    assert_eq!(last, "rate_limited");
+    // servidor sem a 0008
+    f.state.lock().unwrap().no_lookup_rpc = true;
+    assert_eq!(b.nick_lookup("ana_01").await.unwrap_err().code, "server_not_ready");
+}
+
+#[tokio::test]
 async fn local_bridge_password_is_stable_per_account_and_encrypted() {
     let _g = FLOW.lock().await;
     let f = fake::start(0).await.unwrap();

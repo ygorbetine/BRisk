@@ -2,6 +2,7 @@
  * Persistência local em %APPDATA%\Briks-CUI\settings.cfg (linhas chave=valor, gravadas quando algo muda).
  * Cada controle é marcado no relatório como "efeito real" ou "sem efeito real ainda" (UI + persistência, sem backend). */
 #include "briks_ui.h"
+#include "update.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -297,10 +298,11 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     break;
                 case 8: /* Atualizações */
                     SCARD(ui, "ATUALIZAÇÕES") {
-                        cui_text(ui, "Você está na versão de desenvolvimento do app nativo.");
-                        sub(ui, "A atualização automática ainda está desligada nesta versão. Em breve.");
-                        cui_push_disabled(ui, true); cui_button(ui, "Verificar atualizações", .variant = CUI_BUTTON_SECONDARY); cui_pop_disabled(ui);
-                        tag_nofx(ui);
+                        cui_textf(ui, "Versão %s", update_current_version());
+                        { upd_phase_t ph = update_phase();
+                          sub(ui, ph == UPD_READY ? "Atualização pronta: ela é instalada ao fechar o Briks." : ph == UPD_DOWNLOADING ? "Baixando a atualização…" :
+                                  ph == UPD_ERROR ? "Não foi possível verificar agora; o Briks tenta de novo mais tarde." :
+                                  "O Briks verifica novas versões sozinho (a cada 4 horas) quando instalado. BRIKS_DISABLE_UPDATE=1 desliga."); }
                     }
                     break;
                 case 9: /* Sobre */

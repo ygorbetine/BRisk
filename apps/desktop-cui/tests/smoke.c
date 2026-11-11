@@ -261,6 +261,11 @@ static void update_tests(void) {
     CHECK(!update_parse_feed("version: 1.3.1\npath: ..\\evil.exe\nsha512: x\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: caminho com .. ou barra invertida recusado");
     CHECK(!update_parse_feed("version: 1.3.1\npath: setup.zip\nsha512: x\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: so aceita .exe");
     CHECK(!update_parse_feed("version: 1.3.1\npath: a.exe\n", v, sizeof v, p, sizeof p, h, sizeof h), "feed: sem sha512 recusado");
+    CHECK(!update_policy(false, false, false, false, false, true), "politica: sem Release/opt-in fica desligado");
+    CHECK(update_policy(false, false, false, false, true, true), "politica: Release instalado liga por padrao");
+    CHECK(!update_policy(false, false, false, false, true, false), "politica: Release fora do instalador (pasta de build) nao liga");
+    CHECK(!update_policy(true, true, true, true, true, true), "politica: BRIKS_DISABLE_UPDATE=1 vence tudo");
+    CHECK(update_policy(false, true, false, false, false, false), "politica: feed de teste liga");
     CHECK(update_url_allowed("https://github.com/x/y/latest.yml") && update_url_allowed("http://127.0.0.1:8099/latest.yml") && !update_url_allowed("http://example.com/latest.yml") && !update_url_allowed("ftp://x"), "url: https ou http so em loopback");
 }
 

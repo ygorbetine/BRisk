@@ -20,5 +20,6 @@ void update_install_on_exit(void);       /* ao fechar: se há atualização pron
 /* utilitários puros (testados em tests/smoke.c) */
 int update_version_compare(const char *a, const char *b);   /* <0, 0, >0 (semver simples; pré-lançamento < final) */
 bool update_parse_feed(const char *yaml, char *version, size_t vcap, char *path, size_t pcap, char *sha512, size_t scap);
+bool update_policy(bool disable, bool has_feed, bool enable_env, bool enable_file, bool default_on, bool installed);   /* quando a atualizacao liga */
 bool update_url_allowed(const char *url);                    /* https, ou http só em loopback (testes) */
 #endif

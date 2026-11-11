@@ -29,7 +29,7 @@ $core = "$cui\briks-core\target\release\briks-core.exe"
 Write-Host "== app nativo (Release: sem DLLs de depuracao) =="
 $bd = "$cui\build-release"
 Push-Location $cui
-cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>&1 && cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBRIKS_VERSION=$num -DBRIKS_BACKEND_EXE=`"$backend`" && cmake --build build-release"
+cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>&1 && cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBRIKS_VERSION=$num -DBRIKS_UPDATE_DEFAULT_ON=ON -DBRIKS_BACKEND_EXE=`"$backend`" && cmake --build build-release"
 $rc = $LASTEXITCODE
 Pop-Location
 if ($rc) { throw "cmake falhou" }

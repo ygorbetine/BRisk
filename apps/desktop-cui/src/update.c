@@ -196,16 +196,30 @@ static void check_once(void) {
     InterlockedExchange(&g_phase, UPD_READY);
 }
 
-/* DESLIGADO por padrao: so roda com BRIKS_UPDATE_FEED (teste com feed local) ou depois que o usuario autorizar (BRIKS_ENABLE_UPDATE=1 ou o arquivo
- * "update-enabled" na pasta de dados). Nao ha feed ativo enquanto isso nao acontecer. */
+/* Politica de ligar a atualizacao (pura, testada em tests/smoke.c). Ordem: BRIKS_DISABLE_UPDATE=1 desliga sempre; feed de teste liga; BRIKS_ENABLE_UPDATE=1 ou o arquivo
+ * "update-enabled" ligam; e, no build Release do instalador (BRIKS_UPDATE_DEFAULT_ON), liga por padrao SO no app instalado (marcador briks.installed ao lado do exe). */
+bool update_policy(bool disable, bool has_feed, bool enable_env, bool enable_file, bool default_on, bool installed) {
+    if (disable) return false;
+    if (has_feed || enable_env || enable_file) return true;
+    return default_on && installed;
+}
+
 static bool update_enabled(void) {
-    const char *d = getenv("BRIKS_DISABLE_UPDATE"); if (d && d[0] == '1') return false;
-    if (getenv("BRIKS_UPDATE_FEED")) return true;
-    const char *e = getenv("BRIKS_ENABLE_UPDATE"); if (e && e[0] == '1') return true;
-    char appdata[MAX_PATH], f[MAX_PATH];
-    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) return false;
-    snprintf(f, sizeof f, "%s\\Briks-CUI\\update-enabled", appdata);
-    return GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES;
+    const char *d = getenv("BRIKS_DISABLE_UPDATE"), *e = getenv("BRIKS_ENABLE_UPDATE");
+    char appdata[MAX_PATH], f[MAX_PATH]; bool file = false, installed = false;
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) == S_OK) {
+        snprintf(f, sizeof f, "%s\\Briks-CUI\\update-enabled", appdata);
+        file = GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES;
+    }
+    char exe[MAX_PATH]; if (GetModuleFileNameA(NULL, exe, sizeof exe)) {
+        char *sl = strrchr(exe, '\\'); if (sl) { *sl = 0; snprintf(f, sizeof f, "%s\\briks.installed", exe); installed = GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES; }
+    }
+#ifdef BRIKS_UPDATE_DEFAULT_ON
+    const bool def = true;
+#else
+    const bool def = false;
+#endif
+    return update_policy(d && d[0] == '1', getenv("BRIKS_UPDATE_FEED") != NULL, e && e[0] == '1', file, def, installed);
 }
 
 static unsigned __stdcall update_thread(void *unused) {

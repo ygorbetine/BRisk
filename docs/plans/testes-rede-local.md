@@ -19,7 +19,7 @@ Produção: sem a variável nada muda (o `.cargo/config.toml` só vale para proc
 ## O que o modo faz
 
 - **ICE/webrtc-rs** (malha, SFU, sonda de rede): filtro de IP só loopback + candidato loopback incluído; mDNS desligado (o padrão abre
-  UDP 0.0.0.0:5353); servidores STUN/TURN que não sejam loopback são descartados (coletar srflx/relay abre 0.0.0.0:porta).
+  UDP 0.0.0.0:5353); TODOS os servidores STUN/TURN são descartados (coletar srflx/relay abre UDP em 0.0.0.0, medido com Get-NetUDPEndpoint, até com o servidor em 127.0.0.1).
   Todos os `SettingEngine` passam por `netmode::apply`, e as listas de servidores por `netmode::ice_servers`. **Quem criar um novo
   `SettingEngine`/`RTCConfiguration` deve chamar os dois.**
 - **Saída HTTP/WebSocket**: `netmode::deny_url` recusa host que não seja loopback em Realtime/SFU (`open_io`), contas/Supabase,
@@ -48,5 +48,11 @@ Produção: sem a variável nada muda (o `.cargo/config.toml` só vale para proc
   documentação do LiveKit, mas **não foi conferida contra o binário** nem com `Get-NetUDPEndpoint`. Se ele ainda abrir 0.0.0.0, ajustar
   `lk_args()`.
 - Subprocessos externos dos testes (deno/PowerShell em `tests_sfukick`) não passam pelo modo.
-- A prova com `Get-NetUDPEndpoint`/`Get-NetTCPEndpoint` durante a suíte completa ainda não foi feita (ver seção abaixo quando houver).
+- Medição (Get-NetUDPEndpoint + Get-NetTCPConnection -State Listen, amostrando os processos de teste a cada 100 ms durante a suíte do
+  briks-core): só 127.0.0.1 em 1154 amostras, exceto UM socket UDP 0.0.0.0 durante `ice::probe_reports_a_dead_turn...` (coleta relay) --
+  corrigido descartando todos os STUN/TURN no modo. **Não reconferido depois da correção** com a suíte inteira, e não medidos: C
+  (briks_*_test e roteiros do app), livekit-server (binário ausente). (`Get-NetTCPEndpoint` não existe: use `Get-NetTCPConnection`.)
+- Em debug, três testes de vídeo/áudio por contagem de quadros falham por desempenho (com e sem o modo, portanto não são da rede):
+  `screen_share_flows_end_to_end_in_loopback`, `two_simultaneous_shares_in_one_room`, `screen_audio_is_stereo_and_av_offset_is_measured`.
+  A documentação do SFU manda rodar com `--release`.
 - Ao abrir o app real (fora de teste) o modo não vale: só com a variável definida explicitamente.

@@ -5,7 +5,7 @@
 //!
 //! Com o modo ligado:
 //!   - ICE (webrtc-rs): só candidatos host em 127.0.0.1/::1 (filtro de IP + loopback incluído), mDNS desligado (o padrão `QueryOnly`
-//!     abre 0.0.0.0:5353), e os servidores STUN/TURN que não sejam loopback são descartados (coletar srflx/relay abriria 0.0.0.0:porta);
+//!     abre 0.0.0.0:5353), e os todos os servidores STUN/TURN são descartados (coletar srflx/relay abre 0.0.0.0:porta, mesmo com o servidor em loopback);
 //!   - HTTP/WebSocket de saída (Realtime, contas/Supabase, turn-credentials, livekit-token/kick, foto de perfil, prévia de link): só
 //!     destinos loopback (`deny_url`);
 //!   - o resto dos sockets do core já vive em 127.0.0.1 (IPC, mocks, loopback OAuth, transferência de arquivo pelo DataChannel).
@@ -67,10 +67,10 @@ pub fn deny_url(url: &str) -> Option<String> {
     Some("rede externa bloqueada (BRIKS_NET_LOOPBACK_ONLY=1)".into())
 }
 
-/// Servidores STUN/TURN que o modo local deixa usar: só os de loopback (todos, fora do modo).
+/// Servidores STUN/TURN que o modo local deixa usar: NENHUM (todos, fora do modo). Mesmo um STUN/TURN em 127.0.0.1 faria o webrtc-rs
+/// abrir um socket UDP em 0.0.0.0 para a coleta srflx/relay (medido com Get-NetUDPEndpoint), e é isso que dispara o aviso do firewall.
 pub fn ice_servers(list: &[RTCIceServer]) -> Vec<RTCIceServer> {
-    if !loopback_only() { return list.to_vec(); }
-    list.iter().filter(|s| !s.urls.is_empty() && s.urls.iter().all(|u| host_is_loopback(url_host(u)))).cloned().collect()
+    if loopback_only() { Vec::new() } else { list.to_vec() }
 }
 
 #[cfg(test)]
@@ -92,7 +92,7 @@ mod tests {
         assert!(deny_url("https://x.supabase.co/").is_some() && deny_url("http://127.0.0.1:1/").is_none() && deny_url("wss://[::1]:2/").is_none());
         let mk = |u: &str| RTCIceServer { urls: vec![u.into()], ..Default::default() };
         let r = ice_servers(&[mk("stun:stun.l.google.com:19302"), mk("turn:127.0.0.1:9?transport=udp")]);
-        assert_eq!(r.len(), 1);
+        assert!(r.is_empty());
         set_loopback_only(false);
         assert!(deny_url("https://x.supabase.co/").is_none());
         assert_eq!(ice_servers(&[mk("stun:a:1"), mk("stun:b:1")]).len(), 2);

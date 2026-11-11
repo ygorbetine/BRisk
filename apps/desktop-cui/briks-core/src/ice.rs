@@ -299,6 +299,8 @@ mod tests {
     #[tokio::test]
     async fn probe_reports_a_dead_turn_without_hanging_or_leaking_the_password() {
         // porta 9 em loopback: ninguém responde. O teste termina no prazo e diz que o TURN não respondeu.
+        // Coletar relay abre UDP em 0.0.0.0 (aviso do firewall): no modo local o TURN é descartado, então este teste só vale com BRIKS_TEST_REAL_NET=1.
+        if !crate::netmode::real_net_wanted() { return; }
         let dead = vec![RTCIceServer { urls: vec!["turn:127.0.0.1:9?transport=udp".into()], username: "u".into(), credential: "segredo-do-teste".into(), ..Default::default() }];
         let t0 = std::time::Instant::now();
         let v = probe(dead, Duration::from_millis(1500)).await;

@@ -58,14 +58,14 @@ Provas no repositório: `apps/desktop-cui/provas/transmissao/` (`adaptacao-*.{cs
 | 2 | Perda de pacotes: NACK, PLI/FIR, buffer, queda de rede | FEITO e MEDIDO; FEC de vídeo NÃO FEITO |
 | 3 | Cliques reais na interface | FEITO e MEDIDO em parte (ver o que faltou) |
 | 4 | Áudio: estéreo, A/V, volume, Discord, fora da árvore | FEITO e MEDIDO; Discord tocando NÃO TESTADO |
-| 5 | Tela cheia exclusiva e DRM (captura preta) | NÃO FEITO |
+| 5 | Tela cheia exclusiva e DRM (captura preta) | Detecção FEITA e MEDIDA com fonte sintética; jogo/DRM real NÃO TESTADO |
 | 6 | Conversão de cor na GPU, antes/depois | FEITO e MEDIDO (CPU); GPU e latência antes/depois NÃO MEDIDOS |
 | 7 | Vários espectadores | FEITO e MEDIDO com 2 espectadores; 4+ NÃO TESTADO; sem simulcast |
 | 8 | Robustez: órfão, entrar no meio, duas transmissões, reconexão | FEITO e MEDIDO; emissor que reconecta NÃO TESTADO |
 | 9 | Codificadores de reserva | FEITO e MEDIDO de ponta a ponta; AMD/Intel NÃO TESTADOS |
 | 10 | Latência vidro a vidro | NÃO MEDIDO (só captura → quadro pronto) |
 | 11 | Privacidade | FEITO, verificado em parte |
-| 12 | Revisão do código e teste longo | Teste longo: ver seção; revisão crítica NÃO FEITA |
+| 12 | Revisão do código e teste longo | Teste longo FEITO e MEDIDO (30 min); revisão FEITA nos módulos da transmissão |
 
 ## 1. Adaptação automática — FEITO e MEDIDO, com ressalvas
 
@@ -103,7 +103,11 @@ teto de 12 Mbps, degraus de 12–18 s. Gráficos em `provas/transmissao/adaptaca
 - Na queda de 20 para 6 Mbps o laço **desce demais** (~0,4 Mbps quando caberiam ~5) e leva 10–20 s para voltar.
 - Pior intervalo sem quadro novo nas quedas bruscas: 5,0 s (Nitidez) e 4,8 s (Fluidez).
 - Uma tentativa de corrigir isso com retorno direto do espectador (taxa recebida e fila, 4x/s) **piorou** o teste (17 s de
-  congelamento) e foi revertida (`10fd09f` → `6564ffa`). A causa não foi investigada.
+  congelamento) e foi revertida (`10fd09f` → `6564ffa`).
+- Uma segunda tentativa, mais conservadora (a taxa recebida só como piso dos cortes), melhorou o degrau de 6 Mbps numa rodada
+  (Nitidez 0,36 → 1,4 Mbps; Fluidez 0,52 → 2,9 Mbps) mas piorou o de 0,8 Mbps (7,2 s de congelamento) e, na rodada seguinte, a
+  recuperação falhou. Com a máquina a ~76% de CPU por outros trabalhos, a variação entre execuções foi maior que o efeito.
+  Revertida (`c76fc17` → `f1f97e2`). **O problema continua NÃO RESOLVIDO.**
 - O sinal de atraso depende da cadência dos relatórios RTCP (1–2 s). **TWCC não é usado.**
 - Só foi provado com rede simulada na mesma máquina.
 
@@ -169,12 +173,17 @@ O áudio da transmissão liga o FEC interno do Opus e passa por um buffer de 60 
   (`wanted` em `procaudio.rs`). Sem teste próprio.
 - **Discord**: `lists_audio_sessions_and_marks_briks_and_discord_as_excluded` mostra a sessão real `Discord.exe` desta máquina
   marcada como excluída e fora da captura "tudo menos". **Não foi testado com o Discord emitindo som.**
-- **Falta na UI**: o controle de volume do espectador existe no core e no IPC, mas não há controle na tela.
+- **Na UI**: controle de volume no canto do tile do espectador, quando a transmissão tem áudio (captura
+  `ui-real/espectador-1.png`). O arraste do controle não foi exercitado por clique.
 
-## 5. Tela cheia exclusiva e DRM — NÃO FEITO
+## 5. Tela cheia exclusiva e DRM — detecção FEITA; caso real NÃO TESTADO
 
-Não há detecção de quadro preto nem orientação ao usuário. Não foi testado com jogo em tela cheia exclusiva nem com janela
-protegida.
+- **Código**: `share.rs` (uma amostra de brilho por segundo; 3 s seguidos de preto uniforme emitem `share.hint`), `ui_share.c`
+  (o chip passa a "Imagem preta" com ícone de alerta e o popover orienta: jogos em tela cheia exclusiva e conteúdo protegido
+  não podem ser capturados; usar janela sem bordas).
+- **Evidência**: `black_source_is_detected_and_reported` — aviso 3,0 s depois de começar com fonte preta; nenhum aviso com
+  conteúdo normal.
+- **NÃO TESTADO**: jogo real em tela cheia exclusiva e janela com DRM. O aviso na UI não tem captura.
 
 ## 6. Conversão de cor na GPU — FEITO e MEDIDO (CPU)
 
@@ -260,10 +269,20 @@ Tempo de codificação em bancada, 1080p: GPU 5,2 ms; software da Microsoft 5,9 
 
 ## 12. Revisão do código e teste longo
 
-- **Teste longo** (`soak_no_leaks_no_latency_drift`, 30 min, vídeo + áudio sintéticos): ver o resultado no final deste arquivo.
-- **Revisão crítica do código**: NÃO FEITA de forma sistemática. O que se sabe: os caminhos quentes usam `lock().unwrap()` em
-  mutexes (um pânico em outra thread derrubaria a transmissão); as threads de captura por processo terminam por sinalizador,
-  sem `join`; o histórico do pacer e o buffer do receptor têm tamanho limitado.
+- **Teste longo** (`soak_no_leaks_no_latency_drift`, 30 min, vídeo 720p30 + áudio sintéticos, NVENC; série em
+  `provas/transmissao/teste-longo.csv`): memória 113 → 118 MB; handles 704 → 668; 620–640 quadros a cada 30 s e latência p50
+  de 27 ms durante 24 minutos. **Nos 3 minutos finais** a latência subiu para 53–62 ms e os quadros caíram para 307–447 por
+  intervalo, no mesmo momento em que outras sessões começaram a compilar e testar nesta máquina; a causa não foi confirmada.
+  Não houve crescimento de memória nem de handles.
+- **Revisão crítica** dos módulos da transmissão (`share.rs`, `capture.rs`, `gpuconv.rs`, `mfenc.rs`, `procaudio.rs`,
+  `adapt.rs`, `video.rs`), com correções:
+  - um pânico no laço do emissor agora encerra a transmissão com aviso ("A transmissão parou por um erro interno") em vez de
+    deixar a UI mostrando "transmitindo";
+  - travas envenenadas por pânico na thread de captura não derrubam mais o emissor;
+  - o Media Foundation é iniciado uma única vez por processo (a adaptação recria codificadores);
+  - o handle de evento do áudio por processo é fechado também quando a inicialização falha.
+  Os `unwrap` restantes fora de testes estão atrás de checagens. Ficou como está: as threads de captura por processo
+  terminam por sinalizador, sem `join`; a UI em C e o restante do core não foram revisados.
 
 ## Fora do alcance desta máquina — como testar
 
@@ -275,7 +294,3 @@ Tempo de codificação em bancada, 1080p: GPU 5,2 ms; software da Microsoft 5,9 
   transmissão é uma segunda faixa Opus com id `screen-audio`.
 - **AMD/Intel**: rodar `bench_convert_and_encode` e `screen_share_flows_end_to_end_in_loopback` e conferir o nome do codificador
   no popover.
-
-## Resultado do teste longo
-
-(preenchido ao fim da execução)

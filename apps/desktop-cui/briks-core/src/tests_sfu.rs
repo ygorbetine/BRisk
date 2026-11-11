@@ -168,6 +168,55 @@ async fn sfu_screen_share_published_and_watched() {
     b.cmd.send(MeshCmd::Close).await.unwrap();
 }
 
+/// Dois monitores ao mesmo tempo pelo SFU: A publica DUAS faixas de tela (fontes sintéticas, codificador de software) e B assiste às
+/// duas, cada uma no seu arquivo. Parar a 2ª não derruba a 1ª.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_one_person_shares_two_screens_at_once() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let Some(srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    if std::env::var("BRIKS_SFU_TEST_GPU").is_err() { std::env::set_var("BRIKS_ENCODER", "openh264"); }
+    std::env::set_var("BRIKS_DECODER", "openh264");
+    let room = format!("room:{}", uuid::Uuid::new_v4().simple());
+    let (mut a, _au_a) = client(srv.port, &room, A, false).await;
+    let (mut b, _au_b) = client(srv.port, &room, B, false).await;
+    wait_ev(&mut b, |e| matches!(e, MeshEvent::PeerInfo { peer_id, .. } if peer_id == A), 15).await.expect("B não viu o A");
+    let dir = std::env::temp_dir().join(format!("briks-sfu-duastelas-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 15, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "Tela 1", 720), preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::Share2Start { cfg: cfg(SourceKind::TestMotion, "Tela 2", 540), preview: None, dump: None }).await.unwrap();
+    let (mut r0, mut r1) = (None, None);
+    while r0.is_none() || r1.is_none() {
+        let Some(MeshEvent::Share(v)) = wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "on"), 25).await else { panic!("B não soube das duas telas: {r0:?} {r1:?}") };
+        if v["slot"] == 1 { r1 = Some(v) } else { r0 = Some(v) }
+    }
+    assert_eq!((r0.as_ref().unwrap()["label"].as_str(), r1.as_ref().unwrap()["label"].as_str()), (Some("Tela 1"), Some("Tela 2")), "rótulos (o prefixo de slot não aparece)");
+    b.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: dir.join("tela-1.bin") }).await.unwrap();
+    b.cmd.send(MeshCmd::Share2Watch { key: A.into(), on: true, path: dir.join("tela-2.bin") }).await.unwrap();
+    let (mut f0, mut f1) = (None, None);
+    while f0.is_none() || f1.is_none() {
+        let Some(MeshEvent::Share(v)) = wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "frame"), 30).await else { panic!("B sem quadro das duas telas: {f0:?} {f1:?}") };
+        if v["slot"] == 1 { f1 = Some(v) } else { f0 = Some(v) }
+    }
+    assert_eq!((f0.unwrap()["h"].as_u64(), f1.unwrap()["h"].as_u64()), (Some(720), Some(540)), "cada tela chega com a própria resolução");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let count = |n: &str| FrameSource::open(&dir.join(n)).unwrap().read().map(|r| r.2).unwrap_or(0);
+    let (n1, n2) = (count("tela-1.bin"), count("tela-2.bin"));
+    eprintln!("SFU, duas telas de uma pessoa: B recebeu {n1} quadros da tela 1 (720p) e {n2} da tela 2 (540p) em ~3 s (15 qps pedidos)");
+    assert!(n1 > 10 && n2 > 10, "poucos quadros: {n1} e {n2}");
+    a.cmd.send(MeshCmd::Share2Stop).await.unwrap();
+    let Some(MeshEvent::Share(off)) = wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "off"), 15).await else { panic!("B não soube que a 2ª tela parou") };
+    assert_eq!(off["slot"], 1);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let n1b = count("tela-1.bin");
+    assert!(n1b > n1 + 8, "a 1ª tela parou junto com a 2ª: {n1} → {n1b}");
+    a.cmd.send(MeshCmd::Close).await.unwrap();
+    b.cmd.send(MeshCmd::Close).await.unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Token errado / servidor inexistente: falha rápido com erro legível (para o Automático cair no P2P) e sem vazar o token.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sfu_connect_failures_are_fast_and_do_not_leak_the_token() {

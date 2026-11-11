@@ -92,7 +92,7 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
                 if (briks_clicked(ui, "lab")) act = TILE_MUTE;
                 {   /* botão direito no rótulo: popover de vidro acima do rótulo (não o cobre) */
                     cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "lab")); cui_vec2 mp = cui_mouse_pos(ui);
-                    if (cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && lr.w > 0 && mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h) cui_popover_open(ui, "pmenu");
+                    if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && lr.w > 0 && mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h) cui_popover_open(ui, "pmenu");
                 }
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);

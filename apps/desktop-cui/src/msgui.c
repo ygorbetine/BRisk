@@ -261,7 +261,7 @@ void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m) {
     if (g_menu_open || g_emo_open) return;
     bool over = inside(b, mp) || inside(a, mp);
     if (over) snprintf(g_hot_now, sizeof g_hot_now, "%s", m->id);
-    if (inside(b, mp) && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) open_menu(m, mp.x, mp.y);
+    if (!briks_blocked() && inside(b, mp) && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) open_menu(m, mp.x, mp.y);   /* modal aberto: botão direito não atravessa */
 }
 
 /* setinha ao lado do balão: o espaço é sempre reservado (o layout não pula); só aparece no hover da mensagem */

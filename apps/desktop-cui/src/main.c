@@ -121,7 +121,16 @@ int main(void) {
     cui_app *app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
         .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
-    if (!app) return 1;
+    if (!app) {   /* a criação da janela/contexto gráfico pode falhar de forma passageira (várias instâncias ocultas subindo juntas): tenta de novo antes de desistir */
+        fputs("briks_cui: cui_app_create falhou; tentando de novo\n", stderr);
+#ifdef _WIN32
+        Sleep(400);
+#endif
+        app = cui_app_create(&(cui_app_desc){
+        .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
+    }
+    if (!app) { fputs("briks_cui: nao foi possivel criar a janela (saida 1)\n", stderr); return 1; }
     state.app = app;
     migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
     update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */

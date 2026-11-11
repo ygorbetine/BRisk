@@ -2,6 +2,9 @@
 
 Base: `brisk-dev` em db2c4ee (release v1.3.0). Cada frente trabalha no próprio branch/worktree, faz `git merge brisk-dev` antes de começar e de entregar, commits locais pequenos, sem push/tag/release (a publicação é do orquestrador, com ok do usuário). Testes ocultos (`BRIKS_HIDDEN=1`), uma instância, fechar processos, cantos arredondados conferidos. Documentar FEITO/NÃO FEITO com evidência.
 
+## Prioridade (decisão do usuário)
+1º as funções que existiam no Briks anterior (Electron) — frentes B, C e D e tudo que falte da lista de paridade (`cui-ui-paridade-lacunas.md`). 2º as melhorias novas desta versão — frentes A (transmissão) e E (conta e rede) e a Onda 2. A e E ficam em espera depois de fechar o item em andamento e voltam quando B, C e D entregarem.
+
 ## Ondas e donos
 **Onda 1 (paralela)**
 | Frente | Dono | Escopo |

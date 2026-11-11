@@ -73,6 +73,7 @@ static void frame(cui_ctx *ui) {
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
             briks_tip_draw(ui);
+            net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }

@@ -387,6 +387,12 @@ static inline float briks_text_floor(float size) { return (size > 0 && size < BR
 static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
 #undef cui_text
 #define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
+/* net_state.c: estado da internet e faixa persistente (BAS-32) */
+enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };
+int net_status(void);                                                    /* sonda em segundo plano; BRIKS_NET força o estado nos testes */
+void net_retry_now(void);                                                /* "Tentar agora": sonda na hora */
+void net_banner(cui_ctx *ui, app_state_t *s);                            /* pílula no topo: sem conexão, reconectando, restabelecida */
+void net_friendly_error(const char *raw, char *out, size_t cap);         /* erro técnico de rede -> frase compreensível */
 /* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */
 static inline bool briks_clicked_top(cui_ctx *ui, const char *id) {
     if (briks_blocked()) return false;

@@ -79,6 +79,10 @@
     { "id": "lay-min", "demo": "msgs", "roteiro": "lay-min.txt", "env": { "BRIKS_WINDOW": "560x480" }, "checagens": [
       { "item": "LAY-13", "de": "l0", "para": "l0", "esperado": "igual" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
-      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] }
+      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
+    { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [
+      { "item": "BAS-32", "de": "o0", "para": "o1", "esperado": "igual", "regiao": [700, 0, 240, 45] } ] },
+    { "id": "net-restaurada", "demo": "social", "roteiro": "net-restaurada.txt", "env": { "BRIKS_NET": "restored" }, "checagens": [
+      { "item": "BAS-32", "de": "r0", "para": "r1", "esperado": "muda", "regiao": [400, 0, 480, 45], "min": 150 } ] }
   ]
 }

@@ -1,4 +1,4 @@
-# Histórico de chamadas no painel central, registro real ao sair pela "Voz conectada" do menu, opção de guardar (demo social, dentro de uma sala de exemplo)
+﻿# Histórico de chamadas no painel central, registro real ao sair pela "Voz conectada" do menu, opção de guardar (demo social, dentro de uma sala de exemplo)
 waitms 1500
 tap 368 105
 snap h0
@@ -12,6 +12,7 @@ snap h2
 tap 383 177
 tap 464 640
 waitms 400
+tap 383 177
 expect hist_n 1
 expect hist_people 2
 snap h3

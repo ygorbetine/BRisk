@@ -87,6 +87,11 @@
     { "id": "auth-nasc", "demo": "login", "roteiro": "auth-nasc.txt", "env": { "BRIKS_DEV_ACCT": "signup" }, "checagens": [
       { "item": "AUT-03", "de": "n1", "para": "n2", "esperado": "muda", "min": 800 } ] },
     { "id": "auth-nick", "demo": "login", "roteiro": "auth-nick.txt", "env": { "BRIKS_DEV_ACCT": "login", "BRIKS_LOGIN_HINTS_FILE": "nao-existe-hints.txt" }, "checagens": [
-      { "item": "AUT-11", "de": "q1", "para": "q2", "esperado": "muda", "min": 800 } ] }
+      { "item": "AUT-11", "de": "q1", "para": "q2", "esperado": "muda", "min": 800 } ] },
+    { "id": "config-licencas", "demo": "social", "roteiro": "config-licencas.txt", "env": { "BRIKS_DEV_OPEN": "settings:9" }, "checagens": [
+      { "item": "BAS-37", "de": "l0", "para": "l1", "esperado": "muda", "min": 2000 } ] },
+    { "id": "config-texto", "demo": "social", "roteiro": "config-texto.txt", "env": { "BRIKS_DEV_OPEN": "settings:2" }, "checagens": [
+      { "item": "BAS-39", "de": "t0", "para": "t1", "esperado": "muda", "min": 2000 },
+      { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] }
   ]
 }

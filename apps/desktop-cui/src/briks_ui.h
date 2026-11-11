@@ -310,6 +310,7 @@ void ui_history(cui_ctx *ui, app_state_t *s);
 extern float g_tools_w;   /* largura reservada à direita do cabeçalho para os botões + e × do painel (0 = sem botões) */
 extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
 void briks_text_scale_apply(cui_ctx *ui);
+void settings_text_step(cui_ctx *ui, int delta);   /* settings.c: Ctrl+mais/menos/0 mudam o tamanho do texto (delta 0 = padrão) */
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);

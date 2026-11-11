@@ -104,9 +104,14 @@ pub fn connect(cfg: RealtimeCfg, topic: String, peer_id: String, meta: Value) ->
 async fn run(cfg: RealtimeCfg, topic: String, peer_id: String, meta: Value, mut orx: mpsc::Receiver<Out>, etx: mpsc::Sender<RtEvent>) {
     let mut attempt = 0u32;
     let mut meta = meta;
+    // A tabela de Presence sobrevive às reconexões: quem saiu enquanto o canal estava caído aparece como ausente no primeiro
+    // `presence_state` depois de voltar. Com uma tabela nova a cada sessão esses peers nunca eram dados como saídos (fantasmas
+    // ocupando as 5 vagas da malha).
+    let mut presence = PresenceTable::default();
+    let mut pending_leave: Vec<(String, tokio::time::Instant)> = vec![];   // saídas ainda dentro do prazo de graça também sobrevivem à queda
     loop {
         let _ = etx.send(RtEvent::Status(if attempt == 0 { "connecting".into() } else { "reconnecting".into() })).await;
-        match session(&cfg, &topic, &peer_id, &mut meta, &mut orx, &etx).await {
+        match session(&cfg, &topic, &peer_id, &mut meta, &mut presence, &mut pending_leave, &mut orx, &etx).await {
             Ok(()) => {
                 let _ = etx.send(RtEvent::Status("disconnected".into())).await;
                 return;
@@ -134,7 +139,7 @@ fn is_transient(e: &anyhow::Error) -> bool {
     !(s.contains("URL") || s.contains("esquema") || s.contains("host vazio") || s.contains("porta inválida"))
 }
 
-async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value, orx: &mut mpsc::Receiver<Out>, etx: &mpsc::Sender<RtEvent>) -> Result<()> {
+async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value, presence: &mut PresenceTable, pending_leave: &mut Vec<(String, tokio::time::Instant)>, orx: &mut mpsc::Receiver<Out>, etx: &mpsc::Sender<RtEvent>) -> Result<()> {
     let target = parse_target(&cfg.url)?;
     let io = tokio::time::timeout(Duration::from_secs(15), open_io(&target)).await.map_err(|_| anyhow!("tempo esgotado ao conectar ao Realtime"))??;
     let ws_url = format!("{}://{}:{}/realtime/v1/websocket?apikey={}&vsn=1.0.0", if target.tls { "wss" } else { "ws" }, target.host, target.port, cfg.anon_key);
@@ -148,8 +153,6 @@ async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value
     sink.send(Message::Text(phoenix::encode(&join))).await?;
 
     let mut joined = false;
-    let mut presence = PresenceTable::default();
-    let mut pending_leave: Vec<(String, tokio::time::Instant)> = vec![];
     let mut hb = tokio::time::interval(cfg.heartbeat);
     hb.tick().await;
     let join_deadline = tokio::time::Instant::now() + Duration::from_secs(15);

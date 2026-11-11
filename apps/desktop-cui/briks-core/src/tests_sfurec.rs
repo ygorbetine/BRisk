@@ -18,8 +18,22 @@ pub struct Server { child: Child }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
 /// Porta do `livekit-server` de teste. `BRIKS_LK_TEST_PORT` troca a 7880 (e as portas RTC seguintes) para não colidir com outro
-/// servidor na máquina; só `tests_sfurede` usa esta porta na URL, os outros testes continuam na 7880.
-pub fn lk_port() -> u16 { std::env::var("BRIKS_LK_TEST_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
+/// servidor na máquina. `BRIKS_LIVEKIT_TEST_PORT` é o nome preferido; todos os testes de SFU usam esta porta.
+pub fn lk_port() -> u16 { std::env::var("BRIKS_LIVEKIT_TEST_PORT").or_else(|_| std::env::var("BRIKS_LK_TEST_PORT")).ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
+
+/// Argumentos do `livekit-server` de teste, na porta de `lk_port()` (RTC nas duas seguintes).
+pub fn lk_args() -> Vec<String> {
+    let port = lk_port();
+    let mut v: Vec<String> = ["--dev", "--bind", "127.0.0.1"].iter().map(|s| s.to_string()).collect();
+    if port != 7880 { v.push("--config-body".into()); v.push(format!("port: {port}
+rtc:
+  tcp_port: {}
+  udp_port: {}
+keys:
+  devkey: secret
+", port + 1, port + 2)); }
+    v
+}
 
 pub fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
@@ -28,14 +42,7 @@ pub fn start_server() -> Option<Server> {
     for _ in 0..3 {
         let port = lk_port();
         let mut cmd = Command::new(&bin);
-        cmd.args(["--dev", "--bind", "127.0.0.1"]);
-        if port != 7880 { cmd.args(["--config-body", &format!("port: {port}
-rtc:
-  tcp_port: {}
-  udp_port: {}
-keys:
-  devkey: secret
-", port + 1, port + 2)]); }
+        cmd.args(lk_args());
         let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(10) {
@@ -79,7 +86,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let renewals = Arc::new(AtomicU64::new(0));
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
     let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
-    let h = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", crate::tests_sfurec::lk_port()), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);

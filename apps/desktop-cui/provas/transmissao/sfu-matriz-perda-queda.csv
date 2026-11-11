@@ -1,0 +1,13 @@
+cenario,qps_recebido,quadros,lat_p50_ms,lat_p95_ms,lat_p99_ms,maior_intervalo_ms,congelamentos_250ms,nacks_unicos,retransmitidos,retransmissoes_recusadas,pacotes_perdidos_real,plis,quadros_perdidos_rx
+"SFU envio (emissor->SFU): base",29.1,233,47,76,92,90,0,0,0,0,0,0,0
+"SFU envio (emissor->SFU): perda 1%",25.9,207,55,117,183,150,0,68,68,0,66,0,0
+"SFU envio (emissor->SFU): perda 2%",26.8,214,87,152,242,241,0,120,120,0,118,0,0
+"SFU envio (emissor->SFU): perda 5%",28.1,225,114,227,273,252,1,289,289,0,268,0,0
+"SFU envio (emissor->SFU): perda 10%",24.6,197,187,364,533,566,4,648,648,0,577,3,1
+"SFU envio (emissor->SFU): queda total 4 s (6 s após a volta; 1º quadro em 1093 ms; p50 8-12 s depois 39 ms; reconexões 0/0)",24.3,146,56,75,95,1093,1,100,100,0,100,2,1
+"SFU recepcao (SFU->espectador): base",30.0,240,68,79,82,76,0,0,0,0,0,0,0
+"SFU recepcao (SFU->espectador): perda 1%",29.6,237,88,166,168,163,0,0,0,0,0,0,0
+"SFU recepcao (SFU->espectador): perda 2%",29.6,237,142,181,259,142,0,0,0,0,0,0,0
+"SFU recepcao (SFU->espectador): perda 5%",28.5,228,156,280,394,315,3,0,0,0,0,3,0
+"SFU recepcao (SFU->espectador): perda 10%",25.4,203,178,337,372,256,1,0,0,0,0,0,0
+"SFU recepcao (SFU->espectador): queda total 4 s (6 s após a volta; 1º quadro em 1081 ms; p50 8-12 s depois 60 ms; reconexões 0/0)",24.8,149,62,74,97,1081,1,0,0,0,0,2,1

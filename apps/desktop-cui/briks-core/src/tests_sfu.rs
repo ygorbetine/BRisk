@@ -22,8 +22,8 @@ impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = s
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
-    let child = Command::new(bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
-    let port = 7880;
+    let child = Command::new(bin).args(crate::tests_sfurec::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+    let port = crate::tests_sfurec::lk_port();
     // espera a porta HTTP abrir
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {

@@ -31,7 +31,7 @@ fn admin_token(room: &str) -> String {
 fn kick_function(node: &str, room: &str, requester: &str, target: &str) -> (u16, String) {
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../supabase/tests/livekit-kick-local-check.ts");
     let out = std::process::Command::new(node).args(["--experimental-transform-types", "--no-warnings"]).arg(&script)
-        .env("LK_URL", "ws://127.0.0.1:7880").env("LK_KEY", "devkey").env("LK_SECRET", "secret").env("LK_ROOM", room).env("LK_REQUESTER", requester).env("LK_TARGET", target)
+        .env("LK_URL", format!("ws://127.0.0.1:{}", crate::tests_sfurec::lk_port())).env("LK_KEY", "devkey").env("LK_SECRET", "secret").env("LK_ROOM", room).env("LK_REQUESTER", requester).env("LK_TARGET", target)
         .output().expect("rodar o node");
     let txt = String::from_utf8_lossy(&out.stdout).to_string();
     let line = txt.lines().find(|l| l.starts_with("KICK ")).unwrap_or_else(|| panic!("a função não respondeu: {} {}", txt, String::from_utf8_lossy(&out.stderr)));
@@ -54,7 +54,7 @@ async fn sfu_kick_function_removes_participant_for_real() {
     for (x, o) in [(&a, &b), (&a, &c), (&b, &a), (&c, &a), (&c, &b)] { assert!(x.wait(30, &format!("info:{}:{}", o.ident, o.fp)).await, "{} não autenticou {}", x.ident, o.ident); }
 
     // o que o LiveKit devolve em ListParticipants (é disso que a função tira o dono)
-    let lp = { let (r, t) = (lk_room.clone(), admin_token(&lk_room)); tokio::task::spawn_blocking(move || ureq::post("http://127.0.0.1:7880/twirp/livekit.RoomService/ListParticipants").set("authorization", &format!("Bearer {t}")).send_json(json!({ "room": r })).unwrap().into_json::<serde_json::Value>().unwrap()).await.unwrap() };
+    let lp = { let (r, t) = (lk_room.clone(), admin_token(&lk_room)); tokio::task::spawn_blocking(move || ureq::post(&format!("http://127.0.0.1:{}/twirp/livekit.RoomService/ListParticipants", crate::tests_sfurec::lk_port())).set("authorization", &format!("Bearer {t}")).send_json(json!({ "room": r })).unwrap().into_json::<serde_json::Value>().unwrap()).await.unwrap() };
     let ps = lp["participants"].as_array().expect("participants");
     let joined = |id: &str| ps.iter().find(|p| p["identity"] == id).map(|p| { let v = if p["joined_at_ms"].is_null() { &p["joinedAtMs"] } else { &p["joined_at_ms"] }; v.as_str().and_then(|s| s.parse::<u64>().ok()).or(v.as_u64()).unwrap_or(0) }).unwrap_or(0);
     eprintln!("ListParticipants: {} participantes; joined_at_ms A/B/C = {}/{}/{}", ps.len(), joined(A), joined(B), joined(C));
@@ -84,7 +84,7 @@ async fn sfu_kick_function_removes_participant_for_real() {
         None => {
             eprintln!("BRIKS_NODE_BIN não definido: a regra da função NÃO foi exercitada; RemoveParticipant pedido direto ao LiveKit");
             let (r, t) = (lk_room.clone(), admin_token(&lk_room));
-            tokio::task::spawn_blocking(move || ureq::post("http://127.0.0.1:7880/twirp/livekit.RoomService/RemoveParticipant").set("authorization", &format!("Bearer {t}")).send_json(json!({ "room": r, "identity": B })).unwrap()).await.unwrap();
+            tokio::task::spawn_blocking(move || ureq::post(&format!("http://127.0.0.1:{}/twirp/livekit.RoomService/RemoveParticipant", crate::tests_sfurec::lk_port())).set("authorization", &format!("Bearer {t}")).send_json(json!({ "room": r, "identity": B })).unwrap()).await.unwrap();
         }
     }
     // o B é derrubado pelo SERVIDOR: o core avisa "removido" (a sala fica bloqueada nesta sessão) e NÃO tenta reconectar

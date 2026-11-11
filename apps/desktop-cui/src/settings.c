@@ -143,7 +143,7 @@ static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localment
 }
 static bool menu_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 7, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
-            .bg = active ? B_A(B_C3, 0x33) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {
+            .bg = active ? B_A(B_C3, 0x33) : briks_hover(ui, label) ? (cui_mouse_down(ui, CUI_MOUSE_LEFT) ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12)) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {   /* hover e clique visíveis também dentro do diálogo */
         cui_icon(ui, icon, 15, active ? B_TEXT : B_MUTED);
         cui_text(ui, label, .size = 13, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }

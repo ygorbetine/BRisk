@@ -32,7 +32,7 @@ int panel_from_name(const char *name);   /* -1 se desconhecido */
 float panel_min_w(int kind);
 float panel_min_h(int kind);
 
-void layout_app_default(layout_t *l, float width);   /* padrão do app: grupos | menu | conversa | Amigos (>= 1360 px); senão o trio abaixo */
+void layout_app_default(layout_t *l, float width);   /* padrão do app: grupos | menu | conversa | Amigos (>= 1240 px); senão o trio abaixo */
 void layout_default(layout_t *l, float width);   /* o layout de hoje: servidores | menu | conversa, para a largura dada */
 int layout_find(const layout_t *l, int kind);    /* nó da folha ou -1 */
 int layout_count(const layout_t *l);             /* folhas */

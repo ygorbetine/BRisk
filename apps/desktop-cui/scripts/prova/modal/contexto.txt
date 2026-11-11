@@ -1,0 +1,14 @@
+# Menu de contexto de um participante aberto na chamada: clicar fora (no botão Sair) fecha só o menu; a chamada continua
+wait 12
+expect screen 2
+at 511 644
+wait 4
+rdown
+wait 2
+rup
+wait 10
+expect modal 1
+shot contexto-aberto
+click 1113 748
+wait 10
+expect screen 2

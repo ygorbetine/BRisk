@@ -22,9 +22,12 @@ float g_panel_w = 76, g_tools_w;
 char g_tip[160];
 static void hot_paint(cui_ctx *ui, cui_rect r, void *user) {
     (void)r; const float *q = (const float *)user;
+    if (q[2] <= 0) return;
     cui_rect z = { q[0], q[1], q[2], q[3] };
     cui_draw_rect(ui, z, CUI_CORNERS(fminf(12.0f, q[3] * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
 }
+/* Dentro de diálogo/menu a camada de baixo fica coberta: aqui só o cursor de mão; o realce é do próprio item (menus de Configurações e Perfil). */
+void briks_hot_modal_draw(cui_ctx *ui) { if (g_hot_on) { cui_set_cursor(ui, CUI_CURSOR_HAND); g_hot_on = false; } }
 void briks_tip_draw(cui_ctx *ui) {
     if (g_hot_on) {   /* realce do controle sob o mouse (hover) e apertado (clique) */
         g_hot_on = false;
@@ -388,9 +391,9 @@ static void content(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_left = 20, .pad_right = 20 + g_tools_w, .gap = 10,
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
-            cui_text(ui, title, .font = CUI_FONT_MEDIUM);
-            { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
-              cui_text(ui, sub, .size = 12, .color = B_MUTED); }
+            cui_text(ui, title, .font = CUI_FONT_MEDIUM, .nowrap = true);
+            if (g_panel_w >= 620.0f) { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
+              cui_text(ui, sub, .size = 12, .color = B_MUTED, .nowrap = true); }
             if (group) groups_header(ui, s);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
             { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3); }
@@ -466,7 +469,7 @@ static void panel_members(cui_ctx *ui, app_state_t *s) {
         panel_shell(ui, "Membros", CUI_ICON_USERS);
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
         cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            person_t me; snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
+            person_t me; memset(&me, 0, sizeof me); snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");   /* zera: status/presença sem lixo de memória */
             person_row(ui, &me, false);
             for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row(ui, &s->friends[i], false); cui_pop_id(ui); }
         }
@@ -486,7 +489,7 @@ static void panel_history(cui_ctx *ui, app_state_t *s) {
         panel_shell(ui, "Histórico de chamadas", CUI_ICON_HISTORY);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 8, .pad = 16) {
             cui_icon(ui, CUI_ICON_HISTORY, 34, B_C3);
-            cui_text(ui, "Nenhuma chamada ainda", .font = CUI_FONT_DISPLAY, .size = 18);
+            cui_text(ui, "Nenhuma chamada ainda", .font = CUI_FONT_DISPLAY, .size = g_panel_w < 300.0f ? 14 : 18, .nowrap = true);
         }
     }
 }
@@ -507,7 +510,7 @@ static void panel_chat2(cui_ctx *ui, app_state_t *s) {
                 cui_box(ui, .width = CUI_PX(48), .height = CUI_PX(48), .radius = 24, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
                         .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MESSAGE_SQUARE, 20, B_C3); }
                 cui_text(ui, has ? "Sem mensagens ainda" : "Nenhuma conversa aqui", .font = CUI_FONT_MEDIUM, .nowrap = true);
-                cui_text(ui, has ? "O que vocês escreverem aparece aqui." : s->friend_count ? "Use o botão Trocar amigo para escolher com quem conversar." : "Adicione um amigo para abrir uma conversa neste painel.", .size = 12, .color = B_MUTED);
+                cui_text(ui, has ? "O que vocês escreverem aparece aqui." : s->friend_count ? "Use Escolher amigo, aqui embaixo, para abrir a conversa." : "Adicione um amigo para abrir uma conversa neste painel.", .size = 12, .color = B_MUTED);
             }
         } else cui_scroll(ui, .id = "chat2-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 16) {
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
@@ -515,9 +518,8 @@ static void panel_chat2(cui_ctx *ui, app_state_t *s) {
             }
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 12, .gap = 8, .align = CUI_ALIGN_CENTER) {
-            if (s->friend_count > 1 && cui_button(ui, "Trocar amigo", .variant = CUI_BUTTON_SECONDARY)) {
-                int n = s->chat2_friend + 1; if (n >= s->friend_count) n = 0;
-                app_open_chat2(s, n);
+            if (s->friend_count > 0) cui_menu(ui, s->chat2_friend >= 0 && s->chat2_friend < s->friend_count ? "Trocar amigo" : "Escolher amigo", .placement = CUI_PLACE_TOP_START) {
+                for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 8600 + i); if (cui_menu_item(ui, s->friends[i].name)) app_open_chat2(s, i); cui_pop_id(ui); }
             }
         }
     }
@@ -544,7 +546,7 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
 static bool profile_nav(cui_ctx *ui, const char *icon, const char *label, bool active) {
     bool hit = false;
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
-            .bg = active ? B_A(B_C3, 0x33) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {
+            .bg = active ? B_A(B_C3, 0x33) : briks_hover(ui, label) ? (cui_mouse_down(ui, CUI_MOUSE_LEFT) ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12)) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {   /* hover e clique visíveis também dentro do diálogo */
         cui_icon(ui, icon, 16, active ? B_TEXT : B_MUTED);
         cui_text(ui, label, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
     }

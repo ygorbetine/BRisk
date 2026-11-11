@@ -46,7 +46,7 @@ int script_probe(const char *n) {
 }
 
 static void frame(cui_ctx *ui) {
-    g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0;
+    g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0; g_hot_modal_draw = briks_hot_modal_draw;
     memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
     { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */

@@ -44,6 +44,7 @@ static void mic_test_tick(app_state_t *s) {
 void hotkeys_tick(cui_ctx *ui, app_state_t *s) {
     mic_test_tick(s);
     settings_data_pump(s);
+    overlay_tick(ui, s);
     static char applied[HK_N][24]; static bool applied_on, prev[HK_N]; static hk_ptt_t ptt;
     static int real = -1;
     if (real < 0) real = (getenv("BRIKS_HIDDEN") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_DEMO")) ? 0 : 1;   /* testes ocultos: nunca registra atalho de verdade */

@@ -8,6 +8,7 @@
 #include "hotkeys.h"
 #include "storage.h"
 #include "json.h"
+int overlay_state(void); int overlay_probe(const char *n);   /* overlay_host.c */
 void data_refresh(void); void data_ui(cui_ctx *ui, app_state_t *s); int data_probe(const char *n);   /* settings_data.c */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +26,7 @@ typedef struct {
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
     bool echo, excl_audio;
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
-    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute;
+    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
     char key_mute[24], key_deafen[24], key_stream[24], key_ptt[24];
     bool ptt_on; float ptt_delay;
     bool nt_online, nt_stream;
@@ -39,7 +40,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
     { "call_mode", 'i', &g_set.call_mode }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
-    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute },
+    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
@@ -128,6 +129,10 @@ void settings_keys(const char **mute, const char **deafen, const char **stream, 
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off) {
     snprintf(mic, mic_cap, "%s", g_set.mic ? g_set.mic_name : ""); snprintf(out, out_cap, "%s", g_set.out ? g_set.out_name : ""); *noise_off = g_set.noise_off != 0;
 }
+void settings_overlay(bool *on, float *opacity, int *flags, int *corner) {
+    *on = g_set.ov_on; *opacity = g_set.ov_opacity; *corner = g_set.ov_corner < 0 || g_set.ov_corner > 3 ? 0 : g_set.ov_corner;
+    *flags = (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
+}
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
@@ -204,6 +209,8 @@ void settings_export_json(FILE *f) {
 int settings_probe(const char *n, app_state_t *s) {
     unsigned m; int v;
     { int dp = data_probe(n); if (dp != -9999) return dp; }
+    { int op = overlay_probe(n); if (op != -9999) return op; }
+    if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
     if (!strcmp(n, "rec_slot")) return rec_slot;
     if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
     if (!strcmp(n, "mic_test_on")) return s->mic_test_on;
@@ -395,13 +402,24 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     break;
                 case 4: /* Sobreposição */
                     SCARD(ui, "SOBREPOSIÇÃO EM JOGOS") {
-                        sw(ui, "Mostrar sobreposição em jogos", "Mostra a live e quem está na sala por cima do jogo, sem tirar você dele.", &g_set.ov_on);
+                        sw(ui, "Mostrar sobreposição em jogos", "Mostra quem está na sala por cima do jogo, sem tirar você dele. Só aparece enquanto você está numa chamada.", &g_set.ov_on);
+                        { const int os = overlay_state();
+                          if (g_set.ov_on && os == 1) cui_text(ui, "Ativa agora.", .size = 12, .color = B_ONLINE);
+                          else if (g_set.ov_on && os == 2) cui_text(ui, "Não encontrei o briks_overlay.exe ao lado do Briks: reinstale o app para usar a sobreposição.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                          else if (g_set.ov_on && os == 3) cui_text(ui, "A sobreposição fechou sozinha. O Briks tenta abrir de novo em instantes.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                          else if (g_set.ov_on) sub(ui, "Aparece quando você entra numa chamada."); }
                         cui_text(ui, "O que aparece", .size = 12, .color = B_MUTED);
-                        cui_switch(ui, "Transmissão", &g_set.ov_live); cui_switch(ui, "Quem está na sala", &g_set.ov_voice);
-                        cui_switch(ui, "Sala conectada", &g_set.ov_status); cui_switch(ui, "Aviso de mudo", &g_set.ov_mute);
-                        cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 0, 100);
-                        cui_button(ui, "Editar posições", .variant = CUI_BUTTON_SECONDARY);
-                        tag_nofx(ui);
+                        sw(ui, "Quem está na sala", "Você e as pessoas da chamada; quem fala fica destacado.", &g_set.ov_voice);
+                        sw(ui, "Sala conectada", "Uma linha dizendo que a sala está conectada.", &g_set.ov_status);
+                        sw(ui, "Transmissão", "Avisa que você está transmitindo a tela.", &g_set.ov_live);
+                        sw(ui, "Aviso de mudo", "Mostra quando seu microfone está mudo ou você está ensurdecido.", &g_set.ov_mute);
+                        cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 10, 100);
+                        static const char *COR[] = { "Sup. direito", "Sup. esquerdo", "Inf. direito", "Inf. esquerdo" };
+                        cui_text(ui, "Canto da tela", .size = 12, .color = B_MUTED);
+                        seg(ui, "cfg-ovc", COR, 4, &g_set.ov_corner);
+                        sub(ui, "A sobreposição ocupa o canto escolhido do monitor principal e deixa os cliques passarem para o jogo.");
+                        sub(ui, "Jogos em tela cheia exclusiva cobrem qualquer sobreposição: use o modo janela ou janela sem bordas.");
+                        soon(ui, "arrastar e redimensionar a sobreposição (por enquanto só os quatro cantos)");
                     }
                     break;
                 case 5: /* Atalhos */

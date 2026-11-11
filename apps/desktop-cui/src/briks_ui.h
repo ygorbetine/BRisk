@@ -135,6 +135,7 @@ typedef struct {
     bool mic_on, cam_on, sharing, deaf;
     int call_mode, call_view;      /* 0 Call/Transmissão; 0 Chamada/Chat */
     /* WebRTC nativo (briks-core): estado de conexão exibido na tela */
+    unsigned long long rtc_conn_since;   /* GetTickCount64 de quando o estado virou "conectando" (0 = não está) */
     char rtc_state[16];            /* "" | conectando | conectado | reconectando | erro | desconectado */
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;

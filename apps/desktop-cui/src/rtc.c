@@ -172,6 +172,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *idn = json_get(j, "identity");
         if (idn && json_str(idn, "x", "")[0]) snprintf(s->my_jwk, sizeof s->my_jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(idn, "x", ""), json_str(idn, "y", ""));
     } else if (!strcmp(ev, "signaling.status")) {
+        if (!s->in_room) { json_free(j); return false; }   /* "desconectado" atrasado de uma sala já deixada não pode sujar a próxima */
         copy(s->rtc_state, sizeof s->rtc_state, json_str(j, "state", ""));
         net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);   /* erro técnico de rede vira frase compreensível */
     } else if (!strcmp(ev, "peer")) {
@@ -289,6 +290,16 @@ void rtc_pump(app_state_t *s) {
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         copy(s->rtc_state, sizeof s->rtc_state, "conectado"); s->rtc_peer_count = s->rtc_authed_count = dn;   /* a demonstração mostra a sala como conectada */
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }
+    }
+    {   /* "Conectando…" não pode ficar mudo para sempre: sem resposta da sinalização em 30 s o app diz o motivo provável */
+        const bool pending = s->in_room && (!s->rtc_state[0] || !strcmp(s->rtc_state, "conectando")) && !getenv("BRIKS_DEMO_PEERS");
+        if (!pending) s->rtc_conn_since = 0;
+        else if (!s->rtc_conn_since) s->rtc_conn_since = GetTickCount64();
+        else if (GetTickCount64() - s->rtc_conn_since > 30000ULL) {
+            copy(s->rtc_state, sizeof s->rtc_state, "erro");
+            copy(s->rtc_msg, sizeof s->rtc_msg, "O servidor de chamadas não respondeu em 30 segundos. Verifique a internet e entre de novo na sala.");
+            s->rtc_conn_since = 0;
+        }
     }
     if (st == CORE_FAILED && s->in_room && strcmp(s->rtc_state, "erro")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");

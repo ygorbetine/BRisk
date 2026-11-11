@@ -323,7 +323,7 @@ async fn realtime_reports_error_when_server_is_down() {
     let mut saw_reconnecting = false;
     let _ = timeout(Duration::from_secs(5), async {
         while let Some(e) = rx.recv().await {
-            if matches!(e, realtime::RtEvent::Status(ref s) if s == "reconnecting") { saw_reconnecting = true; break; }
+            if matches!(e, realtime::RtEvent::Status(ref s) if s.starts_with("reconnecting")) { saw_reconnecting = true; break; }
         }
     })
     .await;

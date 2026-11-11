@@ -645,15 +645,20 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                 }
             }
             s = async { match rt_status.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
-                if let Some(s) = s {
-                    let (state, msg) = match s.as_str() {
-                        "connecting" => ("conectando", String::new()),
-                        "connected" => ("conectado", String::new()),
-                        "reconnecting" => ("reconectando", String::new()),
-                        "disconnected" => ("desconectado", String::new()),
-                        e => ("erro", e.trim_start_matches("error: ").to_string()),
-                    };
-                    out(&mut wr, json!({ "ev": "signaling.status", "state": state, "message": msg })).await?;
+                match s {
+                    Some(s) => {
+                        let (state, msg) = match s.as_str() {
+                            "connecting" => ("conectando", String::new()),
+                            "connected" => ("conectado", String::new()),
+                            "reconnecting" => ("reconectando", String::new()),
+                            "disconnected" => ("desconectado", String::new()),
+                            e if e.starts_with("reconnecting: ") => ("reconectando", e.trim_start_matches("reconnecting: ").to_string()),
+                            e => ("erro", e.trim_start_matches("error: ").to_string()),
+                        };
+                        out(&mut wr, json!({ "ev": "signaling.status", "state": state, "message": msg })).await?;
+                    }
+                    // o canal de status fechou (a sinalização terminou): sem isto o select girava sem parar nesse ramo
+                    None => { rt_status = None; }
                 }
             }
         }

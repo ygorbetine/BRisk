@@ -127,7 +127,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, state_txt, .size = 11.5f, .color = state_col, .nowrap = true);
                     }
                 }
-                if (briks_hover(ui, "open")) briks_tip(bad && s->rtc_msg[0] ? s->rtc_msg : "Abrir a chamada");
+                if (briks_hover(ui, "open")) briks_tip((bad || reconn) && s->rtc_msg[0] ? s->rtc_msg : "Abrir a chamada");
                 if (briks_clicked_r(ui, "open", 10.0f)) s->screen = SCREEN_CALL;
             }
             if (mini_icon(ui, "mic", CUI_ICON_MIC, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {

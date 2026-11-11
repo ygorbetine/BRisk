@@ -240,6 +240,19 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                     let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                         if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                     });
+                    // Faixa nova (1ª assinatura ou reassinatura depois de uma reconexão): o receptor pede um quadro-chave ao começar,
+                    // mas esse 1º pedido pode chegar ao servidor antes de a faixa de quem transmite estar pronta e se perder; o
+                    // seguinte só sairia depois de 2 s sem quadros. Repete o pedido algumas vezes, até o 1º quadro aparecer.
+                    if !(cfg!(test) && std::env::var("BRIKS_SFU_TEST_REKEY_OLD").is_ok()) {
+                        let (pli2, recv2) = (pli.clone(), recv.clone());
+                        tokio::spawn(async move {
+                            for ms in [250u64, 350, 500, 700] {
+                                tokio::time::sleep(Duration::from_millis(ms)).await;
+                                if recv2.frames.load(Ordering::Relaxed) > 0 { break; }
+                                if recv2.watching.load(Ordering::Relaxed) { pli2(); }
+                            }
+                        });
+                    }
                     tokio::spawn(share::run_remote_video(meta.identity.clone(), track, recv, sev, pli));
                 } else if let Some(a) = audio {
                     let key = if meta.source == lk::TrackSource::ScreenShareAudio as i32 { format!("{}#screen", meta.identity) } else { meta.identity.clone() };
@@ -686,6 +699,12 @@ impl Actor {
                     // contado a partir desse quadro desperdiçado. Sem ele, o PLI do servidor é atendido na hora.
                     let rekey = !std::mem::take(&mut self.republish_video) || (cfg!(test) && std::env::var("BRIKS_SFU_TEST_REKEY_OLD").is_ok());
                     if rekey { self.idr.store(true, Ordering::Relaxed); }
+                    else {
+                        // rede de segurança: se em 1,5 s nenhum pedido de quadro-chave chegou do servidor (ninguém assistindo ainda,
+                        // ou o pedido se perdeu), manda um mesmo assim
+                        let (idr, stats, plis0) = (self.idr.clone(), self.stats.clone(), self.stats.plis.load(Ordering::Relaxed));
+                        tokio::spawn(async move { tokio::time::sleep(Duration::from_millis(1500)).await; if stats.plis.load(Ordering::Relaxed) == plis0 { idr.store(true, Ordering::Relaxed); } });
+                    }
                     let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
                     spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {

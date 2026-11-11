@@ -339,10 +339,18 @@ UI:
 - Causa: ao republicar a faixa de vídeo, o app forçava um quadro-chave antes de o transporte novo existir (perdido). O pedido do
   servidor quando o espectador reassina (PLI) tinha então de esperar o intervalo mínimo entre quadros-chave do codificador (1 a 2 s)
   contado a partir desse quadro desperdiçado.
-- Mudança (`sfu.rs`, `on_track_published`): na REpublicação não força quadro-chave; o PLI do servidor é atendido na hora.
-- Medição (`tests_sfurec`, 1º quadro novo do espectador depois de os três voltarem, e quadros por segundo nos 5 s seguintes),
-  com a máquina a 100% de CPU por outras compilações: ver a tabela no relatório da rodada. O teste falha nessa carga no limite de
-  quadros por segundo (720p em software), antes e depois da mudança.
+- Mudança (`sfu.rs`): na REpublicação não força quadro-chave (o PLI do servidor é atendido na hora; se nenhum chegar em 1,5 s,
+  manda um mesmo assim); e quem assiste repete o pedido de quadro-chave (250, 600, 1100 e 1800 ms depois de a faixa chegar) até
+  o 1º quadro aparecer.
+- **Melhora NÃO demonstrada.** Tempo até o 1º quadro novo do espectador, contado depois de os três clientes voltarem
+  (`tests_sfurec`), com a máquina a 100% de CPU por compilações de outras sessões:
+  - antes: 2,5 / 2,6 / 1,8 / 2,9 s (4 amostras);
+  - só sem o quadro-chave forçado: 1,1 / 3,4 / 3,1 / 1,1 s;
+  - versão final (com os pedidos repetidos): 3,8 / 2,3 / 1,2 s e uma rodada sem nenhum quadro em 5 s (nela os clientes levaram
+    3,1 s para voltar e o teste falhou na voz, por carga).
+  As melhores amostras ficaram abaixo de qualquer amostra de antes (1,1 a 1,2 s contra 1,8 s), as piores ficaram acima. Com a
+  máquina nesse estado não dá para separar o efeito da mudança do ruído. Repetir com a máquina livre.
+- O limite que sobra está em `share.rs` (fora do escopo desta rodada): intervalo mínimo de 1 a 2 s entre quadros-chave.
 
 ### 10% de perda no envio
 - Mudança pequena (`sfu.rs`, `rtx_gap_ms`): com perda alta relatada pelo SFU (a mesma faixa que liga a retransmissão em dobro), o

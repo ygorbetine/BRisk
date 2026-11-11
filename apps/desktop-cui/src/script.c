@@ -144,7 +144,9 @@ void script_tick(cui_ctx *ui) {
 /* cursor (anel com ponto) e legenda, desenhados como caixas comuns (não interceptam o mouse) */
 void script_overlay(cui_ctx *ui) {
     float r = mdown ? 15.0f : 11.0f;
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START,
+    static int hide_cursor = -1;   /* capturas pontuais (BRIKS_SCRIPT_SHOTS) saem sem o círculo do ponteiro (LAY-12); BRIKS_SCRIPT_CURSOR=1 o mantém */
+    if (hide_cursor < 0) hide_cursor = shots_only && !getenv("BRIKS_SCRIPT_CURSOR");
+    if (!hide_cursor) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START,
             .pad_left = cx - r, .pad_top = cy - r) {
         cui_box(ui, .width = CUI_PX(r * 2), .height = CUI_PX(r * 2), .radius = r, .bg = mdown ? CUI_RGBA(0xa78bfacc) : CUI_RGBA(0xffffffcc),
                 .border = 2, .border_color = mdown ? CUI_RGB(0xffffff) : CUI_RGB(0x6d28d9)) {}

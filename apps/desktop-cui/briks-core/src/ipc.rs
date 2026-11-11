@@ -67,17 +67,24 @@ pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::ac
     let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
     let lk_room = format!("{ns}:{}", &secure_room_id(ns, room)[..32]);
     let (url, room2) = (sc.token_url.clone(), lk_room.clone());
-    let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room2)).await.map_err(|e| e.to_string())??;
+    let (token, told_url) = tokio::task::spawn_blocking(move || crate::sfu::fetch_token_ex(&url, &access, &room2)).await.map_err(|e| e.to_string())?.map_err(|e| e.msg)?;
+    // O serviço de tokens diz para qual servidor o token vale. Se for outro que não o configurado aqui, vale o do serviço (é ele que
+    // tem a chave); se a URL que ele mandou não for aceitável (esquema), erro claro em vez de uma recusa sem explicação.
+    let norm = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    let server_url = match told_url {
+        Some(u) if norm(&u) != norm(&sc.url) => { crate::sfu_cfg::check_server_url(&u).map_err(|e| format!("URL do servidor divergente (o serviço de tokens informou outra, inválida): {e}"))?; u }
+        _ => sc.url.clone(),
+    };
     // reconexão: token novo pela mesma função, com a sessão da conta renovada se preciso (o token da sala vale ~1 h)
     let token_url = sc.token_url.clone();
     let renew: crate::sfu::TokenFn = Arc::new(move || {
         let (acc, url, room) = (acc.clone(), token_url.clone(), lk_room.clone());
         Box::pin(async move {
-            let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
-            tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room)).await.map_err(|e| e.to_string())?
+            let access = acc.access_token().await.map_err(|e| crate::sfu::TokenFail::from(format!("sessão: {e}")))?;
+            tokio::task::spawn_blocking(move || crate::sfu::fetch_token_ex(&url, &access, &room).map(|t| t.0)).await.map_err(|e| crate::sfu::TokenFail::from(e.to_string()))?
         })
     });
-    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio, data, renew: Some(renew) }).await.map_err(|e| e.to_string())
+    crate::sfu::connect(crate::sfu::SfuJoin { url: server_url, token, audio, data, renew: Some(renew) }).await.map_err(|e| e.to_string())
 }
 
 pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {

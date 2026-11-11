@@ -342,3 +342,62 @@ async fn ipc_try_sfu_uses_the_account_session_end_to_end() {
     assert!(e.contains("conta"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Servidor HTTP de uma resposta só (loopback), para simular o serviço de tokens.
+fn http_once(status: &'static str, extra_headers: &'static str, body: String) -> u16 {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut s, _)) = l.accept() {
+            let mut buf = vec![0u8; 8192]; let mut n = 0;
+            while n < buf.len() { let r = s.read(&mut buf[n..]).unwrap_or(0); if r == 0 { break; } n += r; if String::from_utf8_lossy(&buf[..n]).contains("\"room\"") { break; } }
+            let _ = write!(s, "HTTP/1.1 {status}\r\ncontent-type: application/json\r\n{extra_headers}content-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    port
+}
+
+/// 429 do serviço de tokens: mensagem clara com o tempo de espera (Retry-After); a `url` da resposta é devolvida ao chamador.
+#[test]
+fn token_service_rate_limit_and_server_url_are_understood() {
+    let p = http_once("429 Too Many Requests", "retry-after: 17\r\n", json!({ "message": "Muitas requisições. Tente de novo em instantes." }).to_string());
+    let e = sfu::fetch_token_ex(&format!("http://127.0.0.1:{p}/livekit-token"), "sessao", "room:a").err().expect("429");
+    assert_eq!(e.retry_after, Some(17));
+    assert!(e.msg.contains("muitas tentativas") && e.msg.contains("aguarde 17 s"), "{}", e.msg);
+    let p = http_once("429 Too Many Requests", "", "{}".into());
+    assert_eq!(sfu::fetch_token_ex(&format!("http://127.0.0.1:{p}/livekit-token"), "s", "room:a").err().unwrap().retry_after, Some(30), "sem Retry-After: espera padrão");
+    let p = http_once("200 OK", "", json!({ "token": "abc.def.ghi", "url": "wss://outro.livekit.cloud", "ttl": 3600 }).to_string());
+    assert_eq!(sfu::fetch_token_ex(&format!("http://127.0.0.1:{p}/livekit-token"), "s", "room:a").unwrap(), ("abc.def.ghi".to_string(), Some("wss://outro.livekit.cloud".to_string())));
+    let p = http_once("401 Unauthorized", "", json!({ "message": "Entre na sua conta" }).to_string());
+    let e = sfu::fetch_token_ex(&format!("http://127.0.0.1:{p}/livekit-token"), "s", "room:a").err().unwrap();
+    assert!(e.retry_after.is_none() && e.msg.contains("401"));
+}
+
+/// A URL do servidor que o serviço de tokens informa vale mais que a do `livekit.json` quando as duas diferem; se a informada for
+/// inaceitável, o erro diz "URL do servidor divergente".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_try_sfu_follows_the_server_url_from_the_token_service() {
+    use crate::accounts::{fake, supabase::SupabaseProvider, Accounts, SignUpOutcome};
+    let Some(srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let dir = std::env::temp_dir().join(format!("briks-sfu-url-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    let acc = Accounts::new(Arc::new(SupabaseProvider::new(&f.url(), "chave-publica-de-teste")), &dir, fake::auto_browser());
+    let SignUpOutcome::SignedIn(_) = acc.sign_up("url@exemplo.com", "senha-boa-1", "Url").await.unwrap() else { panic!("cadastro") };
+    let rt = crate::accounts::service::Runtime::for_tests(Some(Arc::new(acc)), dir.clone());
+    let lk_room = format!("room:{}", &crate::signaling::secure_room_id("room", "sala-url")[..32]);
+    // configurado: um servidor que não existe; o serviço de tokens informa o verdadeiro
+    let p = http_once("200 OK", "", json!({ "token": dev_token(A, &lk_room), "url": format!("ws://127.0.0.1:{}", srv.port), "ttl": 3600 }).to_string());
+    let sc = crate::sfu_cfg::SfuConfig { url: "ws://127.0.0.1:9".into(), token_url: format!("http://127.0.0.1:{p}/functions/v1/livekit-token") };
+    let h = crate::ipc::try_sfu(&sc, &rt, "room", "sala-url", None, None).await.expect("devia entrar pelo servidor informado pelo serviço de tokens");
+    assert_eq!(h.identity, A);
+    h.cmd.send(MeshCmd::Close).await.unwrap();
+    // informada, mas inaceitável (ws:// fora de loopback): erro claro, sem tentar conectar
+    let p = http_once("200 OK", "", json!({ "token": dev_token(A, &lk_room), "url": "ws://exemplo.com", "ttl": 3600 }).to_string());
+    let sc = crate::sfu_cfg::SfuConfig { url: format!("ws://127.0.0.1:{}", srv.port), token_url: format!("http://127.0.0.1:{p}/functions/v1/livekit-token") };
+    let e = crate::ipc::try_sfu(&sc, &rt, "room", "sala-url", None, None).await.err().expect("URL inválida devia falhar");
+    assert!(e.contains("URL do servidor divergente"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

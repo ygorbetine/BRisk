@@ -63,7 +63,15 @@ pub struct SfuJoin {
 }
 
 /// Função que devolve um token de sala novo (no app: a função `livekit-token` do Supabase com a sessão da conta).
-pub type TokenFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+pub type TokenFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, TokenFail>> + Send>> + Send + Sync>;
+
+/// Falha ao pedir o token. `retry_after` = segundos que o serviço mandou esperar (429): ninguém deve pedir de novo antes disso.
+#[derive(Debug, Clone)]
+pub struct TokenFail { pub msg: String, pub retry_after: Option<u64> }
+impl From<String> for TokenFail { fn from(msg: String) -> Self { TokenFail { msg, retry_after: None } } }
+
+/// Intervalo mínimo entre dois pedidos de token durante uma mesma queda (o serviço limita a 30 por usuário a cada 10 min).
+const TOKEN_MIN_GAP: Duration = Duration::from_secs(10);
 
 /// Reconexão: 1ª tentativa quase imediata, depois espera crescente até 5 s (com ±20% de acaso para os clientes não baterem juntos
 /// num servidor que acabou de voltar); desiste após 2 min fora do ar.
@@ -124,7 +132,7 @@ enum Internal {
     Pc { epoch: u32, target: i32, state: RTCPeerConnectionState },
 }
 
-struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String }
+struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String, token_at: Option<std::time::Instant> }
 
 struct Pending { track: Arc<dyn TrackLocal + Send + Sync>, video: bool }
 
@@ -286,6 +294,16 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
 /// chame de `spawn_blocking`. O segredo do LiveKit fica só no servidor; aqui só passa o token curto (1 h) da sala.
 /// A identidade do token é o usuário (a função não aceita identidade livre).
 pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<String, String> {
+    fetch_token_ex(token_url, access_token, room).map(|t| t.0).map_err(|e| e.msg)
+}
+
+/// Como `fetch_token`, devolvendo também a URL do servidor que o serviço informa (`url`, quando vem) e, numa recusa por excesso
+/// de pedidos (429), quantos segundos esperar (`Retry-After`).
+pub fn fetch_token_ex(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
+    fetch_token_inner(token_url, access_token, room)
+}
+
+fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
     crate::sfu_cfg::check_token_url(token_url)?;
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
         .post(token_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
@@ -293,13 +311,19 @@ pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<St
     match resp {
         Ok(r) => {
             let v: Value = r.into_json().map_err(|e| format!("resposta do serviço de tokens inválida: {e}"))?;
-            v["token"].as_str().filter(|t| !t.is_empty() && t.len() < 4096).map(String::from).ok_or_else(|| "serviço de tokens não devolveu token".to_string())
+            let token = v["token"].as_str().filter(|t| !t.is_empty() && t.len() < 4096).map(String::from).ok_or_else(|| "serviço de tokens não devolveu token".to_string())?;
+            Ok((token, v["url"].as_str().map(|u| u.trim().to_string()).filter(|u| !u.is_empty())))
+        }
+        Err(ureq::Error::Status(429, r)) => {
+            // limite de pedidos do serviço: diz quanto esperar em vez de um "recusou" genérico
+            let secs = r.header("retry-after").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(30).clamp(1, 600);
+            Err(TokenFail { msg: format!("muitas tentativas no serviço de tokens: aguarde {secs} s"), retry_after: Some(secs) })
         }
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_json::<Value>().ok().and_then(|v| v["message"].as_str().map(String::from)).unwrap_or_default();
-            Err(format!("serviço de tokens recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()))
+            Err(format!("serviço de tokens recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()).into())
         }
-        Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>())),
+        Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>()).into()),
     }
 }
 
@@ -428,7 +452,7 @@ impl Actor {
     /// A sessão caiu (WebSocket fechado, servidor mudo ou mídia falhou): entra no estado "fora do ar"; o laço tenta voltar.
     fn lost(&mut self, reason: &str) {
         if self.down.is_some() || self.leave { return; }
-        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string() });
+        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string(), token_at: None });
     }
 
     /// Fim definitivo que NÃO é expulsão (a sala não fica bloqueada nesta sessão): a UI mostra o erro e o usuário pode entrar de novo.
@@ -467,11 +491,22 @@ impl Actor {
         let (attempt, since, fresh) = { let d = self.down.as_mut()?; d.attempt += 1; (d.attempt, d.since, d.token_fresh) };
         if since.elapsed() > GIVE_UP { self.terminal("conexão com o servidor de chamadas perdida (sem resposta por 2 minutos)").await; return None; }
         let fail = |a: &mut Actor, e: String| { if let Some(d) = a.down.as_mut() { d.next = tokio::time::Instant::now() + retry_delay(attempt); } e };
-        if !fresh {
+        // Token novo: uma vez por queda; de novo só se o servidor recusar, e nunca mais de um pedido a cada 10 s (com o token
+        // recusado e o pedido ainda cedo demais, a tentativa segue com o token que há: não gasta a cota do serviço em laço).
+        let too_soon = self.down.as_ref().and_then(|d| d.token_at).map(|t| t.elapsed() < TOKEN_MIN_GAP).unwrap_or(false);
+        if !fresh && !too_soon {
             if let Some(f) = self.renew.clone() {
-                match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err("serviço de tokens não respondeu".into())) {
+                if let Some(d) = self.down.as_mut() { d.token_at = Some(std::time::Instant::now()); }
+                match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err(TokenFail::from("serviço de tokens não respondeu".to_string()))) {
                     Ok(t) => { self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
-                    Err(e) => { let e = fail(self, e); self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": format!("token: {e}") }))).await; return None; }
+                    Err(e) => {
+                        let msg = fail(self, e.msg);
+                        // 429: o serviço disse quanto esperar; a próxima tentativa (e o próximo pedido de token) só depois disso
+                        if let (Some(secs), Some(d)) = (e.retry_after, self.down.as_mut()) { d.next = tokio::time::Instant::now() + Duration::from_secs(secs.clamp(1, 110)); }
+                        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": format!("token: {msg}"), "retry_after": e.retry_after }))).await;
+                        if e.retry_after.is_some() { self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "reconectando", "message": msg }))).await; }
+                        return None;
+                    }
                 }
             }
         }

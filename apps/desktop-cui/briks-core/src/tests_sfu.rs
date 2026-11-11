@@ -132,6 +132,7 @@ async fn sfu_screen_share_published_and_watched() {
     let (w, h) = (1280usize, 720usize);
     for round in 0..2 {
         a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+        if let Some(MeshEvent::Share(v)) = wait_ev(&mut a, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.local" && v["state"] == "on"), 20).await { eprintln!("SFU codificador: {} (hardware: {})", v["encoder"], v["hardware"]); }
         let on = wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "on"), 20).await.expect("B não soube da transmissão");
         if let MeshEvent::Share(v) = on { assert_eq!(v["label"], "Teste"); }
         let rpath = dir.join(format!("recebido-{round}.bin"));
@@ -151,7 +152,7 @@ async fn sfu_screen_share_published_and_watched() {
         let cpu = (crate::share::cpu_ms() - c0) / (wall0.elapsed().as_secs_f64() * 1000.0) * 100.0;
         lats.sort();
         let (n, p50, p95) = (lats.len(), lats[lats.len() / 2], lats[lats.len() * 95 / 100]);
-        eprintln!("SFU vídeo, rodada {round}: {n} quadros em 4 s ({:.1} fps), latência captura→quadro p50 {p50} ms p95 {p95} ms; CPU do processo (codificação software + decodificação software + 2 clientes) {cpu:.0}% de 1 núcleo", n as f64 / 4.0);
+        eprintln!("SFU vídeo, rodada {round}: {n} quadros em 4 s ({:.1} fps), latência captura→quadro p50 {p50} ms p95 {p95} ms; CPU do processo (codificação + decodificação software + 2 clientes) {cpu:.0}% de 1 núcleo", n as f64 / 4.0);
         assert!(n >= 12, "poucos quadros: {n}");   // só prova o fluxo; o desempenho se mede em --release
         // parar: B é avisado
         a.cmd.send(MeshCmd::ShareStop).await.unwrap();

@@ -118,6 +118,9 @@
     { "id": "amigos-codigo", "demo": "social", "roteiro": "amigos-codigo.txt", "env": { "BRIKS_DEV_OPEN": "add", "BRIKS_DEV_NOCLIP": "1" }, "checagens": [
       { "item": "AMI-04", "de": "am0", "para": "am1", "esperado": "muda" },
       { "item": "AMI-04", "de": "am1", "para": "am2", "esperado": "muda" } ] },
+    { "id": "rede-modo", "demo": "social", "roteiro": "rede-modo.txt", "env": { "BRIKS_DEV_OPEN": "settings:1" }, "checagens": [
+      { "item": "RDE-01", "de": "rm0", "para": "rm1", "esperado": "muda" },
+      { "item": "RDE-01", "de": "rm1", "para": "rm2", "esperado": "muda" } ] },
     { "id": "grupos-voz", "demo": "group", "roteiro": "grupos-voz.txt", "env": { "BRIKS_DEMO_GROSTER": "1" }, "checagens": [
       { "item": "GRP-17", "de": "gv0", "para": "gv1", "esperado": "muda" } ] },
     { "id": "grupos-busca", "demo": "group", "roteiro": "grupos-busca.txt", "checagens": [

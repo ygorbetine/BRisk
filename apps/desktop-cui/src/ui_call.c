@@ -229,7 +229,8 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 /* grade: eu + quem está na sala, em linhas de `cols` colunas (até 1+BRIKS_MAX_PEERS quadros). O avatar encolhe para caber. */
                 int order[BRIKS_MAX_PEERS], np = 0;
                 for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) order[np++] = i;
-                int total = 1 + np + (s->in_room ? 0 : 1);
+                bool more = s->in_room && s->rtc_overflow > 0;   /* gente além da grade: um último quadro "+N" */
+                int total = 1 + np + (s->in_room ? 0 : 1) + (more ? 1 : 0);
                 int cols = total <= 3 ? total : total <= 4 ? 2 : total <= 6 ? 3 : total <= 12 ? 4 : total <= 20 ? 5 : total <= 30 ? 6 : 7;
                 int rows = (total + cols - 1) / cols;
                 cui_vec2 gvp = cui_viewport_size(ui);
@@ -246,6 +247,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                         if (k >= total) { cui_box(ui, .width = CUI_FILL, .height = CUI_FILL) {} continue; }   /* última linha incompleta: mantém a largura das colunas */
                         if (k == 0) { tile(ui, &me, mic_eff); continue; }
                         if (!s->in_room) { tile(ui, &other, s->mic_on); continue; }   /* prévia local sem sala */
+                        if (more && k == total - 1) {
+                            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 2, .clip = true) {
+                                char pn[24]; snprintf(pn, sizeof pn, "+%d", s->rtc_overflow);
+                                cui_text(ui, pn, .font = CUI_FONT_DISPLAY, .size = av < 170.0f ? 18.0f : 30.0f, .color = CUI_RGB(0xffffff));
+                                cui_text(ui, s->rtc_overflow == 1 ? "pessoa na chamada" : "pessoas na chamada", .size = 12, .color = B_MUTED);
+                            }
+                            continue;
+                        }
                         int i = order[k - 1];
                         {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);

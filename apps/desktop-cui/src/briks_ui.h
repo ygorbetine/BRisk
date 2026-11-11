@@ -122,6 +122,7 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
+    int rtc_overflow;              /* participantes além de BRIKS_MAX_PEERS: estão na chamada (o áudio toca), mas sem quadro: a grade mostra "+N" */
     struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; char fp[72], name[64], status[64], presence[64]; } rtc_peers[BRIKS_MAX_PEERS];
     float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */

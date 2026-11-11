@@ -6,6 +6,7 @@
 #include "json.h"
 #include "msgui.h"
 #include "attach.h"
+#include "call.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -34,14 +35,14 @@ static void dm_channel(const app_state_t *s, const char *peer, char *out, size_t
 }
 
 void app_open_friend(app_state_t *s, int idx) {
-    s->active_friend = idx; s->active_group = -1; s->msg_count = 0;
+    s->active_friend = idx; s->active_group = -1; s->msg_count = 0; history_close();
     if (idx < 0) return;
     dm_channel(s, s->friends[idx].id, s->chat_channel, sizeof s->chat_channel);
     s->reload_msgs = true;
 }
 
 void app_open_group(app_state_t *s, int idx) {
-    s->active_group = idx; s->active_friend = -1; s->msg_count = 0;
+    s->active_group = idx; s->active_friend = -1; s->msg_count = 0; history_close();
     if (idx < 0) return;
     snprintf(s->chat_channel, sizeof s->chat_channel, "%s", s->groups[idx].channel);
     s->reload_msgs = true;
@@ -207,7 +208,7 @@ void app_demo(app_state_t *s, const char *mode) {
         s->screen = SCREEN_CALL; s->mic_on = true;
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
         add_msg(s, "m2", "Ygor", "Entro sim, só terminar o jantar.", "2026-11-09T23:42:00.000Z", true);
-        if (!strcmp(mode, "call-chat")) s->call_view = 1;
+        if (!strcmp(mode, "call-chat")) { s->call_view = 1; for (int i = 0; i < s->msg_count; i++) call_chat_add(s->msgs[i].id, s->msgs[i].author, s->msgs[i].content, 1794267660000LL + i * 60000LL, s->msgs[i].mine); }   /* chat da sala de exemplo */
         if (!strcmp(mode, "call-broadcast")) s->call_mode = 1;
         return;
     }

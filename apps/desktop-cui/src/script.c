@@ -143,7 +143,7 @@ void script_tick(cui_ctx *ui) {
                 char *pl = strchr(k, '+');
                 if (pl && pl[1]) { *pl = 0; if (!_stricmp(k, "ctrl")) mods |= CUI_MOD_CTRL; else if (!_stricmp(k, "shift")) mods |= CUI_MOD_SHIFT; else if (!_stricmp(k, "alt")) mods |= CUI_MOD_ALT; k = pl + 1; continue; }
                 kc = !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE
-                   : !strcmp(k, "home") ? CUI_KEY_HOME : !strcmp(k, "end") ? CUI_KEY_END : !strcmp(k, "left") ? CUI_KEY_LEFT : !strcmp(k, "right") ? CUI_KEY_RIGHT : !strcmp(k, "delete") ? CUI_KEY_DELETE
+                   : !strcmp(k, "home") ? CUI_KEY_HOME : !strcmp(k, "end") ? CUI_KEY_END : !strcmp(k, "left") ? CUI_KEY_LEFT : !strcmp(k, "right") ? CUI_KEY_RIGHT : !strcmp(k, "delete") ? CUI_KEY_DELETE : !strcmp(k, "f11") ? CUI_KEY_F11
                    : (strlen(k) == 1 && k[0] >= 'a' && k[0] <= 'z') ? (int)CUI_KEY_A + (k[0] - 'a') : -1;
                 break;
             }

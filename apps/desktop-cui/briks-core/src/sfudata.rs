@@ -282,6 +282,24 @@ impl Layer {
                 if had { vec![Out::Ev(MeshEvent::Ack { id: id.to_string(), from_fp: fp })] } else { vec![] }   // "entregue" na UI, uma vez só
             }
             "typing" => vec![Out::Ev(MeshEvent::Typing { from_fp: fp })],
+            "room.chat" => {
+                // chat da chamada: só de quem fez hello, com limite de frequência; o autor é a identidade provada (nada do que vem no JSON)
+                let author = self.peers.get(from).map(|p| p.name.clone()).unwrap_or_default();
+                let (Some(id), Some(content)) = (v["id"].as_str().and_then(crate::roomchat::clean_id), v["content"].as_str().and_then(crate::roomchat::clean)) else { return vec![] };
+                let now = now_ms() as u64;
+                if !crate::roomchat::allow_chat(&self.me, from, now) { return vec![]; }
+                if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }
+                if self.seen_msgs.insert(format!("room:{id}")) { vec![Out::Ev(MeshEvent::RoomChat { peer_id: from.into(), from_fp: fp, author, content, id, ts: now })] } else { vec![] }
+            }
+            "stream.request" | "stream.reply" => {
+                let name = self.peers.get(from).map(|p| p.name.clone()).unwrap_or_default();
+                let now = now_ms() as u64;
+                if t == "stream.request" {
+                    if crate::roomchat::allow_request(&self.me, from, now) { vec![Out::Ev(MeshEvent::StreamRequest { peer_id: from.into(), name })] } else { vec![] }
+                } else if crate::roomchat::take_asked(&self.me, from, now) {
+                    vec![Out::Ev(MeshEvent::StreamReply { peer_id: from.into(), name, accepted: v["accepted"].as_bool().unwrap_or(false) })]
+                } else { vec![] }
+            }
             "file" => vec![Out::File { from: from.to_string(), fp, jwk, m: v["m"].clone() }],
             "group" => {
                 let Ok(s) = serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) else { return vec![] };   // formato desconhecido: ignora
@@ -437,6 +455,23 @@ impl Layer {
                 let idents: Vec<String> = self.muted_idents.iter().filter(|(_, f)| f.as_str() == fp).map(|(k, _)| k.clone()).collect();
                 for i in idents { self.muted_idents.remove(&i); out.push(Out::MuteLocal { ident: i, muted: false }); }
                 Some(out)
+            }
+            MeshCmd::RoomChat { id, text } => {
+                let (Some(id), Some(text)) = (crate::roomchat::clean_id(&id), crate::roomchat::clean(&text)) else { return Some(vec![]) };
+                let to: Vec<String> = self.peers.keys().cloned().collect();
+                Some(if to.is_empty() { vec![] } else { vec![Out::Send { to, msg: json!({ "v": 1, "t": "room.chat", "id": id, "content": text, "ts": now_ms() }) }] })
+            }
+            MeshCmd::StreamRequest { key } | MeshCmd::StreamReply { key, .. } if !self.peers.iter().any(|(k, p)| *k == key || p.fp == key) => {
+                Some(vec![Out::Ev(MeshEvent::Error("pedido de transmissão: essa pessoa não está na sala".into()))])
+            }
+            MeshCmd::StreamRequest { key } => {
+                let id = self.peers.iter().find(|(k, p)| **k == key || p.fp == key).map(|(k, _)| k.clone()).unwrap_or(key);
+                crate::roomchat::mark_asked(&self.me, &id, now_ms() as u64);
+                Some(vec![Out::Send { to: vec![id], msg: json!({ "v": 1, "t": "stream.request" }) }])
+            }
+            MeshCmd::StreamReply { key, accepted } => {
+                let id = self.peers.iter().find(|(k, p)| **k == key || p.fp == key).map(|(k, _)| k.clone()).unwrap_or(key);
+                Some(vec![Out::Send { to: vec![id], msg: json!({ "v": 1, "t": "stream.reply", "accepted": accepted }) }])
             }
             MeshCmd::Typing => { let to: Vec<String> = self.peers.keys().cloned().collect(); Some(if to.is_empty() { vec![] } else { vec![Out::Send { to, msg: json!({ "v": 1, "t": "typing" }) }] }) }
             MeshCmd::GroupSend { snapshot } => {

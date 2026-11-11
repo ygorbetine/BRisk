@@ -138,6 +138,7 @@ void settings_overlay(bool *on, float *opacity, int *flags, int *corner) {
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 bool settings_nt_online(void) { return g_set.nt_online; }
 bool settings_nt_stream(void) { return g_set.nt_stream; }
+void settings_audio_set(float in_vol, float out_vol, bool gate_on, float gate_db) { g_set.in_vol = in_vol < 0 ? 0 : in_vol > 100 ? 100 : in_vol; g_set.out_vol = out_vol < 0 ? 0 : out_vol > 100 ? 100 : out_vol; g_set.gate_on = gate_on; g_set.gate_db = gate_db < -70 ? -70 : gate_db > -20 ? -20 : gate_db; }   /* ajustes de áudio da chamada (ui_call.c): settings_tick grava */
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
 }

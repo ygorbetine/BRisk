@@ -1,0 +1,18 @@
+# Chat da sala (demo call-chat): balões, campo embaixo, Enter e botão enviam; ao voltar para Chamada nada some
+waitms 400
+snap k0
+expect call_msgs 2
+click 600 645
+waitms 300
+type Chego em cinco minutos
+key enter
+waitms 400
+expect call_msgs 3
+snap k1
+click 600 645
+waitms 300
+type pelo botão
+click 1224 645
+waitms 400
+expect call_msgs 4
+snap k2

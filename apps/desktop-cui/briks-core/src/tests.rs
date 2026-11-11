@@ -1339,3 +1339,6 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
     let _ = b.cmd.send(MeshCmd::Close).await;
     let _ = std::fs::remove_dir_all(&recv); let _ = std::fs::remove_dir_all(&src);
 }
+
+#[path = "tests_sala.rs"]
+mod sala;   // chat da sala e pedido de transmissao

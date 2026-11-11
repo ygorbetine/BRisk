@@ -46,6 +46,19 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
     a.cmd.send(MeshCmd::Typing).await.unwrap();
     assert!(b.wait(10, &format!("typing:{}", a.fp)).await && d.wait(10, &format!("typing:{}", a.fp)).await, "digitando não chegou");
 
+    // 1b) chat da chamada (para todos, autor = identidade provada) e pedido de transmissão com resposta
+    b.cmd.send(MeshCmd::RoomChat { id: "sala-msg-0001".into(), text: "alguém me ouve?".into() }).await.unwrap();
+    for c in [&a, &d] { assert!(c.wait(10, &format!("roomchat:{B}:{}:Beto:sala-msg-0001:alguém me ouve?", b.fp)).await, "{}: chat da chamada não chegou", c.ident); }
+    assert_eq!(b.count("roomchat:"), 0, "eco do próprio chat da chamada");
+    a.cmd.send(MeshCmd::StreamRequest { key: b.fp.clone() }).await.unwrap();
+    assert!(b.wait(10, &format!("streamreq:{A}:Ana")).await, "pedido de transmissão não chegou");
+    b.cmd.send(MeshCmd::StreamReply { key: a.fp.clone(), accepted: true }).await.unwrap();
+    assert!(a.wait(10, &format!("streamreply:{B}:Beto:true")).await, "resposta ao pedido de transmissão não chegou");
+    // resposta que ninguém pediu é ignorada
+    d.cmd.send(MeshCmd::StreamReply { key: a.fp.clone(), accepted: true }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(a.count("streamreply:") + d.count("streamreq:"), 1, "resposta não pedida passou");
+
     // 2) DM com o id da UI e confirmação de entrega (uma vez)
     b.cmd.send(MeshCmd::ChatWithId { to_fp: a.fp.clone(), text: "com id da UI".into(), id: "msg-ui-0001".into() }).await.unwrap();
     assert!(a.wait(10, &format!("chat:{}:com id da UI", b.fp)).await, "DM não chegou");

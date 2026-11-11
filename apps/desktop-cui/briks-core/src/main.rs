@@ -30,6 +30,7 @@ mod sfu;
 mod sfudata;
 mod sfufiles;
 mod sfu_cfg;
+mod roomchat;
 mod share;
 mod signaling;
 

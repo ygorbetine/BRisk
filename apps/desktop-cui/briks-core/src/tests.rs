@@ -369,6 +369,44 @@ async fn signed_chat_events_travel_between_peers_and_bad_ones_are_dropped() {
     let _ = b.cmd.send(MeshCmd::Close).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn history_syncs_missing_messages_verified_and_only_for_the_shared_dm() {
+    use crate::identity::{self, ChatWire};
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-historico", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-historico", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+
+    let ch = identity::dm_channel(&ia.fingerprint(), &ib.fingerprint());
+    let mk = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new() });
+    let m1 = mk(&ia, &ch, 1, "oi, sou a Ana");
+    let m2 = mk(&ia, &ch, 2, "segunda da Ana");
+    let m3 = mk(&ib, &ch, 3, "resposta do Beto, escrita antes");
+    // forjada: assinada pela Ana, mas dizendo que o autor é o Beto -> o Beto tem que descartar
+    let mut forged = mk(&ia, &ch, 4, "o Beto nunca disse isto"); forged.author_peer_id = ib.fingerprint();
+    // de outra DM: a Ana tem, mas não é do canal que os dois compartilham -> nunca deve chegar
+    let other = mk(&ia, &identity::dm_channel(&ia.fingerprint(), "outra-pessoa-fp"), 5, "conversa com outra pessoa");
+    a.cmd.send(MeshCmd::HistSeed { msgs: vec![m1.clone(), m2.clone(), m3.clone(), forged, other] }).await.unwrap();
+    // o Beto já tem a m2: não deve voltar
+    b.cmd.send(MeshCmd::HistSeed { msgs: vec![m2.clone()] }).await.unwrap();
+    b.cmd.send(MeshCmd::HistAsk).await.unwrap();
+
+    let mut got: Vec<(String, bool)> = Vec::new();
+    while let Some(MeshEvent::History { id, mine, content, .. }) = wait_for(&mut b, 8, |e| matches!(e, MeshEvent::History { .. })).await {
+        assert!(!content.contains("nunca disse") && !content.contains("outra pessoa"), "chegou mensagem que não devia: {content}");
+        got.push((id, mine));
+        if got.len() >= 2 { break; }
+    }
+    got.sort();
+    assert_eq!(got, vec![("hist-00000001".to_string(), false), ("hist-00000003".to_string(), true)], "faltaram/sobraram mensagens: {got:?}");
+    // pedir de novo: já tem tudo -> nada novo
+    b.cmd.send(MeshCmd::HistAsk).await.unwrap();
+    assert!(wait_for(&mut b, 4, |e| matches!(e, MeshEvent::History { .. })).await.is_none(), "reenviou o que já tinha");
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Transmissão de tela: A transmite (fonte sintética), B assiste; conteúdo, latência, parar e retomar (renegociação)
 // ---------------------------------------------------------------------------------------------------------------------

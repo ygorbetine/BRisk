@@ -87,11 +87,11 @@ Comparado com `ConversationTimeline.tsx`, `MessageComposer.tsx`, `SafeMessageCon
 | Anexos: oferta, **Baixar**/Recusar, pausar/retomar, cancelar, tentar de novo, verificação SHA-256, abrir/salvar | feito no core e na faixa; limite de 20 GiB igual ao Electron; recebido só abre com confirmação |
 | Galeria de imagens | feito para as imagens da sessão (diálogo com miniaturas); o Electron também inclui vídeos |
 | Outbox (mensagem espera a conexão) / confirmação de entrega (`ack`) | core: a outbox de DM e o `ack` existem e o ack agora limpa a outbox; **UI não usa** (mensagens vão pelo backend local) |
-| Histórico/sincronização entre peers (`history.request/chunk`) | **não feito** |
-| Anexos como itens da linha do tempo, persistidos por canal | **não**: faixa acima do campo, só da sessão |
-| Arrastar e soltar arquivos / vários arquivos de uma vez | **não** (um por vez pelo seletor) |
-| @nick verificado ao lado do autor | **não** |
-| Data e hora completas no cabeçalho da mensagem | só hora (HH:MM) |
+| Histórico/sincronização entre peers (`chat.history.request/chunk/complete`) | **core feito** (`history.rs`, `mesh.rs`): DMs assinadas guardadas por canal em `%LOCALAPPDATA%\Briks-CUI\historico`; ao autenticar, pede o que falta (ids conhecidos), recebe em chunks < 40 KiB, verifica a assinatura de cada uma (o par não forja o que "eu" disse), só para a DM dos dois; evento `chat.history` no IPC. **UI ainda não mostra** (as mensagens da UI vão pelo backend local, não pelo DM do core) |
+| Anexos como itens da linha do tempo, persistidos por canal | **feito**: cada transferência concluída vira um cartão na conversa aberta, na ordem do horário, guardado em `anexos.tsv`; limite: anexo vai para a sala de voz, então entra na conversa que estava aberta (não há ainda vínculo anexo → amigo) |
+| Arrastar e soltar arquivos / vários arquivos de uma vez | **feito**: seletor com seleção múltipla e soltar na janela (até 10 por vez; pastas ignoradas); precisa estar numa sala de voz |
+| @nick verificado ao lado do autor | **parcial**: mensagem que menciona você (`@nome` ou `@nick`) ganha borda de destaque; o @nick dos outros não é mostrado (o app não guarda o @nick dos amigos) |
+| Data e hora completas no cabeçalho da mensagem | **feito**: HH:MM no dia, "dd/mm HH:MM" em outro dia, e data e hora completas ao passar o mouse |
 | Pré-visualização de vídeo/áudio/PDF no cartão do anexo | **não** (só miniatura de PNG/JPEG) |
 
-Testes ocultos: `briks_richtext_test` (texto, menções, URLs, agrupamento, sem janela), `cargo test linkpreview filetransfer file_attachments signed_chat` e capturas com `BRIKS_HIDDEN=1`.
+Testes ocultos: `cargo test history` (store, limites, chunks, disco e sincronização entre dois nós), `briks_richtext_test` (texto, menções, URLs, agrupamento, sem janela), `cargo test linkpreview filetransfer file_attachments signed_chat` e capturas com `BRIKS_HIDDEN=1`.

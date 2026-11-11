@@ -12,6 +12,7 @@ mod capture;
 mod video;
 mod gpuconv;
 mod ice;
+mod history;
 mod identity;
 mod filetransfer;
 mod import;

@@ -6,10 +6,12 @@
 #include "attach.h"
 #include "sysint.h"
 #include "call.h"
-bool settings_echo(void);   /* settings.c: cancelamento de eco ligado? */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool settings_echo(void);   /* settings.c: cancelamento de eco ligado? */
 
 static void copy(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src ? src : ""); }
 
@@ -102,11 +104,51 @@ void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
 }
+/* Volume por pessoa lembrado entre chamadas: "<identidade> <porcentagem>" por linha em peer-volumes.txt na pasta de dados.
+   A chave é a identidade (fp) do participante, que não muda de uma chamada para outra; só guarda quem saiu de 100%. */
+static struct { char fp[72]; float v; } g_pv[64]; static int g_pvn; static bool g_pv_loaded;
+static bool pv_path(char *out, size_t cap) {
+    const char *d = getenv("BRIKS_CUI_DATA");
+    if (d && d[0]) { snprintf(out, cap, "%s\\peer-volumes.txt", d); return true; }
+    const char *ad = getenv("APPDATA"); if (!ad || !ad[0]) return false;
+    snprintf(out, cap, "%s\\Briks-CUI\\peer-volumes.txt", ad); return true;
+}
+static void pv_load(void) {
+    if (g_pv_loaded) return; g_pv_loaded = true;
+    char p[600]; if (!pv_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "rb"); if (!f) return;
+    char fp[72]; float v;
+    while (g_pvn < 64 && fscanf(f, "%71s %f", fp, &v) == 2) if (v >= 0 && v <= 200) { snprintf(g_pv[g_pvn].fp, sizeof g_pv[g_pvn].fp, "%s", fp); g_pv[g_pvn++].v = v; }
+    fclose(f);
+}
+static void pv_save(const char *fp, float v) {
+    if (!fp[0] || strpbrk(fp, " \t\r\n")) return;
+    pv_load();
+    int k = -1; for (int i = 0; i < g_pvn; i++) if (!strcmp(g_pv[i].fp, fp)) { k = i; break; }
+    if (k >= 0 && fabsf(g_pv[k].v - v) < 0.5f) return;
+    if (k < 0) { if (g_pvn == 64) { memmove(&g_pv[0], &g_pv[1], 63 * sizeof g_pv[0]); g_pvn = 63; } k = g_pvn++; snprintf(g_pv[k].fp, sizeof g_pv[k].fp, "%s", fp); }
+    g_pv[k].v = v;
+    char p[600]; if (!pv_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "wb"); if (!f) return;
+    for (int i = 0; i < g_pvn; i++) if (fabsf(g_pv[i].v - 100.0f) >= 0.5f) fprintf(f, "%s %.0f\n", g_pv[i].fp, g_pv[i].v);
+    fclose(f);
+}
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
     char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"volume\":%.2f", id, gain);
     if (core_state() == CORE_READY) send_cmd("peer.volume", extra);
+    pv_save(s->rtc_peers[slot].fp, gain * 100.0f);
+}
+/* A identidade do participante acabou de chegar: se o usuário já tinha mexido no volume dele em outra chamada, repõe. */
+static void pv_apply(app_state_t *s, int slot) {
+    pv_load();
+    for (int i = 0; i < g_pvn; i++) if (!strcmp(g_pv[i].fp, s->rtc_peers[slot].fp)) {
+        if (fabsf(g_pv[i].v - 100.0f) < 0.5f) return;
+        s->rtc_peers[slot].volume = g_pv[i].v; s->rtc_peers[slot].vol_set = true;
+        rtc_set_peer_volume(s, slot, g_pv[i].v / 100.0f);
+        return;
+    }
 }
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
@@ -141,6 +183,7 @@ static void over_promote(app_state_t *s) {
         memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]);
         copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, o->id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, o->state);
         copy(s->rtc_peers[slot].fp, sizeof s->rtc_peers[slot].fp, o->fp); copy(s->rtc_peers[slot].name, sizeof s->rtc_peers[slot].name, o->name);
+        if (s->rtc_peers[slot].fp[0]) pv_apply(s, slot);
         copy(s->rtc_peers[slot].status, sizeof s->rtc_peers[slot].status, o->status); copy(s->rtc_peers[slot].presence, sizeof s->rtc_peers[slot].presence, o->presence);
         s->rtc_peers[slot].mic_off = o->mic_off; s->rtc_peers[slot].deafened = o->deafened;
         memset(o, 0, sizeof *o); if (s->rtc_overflow > 0) s->rtc_overflow--;
@@ -193,6 +236,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             copy(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, json_str(j, "fp", ""));
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, json_str(j, "name", ""));
+            if (s->rtc_peers[i].fp[0]) pv_apply(s, i);
         }
     } else if (!strcmp(ev, "room.owner")) {
         const jval *m = json_get(j, "me");

@@ -1,0 +1,21 @@
+# Central de amigos: abas (Online, Atividade) e busca (demo social)
+tap 338 105
+waitms 300
+expect friends_tab 0
+snap t0
+tap 703 93
+waitms 200
+expect friends_tab 1
+snap t1
+tap 1197 93
+waitms 200
+expect friends_tab 5
+snap t2
+tap 580 93
+waitms 200
+expect friends_tab 0
+snap s0
+tap 888 188
+type zzzz
+waitms 200
+snap s1

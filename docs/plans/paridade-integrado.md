@@ -2,6 +2,16 @@
 
 Complementa `paridade-electron-cui.md` (gerado do `itens.csv`, classificado sobre o brisk-dev). Este arquivo é escrito à mão: registra o que o roteiro `scripts/paridade.ps1` mostrou no build integrado (painéis 3aa4bc3, paridade e039295, mensagens 0a9cf2d, contas a529283, auditoria 8e0bfb9; SEM transmissão nova e SEM SFU).
 
+## Atualização de 2026-11-11 (este arquivo abaixo é histórico)
+- Os 5 FALHOU por coordenadas velhas não existem mais: os roteiros `social-a/b`, `config-abas` e `call` passam no integrado.
+- `atalhos-gravar` às vezes sai com código 1 ao abrir e passa na repetição (a saída 1 intermitente descrita no fim deste arquivo).
+- Os 13 REVER restantes foram conferidos e reclassificados no `itens.csv`:
+  - Viraram PRESENTE-FUNCIONAL: PRF-06, AMI-06, AMI-07, AMI-08, AMI-09, AMI-11, MSG-08, CHM-14, CFG-26, RDE-03.
+  - TRX-11 (SFU) virou VERIFICAR: o código existe e o modo de Configurações > Rede chega ao core, mas falta teste com LiveKit real.
+  - CHM-16 (desconexão por inatividade) e CFG-29 (novidades da versão) continuam AUSENTE: as sondas davam falso positivo e foram corrigidas.
+- Ressalvas: CHM-14 passou a lembrar o volume por identidade (`peer-volumes.txt`), só compilado, sem teste; CFG-26 só recebe aviso da falha de "iniciar com o Windows"; em AMI-11 o texto de atividade só chega de quem está na sua chamada. Só AMI-08, AMI-09 e AMI-11 ganharam roteiro (`amigos-abas`); PRF-06 tem teste em `tests/profile_test.c`; os demais foram conferidos por leitura do código.
+- O cartão "MODO DA CHAMADA" em Configurações > Rede perdeu a etiqueta "sem efeito" (o modo já chegava ao core); "PREFERÊNCIA DE CONEXÃO" continua sem efeito.
+
 ## Números
 | | brisk-dev (auditoria) | integrado (roteiro) |
 |---|---|---|

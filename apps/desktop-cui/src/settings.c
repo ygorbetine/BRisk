@@ -395,7 +395,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     SCARD(ui, "MODO DA CHAMADA") {
                         seg(ui, "cfg-cm", CM, 3, &g_set.call_mode);
                         sub(ui, g_set.call_mode == 0 ? "Conexão direta; passa para o servidor em sala grande ou rede ruim." : g_set.call_mode == 1 ? "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio." : "Passa por um servidor. Melhor para salas grandes e redes difíceis.");
-                        sub(ui, "Todos da sala precisam usar o mesmo modo."); tag_nofx(ui);
+                        sub(ui, "Todos da sala precisam usar o mesmo modo. Vale a partir da próxima chamada.");
                     }
                     SCARD(ui, "PREFERÊNCIA DE CONEXÃO") {
                         seg(ui, "cfg-np", NP, 3, &g_set.net_pref);

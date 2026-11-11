@@ -523,7 +523,7 @@ static bool mini_icon(cui_ctx *ui, const char *id, const char *icon, const char 
     cui_box(ui, .id = id, .width = CUI_PX(24), .height = CUI_PX(24), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
             .bg = briks_hover(ui, id) ? CUI_RGBA(0xffffff20) : CUI_RGBA(0x00000000)) { cui_icon(ui, icon, 14, danger ? B_DANGER : B_MUTED); }
     if (briks_hover(ui, id)) briks_tip(tip);
-    return briks_clicked(ui, id);
+    return briks_clicked_r(ui, id, 8.0f);
 }
 
 static bool last_text_channel(const group_t *g, int ci) {
@@ -561,7 +561,7 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo 
                             if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
                                 cui_text(ui, "AO VIVO", .size = 10, .color = B_C3, .nowrap = true);
                                 cui_box(ui, .id = "wt", .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(B_C1, 0x55)) { cui_text(ui, "Assistir", .size = 11, .nowrap = true); }
-                                if (briks_clicked(ui, "wt")) watch = true;
+                                if (briks_clicked_r(ui, "wt", 9.0f)) watch = true;
                             }
                         }
                         cui_pop_id(ui);

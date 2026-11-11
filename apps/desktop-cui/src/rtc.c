@@ -25,6 +25,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
     copy(s->room_name, sizeof s->room_name, room);
     s->rtc_want_room = true;
     s->in_room = true;
+    fw_maybe_prompt();   /* primeira chamada: pergunta (sem bloquear) se pode liberar o Briks no Firewall */
     copy(s->rtc_state, sizeof s->rtc_state, "conectando");
     s->rtc_msg[0] = 0;
     s->rtc_peer_count = s->rtc_authed_count = 0;
@@ -214,6 +215,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *idn = json_get(j, "identity");
         if (idn && json_str(idn, "x", "")[0]) snprintf(s->my_jwk, sizeof s->my_jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(idn, "x", ""), json_str(idn, "y", ""));
     } else if (!strcmp(ev, "signaling.status")) {
+        if (!s->in_room) { json_free(j); return false; }   /* "desconectado" atrasado de uma sala já deixada não pode sujar a próxima */
         copy(s->rtc_state, sizeof s->rtc_state, json_str(j, "state", ""));
         net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);   /* erro técnico de rede vira frase compreensível */
     } else if (!strcmp(ev, "peer")) {
@@ -286,6 +288,12 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
         changed = true;
+    } else if (!strcmp(ev, "group.roster")) {
+        groups_roster_event(s, j);
+    } else if (!strcmp(ev, "net.config")) {
+        const jval *c = json_get(j, "configured");
+        s->net_cfg_known = true; s->net_cfg_sfu = c && c->type == J_BOOL && c->b;
+        copy(s->net_cfg_err, sizeof s->net_cfg_err, json_str(j, "error", ""));
     } else if (!strcmp(ev, "net.mode")) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
         s->net_sfu = !strcmp(md, "sfu");
@@ -301,7 +309,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, "O serviço de chamadas encerrou.");
-        s->rtc_session_ready = s->rtc_session_sent = false;
+        s->rtc_session_ready = s->rtc_session_sent = false; groups_roster_reset();
     } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
     return changed;
@@ -333,6 +341,16 @@ void rtc_pump(app_state_t *s) {
         copy(s->rtc_state, sizeof s->rtc_state, "conectado"); s->rtc_peer_count = s->rtc_authed_count = dn;   /* a demonstração mostra a sala como conectada */
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }
     }
+    {   /* "Conectando…" não pode ficar mudo para sempre: sem resposta da sinalização em 30 s o app diz o motivo provável */
+        const bool pending = s->in_room && (!s->rtc_state[0] || !strcmp(s->rtc_state, "conectando")) && !getenv("BRIKS_DEMO_PEERS");
+        if (!pending) s->rtc_conn_since = 0;
+        else if (!s->rtc_conn_since) s->rtc_conn_since = GetTickCount64();
+        else if (GetTickCount64() - s->rtc_conn_since > 30000ULL) {
+            copy(s->rtc_state, sizeof s->rtc_state, "erro");
+            copy(s->rtc_msg, sizeof s->rtc_msg, "O servidor de chamadas não respondeu em 30 segundos. Verifique a internet e entre de novo na sala.");
+            s->rtc_conn_since = 0;
+        }
+    }
     if (st == CORE_FAILED && s->in_room && strcmp(s->rtc_state, "erro")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());
@@ -361,17 +379,27 @@ void rtc_pump(app_state_t *s) {
                 send_cmd("profile.set", extra);
             }
         }
-        if (s->rtc_want_room && !s->rtc_session_sent) {
+        {   /* Configurações > Rede: o modo da chamada e a preferência de conexão seguem para o core (que grava net-mode.json) quando mudam */
+            static int lcm = -1, lnp = -1;
+            const int cm = settings_call_mode(), np = settings_net_pref();
+            if (cm != lcm || np != lnp) {
+                lcm = cm; lnp = np;
+                char extra[96]; snprintf(extra, sizeof extra, "\"mode\":\"%s\",\"pref\":%d", cm == 1 ? "p2p" : cm == 2 ? "sfu" : "auto", np);
+                send_cmd("net.mode.set", extra);
+            }
+        }
+        if ((s->rtc_want_room || groups_want_roster(s)) && !s->rtc_session_sent) {
             char extra[256], nm[160];
             json_escape(s->user_name[0] ? s->user_name : "Você", nm, sizeof nm);
             snprintf(extra, sizeof extra, "\"display_name\":\"%s\"", nm);
             send_cmd("session.start", extra);
             s->rtc_session_sent = true;
         }
+        groups_roster_tick(s);
         if (s->rtc_want_room && s->rtc_session_ready) {
             char extra[256], rm[160];
             json_escape(s->room_name, rm, sizeof rm);
-            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\"", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto"); }
+            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\",\"pref\":%d", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto", settings_net_pref()); }
             send_cmd("room.join", extra);
             s->rtc_want_room = false;
         }

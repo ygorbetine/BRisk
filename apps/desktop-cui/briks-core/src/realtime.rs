@@ -124,7 +124,8 @@ async fn run(cfg: RealtimeCfg, topic: String, peer_id: String, meta: Value, mut 
                     let _ = etx.send(RtEvent::Status(format!("error: {e}"))).await;
                     return;
                 }
-                let _ = etx.send(RtEvent::Status("reconnecting".into())).await;
+                // o motivo da queda acompanha o estado ("reconnecting: motivo"): a UI mostra o porquê em vez de um "Conectando…" mudo
+                let _ = etx.send(RtEvent::Status(format!("reconnecting: {e}"))).await;
                 let wait = Duration::from_millis((500u64 << attempt.min(5)).min(15_000));
                 tokio::select! {
                     _ = tokio::time::sleep(wait) => {}
@@ -144,7 +145,8 @@ async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value
     let target = parse_target(&cfg.url)?;
     let io = tokio::time::timeout(Duration::from_secs(15), open_io(&target)).await.map_err(|_| anyhow!("tempo esgotado ao conectar ao Realtime"))??;
     let ws_url = format!("{}://{}:{}/realtime/v1/websocket?apikey={}&vsn=1.0.0", if target.tls { "wss" } else { "ws" }, target.host, target.port, cfg.anon_key);
-    let (ws, _) = tokio_tungstenite::client_async(ws_url, io).await.map_err(|e| anyhow!("WebSocket recusado: {e}"))?;
+    let (ws, _) = tokio::time::timeout(Duration::from_secs(15), tokio_tungstenite::client_async(ws_url, io)).await
+        .map_err(|_| anyhow!("tempo esgotado no handshake do Realtime"))?.map_err(|e| anyhow!("WebSocket recusado: {e}"))?;
     let (mut sink, mut stream) = ws.split();
 
     let mut next_ref: u64 = 1;

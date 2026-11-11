@@ -1,0 +1,9 @@
+# Agora nao: fecha, guarda "agora nao" (2) e nao chama add rule.
+waitms 700
+sys fwask
+waitms 3000
+expect fw_open 1
+click 701 493
+waitms 500
+expect fw_open 0
+expect fw_choice 2

@@ -135,6 +135,8 @@ typedef struct {
     bool mic_on, cam_on, sharing, deaf;
     int call_mode, call_view;      /* 0 Call/Transmissão; 0 Chamada/Chat */
     /* WebRTC nativo (briks-core): estado de conexão exibido na tela */
+    bool net_cfg_known, net_cfg_sfu; char net_cfg_err[120];   /* net.config do core: SFU configurado? erro de configuração */
+    unsigned long long rtc_conn_since;   /* GetTickCount64 de quando o estado virou "conectando" (0 = não está) */
     char rtc_state[16];            /* "" | conectando | conectado | reconectando | erro | desconectado */
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
@@ -225,6 +227,9 @@ void groups_create_json(const app_state_t *s, char *out, size_t cap);
 void groups_overlay(cui_ctx *ui, app_state_t *s);                              /* menu de contexto do grupo (camada de cima, junto do menu da mensagem) */
 void friends_code_card(cui_ctx *ui, app_state_t *s);   /* cartão "Por código" (gerar/copiar/aceitar), usado no diálogo e no hub */
 void friends_p2p_event(app_state_t *s, const struct jval *j);   /* friend.result do core */
+bool groups_want_roster(const app_state_t *s);                                  /* há grupo com sala de voz: vale abrir a sessão do core cedo (presença por sala) */
+void groups_roster_tick(app_state_t *s); void groups_roster_reset(void);
+void groups_roster_event(app_state_t *s, const struct jval *j);                         /* evento group.roster do core */
 void groups_demo_roster(void);                                                  /* dados demo da presença por sala (BRIKS_DEMO_GROSTER) */
 int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
 bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
@@ -273,6 +278,10 @@ void rtc_leave_room(app_state_t *s);
 void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+int settings_fw_choice(void); void settings_fw_set(int c);   /* escolha do Firewall: 0 nova, 1 liberado, 2 agora não, 3 não perguntar (firewall.c) */
+void fw_maybe_prompt(void); void fw_tick(void); void fw_dialog(cui_ctx *ui, app_state_t *s); void fw_request(bool add); void fw_refresh(void);
+bool fw_busy(void); bool fw_open(void); int fw_exists(void); const char *fw_msg(void); const char *fw_state_text(void);
+int settings_net_pref(void);                               /* 0 Automático, 1 Internet direta, 2 VPN privada */
 int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */

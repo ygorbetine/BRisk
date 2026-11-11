@@ -1,0 +1,29 @@
+# Configuracoes > Rede: modo da chamada. Fora da chamada a escolha vale na hora; em chamada pede confirmacao (reconectar) e so muda no "Só na próxima chamada".
+# Demo social + BRIKS_DEV_OPEN=settings:1. "sys room 1" simula estar numa sala.
+waitms 900
+expect cfg_cm 0
+click 757 158
+waitms 300
+expect cfg_cm 1
+click 951 158
+waitms 300
+expect cfg_cm 2
+click 563 158
+waitms 300
+expect cfg_cm 0
+sys room 1
+waitms 300
+snap rm0
+click 757 158
+waitms 400
+snap rm1
+expect cfg_cm 0
+click 832 247
+waitms 300
+expect cfg_cm 0
+click 757 158
+waitms 300
+click 706 247
+waitms 300
+snap rm2
+expect cfg_cm 1

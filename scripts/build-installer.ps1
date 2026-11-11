@@ -58,6 +58,23 @@ if (Test-Path $SupabaseJson) {
     @{ url = $sj.url; anon_key = $k } | ConvertTo-Json | Set-Content "$stage\supabase.json" -Encoding UTF8
     Write-Host "supabase.json incluido (chave publishable)."
 } else { Write-Warning "supabase.json nao encontrado: o instalador sai sem login online." }
+# livekit.json (so URLs publicas: servidor wss:// e funcao de tokens https://) ao lado do Briks.exe; o core le dali quando a pasta de dados nao tem um.
+# So entra se a variavel de ambiente BRIKS_LIVEKIT_JSON_SRC apontar para o arquivo de origem; sem ela o instalador sai como antes.
+# NUNCA leva chave/segredo: so as chaves url, token_url e kick_url passam, com esquema validado; qualquer outra chave faz o script recusar.
+if ($env:BRIKS_LIVEKIT_JSON_SRC) {
+    if (-not (Test-Path $env:BRIKS_LIVEKIT_JSON_SRC)) { throw "BRIKS_LIVEKIT_JSON_SRC aponta para um arquivo que nao existe." }
+    $lj = Get-Content $env:BRIKS_LIVEKIT_JSON_SRC -Raw | ConvertFrom-Json
+    $allowed = @("url", "token_url", "kick_url")
+    foreach ($p in $lj.PSObject.Properties) { if ($allowed -notcontains $p.Name) { throw "livekit.json: a chave '$($p.Name)' nao e permitida (so url, token_url, kick_url; nunca segredo)." } }
+    if ($lj.url -notmatch '^wss://[^\s/]+') { throw "livekit.json: 'url' deve ser wss://..." }
+    if ($lj.token_url -notmatch '^https://[^\s/]+') { throw "livekit.json: 'token_url' deve ser https://..." }
+    if ($lj.kick_url -and $lj.kick_url -notmatch '^https://[^\s/]+') { throw "livekit.json: 'kick_url' deve ser https://..." }
+    foreach ($p in $lj.PSObject.Properties) { if ("$($p.Value)" -match '(?i)secret|api[_-]?key|eyJ|sb_secret') { throw "livekit.json: valor com cara de segredo na chave '$($p.Name)'." } }
+    $o = [ordered]@{ url = $lj.url; token_url = $lj.token_url }
+    if ($lj.kick_url) { $o.kick_url = $lj.kick_url }
+    [IO.File]::WriteAllText("$stage\livekit.json", ($o | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+    Write-Host "livekit.json incluido (so URLs publicas)."
+}
 foreach ($f in "LICENSE", "THIRD_PARTY_NOTICES.md") { if (Test-Path "$root\$f") { Copy-Item "$root\$f" $stage } }
 if (Test-Path "$root\LICENSES") { Copy-Item "$root\LICENSES" "$stage\LICENSES" -Recurse }
 

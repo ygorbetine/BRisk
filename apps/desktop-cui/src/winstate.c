@@ -8,6 +8,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,7 +20,8 @@ static bool g_automation, g_headless, g_start_min, g_quitting, g_in_tray, g_tray
 static HWND g_hwnd; static WNDPROC g_orig; static cui_ctx *g_ui; static app_state_t *g_s;
 static HANDLE g_mutex; static UINT g_msg_show, g_msg_taskbar;
 static ULONGLONG g_dirty_at; static int g_show_count, g_restart_dry, g_restored = -1, g_saves;
-static char g_link[600]; static wchar_t g_prop[100]; static int g_links;   /* briks://mensagem/<canal>/<id> pendente */
+#define LINK_MAX 34000   /* convite de grupo assinado cabe em ~32 KB (limite da linha de comando do Windows) */
+static char g_link[LINK_MAX]; static wchar_t g_prop[100]; static int g_links;   /* briks://mensagem/<canal>/<id>, briks://friend/<codigo> ou briks://group/<codigo> pendente */
 static char g_cfg_file[MAX_PATH]; static int g_url_ok, g_url_bad;
 
 /* ---------------- configuração ---------------- */
@@ -221,7 +223,7 @@ static LRESULT CALLBACK sys_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         }
         break;
-    case WM_COPYDATA: { COPYDATASTRUCT *cd = (COPYDATASTRUCT *)l; if (cd && cd->dwData == 0xB21C && cd->lpData && cd->cbData > 8 && cd->cbData < 600) { char b[600]; memcpy(b, cd->lpData, cd->cbData); b[cd->cbData - 1] = 0; handle_link(b); } return TRUE; }
+    case WM_COPYDATA: { COPYDATASTRUCT *cd = (COPYDATASTRUCT *)l; if (cd && cd->dwData == 0xB21C && cd->lpData && cd->cbData > 8 && cd->cbData < LINK_MAX) { static char b[LINK_MAX]; memcpy(b, cd->lpData, cd->cbData); b[cd->cbData - 1] = 0; handle_link(b); } return TRUE; }
     case WM_TIMER:
         if (w == SYS_TIMER) { if (g_ui && (!IsWindowVisible(h) || IsIconic(h))) cui_request_redraw(g_ui); return 0; }   /* escondida: o app segue recebendo eventos do core */
         break;
@@ -253,8 +255,28 @@ void sys_tick(app_state_t *s) {
     if (g_dirty && GetTickCount64() - g_dirty_at > 1500 && g_hwnd && !IsIconic(g_hwnd)) capture_window();   /* posição/tamanho gravados logo depois de mexer */
     notify_tick(s);
     if (g_link[0] && s->screen != SCREEN_AUTH) {   /* briks://mensagem/<canal>/<id>: abre a conversa */
-        char l[600]; snprintf(l, sizeof l, "%s", g_link); g_link[0] = 0;
+        static char l[LINK_MAX]; snprintf(l, sizeof l, "%s", g_link); g_link[0] = 0;
         if (!strncmp(l, "briks://mensagem/", 17)) { char *ch = l + 17, *sl = strchr(ch, '/'); if (sl) *sl = 0; if (ch[0]) { notify_open_channel(s, ch); sys_show_window(); } }
+        else if (!strncmp(l, "briks://friend/", 15) || !strncmp(l, "briks://group/", 14)) {
+            /* convites: o link só PREENCHE o código e abre o diálogo; entrar/adicionar exige o clique da pessoa (nunca é automático) */
+            const bool friend = l[8] == 'f'; char *src = l + (friend ? 15 : 14);
+            src[strcspn(src, "?#\r\n \t\"")] = 0;
+            size_t n = strlen(src); while (n && src[n - 1] == '/') src[--n] = 0;
+            char *code = friend ? s->amg_in : s->join_code; const size_t cap = friend ? sizeof s->amg_in : sizeof s->join_code; size_t o = 0;
+            const char *c = src;
+            for (; *c && o + 1 < cap; c++) {   /* o navegador pode ter escapado + / = (%XX) */
+                if (*c == '%' && isxdigit((unsigned char)c[1]) && isxdigit((unsigned char)c[2])) { char hx[3] = { c[1], c[2], 0 }; code[o++] = (char)strtol(hx, NULL, 16); c += 2; }
+                else code[o++] = *c;
+            }
+            code[o] = 0;
+            const bool whole = *c == 0;   /* cabe inteiro? */
+            if (!o || !whole) { snprintf(s->notice, sizeof s->notice, "O link de convite está incompleto ou é grande demais."); code[0] = 0; }
+            else {
+                if (friend) { s->amg_msg[0] = 0; snprintf(s->amg_msg, sizeof s->amg_msg, "Convite recebido por link. Confira de quem é e toque em Adicionar para confirmar."); s->add_friend_open = true; }
+                else { s->join_err[0] = 0; s->join_open = true; }
+                s->screen = SCREEN_SOCIAL; sys_show_window();
+            }
+        }
     }
 }
 
@@ -316,6 +338,7 @@ bool sys_script(const char *args) {
     else if (!strcmp(c, "sound") && n > 1) sound_play((sound_kind_t)atoi(t[1]));
     else if (!strcmp(c, "cfg") && n > 2) { bool v = atoi(t[2]) != 0; if (!strcmp(t[1], "close_to_tray")) g_sys.close_to_tray = v; else if (!strcmp(t[1], "nt_msg")) g_sys.nt_msg = v; else if (!strcmp(t[1], "sounds")) g_sys.sounds = v; }
     else if (!strcmp(c, "link") && n > 1) handle_link(t[1]);
+    else if (!strcmp(c, "fwask")) fw_maybe_prompt();   /* o que a primeira chamada faz */
     else if (!strcmp(c, "autostart") && n > 1) sys_autostart_set(atoi(t[1]) != 0);
     else if (!strcmp(c, "msg") && n > 3 && g_s) { char x[300]; snprintf(x, sizeof x, "%s", strstr(rest, t[2]) ? strstr(rest, t[2]) + strlen(t[2]) + 1 : ""); notify_chat_message(g_s, t[1], t[2], x); }   /* msg <canal> <autor> <texto> */
     else if (!strcmp(c, "friend") && g_s) notify_friend(g_s, rest1, false);

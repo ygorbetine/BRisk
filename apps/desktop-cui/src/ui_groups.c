@@ -472,10 +472,10 @@ static const char *role_of(const group_t *g, const gmember_t *m) { return !strcm
 
 /* ---- quem está em cada sala de voz do grupo (GRP-17) ----
  * Fontes: (1) a sala em que EU estou (eu + participantes autenticados, com "Ao vivo" de share_peer_live); (2) a tabela g_ros, alimentada pelo evento
- * group.roster do core ({"room":"...","members":[{"name":"...","live":bool}]}) e pelos dados demo. LIMITE: o core de hoje ainda NÃO emite group.roster
- * (a presença dele é por sala já aberta), então das salas em que não estou só se vê o que o demo ou um core futuro entregar. */
+ * group.roster do core ({"group","room","total","more","members":[{"fp","name","live"}]}) e pelos dados demo. O core mantém um canal de presença por
+ * grupo (group.roster.watch/here/unwatch): só entram membros do grupo, com os nomes da lista de membros daqui; no máximo 8 por sala e 4 grupos. */
 typedef struct { char name[48]; bool live; } rmem_t;
-typedef struct { char room[96]; int n; rmem_t m[8]; } rroster_t;
+typedef struct { char room[96]; int n, more; rmem_t m[8]; } rroster_t;
 static rroster_t g_ros[16];
 static rroster_t *ros_slot(const char *room, bool create) {
     for (int i = 0; i < 16; i++) if (!strcmp(g_ros[i].room, room)) return &g_ros[i];
@@ -504,6 +504,71 @@ static int roster_get(const app_state_t *s, const channel_t *c, rmem_t out[8], b
     const rroster_t *r = ros_slot(key, false);
     for (int i = 0; r && i < r->n; i++) out[n++] = r->m[i];
     return n;
+}
+
+/* ---- presença por sala: o que o app pede ao core (GRP-17) ---- */
+#define ROS_GROUPS 4
+static struct { char gid[48]; unsigned long long sig; char room[96]; bool live, sent; } g_rw[ROS_GROUPS];
+static const char *chan_key(const channel_t *c) { return c->room[0] ? c->room : c->id; }
+static bool group_has_voice(const group_t *g) { for (int i = 0; i < g->nch; i++) if (g->ch[i].voice) return true; return false; }
+bool groups_want_roster(const app_state_t *s) {
+    if (getenv("BRIKS_DEMO")) return false;
+    for (int i = 0; i < s->group_count && i < ROS_GROUPS; i++) if (group_has_voice(&s->groups[i]) && s->groups[i].nm > 0) return true;
+    return false;
+}
+void groups_roster_reset(void) { memset(g_rw, 0, sizeof g_rw); }   /* o core reiniciou: nada do que foi pedido vale mais */
+void groups_roster_tick(app_state_t *s) {
+    if (!s->rtc_session_ready) return;
+    int slot = 0;
+    for (int i = 0; i < s->group_count && slot < ROS_GROUPS; i++) {
+        const group_t *g = &s->groups[i];
+        if (!group_has_voice(g) || g->nm <= 0) continue;
+        unsigned long long sig = 1469598103934665603ULL;   /* FNV-1a do id e da lista (impressão digital + nome) */
+        for (const char *c = g->id; *c; c++) sig = (sig ^ (unsigned char)*c) * 1099511628211ULL;
+        for (int m = 0; m < g->nm; m++) { for (const char *c = g->m[m].fp; *c; c++) sig = (sig ^ (unsigned char)*c) * 1099511628211ULL; for (const char *c = g->m[m].name; *c; c++) sig = (sig ^ (unsigned char)*c) * 1099511628211ULL; }
+        if (strcmp(g_rw[slot].gid, g->id) || g_rw[slot].sig != sig) {
+            sbuf b = { 0 }; sb_put(&b, "{\"cmd\":\"group.roster.watch\",\"group\":"); sb_str(&b, g->id); sb_put(&b, ",\"members\":[");
+            int k = 0;
+            for (int m = 0; m < g->nm; m++) if (g->m[m].fp[0]) { if (k++) sb_put(&b, ","); sb_put(&b, "{\"fp\":"); sb_str(&b, g->m[m].fp); sb_put(&b, ",\"name\":"); sb_str(&b, g->m[m].name); sb_put(&b, "}"); }
+            sb_put(&b, "]}"); core_send(b.p); free(b.p);
+            snprintf(g_rw[slot].gid, sizeof g_rw[slot].gid, "%s", g->id); g_rw[slot].sig = sig; g_rw[slot].sent = false;
+        }
+        /* em qual sala de voz deste grupo eu estou (vazio = em nenhuma) */
+        char room[96] = "";
+        if (s->in_room) for (int c = 0; c < g->nch; c++) if (g->ch[c].voice) {
+            char rn[96]; snprintf(rn, sizeof rn, "g-%s", chan_key(&g->ch[c]));
+            if (!strcmp(s->room_name, rn)) { snprintf(room, sizeof room, "%s", chan_key(&g->ch[c])); break; }
+        }
+        const bool live = room[0] && s->sh.active;
+        if (!g_rw[slot].sent || strcmp(g_rw[slot].room, room) || g_rw[slot].live != live) {
+            char gi[96], ri[200]; json_escape(g->id, gi, sizeof gi); json_escape(room, ri, sizeof ri);
+            char line[420]; snprintf(line, sizeof line, "{\"cmd\":\"group.roster.here\",\"group\":\"%s\",\"room\":\"%s\",\"live\":%s}", gi, ri, live ? "true" : "false");
+            core_send(line);
+            snprintf(g_rw[slot].room, sizeof g_rw[slot].room, "%s", room); g_rw[slot].live = live; g_rw[slot].sent = true;
+        }
+        slot++;
+    }
+    for (; slot < ROS_GROUPS; slot++) if (g_rw[slot].gid[0]) {   /* o grupo saiu da lista: para de observar */
+        char line[160], gi[96]; json_escape(g_rw[slot].gid, gi, sizeof gi);
+        snprintf(line, sizeof line, "{\"cmd\":\"group.roster.unwatch\",\"group\":\"%s\"}", gi); core_send(line);
+        memset(&g_rw[slot], 0, sizeof g_rw[slot]);
+    }
+}
+/* evento group.roster: troca a lista da sala; sala esvaziada some */
+void groups_roster_event(app_state_t *s, const jval *j) {
+    const char *gid = json_str(j, "group", ""), *room = json_str(j, "room", "");
+    if (!room[0] || strlen(room) >= sizeof g_ros[0].room || find_group(s, gid) < 0) return;   /* grupo que não conheço: ignora */
+    const jval *ms = json_get(j, "members"); const int n = ms ? json_len(ms) : 0;
+    rroster_t *r = ros_slot(room, n > 0);
+    if (!r) return;
+    r->n = 0; r->more = 0;
+    for (int i = 0; i < n && r->n < 8; i++) {
+        const jval *m = json_at(ms, i); const char *nm = json_str(m, "name", ""); if (!nm[0]) continue;
+        const jval *lv = json_get(m, "live");
+        snprintf(r->m[r->n].name, sizeof r->m[r->n].name, "%s", nm); r->m[r->n].live = lv && lv->type == J_BOOL && lv->b; r->n++;
+    }
+    { const jval *mo = json_get(j, "more"); r->more = mo && mo->type == J_NUM ? (int)mo->num : 0; }
+    if (!r->n) memset(r, 0, sizeof *r);
 }
 
 /* estado só de interface (diálogos do canal e do membro); os dados continuam no group_t */
@@ -566,6 +631,8 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo 
                         }
                         cui_pop_id(ui);
                     }
+                    { const rroster_t *rr = mine ? NULL : ros_slot(g->ch[i].room[0] ? g->ch[i].room : g->ch[i].id, false);
+                      if (rr && rr->more > 0) cui_textf(ui, "+%d na sala", rr->more); }
                 }
                 if (watch) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
             }
@@ -604,7 +671,7 @@ void groups_header(cui_ctx *ui, app_state_t *s) {   /* botões do cabeçalho do 
 void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     groups_tick(s);
     cui_dialog(ui, "Entrar com convite", &s->join_open, .width = 460.0f) {
-        cui_text(ui, "Cole o código que um administrador do grupo mandou para você. Ele só vale para a sua conta.", .size = 12.5f, .color = B_MUTED);
+        cui_text(ui, "Cole o código que um administrador do grupo mandou para você (ou abra o link do convite). Confira o código e toque em Entrar no grupo: o Briks nunca entra sozinho. Ele só vale para a sua conta.", .size = 12.5f, .color = B_MUTED);
         int jr = cui_input(ui, "join-code", s->join_code, sizeof s->join_code, .placeholder = "briks-grp1.…", .autofocus = true);
         if (s->join_err[0]) cui_text(ui, s->join_err, .size = 12.5f, .color = B_DANGER);
         cui_dialog_footer(ui) {

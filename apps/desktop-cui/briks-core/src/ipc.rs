@@ -196,6 +196,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let turn_rt = accounts.clone();   // cache do TURN da conta
     let ev_tx = acct_tx.clone();   // eventos de tarefas em segundo plano (teste de rede)
     let mut account = crate::accounts::service::Service::new(accounts.clone(), acct_tx);   // contas online: account.*, friends.*, import.*
+    let mut roster_ch: std::collections::HashMap<String, realtime::Realtime> = std::collections::HashMap::new();   // grupo -> canal de presença (GRP-17)
     let mut identity: Option<Arc<Identity>> = None;
     let mut name = String::from("Usuário");
     let mut local_peer = uuid::Uuid::new_v4().to_string();
@@ -250,6 +251,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         }
                         // Modo de rede (Automático / SFU / P2P). Com o SFU configurado, Automático e SFU entram pelo servidor de chamadas;
                         // se o token ou a entrada falharem, a chamada NÃO abre em P2P (sala dividida), a não ser com a reserva ligada.
+                        if let Some(p) = v["pref"].as_u64() { crate::sfu_cfg::set_pref(p as u8); }
                         let sfu_ns = v["namespace"].as_str().map(|n| n == "room" || n == "group").unwrap_or(true);
                         let net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
                         let mut sfu_err = String::new();
@@ -290,7 +292,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                             continue;
                                         }
                                         Ok(h) => { hybrid = Some(h); sfu_au = au; }
-                                        Err(e) if !crate::sfu_cfg::fallback_p2p(&net_env, &cfg.data_dir) => {
+                                        Err(e) if net_mode == crate::sfu_cfg::NetMode::Sfu || !crate::sfu_cfg::fallback_p2p(&net_env, &cfg.data_dir) => {
                                             // sem reserva: erro visível em vez de uma sala P2P à parte
                                             mesh_ev = None;
                                             rt_status = None;
@@ -303,6 +305,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     }
                                 }
                             }
+                        }
+                        if sfu_ns && net_mode == crate::sfu_cfg::NetMode::Sfu && !sfu_ready {
+                            // "Sempre SFU" sem servidor configurado: erro visível, nunca uma sala P2P à parte
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, false, false, false);
+                            out(&mut wr, json!({ "ev": "net.mode", "mode": "none", "reason": reason, "error": sfu_err, "configured": false, "fallback": false })).await?;
+                            out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "Modo \"Sempre SFU\": o servidor de chamadas não está configurado." })).await?;
+                            continue;
                         }
                         let (Some(url), Some(key)) = (cfg.realtime_url.clone(), cfg.realtime_key.clone()) else {
                             out(&mut wr, json!({ "ev": "signaling.status", "state": "erro", "message": "Supabase Realtime não configurado (VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY)" })).await?;
@@ -581,10 +590,36 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let safe: String = key.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareWatch { key, on: v["on"].as_bool().unwrap_or(true), path: cfg.data_dir.join("video").join(format!("remote-{safe}.bin")) }).await; }
                     }
+                    // GRP-17: quem está em cada sala de voz do grupo, sem entrar nela (canal de presença do grupo, ver grouproster.rs)
+                    "group.roster.watch" => {
+                        let gid = v["group"].as_str().unwrap_or("").to_string();
+                        let (Some(id), Some(url), Some(key)) = (identity.clone(), cfg.realtime_url.clone(), cfg.realtime_key.clone()) else {
+                            out(&mut wr, json!({ "ev": "error", "where": "group.roster.watch", "message": "sinalização ou sessão indisponível" })).await?;
+                            continue;
+                        };
+                        if !crate::grouproster::valid_id(&gid) || (!roster_ch.contains_key(&gid) && roster_ch.len() >= crate::grouproster::MAX_GROUPS) {
+                            out(&mut wr, json!({ "ev": "error", "where": "group.roster.watch", "message": "grupo inválido ou observando grupos demais" })).await?;
+                            continue;
+                        }
+                        let members: Vec<(String, String)> = v["members"].as_array().map(|a| a.iter().take(crate::grouproster::MAX_MEMBERS)
+                            .filter_map(|m| Some((m["fp"].as_str()?.to_string(), m["name"].as_str().unwrap_or("").chars().take(48).collect::<String>())))
+                            .filter(|(f, _)| !f.is_empty() && f.len() <= 72).collect()).unwrap_or_default();
+                        if let Some(old) = roster_ch.remove(&gid) { old.close().await; }
+                        roster_ch.insert(gid.clone(), crate::grouproster::spawn(RealtimeCfg::new(&url, &key), gid, id.fingerprint(), members, ev_tx.clone()));
+                    }
+                    "group.roster.unwatch" => { if let Some(old) = v["group"].as_str().and_then(|g| roster_ch.remove(g)) { old.close().await; } }
+                    "group.roster.here" => {
+                        // anuncia (ou tira, com room vazio) a minha presença numa sala de voz do grupo
+                        let (gid, room) = (v["group"].as_str().unwrap_or(""), v["room"].as_str().unwrap_or(""));
+                        if let (Some(rt), Some(id)) = (roster_ch.get(gid), &identity) {
+                            if room.len() <= 96 { let _ = rt.track(crate::grouproster::meta(&id.fingerprint(), room, v["live"].as_bool().unwrap_or(false))).await; }
+                        }
+                    }
                     "net.mode.set" | "net.status" => {
                         if let Some(m) = v["mode"].as_str().and_then(crate::sfu_cfg::NetMode::parse) { let _ = crate::sfu_cfg::save_mode(&cfg.data_dir, m); }
+                        if let Some(p) = v["pref"].as_u64() { crate::sfu_cfg::set_pref(p as u8); }
                         let (mode, conf) = (crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir), crate::sfu_cfg::resolve(&net_env, &cfg.data_dir));
-                        out(&mut wr, json!({ "ev": "net.config", "mode": mode.name(), "configured": matches!(conf, Ok(Some(_))), "error": conf.err().unwrap_or_default() })).await?;
+                        out(&mut wr, json!({ "ev": "net.config", "mode": mode.name(), "pref": crate::sfu_cfg::pref(), "configured": matches!(conf, Ok(Some(_))), "error": conf.err().unwrap_or_default() })).await?;
                     }
                     // tela Rede: servidor TURN/STUN próprio em ice.json. A senha entra aqui e nunca volta para a UI.
                     "ice.get" => out(&mut wr, crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers())).await?,
@@ -645,19 +680,25 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                 }
             }
             s = async { match rt_status.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
-                if let Some(s) = s {
-                    let (state, msg) = match s.as_str() {
-                        "connecting" => ("conectando", String::new()),
-                        "connected" => ("conectado", String::new()),
-                        "reconnecting" => ("reconectando", String::new()),
-                        "disconnected" => ("desconectado", String::new()),
-                        e => ("erro", e.trim_start_matches("error: ").to_string()),
-                    };
-                    out(&mut wr, json!({ "ev": "signaling.status", "state": state, "message": msg })).await?;
+                match s {
+                    Some(s) => {
+                        let (state, msg) = match s.as_str() {
+                            "connecting" => ("conectando", String::new()),
+                            "connected" => ("conectado", String::new()),
+                            "reconnecting" => ("reconectando", String::new()),
+                            "disconnected" => ("desconectado", String::new()),
+                            e if e.starts_with("reconnecting: ") => ("reconectando", e.trim_start_matches("reconnecting: ").to_string()),
+                            e => ("erro", e.trim_start_matches("error: ").to_string()),
+                        };
+                        out(&mut wr, json!({ "ev": "signaling.status", "state": state, "message": msg })).await?;
+                    }
+                    // o canal de status fechou (a sinalização terminou): sem isto o select girava sem parar nesse ramo
+                    None => { rt_status = None; }
                 }
             }
         }
     }
+    for (_, r) in roster_ch.drain() { r.close().await; }
     if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
     Ok(())
 }

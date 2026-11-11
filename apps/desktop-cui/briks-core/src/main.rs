@@ -13,6 +13,7 @@ mod video;
 mod gpuconv;
 mod friend_invite;
 mod group_sync;
+mod grouproster;
 mod ice;
 mod history;
 mod identity;
@@ -99,6 +100,8 @@ mod tests_sfurec;
 mod tests_sfurede;
 #[cfg(test)]
 mod tests_sfuipc;
+#[cfg(test)]
+mod tests_netmodes;
 #[cfg(test)]
 mod tests_sfuproc;
 #[cfg(test)]

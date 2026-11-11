@@ -55,12 +55,19 @@ fn check(u: &str, secure: &str, plain: &str, what: &str) -> Result<(), String> {
 pub fn check_server_url(u: &str) -> Result<(), String> { check(u, "wss://", "ws://", "URL do servidor LiveKit") }
 pub fn check_token_url(u: &str) -> Result<(), String> { check(u, "https://", "http://", "URL do serviço de tokens") }
 
+/// `livekit.json`: primeiro o da pasta de dados do usuário (o que a pessoa editou vence); sem ele, o que o instalador deixou ao lado do
+/// executável (só URLs públicas, sem segredo; mesmo esquema do `supabase.json`).
+fn read_file(data_dir: &Path) -> serde_json::Value {
+    let exe_side = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("livekit.json")));
+    [Some(data_dir.join("livekit.json")), exe_side].into_iter().flatten()
+        .find_map(|p| std::fs::read_to_string(p).ok().and_then(|t| if t.len() <= 8 * 1024 { serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok() } else { None }))
+        .unwrap_or(serde_json::Value::Null)
+}
+
 /// `Ok(None)` = não configurado (modo P2P puro); `Err` = configurado mas inválido (aparece no diagnóstico, não derruba nada).
 pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Result<Option<SfuConfig>, String> {
     let get = |k: &str| env(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    let file: serde_json::Value = std::fs::read_to_string(data_dir.join("livekit.json")).ok()
-        .and_then(|t| if t.len() <= 8 * 1024 { serde_json::from_str(t.trim_start_matches('\u{feff}')).ok() } else { None })
-        .unwrap_or(serde_json::Value::Null);
+    let file = read_file(data_dir);
     let fget = |k: &str| file[k].as_str().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let url = get("BRIKS_LIVEKIT_URL").or_else(|| get("VITE_LIVEKIT_URL")).or_else(|| fget("url"));
     let token_url = get("BRIKS_LIVEKIT_TOKEN_URL").or_else(|| get("VITE_LIVEKIT_TOKEN_URL")).or_else(|| fget("token_url"));
@@ -77,8 +84,7 @@ pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Result<
 /// aviso assinado pela camada de dados). Mesmas regras de esquema da URL de tokens.
 pub fn kick_url(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, token_url: &str) -> Option<String> {
     let explicit = env("BRIKS_LIVEKIT_KICK_URL").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
-        std::fs::read_to_string(data_dir.join("livekit.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok())
-            .and_then(|v| v["kick_url"].as_str().map(|s| s.trim().to_string())).filter(|v| !v.is_empty())
+        Some(read_file(data_dir)).and_then(|v| v["kick_url"].as_str().map(|s| s.trim().to_string())).filter(|v| !v.is_empty())
     });
     let u = match explicit { Some(u) => u, None => format!("{}/livekit-kick", token_url.strip_suffix("/livekit-token")?) };
     check_token_url(&u).ok().map(|_| u)
@@ -124,16 +130,36 @@ pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool, fallback: bool) 
         (NetMode::P2p, _, _) => ("p2p", "escolhido: P2P".into()),
         (NetMode::Sfu, true, false) => ("sfu", "escolhido: SFU".into()),
         (NetMode::Auto, true, false) => ("sfu", "automático: servidor de chamadas (SFU)".into()),
-        (NetMode::Sfu, false, _) => ("p2p", "SFU escolhido, mas não configurado: usando P2P".into()),
+        (NetMode::Sfu, false, _) => ("none", "SFU escolhido, mas o servidor de chamadas não está configurado: a chamada não abre em P2P sozinha (troque para Automático ou P2P)".into()),
         (NetMode::Auto, false, _) => ("p2p", "automático: SFU não configurado".into()),
-        (_, true, true) if fallback => ("p2p", "servidor de chamadas indisponível: usando P2P (reserva ligada; só fala com quem também caiu no P2P)".into()),
+        (NetMode::Auto, true, true) if fallback => ("p2p", "servidor de chamadas indisponível: usando P2P (reserva ligada; só fala com quem também caiu no P2P)".into()),
         (_, true, true) => ("none", "servidor de chamadas indisponível: a chamada não foi aberta em P2P para não dividir a sala".into()),
     }
 }
 
+/// Preferência de conexão (Configurações > Rede): 0 Automático, 1 Internet direta, 2 VPN privada. Vale para as próximas conexões.
+static NET_PREF: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub fn set_pref(p: u8) { NET_PREF.store(p.min(2), std::sync::atomic::Ordering::Relaxed); }
+pub fn pref() -> u8 { NET_PREF.load(std::sync::atomic::Ordering::Relaxed) }
+
+/// Adaptador de VPN privada conhecido (ZeroTier, Tailscale, WireGuard e túneis genéricos), pelo nome da interface.
+pub fn is_vpn_iface(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["zerotier", "tailscale", "wireguard", "wintun", "openvpn", "tap-windows", "vpn"].iter().any(|k| n.contains(k)) || n.starts_with("wg") || n.starts_with("zt") || n.starts_with("tun") || n.starts_with("utun")
+}
+
+/// Filtro de interfaces do ICE conforme a preferência: "Internet direta" não oferece candidatos de adaptadores de VPN (o STUN/TURN
+/// seguem valendo). Automático e "VPN privada" deixam todos os adaptadores: a prioridade entre eles é do ICE.
+pub fn iface_allowed(name: &str) -> bool { pref() != 1 || !is_vpn_iface(name) }
+
 #[cfg(test)]
 mod t {
     use super::*;
+    #[test]
+    fn direct_pref_hides_vpn_interfaces() {
+        assert!(super::is_vpn_iface("ZeroTier One [8056c2e21c000001]") && super::is_vpn_iface("Tailscale") && super::is_vpn_iface("wg0"));
+        assert!(!super::is_vpn_iface("Ethernet") && !super::is_vpn_iface("Wi-Fi") && !super::is_vpn_iface("Realtek PCIe GbE"));
+    }
     fn env_of(v: Vec<(&'static str, &'static str)>) -> impl Fn(&str) -> Option<String> { move |k| v.iter().find(|(a, _)| *a == k).map(|(_, b)| b.to_string()) }
 
     #[test]
@@ -200,10 +226,10 @@ mod t {
         assert_eq!(decide(NetMode::Sfu, true, true, false).0, "none");
         // reserva só quando ligada de propósito
         assert_eq!(decide(NetMode::Auto, true, true, true).0, "p2p");
-        assert_eq!(decide(NetMode::Sfu, true, true, true).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, true, true, true).0, "none", "Sempre SFU nunca cai em P2P, nem com a reserva ligada");
         // sem configuração (ou inválida): P2P, como antes; a escolha P2P nunca tenta o SFU
         assert_eq!(decide(NetMode::Auto, false, false, false).0, "p2p");
-        assert_eq!(decide(NetMode::Sfu, false, false, false).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, false, false, false).0, "none", "Sempre SFU sem servidor configurado: erro, não P2P");
         for (ready, failed) in [(true, false), (true, true), (false, false)] { assert_eq!(decide(NetMode::P2p, ready, failed, false).0, "p2p"); }
     }
 

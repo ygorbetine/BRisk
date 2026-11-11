@@ -353,6 +353,7 @@ impl Actor {
         // mais de 100 pacotes para trás. 8192 cobre ~1 s a 50 Mbps e continua barrando replays antigos.
         let mut se = webrtc::api::setting_engine::SettingEngine::default();
         se.set_srtp_replay_protection_window(8192);
+        se.set_interface_filter(Box::new(|n: &str| crate::sfu_cfg::iface_allowed(n)));
         // desiste mais cedo de uma conexão sem resposta (padrão: ~30 s para falhar): a malha refaz o par sozinha (`Reconnect`), então
         // depois de uma queda longa a transmissão volta em ~10 s em vez de ~30 s
         se.set_ice_timeouts(Some(std::time::Duration::from_secs(4)), Some(std::time::Duration::from_secs(8)), Some(std::time::Duration::from_secs(2)));

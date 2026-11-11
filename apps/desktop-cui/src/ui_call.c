@@ -234,7 +234,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 }
                 if (pill(ui, 2, CUI_ICON_VOLUME_2, "Ensurdecer", s->deaf ? 1 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
                 if (pill(ui, 3, CUI_ICON_VIDEO, "Câmera", s->cam_on ? 1 : 0)) s->cam_on = !s->cam_on;
-                if (pill(ui, 4, CUI_ICON_MONITOR, "Compartilhar", s->sharing ? 1 : 0)) s->sharing = !s->sharing;
+                /* Compartilhar tela escondido na versão enxuta: volta com o módulo de transmissão (branch cui-transmissao) */
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
             }
         }

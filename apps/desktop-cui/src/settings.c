@@ -124,7 +124,7 @@ void settings_notice(const char *text) {
 
 static void sub(cui_ctx *ui, const char *t) { cui_text(ui, t, .size = 12, .color = B_MUTED); }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
-    cui_text(ui, "Salvo neste computador · sem efeito real ainda", .size = 11, .color = g_th.ph);
+    cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
 }
 static bool menu_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 7, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
@@ -298,15 +298,15 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                 case 8: /* Atualizações */
                     SCARD(ui, "ATUALIZAÇÕES") {
                         cui_text(ui, "Você está na versão de desenvolvimento do app nativo.");
-                        sub(ui, "A baixada em segundo plano e o botão \"Reiniciar e instalar\" ligam quando o atualizador (cui-instalador) for integrado.");
-                        cui_button(ui, "Verificar atualizações", .variant = CUI_BUTTON_SECONDARY);
+                        sub(ui, "A atualização automática ainda está desligada nesta versão. Em breve.");
+                        cui_push_disabled(ui, true); cui_button(ui, "Verificar atualizações", .variant = CUI_BUTTON_SECONDARY); cui_pop_disabled(ui);
                         tag_nofx(ui);
                     }
                     break;
                 case 9: /* Sobre */
                     SCARD(ui, "BRIKS") {
                         cui_text(ui, "Briks", .font = CUI_FONT_DISPLAY, .size = 20);
-                        sub(ui, "Chamadas, chat e compartilhamento de tela ponto a ponto, com grupos assinados e @nick.");
+                        sub(ui, "Chamadas e chat ponto a ponto, com grupos assinados e @nick. Compartilhamento de tela: em breve.");
                         sw(ui, "Ajudar a melhorar as chamadas", "Envia só contadores anônimos por dia: se a conexão deu certo e se foi direta ou pelo relay. Nunca quem, com quem, sala, IP ou conteúdo.", &g_set.telemetry);
                         tag_nofx(ui);
                         sub(ui, "Feito por Becine Tools · Código-fonte: github.com/ygorbetine/Briks · Licença AGPL");

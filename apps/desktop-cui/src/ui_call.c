@@ -375,7 +375,8 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
         if (now > g_call.toast_until) g_call.toast[0] = 0; else cui_request_wakeup(ui, 0.5f);
     }
     const bool share_note = share_notice_active(ui, s);
-    if (!g_call.req.open && !g_call.toast[0] && !share_note) return;
+    const bool mic_note = s->in_room && rtc_mic_problem(s);   /* aviso fixo enquanto o microfone não funciona (o toast some em 4 s) */
+    if (!g_call.req.open && !g_call.toast[0] && !share_note && !mic_note) return;
     cui_push_id_int(ui, 9400);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad = 14, .pad_top = s->screen == SCREEN_CALL && !g_call.fullscreen ? 84 : 14, .gap = 8) {
         if (g_call.req.open) {
@@ -392,6 +393,13 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
             { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "reqbox")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* o clique no aviso não vale para o bloco que está por baixo */
         }
         if (share_note) ui_share_notice_row(ui, s);
+        if (mic_note) {
+            cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 16, .pad_y = 9, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_A(B_DANGER, 0x99), .align = CUI_ALIGN_CENTER, .max_width = 640, .wrap = true, .justify = CUI_JUSTIFY_CENTER) {
+                cui_icon(ui, CUI_ICON_MIC, 14, B_DANGER);
+                cui_text(ui, !strcmp(s->mic_state, "denied") ? "O Windows bloqueou o microfone: ninguém ouve você." : !strcmp(s->mic_state, "no_device") ? "Nenhum microfone encontrado: ninguém ouve você." : !strcmp(s->mic_state, "busy") ? "Outro aplicativo está usando o microfone: ninguém ouve você." : "O microfone não abriu: ninguém ouve você.", .size = 13, .nowrap = true);
+                if (!strcmp(s->mic_state, "denied") && cui_button(ui, "Abrir Configurações", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rtc_open_mic_privacy();
+            }
+        }
         if (g_call.toast[0]) {
             cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 16, .pad_y = 9, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .max_width = 560) {
                 cui_icon(ui, CUI_ICON_INFO, 14, B_C3);

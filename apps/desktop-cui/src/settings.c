@@ -268,6 +268,8 @@ int settings_probe(const char *n, app_state_t *s) {
     if (!strcmp(n, "mic_test_level")) return (int)(s->mic_test_level * 100.0f + 0.5f);
     if (!strncmp(n, "mic_test_ge", 11)) return s->mic_test_level * 100.0f >= (float)atoi(n + 11);   /* nível do teste >= N % */
     if (!strcmp(n, "mic_test_err")) return s->mic_test_msg[0] != 0;
+    if (!strcmp(n, "mic_problem")) return rtc_mic_problem(s);
+    if (!strcmp(n, "dev_notice")) return s->dev_notice[0] != 0;
     if (!strncmp(n, "hk_status", 9)) return s->hk_status[n[9] - '0' < 3 && n[9] >= '0' ? n[9] - '0' : 0];
     if (!strncmp(n, "key_", 4) && (!strcmp(n + 4, "mute") || !strcmp(n + 4, "deafen") || !strcmp(n + 4, "stream") || !strcmp(n + 4, "ptt"))) return key_field(n[4] == 'm' ? 0 : n[4] == 'd' ? 1 : n[4] == 's' ? 2 : 3)[0] != 0;
     if (!strncmp(n, "keyvk_", 6)) { const char *w = n + 6; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? v : 0; }
@@ -357,6 +359,11 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, "Microfone", .size = 12, .color = B_MUTED);
                         cui_select(ui, "cfg-mic", in_ptr, in_n, &g_set.mic);
                         sub(ui, "Vale na hora, inclusive numa chamada em andamento. Se o aparelho sumir, volta ao padrão do sistema.");
+                        if (rtc_mic_problem(s)) {   /* mesmo padrão do aviso da câmera: texto em vermelho + o caminho para resolver */
+                            cui_text(ui, s->mic_text, .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                            if (!strcmp(s->mic_state, "denied") && cui_button(ui, "Abrir Configurações do Windows", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rtc_open_mic_privacy();
+                        }
+                        if (s->dev_notice[0]) sub(ui, s->dev_notice);
                         cui_text(ui, "Nível do microfone", .size = 12, .color = B_MUTED);
                         level_sim += ((s->in_room ? s->me_level : s->mic_test_level) - level_sim) * 0.3f;
                         cui_progress(ui, level_sim);

@@ -1,0 +1,7 @@
+# Chamada (demo call) com o microfone bloqueado pelo Windows e aviso de troca de dispositivo (BRIKS_DEMO_MIC / BRIKS_DEMO_DEVNOTICE)
+waitms 600
+snap a0
+expect mic_problem 1
+expect dev_notice 1
+waitms 5000
+snap a1

@@ -186,6 +186,8 @@ typedef struct {
     char birth[16];                                            /* cadastro: data de nascimento digitada (só valida, nunca é guardada) */
     /* Voz e atalhos: teste do microfone fora da chamada e resultado do registro dos atalhos globais */
     bool mic_test_on; float mic_test_level; char mic_test_msg[160];
+    /* aviso do microfone/áudio (core: audio.mic, audio.device, mic.test com code): mic_state "" = sem notícia, "ok" ou no_device | denied | busy | error */
+    char mic_state[12]; char mic_text[260]; char dev_notice[220];
     int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
     char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
     /* PRF-12: computadores ligados ao @nick (core: account.devices / account.device_revoke; migração 0009) */
@@ -307,6 +309,8 @@ int settings_call_mode(void);                              /* 0 Automático, 1 P
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */
 void rtc_mic_test(app_state_t *s, bool on);               /* rtc.c: teste do microfone fora da chamada (eventos mic.test) */
+bool rtc_mic_problem(const app_state_t *s);               /* rtc.c: o microfone tem um problema a avisar (sem dispositivo, negado, em uso) */
+void rtc_open_mic_privacy(void);                          /* rtc.c: abre Configurações do Windows > Privacidade > Microfone */
 extern bool g_hk_recording;                                /* hotkeys_rt.c: capturando tecla na tela de Atalhos */
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay);
 void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */

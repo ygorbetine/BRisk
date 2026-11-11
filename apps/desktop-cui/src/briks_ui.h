@@ -71,7 +71,7 @@ typedef struct {
     char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
-    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; float volume; bool vol_set; char label[64], path[300]; } remote[8];
+    struct { bool on, audio, watching, has_frame, poor; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[8];
 } share_state_t;
 
 typedef struct {

@@ -108,6 +108,8 @@ enum Internal {
     DcOpen { peer: String, gen: u32 },
     DcAttach { peer: String, gen: u32, dc: Arc<RTCDataChannel> },
     DcMsg { peer: String, gen: u32, text: String },
+    /// refaz a conexão de um par cuja conexão WebRTC falhou (depois de uma queda longa de rede)
+    Reconnect { peer: String },
 }
 
 struct Peer {
@@ -179,6 +181,8 @@ struct Actor {
     irx: Option<mpsc::Receiver<Internal>>,
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
+    /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
+    watch_intent: HashMap<String, std::path::PathBuf>,
     seen_msgs: HashSet<String>,
     ev_last_ts: u64,                // relógio monotônico dos meus eventos de chat
     seen_events: HashSet<String>,
@@ -209,7 +213,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -299,6 +303,9 @@ impl Actor {
         // mais de 100 pacotes para trás. 8192 cobre ~1 s a 50 Mbps e continua barrando replays antigos.
         let mut se = webrtc::api::setting_engine::SettingEngine::default();
         se.set_srtp_replay_protection_window(8192);
+        // desiste mais cedo de uma conexão sem resposta (padrão: ~30 s para falhar): a malha refaz o par sozinha (`Reconnect`), então
+        // depois de uma queda longa a transmissão volta em ~10 s em vez de ~30 s
+        se.set_ice_timeouts(Some(std::time::Duration::from_secs(4)), Some(std::time::Duration::from_secs(8)), Some(std::time::Duration::from_secs(2)));
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
         {
@@ -516,6 +523,7 @@ impl Actor {
                 let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv.clone()));
                 match found {
                     Some((id, r)) => {
+                        if on { self.watch_intent.insert(id.clone(), path.clone()); } else { self.watch_intent.remove(&id); }
                         if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.frames.store(0, std::sync::atomic::Ordering::Relaxed); }
                         r.watching.store(on, std::sync::atomic::Ordering::Relaxed);
                         self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
@@ -727,7 +735,22 @@ impl Actor {
             Internal::PcState { peer, gen, state } => {
                 if !self.gen_ok(&peer, gen) { return; }
                 let s = match state { RTCPeerConnectionState::Connected => "conectado", RTCPeerConnectionState::Failed => "falhou", RTCPeerConnectionState::Closed => "fechado", RTCPeerConnectionState::Disconnected => "falhou", _ => "negociando" };
-                self.emit(MeshEvent::Peer { peer_id: peer, state: s.into() }).await;
+                self.emit(MeshEvent::Peer { peer_id: peer.clone(), state: s.into() }).await;
+                // Conexão FALHA (o ICE desiste depois de ~30 s sem resposta): sem isto o par ficava morto para sempre mesmo com a rede de
+                // volta e os dois ainda na sala. Fecha, espera um pouco e refaz do zero (o lado iniciador oferece, o outro aceita a
+                // oferta na própria `on_signal`); a transmissão em curso é anexada de novo na reautenticação (`after_auth`).
+                if state == RTCPeerConnectionState::Failed {
+                    self.net.lock().unwrap().peers.remove(&peer);
+                    if let Some(a) = &self.audio { a.remove_peer(&peer); }
+                    if let Some(p) = self.peers.remove(&peer) { let _ = p.pc.close().await; }
+                    let (itx, id) = (self.itx.clone(), peer);
+                    tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1500)).await; let _ = itx.send(Internal::Reconnect { peer: id }).await; });
+                }
+            }
+            Internal::Reconnect { peer } => {
+                if !self.present.contains(&peer) || self.blocked.contains(&peer) || self.peers.contains_key(&peer) || self.peers.len() >= MAX_PEERS { return; }
+                if let Err(e) = self.add_peer(&peer).await { self.emit(MeshEvent::Error(format!("reconexão com {peer}: {e}"))).await; return; }
+                if is_initiator(&self.cfg.local_peer, &peer) { self.start_offer(&peer, true).await; }
             }
             Internal::DcAttach { peer, gen, dc } => {
                 if !self.gen_ok(&peer, gen) { return; }
@@ -850,8 +873,20 @@ impl Actor {
                 for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
                 m["label"] = json!(v["label"].as_str().unwrap_or("").chars().take(64).collect::<String>());
                 m["audio"] = json!(v["audio"].as_bool().unwrap_or(false));
-                if !on { if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
+                if !on { self.watch_intent.remove(peer); if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
                 self.emit(MeshEvent::Share(m)).await;
+                // a conexão com o emissor foi refeita (queda longa) e o usuário estava assistindo: retoma sozinho, sem ele precisar fazer nada
+                if on {
+                    if let (Some(path), Some(p)) = (self.watch_intent.get(peer).cloned(), self.peers.get(peer)) {
+                        if !p.recv.watching.load(std::sync::atomic::Ordering::Relaxed) {
+                            *p.recv.sink_path.lock().unwrap() = Some(path.clone());
+                            p.recv.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            p.recv.frames.store(0, std::sync::atomic::Ordering::Relaxed);
+                            p.recv.watching.store(true, std::sync::atomic::Ordering::Relaxed);
+                            self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": peer, "state": "watch", "path": path.to_string_lossy() }))).await;
+                        }
+                    }
+                }
             }
             "chat.message.ack" => {
                 let id = v["messageId"].as_str().unwrap_or("");

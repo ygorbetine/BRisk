@@ -88,4 +88,6 @@ mod tests_sfudata;
 #[cfg(test)]
 mod tests_sfurec;
 #[cfg(test)]
+mod tests_sfurede;
+#[cfg(test)]
 mod tests_sfu;

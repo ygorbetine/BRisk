@@ -541,6 +541,8 @@ impl Actor {
                 if let (Some(mid), Some(tr)) = (t.mid(), t.sender().await.track().await) { mid_map.insert(mid.to_string(), tr.id().to_string()); }
             }
             self.pub_offering = true;
+            #[cfg(test)]
+            let offer = { let mut o = offer; if crate::netsim::for_peer(&self.me.identity).is_some() { o.sdp = crate::netsim::strip_sdp(&o.sdp); } o };
             self.send(rq::Message::Offer(lk::SessionDescription { r#type: "offer".into(), sdp: offer.sdp, id: 0, mid_to_track_id: mid_map })).await;
             Ok(())
         }.await;
@@ -555,7 +557,7 @@ impl Actor {
             Ok(sender) => {
                 if p.video {
                     self.idr.store(true, Ordering::Relaxed);
-                    let nack = self.vout.as_ref().map(|v| v.nack_tx.clone());
+                    let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone()));
                     spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {
                     self.mic_sid = Some(sid.clone());
@@ -568,6 +570,19 @@ impl Actor {
             }
             Err(e) => self.emit(MeshEvent::Error(format!("faixa {}: {e}", r.cid))).await,
         }
+    }
+
+    /// Só testes (rede ruim simulada entre ESTE cliente e o SFU): os candidatos do servidor que vêm dentro do SDP passam a apontar
+    /// para o proxy UDP do `netsim` (os que ele não sabe encaminhar, como TCP e IPv6, saem), para nenhum pacote contornar o proxy.
+    #[cfg(test)]
+    async fn sim_in_sdp(&self, sdp: String) -> String {
+        let Some(ns) = crate::netsim::for_peer(&self.me.identity) else { return sdp };
+        let mut out = vec![];
+        for l in sdp.split("\r\n") {
+            if let Some(c) = l.strip_prefix("a=") .filter(|c| c.starts_with("candidate:")) { if let Some(n) = ns.rewrite(c).await { out.push(format!("a={n}")); } }
+            else if !l.starts_with("a=end-of-candidates") { out.push(l.to_string()); }
+        }
+        out.join("\r\n")
     }
 
     async fn add_ice(&mut self, target: i32, init: RTCIceCandidateInit) {
@@ -588,17 +603,23 @@ impl Actor {
         match m {
             rs::Message::Offer(o) => {
                 // subscriber: o servidor oferece, nós respondemos
+                #[cfg(test)]
+                let o = { let mut o = o; o.sdp = self.sim_in_sdp(o.sdp).await; o };
                 let r: Result<()> = async {
                     self.sub.set_remote_description(RTCSessionDescription::offer(o.sdp)?).await?;
                     self.flush_ice(1).await;
                     let ans = self.sub.create_answer(None).await?;
                     self.sub.set_local_description(ans.clone()).await?;
+                    #[cfg(test)]
+                    let ans = { let mut a = ans; if crate::netsim::for_peer(&self.me.identity).is_some() { a.sdp = crate::netsim::strip_sdp(&a.sdp); } a };
                     self.send(rq::Message::Answer(lk::SessionDescription { r#type: "answer".into(), sdp: ans.sdp, id: o.id, mid_to_track_id: Default::default() })).await;
                     Ok(())
                 }.await;
                 if let Err(e) = r { self.emit(MeshEvent::Error(format!("resposta ao SFU: {e}"))).await; }
             }
             rs::Message::Answer(a) => {
+                #[cfg(test)]
+                let a = { let mut a = a; a.sdp = self.sim_in_sdp(a.sdp).await; a };
                 if let Some(pc) = self.publisher.clone() {
                     match RTCSessionDescription::answer(a.sdp) { Ok(d) => { if let Err(e) = pc.set_remote_description(d).await { self.emit(MeshEvent::Error(format!("answer do SFU: {e}"))).await; } } Err(e) => self.emit(MeshEvent::Error(format!("answer inválida: {e}"))).await }
                     self.flush_ice(0).await;
@@ -607,7 +628,11 @@ impl Actor {
                 if std::mem::take(&mut self.pub_dirty) { self.negotiate_publisher().await; }
             }
             rs::Message::Trickle(t) => {
-                if let Ok(init) = serde_json::from_str::<RTCIceCandidateInit>(&t.candidate_init) { self.add_ice(t.target, init).await; }
+                if let Ok(init) = serde_json::from_str::<RTCIceCandidateInit>(&t.candidate_init) {
+                    #[cfg(test)]
+                    let init = { let mut init = init; if let Some(ns) = crate::netsim::for_peer(&self.me.identity) { match ns.rewrite(&init.candidate).await { Some(c) => init.candidate = c, None => return } } init };
+                    self.add_ice(t.target, init).await;
+                }
             }
             rs::Message::Update(u) => self.on_participants(&u.participants).await,
             rs::Message::TrackPublished(p) => self.on_track_published(p).await,
@@ -774,6 +799,8 @@ impl Actor {
             Internal::DcOpen(ep) => { if ep == self.epoch { for b in std::mem::take(&mut self.dc_queue) { self.dc_send_raw(b).await; } } }
             Internal::Ice { epoch, target, init } => {
                 if epoch != self.epoch { return; }
+                #[cfg(test)]
+                let init = { let mut init = init; if let Some(ns) = crate::netsim::for_peer(&self.me.identity) { match ns.rewrite(&init.candidate).await { Some(c) => init.candidate = c, None => return } } init };
                 if let Ok(s) = serde_json::to_string(&init) { self.send(rq::Message::Trickle(lk::TrickleRequest { candidate_init: s, target, r#final: false })).await; }
             }
             Internal::Pc { epoch, target, state } => {
@@ -957,11 +984,14 @@ impl Actor {
 
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports
 /// (perda/jitter/RTT para o adapt.rs). É a mesma leitura da malha, com a chave "sfu" no lugar do peer.
-fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<mpsc::Sender<Vec<u16>>>, stats: Arc<SfuStats>) {
+fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<(mpsc::Sender<Vec<u16>>, Arc<AtomicU64>)>, stats: Arc<SfuStats>) {
     tokio::spawn(async move {
         use webrtc::rtcp::receiver_report::ReceiverReport;
         use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
         let ssrc = sender.get_parameters().await.encodings.first().map(|e| e.ssrc).unwrap_or(0);
+        // O LiveKit pede cada pacote perdido poucas vezes, em intervalos curtos, e desiste: com os 150 ms da malha a 2ª retransmissão
+        // (quando a 1ª também se perde) era sempre recusada e o quadro morria. Aqui o intervalo acompanha o RTT medido (30..150 ms).
+        if let Some((_, gap)) = &nack_tx { gap.store(40, Ordering::Relaxed); }
         while let Ok((pkts, _)) = sender.read_rtcp().await {
             for pk in pkts {
                 let any = pk.as_any();
@@ -976,7 +1006,10 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                         if r.last_sender_report != 0 {
                             let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
                             let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
-                            if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); } }
+                            if d < 10 * 65536 {
+                                e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); }
+                                if let Some((_, gap)) = &nack_tx { gap.store(((e.rtt_ms * 1.5) as u64 + 15).clamp(30, 150), Ordering::Relaxed); }
+                            }
                         }
                         e.updated = std::time::Instant::now();
                         stats.rr.fetch_add(1, Ordering::Relaxed); stats.rtt_us.store((e.rtt_ms * 1000.0) as u64, Ordering::Relaxed); stats.loss_permille.store((e.loss * 1000.0) as u64, Ordering::Relaxed);
@@ -987,7 +1020,7 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                         for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
                         seqs.truncate(512);
                         e.nacks += seqs.len() as u64; stats.nacks.fetch_add(seqs.len() as u64, Ordering::Relaxed);
-                        if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
+                        if let Some((t, _)) = &nack_tx { let _ = t.try_send(seqs); }
                     }
                 }
             }

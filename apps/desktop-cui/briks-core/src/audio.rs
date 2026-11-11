@@ -3,7 +3,7 @@
 //! Com `fake = true` (BRIKS_CORE_FAKE_AUDIO=1) a captura é um tom de 440 Hz e não há dispositivo de áudio: os testes
 //! chamam `mix_pull` no lugar do callback do cpal.
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -76,9 +76,20 @@ pub struct Audio {
     gains: Mutex<HashMap<String, f32>>,
     sinks: Mutex<HashMap<String, Sink>>,
     cap: Mutex<VecDeque<f32>>,
+    /// Configurações de áudio (bits de f32): ganho de entrada, ganho de saída, limite da porta de ruído em dB (NAN = porta desligada)
+    in_gain: AtomicU32,
+    out_gain: AtomicU32,
+    gate_db: AtomicU32,
     pub stats: Mutex<HashMap<String, RxStat>>,
     pub sent_frames: AtomicU64,
     ev: mpsc::Sender<AudioEvent>,
+}
+
+/// Ganho de entrada + porta de ruído (bloco inteiro abaixo do limite em dB vira silêncio).
+pub fn process_input(x: &[f32], gain: f32, gate_db: Option<f32>) -> Vec<f32> {
+    let closed = match gate_db { Some(db) if !x.is_empty() => { let r = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt() * gain; 20.0 * r.max(1e-9).log10() < db } _ => false };
+    if closed { return vec![0.0; x.len()]; }
+    x.iter().map(|v| (v * gain).clamp(-1.0, 1.0)).collect()
 }
 
 pub fn rms(x: &[f32]) -> f32 { if x.is_empty() { 0.0 } else { (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt() } }
@@ -92,7 +103,7 @@ impl Audio {
             "briks".into(),
         ));
         let a = Arc::new(Audio { track, mic_muted: AtomicBool::new(false), deaf: AtomicBool::new(false), stop: AtomicBool::new(false), fake,
-            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
+            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
         (a, rx)
     }
 
@@ -111,6 +122,14 @@ impl Audio {
     }
     /// Volume (0..2) do áudio da transmissão de um peer, só para este espectador.
     pub fn set_screen_gain(&self, peer: &str, gain: f32) { self.gains.lock().unwrap().insert(format!("{peer}#screen"), gain.clamp(0.0, 2.0)); }
+    /// Volume (0..2) da voz de um peer, só para quem escuta (1.0 = normal).
+    pub fn set_peer_gain(&self, peer: &str, gain: f32) { self.gains.lock().unwrap().insert(peer.to_string(), gain.clamp(0.0, 2.0)); }
+    /// Ajustes de áudio das Configurações: ganhos 0..2 (1 = normal) e porta de ruído (`gate_db` = None desliga).
+    pub fn set_audio_cfg(&self, in_gain: f32, out_gain: f32, gate_db: Option<f32>) {
+        self.in_gain.store(in_gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.out_gain.store(out_gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.gate_db.store(gate_db.map(|d| d.clamp(-90.0, 0.0)).unwrap_or(f32::NAN).to_bits(), Ordering::Relaxed);
+    }
     pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
     pub fn rx_stat(&self, peer: &str) -> RxStat { self.stats.lock().unwrap().get(peer).cloned().unwrap_or_default() }
 
@@ -252,12 +271,15 @@ impl Audio {
             for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v * g; } }
             if take < out.len() { s.primed = false; }
         }
-        out.iter_mut().for_each(|v| *v = v.clamp(-1.0, 1.0));
+        let og = f32::from_bits(self.out_gain.load(Ordering::Relaxed));
+        out.iter_mut().for_each(|v| *v = (*v * og).clamp(-1.0, 1.0));
     }
 
     fn push_capture(&self, mono48: &[f32]) {
+        let gate = f32::from_bits(self.gate_db.load(Ordering::Relaxed));
+        let proc = process_input(mono48, f32::from_bits(self.in_gain.load(Ordering::Relaxed)), if gate.is_nan() { None } else { Some(gate) });
         let mut c = self.cap.lock().unwrap();
-        c.extend(mono48.iter().copied());
+        c.extend(proc.iter().copied());
         if c.len() > RATE as usize { let d = c.len() - RATE as usize; c.drain(..d); }
     }
 
@@ -327,6 +349,17 @@ mod unit {
         let mut off = None;
         for _ in 0..16 { if let Some(l) = s.feed(0.001) { off = Some(l); } }
         assert_eq!(off, Some(0.0));
+    }
+
+    #[test]
+    fn input_gain_and_noise_gate() {
+        let tone: Vec<f32> = (0..480).map(|i| 0.2 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin()).collect();
+        let r0 = rms(&tone);
+        assert!((rms(&process_input(&tone, 0.5, None)) - r0 * 0.5).abs() < 1e-4, "ganho 0,5");
+        assert!(rms(&process_input(&tone, 1.0, Some(-50.0))) > r0 * 0.99, "porta aberta (voz forte)");
+        let hiss: Vec<f32> = tone.iter().map(|v| v * 0.005).collect();   // ~-60 dB
+        assert_eq!(rms(&process_input(&hiss, 1.0, Some(-50.0))), 0.0, "porta fecha no ruído baixo");
+        assert!(rms(&process_input(&hiss, 1.0, None)) > 0.0, "sem porta o ruído passa");
     }
 
     #[test]

@@ -160,6 +160,18 @@ async fn audio_tone_travels_between_two_cores_and_mute_deafen_work() {
     let _ = tone_in(&au_b);
     assert!(until(5, || tone_in(&au_b).0 > 0.05).await, "peer não voltou ao desmutar");
 
+    // volume por pessoa: 0,25 baixa o nível proporcionalmente; 1,0 volta ao normal
+    let mut base = 0.0f32;
+    for _ in 0..30 { base = base.max(tone_in(&au_b).0); tokio::time::sleep(Duration::from_millis(50)).await; }
+    assert!(base > 0.05, "sem tom base: {base}");
+    b.cmd.send(MeshCmd::PeerVolume { key: PA.into(), gain: 0.25 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut low = 0.0f32;
+    for _ in 0..30 { low = low.max(tone_in(&au_b).0); tokio::time::sleep(Duration::from_millis(50)).await; }
+    assert!(low > 0.005 && low < base * 0.6, "volume por pessoa não baixou: base {base} baixo {low}");
+    b.cmd.send(MeshCmd::PeerVolume { key: PA.into(), gain: 1.0 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
     // microfone mudo de A: B deixa de receber frames novos e é avisado (peer.state)
     au_a.set_mic_muted(true);
     a.cmd.send(MeshCmd::BroadcastState).await.unwrap();

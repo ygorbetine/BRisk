@@ -9,8 +9,8 @@ Complementa `paridade-electron-cui.md` (gerado do `itens.csv`, classificado sobr
   - Viraram PRESENTE-FUNCIONAL: PRF-06, AMI-06, AMI-07, AMI-08, AMI-09, AMI-11, MSG-08, CHM-14, CFG-26, RDE-03.
   - TRX-11 (SFU) virou VERIFICAR: o código existe e o modo de Configurações > Rede chega ao core, mas falta teste com LiveKit real.
   - CHM-16 (desconexão por inatividade) e CFG-29 (novidades da versão) continuam AUSENTE: as sondas davam falso positivo e foram corrigidas.
-- Ressalvas: CHM-14 não lembra o volume na chamada seguinte; CFG-26 só recebe aviso da falha de "iniciar com o Windows"; em AMI-11 o texto de atividade só chega de quem está na sua chamada. Só AMI-08, AMI-09 e AMI-11 ganharam roteiro (`amigos-abas`); PRF-06 tem teste em `tests/profile_test.c`; os demais foram conferidos por leitura do código.
-- O cartão "MODO DA CHAMADA" em Configurações > Rede ainda mostra a etiqueta "sem efeito", embora o modo já chegue ao core: NÃO CORRIGIDO.
+- Ressalvas: CHM-14 passou a lembrar o volume por identidade (`peer-volumes.txt`), só compilado, sem teste; CFG-26 só recebe aviso da falha de "iniciar com o Windows"; em AMI-11 o texto de atividade só chega de quem está na sua chamada. Só AMI-08, AMI-09 e AMI-11 ganharam roteiro (`amigos-abas`); PRF-06 tem teste em `tests/profile_test.c`; os demais foram conferidos por leitura do código.
+- O cartão "MODO DA CHAMADA" em Configurações > Rede perdeu a etiqueta "sem efeito" (o modo já chegava ao core); "PREFERÊNCIA DE CONEXÃO" continua sem efeito.
 
 ## Números
 | | brisk-dev (auditoria) | integrado (roteiro) |

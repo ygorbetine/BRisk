@@ -1,0 +1,24 @@
+# Tela cheia da chamada: a janela toda é HTCLIENT (sem faixa de título nem bordas de redimensionar) e os botões funcionam.
+# Rodar com BRIKS_DEMO=call BRIKS_DEMO_PEERS=1 BRIKS_TEST_FULLSCREEN=1 (oculto).
+waitms 600
+expect call_full 0
+sys tbhit 500 10
+expect tb_hit 2
+key f11
+waitms 600
+expect call_full 1
+sys tbhit 500 10
+expect tb_hit 1
+sys tbhit 2 400
+expect tb_hit 1
+sys tbhit -3 400
+expect tb_hit 1
+sys tbhit 500 -2
+expect tb_hit 1
+sys tbhit 2 2
+expect tb_hit 1
+sys tbhit -3 -2
+expect tb_hit 1
+at 800 600
+waitms 300
+shot tela-cheia

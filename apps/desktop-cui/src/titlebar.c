@@ -39,6 +39,12 @@ void titlebar_action(int a) {
     else ShowWindow(h, IsZoomed(h) ? SW_RESTORE : SW_MAXIMIZE);
 }
 
+/* Tela cheia (chamada): a janela toda é área do app. Sem faixa de arrastar, sem bordas de redimensionar e sem a barra desenhada;
+   senão o topo e as bordas engoliam os cliques (ex.: "Sair da tela cheia" e a barra de controles flutuante). ui_call.c avisa aqui. */
+static bool g_fullscreen;
+void titlebar_set_fullscreen(bool on) { g_fullscreen = on; }
+bool titlebar_fullscreen(void) { return g_fullscreen; }
+
 /* Resultado do WM_NCHITTEST para um ponto em pixels de tela relativos ao canto da janela (cx, cy) numa janela w x h. Puro: serve ao roteiro de teste. */
 int titlebar_hit(int cx, int cy, int w, int h, bool maximized, float sc) {
     const int edge = maximized ? 0 : (int)(TB_EDGE * sc + 0.5f), bar = (int)(TB_H * sc + 0.5f);
@@ -68,6 +74,7 @@ bool titlebar_proc(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         }
         break;
     case WM_NCHITTEST: {
+        if (g_fullscreen) { *res = HTCLIENT; return true; }
         RECT r; GetWindowRect(h, &r);
         const int hit = titlebar_hit(GET_X_LPARAM(l) - r.left, GET_Y_LPARAM(l) - r.top, r.right - r.left, r.bottom - r.top, IsZoomed(h) != 0, scale());
         if (hit == HTCAPTION) g_drag_hint++;
@@ -101,6 +108,7 @@ static bool tb_btn(cui_ctx *ui, const char *id, const char *icon, bool danger) {
 void titlebar_draw(cui_ctx *ui, app_state_t *s) {
     (void)s;
     g_scale = cui_dpi_scale(ui);
+    if (g_fullscreen) return;   /* tela cheia: nada de barra de título por cima do palco */
     const bool max = g_hwnd && IsZoomed(g_hwnd);
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(TB_H), .pad_x = TB_MARGIN + 4, .gap = 10, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0x0c021466)) {
         cui_box(ui, .width = CUI_PX(20), .height = CUI_PX(20), .radius = 6, .bg = B_C2, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
@@ -139,7 +147,7 @@ bool titlebar_script(const char *cmd, int a, int b) {
         const int w = r.right - r.left, h = r.bottom - r.top;
         if (a < 0) a += w;   /* negativo = distância da borda direita/inferior (a janela real pode ter outro tamanho por causa do DPI) */
         if (b < 0) b += h;
-        g_hit_result = titlebar_hit(a, b, r.right - r.left, r.bottom - r.top, IsZoomed(g_hwnd) != 0, scale());
+        g_hit_result = g_fullscreen ? HTCLIENT : titlebar_hit(a, b, r.right - r.left, r.bottom - r.top, IsZoomed(g_hwnd) != 0, scale());
         return true;
     }
     if (!strcmp(cmd, "tbact")) { titlebar_action(a); return true; }

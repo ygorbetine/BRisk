@@ -58,10 +58,12 @@ void call_request_in(const char *peer_id, const char *name) {
 }
 
 /* ---------- tela cheia ---------- */
+void titlebar_set_fullscreen(bool on);   /* titlebar.c */
 static struct { bool applied; LONG_PTR style; RECT rc; } g_fsw;   /* estilo e retângulo de antes (janela maximizada volta maximizada: o estilo guarda isso) */
 void call_set_fullscreen(app_state_t *s, bool on) {
     if (g_call.fullscreen == on) return;
     g_call.fullscreen = on; g_call.last_move = -1;
+    titlebar_set_fullscreen(on);   /* titlebar.c: em tela cheia a janela toda é HTCLIENT e a barra própria some */
     HWND h = s->app ? (HWND)cui_app_native_window(s->app) : NULL;
     if (!h) return;
     /* janela oculta (teste automatizado): só o layout imersivo, sem mexer na janela; BRIKS_TEST_FULLSCREEN exercita o caminho real, ainda oculto */
@@ -518,6 +520,7 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
     if (g_call.fullscreen) { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "ctlbar")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* flutuando sobre o palco: o clique na barra não destaca o bloco de baixo */
     /* janela estreita ou texto grande: os controles quebram em duas linhas em vez de passar da largura */
     const float vw = cui_viewport_size(ui).x;
+    const bool own = g_call.fullscreen; if (own) g_cov_own++;   /* a barra cobre o palco, mas os botões DELA continuam valendo (antes a cobertura matava os próprios botões em tela cheia) */
     cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = compact ? 8 : 10, .pad = compact ? 10 : 14, .radius = compact ? 30 : 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
             .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .wrap = true, .max_width = vw - 16.0f) {
         const bool mic_eff = s->mic_on && !s->deaf;
@@ -541,6 +544,7 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
         if (g_call.fullscreen && pill(ui, 7, CUI_ICON_MINIMIZE_2, NULL, 0, "Sair da tela cheia (Esc)")) call_set_fullscreen(s, false);
         if (pill(ui, 5, CUI_ICON_PHONE, compact ? NULL : "Sair", 2, "Sair da chamada")) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
     }
+    if (own) g_cov_own--;
 }
 
 void ui_call(cui_ctx *ui, app_state_t *s) {

@@ -1,0 +1,19 @@
+# Tela cheia (layout imersivo, janela oculta de 1280x800): os botões da barra flutuante e "Sair da tela cheia" respondem ao clique.
+# Rodar com BRIKS_DEMO=call BRIKS_DEMO_PEERS=1 BRIKS_WINDOW=1280x800 (oculto, sem BRIKS_TEST_FULLSCREEN).
+waitms 600
+key f11
+waitms 500
+expect call_full 1
+expect mic 1
+at 640 400
+waitms 300
+click 150 784
+waitms 300
+expect mic 0
+shot mic-desligado
+click 150 784
+waitms 300
+expect mic 1
+click 1087 784
+waitms 400
+expect call_full 0

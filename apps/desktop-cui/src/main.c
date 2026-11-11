@@ -83,7 +83,7 @@ int script_probe(const char *n) {
 
 static void frame(cui_ctx *ui) {
     g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0; g_hot_modal_draw = briks_hot_modal_draw;
-    memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
+    memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0; g_cov_own = 0;
     { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
     if (!g_modal_prev) {   /* BAS-39: Ctrl+mais, Ctrl+menos e Ctrl+0 ajustam o tamanho do texto */
         if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_EQUAL) || cui_shortcut(ui, CUI_MOD_CTRL | CUI_MOD_SHIFT, CUI_KEY_EQUAL)) settings_text_step(ui, 1);

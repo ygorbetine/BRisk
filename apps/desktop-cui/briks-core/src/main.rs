@@ -25,6 +25,7 @@ mod mock;
 mod phoenix;
 mod procaudio;
 mod realtime;
+mod roomchat;
 mod share;
 mod signaling;
 

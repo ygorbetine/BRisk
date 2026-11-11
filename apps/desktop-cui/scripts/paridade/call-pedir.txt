@@ -1,0 +1,16 @@
+# Pedir transmissão (3 participantes de exemplo e um pedido recebido): aviso com Transmitir / Agora não; menu do bloco com "Pedir transmissão"
+waitms 400
+expect call_req 1
+snap p0
+tap 884 114
+expect call_req 0
+snap p1
+at 950 236
+rdown
+wait 3
+rup
+at 2 790
+waitms 500
+shot p2
+tap 763 243
+snap p3

@@ -5,6 +5,7 @@
 #include "msgui.h"
 #include "attach.h"
 #include "sysint.h"
+#include "call.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,26 @@ void rtc_leave_room(app_state_t *s) {
     s->rtc_owner_me = false; s->kick_open = false;
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
     share_reset(s);
+    call_reset(s);
+}
+
+/* chat da sala e pedido de transmissão: só para quem está autenticado na sala (o core confere) */
+void rtc_room_chat(const char *id, const char *text) {
+    if (core_state() != CORE_READY) return;
+    char line[2400], t[1700], i[96]; json_escape(text, t, sizeof t); json_escape(id, i, sizeof i);
+    snprintf(line, sizeof line, "{\"cmd\":\"room.chat.send\",\"id\":\"%s\",\"text\":\"%s\"}", i, t);
+    core_send(line);
+}
+void rtc_stream_request(app_state_t *s, int slot) {
+    if (slot < 0 || slot >= 8 || !s->rtc_peers[slot].id[0]) return;
+    char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
+    snprintf(extra, sizeof extra, "\"peer\":\"%s\"", id);
+    if (core_state() == CORE_READY) send_cmd("stream.request", extra);
+}
+void rtc_stream_reply(const char *peer_id, bool accepted) {
+    char extra[160], id[96]; json_escape(peer_id, id, sizeof id);
+    snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"accepted\":%s", id, accepted ? "true" : "false");
+    if (core_state() == CORE_READY) send_cmd("stream.reply", extra);
 }
 
 void rtc_kick_peer(app_state_t *s, int slot) {
@@ -124,6 +145,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         copy(s->rtc_state, sizeof s->rtc_state, "");
         s->kicked_open = true;
         s->screen = SCREEN_SOCIAL;
+        call_reset(s);
     } else if (!strcmp(ev, "peer.state")) {
         const char *p = json_str(j, "peer_id", "");
         const jval *m = json_get(j, "microphone"), *d = json_get(j, "deafened");
@@ -140,6 +162,17 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
     } else if (!strcmp(ev, "chat.message")) {   /* mensagem nova de outra pessoa: aviso do sistema e contador de não lidas (notify.c) */
         notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), json_str(j, "content", ""));
+    } else if (!strcmp(ev, "room.chat")) {
+        const jval *ts = json_get(j, "ts");
+        call_chat_add(json_str(j, "id", ""), json_str(j, "author", "Participante"), json_str(j, "content", ""), ts && ts->type == J_NUM ? (long long)ts->num : 0, false);
+        if (!(s->screen == SCREEN_CALL && s->call_view == 1)) g_call.unread++;
+    } else if (!strcmp(ev, "stream.request")) {
+        call_request_in(json_str(j, "peer_id", ""), json_str(j, "name", ""));
+    } else if (!strcmp(ev, "stream.reply")) {
+        const jval *a = json_get(j, "accepted"); const char *nm = json_str(j, "name", ""); char t[160];
+        if (a && a->type == J_BOOL && a->b) snprintf(t, sizeof t, "%s vai transmitir.", nm[0] ? nm : "A pessoa");
+        else snprintf(t, sizeof t, "%s não pode transmitir agora.", nm[0] ? nm : "A pessoa");
+        call_toast(t);
     } else if (!strcmp(ev, "ice.info")) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
@@ -166,10 +199,14 @@ void rtc_pump(app_state_t *s) {
     static bool demo_peers_done;   /* BRIKS_DEMO_PEERS=1: dois participantes de exemplo e eu como dono (captura do menu/diálogo de expulsar) */
     if (!demo_peers_done && getenv("BRIKS_DEMO_PEERS")) {
         demo_peers_done = true;
-        const char *nm[2] = { "Marina Costa", "Rafael Lima" };
-        for (int i = 0; i < 2; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
+        const char *nm[8] = { "Marina Costa", "Rafael Lima", "Bia Nogueira", "Caio Ramos", "Helena Dias", "Lucas Prado", "Duda Reis", "Téo Farias" };
+        int dn = atoi(getenv("BRIKS_DEMO_PEERS")); if (dn < 2) dn = 2; if (dn > 8) dn = 8;   /* =N: N participantes (grade/foco nas capturas) */
+        if (getenv("BRIKS_DEMO_REQ")) call_request_in("demo-0", nm[0]);                      /* captura do aviso "pediu para você transmitir" */
+        if (getenv("BRIKS_DEMO_ROOMCHAT")) { call_chat_add("d1", nm[0], "Cheguei! Alguém me ouve?", 0, false); call_chat_add("d2", nm[1], "Ouvindo bem daqui.", 0, false); g_call.unread = 2; }
+        for (int i = 0; i < dn; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i]); snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); }
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
+        copy(s->rtc_state, sizeof s->rtc_state, "conectado"); s->rtc_peer_count = s->rtc_authed_count = dn;   /* a demonstração mostra a sala como conectada */
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }
     }
     if (st == CORE_FAILED && s->in_room && strcmp(s->rtc_state, "erro")) {
@@ -215,6 +252,7 @@ void rtc_pump(app_state_t *s) {
             s->rtc_want_room = false;
         }
     }
+    history_tick(s);   /* registro da chamada em andamento (ui_history.c) */
     static char line[65536];   /* a lista de fontes (share.sources) passa de 8 KB */
     bool any = false;
     while (core_next_event(line, sizeof line)) any |= rtc_handle_event(s, line);

@@ -54,6 +54,12 @@ pub enum MeshEvent {
     Ack { id: String, from_fp: String },
     /// O peer está digitando.
     Typing { from_fp: String },
+    /// Mensagem do chat da sala (aba Chat da chamada): vale só durante a chamada, de um peer autenticado.
+    RoomChat { peer_id: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// Um peer autenticado pediu para eu transmitir a tela.
+    StreamRequest { peer_id: String, name: String },
+    /// Resposta ao meu pedido de transmissão (só chega se eu pedi há pouco).
+    StreamReply { peer_id: String, name: String, accepted: bool },
     /// Snapshot de grupo assinado recebido de um peer autenticado (estrutura e assinatura conferidas; a autorização é de `group.verify`).
     GroupSnapshot { from_fp: String, snapshot: Value },
     /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
@@ -104,6 +110,12 @@ pub enum MeshCmd {
     PauseFile { id: String, paused: bool },
     /// Avisa os peers autenticados que estou digitando.
     Typing,
+    /// Chat da sala: texto para todos os peers autenticados (não fica gravado).
+    RoomChat { id: String, text: String },
+    /// Pede a um peer (peer_id ou impressão digital) que transmita a tela.
+    StreamRequest { key: String },
+    /// Responde a quem pediu a minha transmissão.
+    StreamReply { key: String, accepted: bool },
     Event { channel: String, target: String, action: String, content: Option<String>, reference: Option<String>, emoji: Option<String> },
     /// Envia um snapshot de grupo (já assinado) a todos os peers autenticados da sala.
     GroupSend { snapshot: Value },
@@ -522,6 +534,23 @@ impl Actor {
             MeshCmd::Typing => {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "chat.typing", "fromPeerId": self.cfg.local_peer })).await; }
+            }
+            MeshCmd::RoomChat { id, text } => {
+                let (Some(id), Some(text)) = (crate::roomchat::clean_id(&id), crate::roomchat::clean(&text)) else { return };
+                let wire = json!({ "version": 1, "type": "room.chat", "id": id, "content": text, "timestamp": now_ms() });
+                for pid in self.authed_ids() { self.dc_send(&pid, wire.clone()).await; }
+            }
+            MeshCmd::StreamRequest { key } | MeshCmd::StreamReply { key, .. } if !self.peers.iter().any(|(k, p)| (k == &key || p.fp.as_deref() == Some(key.as_str())) && p.sent_proof && p.proven) => {
+                self.emit(MeshEvent::Error("pedido de transmissão: essa pessoa não está na sala".into())).await;
+            }
+            MeshCmd::StreamRequest { key } => {
+                let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                crate::roomchat::mark_asked(&self.cfg.local_peer, &id, now_ms() as u64);
+                self.dc_send(&id, json!({ "version": 1, "type": "stream.request" })).await;
+            }
+            MeshCmd::StreamReply { key, accepted } => {
+                let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                self.dc_send(&id, json!({ "version": 1, "type": "stream.reply", "accepted": accepted })).await;
             }
             MeshCmd::SendFile { path, to_fp } => self.send_file(path, to_fp).await,
             MeshCmd::AcceptFile { id } => {
@@ -1080,6 +1109,30 @@ impl Actor {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
                 self.emit(MeshEvent::Typing { from_fp: fp }).await;
+            }
+            "room.chat" => {
+                // chat da sala: só de peer autenticado, com limite de frequência; o autor é a identidade provada do canal (nada do que vem no JSON)
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                let author = p.name.clone();
+                let (Some(id), Some(content)) = (v["id"].as_str().and_then(crate::roomchat::clean_id), v["content"].as_str().and_then(crate::roomchat::clean)) else { return };
+                let now = now_ms() as u64;
+                if !crate::roomchat::allow_chat(&self.cfg.local_peer, peer, now) { return; }
+                if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }
+                if self.seen_msgs.insert(format!("room:{id}")) {
+                    self.emit(MeshEvent::RoomChat { peer_id: peer.into(), from_fp: fp, author, content, id, ts: now }).await;
+                }
+            }
+            "stream.request" | "stream.reply" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                if !(p.proven && p.sent_proof) { return; }
+                let name = p.name.clone();
+                let now = now_ms() as u64;
+                if v["type"] == "stream.request" {
+                    if crate::roomchat::allow_request(&self.cfg.local_peer, peer, now) { self.emit(MeshEvent::StreamRequest { peer_id: peer.into(), name }).await; }
+                } else if crate::roomchat::take_asked(&self.cfg.local_peer, peer, now) {
+                    self.emit(MeshEvent::StreamReply { peer_id: peer.into(), name, accepted: v["accepted"].as_bool().unwrap_or(false) }).await;
+                }
             }
             "file.offer" | "file.chunk" | "file.done" | "file.cancel" | "file.accept" | "file.pause" | "file.resume" => self.on_file_msg(peer, &v).await,
             "chat.event" => {

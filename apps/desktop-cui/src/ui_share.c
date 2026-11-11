@@ -63,7 +63,7 @@ static void quality_chip(const share_state_t *q, char *out, size_t cap) {
 
 /* ---------- quadro compartilhado -> textura ---------- */
 typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; } fview_t;
-static fview_t g_fv[9];           /* 0..7 = slots de rtc_peers; 8 = prévia local */
+static fview_t g_fv[BRIKS_MAX_PEERS + 1];   /* 0..MAX-1 = slots de rtc_peers; MAX = prévia local */
 static cui_texture g_trash[64]; static int g_ntrash;   /* texturas a destruir no próximo quadro (só a thread da UI mexe em GL) */
 
 static void fv_close(fview_t *v) {
@@ -150,16 +150,16 @@ void share_stop(app_state_t *s) { cmd("{\"cmd\":\"share.stop\"}"); s->sh.active 
 void share_reset(app_state_t *s) {
     share_state_t *q = &s->sh;
     for (int t = 0; t < 2; t++) for (int i = 0; i < q->nsrc[t]; i++) if (q->src[t][i].tex && g_ntrash < 64) g_trash[g_ntrash++] = q->src[t][i].tex;
-    for (int i = 0; i < 9; i++) fv_close(&g_fv[i]);
+    for (int i = 0; i <= BRIKS_MAX_PEERS; i++) fv_close(&g_fv[i]);
     int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode; float bc = q->br_custom;
     memset(q, 0, sizeof *q);
     q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc;
 }
 
-bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < 8 && s->sh.remote[slot].on; }
+bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < BRIKS_MAX_PEERS && s->sh.remote[slot].on; }
 
 static int slot_of(const app_state_t *s, const char *peer) {
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, peer)) return i;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, peer)) return i;
     return -1;
 }
 
@@ -241,7 +241,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     if (q->fps < 0 || q->fps >= FPS_N) q->fps = FPS_DEFAULT;   /* padrão: 1080p · 30 FPS · automático */
     /* só assiste no modo Transmissão (aba Chamada): fora dele o core nem decodifica */
     bool viewing = s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
         if (!s->rtc_peers[i].id[0]) { if (q->remote[i].on || q->remote[i].watching) { memset(&q->remote[i], 0, sizeof q->remote[i]); fv_close(&g_fv[i]); } continue; }
         bool want = viewing && q->remote[i].on;
         if (want != q->remote[i].watching) {
@@ -561,18 +561,18 @@ static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
 bool ui_share_stage(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
     int n = (q->active ? 1 : 0);
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) n++;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) n++;
     if (!n) return false;
     cui_request_redraw(ui);   /* vídeo: redesenha a cada quadro enquanto o palco está visível */
     cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
         if (q->active) {
             char path[300], title[160], chip[96]; preview_path(path, sizeof path);
-            bool has = fv_update(ui, s, &g_fv[8], path);
+            bool has = fv_update(ui, s, &g_fv[BRIKS_MAX_PEERS], path);
             snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
             quality_chip(q, chip, sizeof chip);
-            video_tile(ui, 8, has ? g_fv[8].tex : 0, g_fv[8].w, g_fv[8].h, title, chip, "Preparando a prévia…", NULL);
+            video_tile(ui, BRIKS_MAX_PEERS, has ? g_fv[BRIKS_MAX_PEERS].tex : 0, g_fv[BRIKS_MAX_PEERS].w, g_fv[BRIKS_MAX_PEERS].h, title, chip, "Preparando a prévia…", NULL);
         }
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
             char title[200], chip[96], r[24];
             bool has = q->remote[i].path[0] && q->remote[i].watching && fv_update(ui, s, &g_fv[i], q->remote[i].path);
             const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";

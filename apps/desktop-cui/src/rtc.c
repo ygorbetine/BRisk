@@ -31,13 +31,22 @@ void rtc_leave_room(app_state_t *s) {
     s->rtc_peer_count = s->rtc_authed_count = 0;
     if (core_state() == CORE_READY) send_cmd("room.leave", NULL);
     copy(s->rtc_state, sizeof s->rtc_state, "");
-    s->rtc_owner_me = false; s->kick_open = false; s->net_sfu = false;
+    s->rtc_owner_me = false; s->kick_open = false; s->net_sfu = false; s->net_failed = false; s->force_p2p = false;
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
     share_reset(s);
 }
 
+/* A entrada pelo servidor de chamadas falhou e o usuário escolheu seguir em P2P: entra de novo na mesma sala com "net":"p2p".
+   Só fala com quem também estiver em P2P (o aviso da tela diz isso). */
+void rtc_join_p2p(app_state_t *s) {
+    char room[sizeof s->room_name]; copy(room, sizeof room, s->room_name);
+    s->rtc_session_sent = s->rtc_session_ready;   /* a sessão do core continua valendo: só o room.join é refeito */
+    rtc_join_room(s, room);
+    s->force_p2p = true; s->net_failed = false;
+}
+
 void rtc_kick_peer(app_state_t *s, int slot) {
-    if (!s->rtc_owner_me || slot < 0 || slot >= 8 || !s->rtc_peers[slot].fp[0]) return;
+    if (!s->rtc_owner_me || slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].fp[0]) return;
     char extra[200], fp[96]; json_escape(s->rtc_peers[slot].fp, fp, sizeof fp);
     snprintf(extra, sizeof extra, "\"fp\":\"%s\"", fp);
     if (core_state() == CORE_READY) send_cmd("peer.kick", extra);
@@ -45,7 +54,7 @@ void rtc_kick_peer(app_state_t *s, int slot) {
 
 /* o dono pede ao core para fechar/reabrir o microfone de alguém para todos (pedido assinado; o core recusa quem não é dono) */
 void rtc_room_mute(app_state_t *s, int slot, bool muted) {
-    if (!s->rtc_owner_me || !s->net_sfu || slot < 0 || slot >= 8 || !s->rtc_peers[slot].fp[0]) return;
+    if (!s->rtc_owner_me || !s->net_sfu || slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].fp[0]) return;
     char extra[200], fp[96]; json_escape(s->rtc_peers[slot].fp, fp, sizeof fp);
     snprintf(extra, sizeof extra, "\"fp\":\"%s\",\"muted\":%s", fp, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("room.mute", extra);
@@ -54,7 +63,7 @@ void rtc_room_mute(app_state_t *s, int slot, bool muted) {
 void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
 /* silenciar uma pessoa = ganho zero só para ela (por peer_id) */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
-    if (slot < 0 || slot >= 8 || !s->rtc_peers[slot].id[0]) return;
+    if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
     s->rtc_peers[slot].muted_by_me = muted;
     char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
@@ -93,10 +102,10 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         float l = lv && lv->type == J_NUM ? (float)lv->num : 0;
         const char *p = json_str(j, "peer", "");
         if (!strcmp(p, "me")) s->me_level = l;
-        else for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
+        else for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
     } else if (!strcmp(ev, "peer.info")) {
         const char *p = json_str(j, "peer_id", "");
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             copy(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, json_str(j, "fp", ""));
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, json_str(j, "name", ""));
         }
@@ -121,7 +130,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "peer.state")) {
         const char *p = json_str(j, "peer_id", "");
         const jval *m = json_get(j, "microphone"), *d = json_get(j, "deafened");
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             s->rtc_peers[i].mic_off = m && m->type == J_BOOL && !m->b;
             s->rtc_peers[i].deafened = d && d->type == J_BOOL && d->b;
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
@@ -137,6 +146,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "net.mode")) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
         s->net_sfu = !strcmp(md, "sfu");
+        s->net_failed = !strcmp(md, "none");
         snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : !strcmp(md, "none") ? "Sem chamada" : "P2P", json_str(j, "reason", ""),
                  json_str(j, "server", "")[0] ? " · servidor " : "", json_str(j, "server", ""), er[0] ? " · " : "", er);
         changed = true;
@@ -162,9 +172,12 @@ void rtc_pump(app_state_t *s) {
     static bool demo_peers_done;   /* BRIKS_DEMO_PEERS=1: dois participantes de exemplo e eu como dono (captura do menu/diálogo de expulsar) */
     if (!demo_peers_done && getenv("BRIKS_DEMO_PEERS")) {
         demo_peers_done = true;
-        const char *nm[2] = { "Marina Costa", "Rafael Lima" };
-        for (int i = 0; i < 2; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
-            copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i]); snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); }
+        const char *nm[6] = { "Marina Costa", "Rafael Lima", "Bianca Nogueira", "Thiago Prado", "Luiza Antunes", "Caio Figueiredo" };
+        int demo_n = atoi(getenv("BRIKS_DEMO_PEERS")); if (demo_n < 2) demo_n = 2; if (demo_n > BRIKS_MAX_PEERS) demo_n = BRIKS_MAX_PEERS;   /* BRIKS_DEMO_PEERS=N: N participantes (captura da grade) */
+        for (int i = 0; i < demo_n; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
+            if (i < 6) copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i]); else snprintf(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, "%s %d", nm[i % 6], i / 6 + 1);
+            snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); if (i % 5 == 3) s->rtc_peers[i].mic_off = true; if (i % 7 == 4) s->rtc_peers[i].level = 0.5f; }
+        if (getenv("BRIKS_DEMO_NETFAIL")) { s->net_failed = true; copy(s->rtc_state, sizeof s->rtc_state, "erro"); copy(s->rtc_msg, sizeof s->rtc_msg, "Não foi possível entrar pelo servidor de chamadas: serviço de tokens inacessível"); }
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }
     }
@@ -193,7 +206,7 @@ void rtc_pump(app_state_t *s) {
         if (s->rtc_want_room && s->rtc_session_ready) {
             char extra[256], rm[160];
             json_escape(s->room_name, rm, sizeof rm);
-            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\"", rm, cm == 1 ? "p2p" : cm == 2 ? "sfu" : "auto"); }
+            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\"", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto"); }
             send_cmd("room.join", extra);
             s->rtc_want_room = false;
         }

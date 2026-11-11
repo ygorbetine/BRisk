@@ -314,6 +314,9 @@ void share_stop(app_state_t *s);
 void share_reset(app_state_t *s);                             /* saiu da sala: esquece tudo */
 void ui_share_dialog(cui_ctx *ui, app_state_t *s);            /* "Compartilhar tela — Escolha a fonte e confirme" */
 void ui_share_bar(cui_ctx *ui, app_state_t *s);               /* botão Compartilhar + chips de áudio e qualidade */
+int share_probe(const char *name, const app_state_t *s);      /* estados para os roteiros de teste; -9999 = desconhecido */
+bool share_notice_active(cui_ctx *ui, app_state_t *s);       /* há aviso "X começou a transmitir" para mostrar */
+void ui_share_notice_row(cui_ctx *ui, app_state_t *s);        /* a linha do aviso, com o botão Assistir */
 bool ui_share_stage(cui_ctx *ui, app_state_t *s);             /* palco do modo Transmissão; false = ninguém transmitindo */
 bool share_peer_live(const app_state_t *s, int slot);         /* esse participante está transmitindo? */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */

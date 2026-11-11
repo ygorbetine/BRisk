@@ -362,7 +362,8 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
         if (g_call.toast_until < 0) g_call.toast_until = now + 4.0;
         if (now > g_call.toast_until) g_call.toast[0] = 0; else cui_request_wakeup(ui, 0.5f);
     }
-    if (!g_call.req.open && !g_call.toast[0]) return;
+    const bool share_note = share_notice_active(ui, s);
+    if (!g_call.req.open && !g_call.toast[0] && !share_note) return;
     cui_push_id_int(ui, 9400);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad = 14, .pad_top = s->screen == SCREEN_CALL && !g_call.fullscreen ? 84 : 14, .gap = 8) {
         if (g_call.req.open) {
@@ -378,6 +379,7 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
             }
             { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "reqbox")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* o clique no aviso não vale para o bloco que está por baixo */
         }
+        if (share_note) ui_share_notice_row(ui, s);
         if (g_call.toast[0]) {
             cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 16, .pad_y = 9, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .max_width = 560) {
                 cui_icon(ui, CUI_ICON_INFO, 14, B_C3);

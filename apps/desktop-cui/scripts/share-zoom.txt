@@ -1,0 +1,27 @@
+# CHM-12: zoom de quem assiste (roda do mouse em torno do ponteiro, arrastar move, selo de % e volta a 100%)
+waitms 1500
+expect share_zoom 100
+shot zoom-1-encaixada
+at 640 420
+wheel 3
+waitms 600
+expect share_zoomed 1
+expect share_cx 640
+shot zoom-2-ampliada
+at 700 420
+waitms 100
+down
+waitms 100
+at 600 360
+waitms 100
+at 500 300
+waitms 200
+up
+waitms 400
+expect share_zoomed 1
+expect share_cx 786
+shot zoom-3-arrastada
+click 112 125
+waitms 600
+expect share_zoom 100
+shot zoom-4-de-volta-a-100

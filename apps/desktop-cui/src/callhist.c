@@ -126,3 +126,18 @@ const char *call_net_label(int q) {
     default: return "Fora da sala";
     }
 }
+
+bool share_notice_wanted(bool was_on, bool now_on, bool viewing) { return now_on && !was_on && !viewing; }
+
+int share_zoom_pct(float zoom, float fit) {
+    if (zoom <= 0 || fit <= 0) return 100;
+    int p = (int)(zoom / fit * 100.0f + 0.5f);
+    return p < 100 ? 100 : p;
+}
+
+bool share_zoom_clamp(float *zoom, float *cx, float *cy, float fit, float max_mult) {
+    if (*zoom <= 0 || fit <= 0) return false;
+    if (*zoom <= fit * 1.02f) { *zoom = 0; *cx = 0; *cy = 0; return false; }   /* de volta ao encaixe: esquece a posição */
+    if (max_mult > 1 && *zoom > fit * max_mult) *zoom = fit * max_mult;
+    return true;
+}

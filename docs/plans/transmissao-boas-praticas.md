@@ -667,3 +667,39 @@ maior intervalo 782 ms); quedas de 3 e 5 s voltam em ~1,5 s.
 - **NÃO resolvido:** 6–9 s sem imagem numa queda brusca de banda ainda é muito. O que falta é a recuperação do quadro-chave em si
   (ex.: quadro-chave menor/intra-refresh sob restrição, ou retorno direto da taxa recebida pelo espectador); FEC não foi feito.
 - **Matriz sobre o SFU continua NÃO repetida:** falta o `livekit-server.exe` nesta máquina.
+
+## 21. SFU, aviso "Assistir", zoom e dois monitores — 2026-11-11
+
+**Matriz sobre o SFU (LiveKit local, porta 7890, `BRIKS_LIVEKIT_TEST_PORT`; vale em todos os testes de SFU):** 3 de 3 passaram
+(`sfu_network_*`). Envio a bitrate fixo, 720p: perda 5% 28,1 qps; perda 10% **24,6 qps** (antes 4,4, depois 10–17); queda de 4 s
+volta em 1,1 s. Recepção: 29,6 / 29,6 / 28,5 / 25,4 qps com 1/2/5/10%. Adaptação com 10% de perda: estimativa fica em 3000 kbps
+(antes caía de 1316 para 223). Rodado com a CPU ocupada por builds de outras sessões. CSVs: `provas/transmissao/sfu-*.csv`.
+
+**Pedir/aceitar transmissão (`stream.request`/`stream.reply`):** igual. Passa na malha (`tests_sala`) e no SFU (trecho 1b de
+`tests_sfuapps`; o teste falha depois, na linha 68, porque `count("chat:")` também conta `roomchat:` — erro do teste).
+
+**TRX-10, aviso "X começou a transmitir · Assistir":** aparece só na passagem de desligada para ligada e só fora do modo
+Transmissão; fica 8 s; some se a pessoa parar ou sair. O clique troca para a aba Transmissão; a chamada continua sem exibir
+transmissões sozinha. **CHM-12, zoom de quem assiste:** roda do mouse (pinça chega como Ctrl+roda) amplia em torno do ponteiro,
+arrastar move, selo "173% · voltar a 100%" no canto (clique volta; duplo clique e tecla 0 são do componente), limite de 8x, nunca
+abaixo do encaixe, estado por transmissão. Lógica em `callhist.c` (11 testes em `call_test`), tela em `ui_share.c`.
+Prova: `scripts/prova-transmissao-ui.ps1` (janela oculta, sem backend, quadro sintético; 10 verificações `expect`), capturas em
+`provas/transmissao-ui/`. A pinça não foi testada à parte.
+
+**Dois monitores ao mesmo tempo — levantamento (nada implementado):**
+- `share.list` já devolve TODAS as telas (`Monitor::enumerate`, com `primary`), não só a principal.
+- O que impede: o core tem UMA transmissão por pessoa de ponta a ponta. Malha: `share: Option<ActiveShare>`, uma `vtrack`, um
+  `idr`, um `net` (estimador), um `vsender` e um `recv` por par; `share.state` no canal de dados não tem identificador. SFU: uma
+  faixa `VIDEO_TRACK_ID`, `known.share` único por participante, `recv` por identidade. IPC/UI: `share.start/stop/watch`,
+  `share.local/remote/stats`, `preview.bin` e `remote-<par>.bin` são por pessoa; `sh.remote[par]` na UI.
+- O que falta: (1) um `slot` (0/1) em `ShareStart/Stop/Watch`, nos eventos e nos arquivos de quadro; (2) malha: segunda faixa por
+  par (nova renegociação), RTCP/NACK/PLI por SSRC, `share.state` com `slot`; (3) SFU: segunda faixa publicada (nome/`cid`
+  próprios) e mapeamento de duas faixas ScreenShare por participante no espectador; (4) banda: os dois estimadores veem o mesmo
+  gargalo — precisa de um orçamento único dividido entre os dois codificadores e de um teto somado no pacer; (5) NVENC: duas
+  sessões simultâneas e a recriação em queda; (6) UI: escolher duas fontes, duas prévias, dois blocos por pessoa no palco;
+  (7) teste com duas fontes sintéticas (`SourceKind::Test` + `TestMotion`) na malha e no SFU.
+- Esforço estimado: 3 a 4 dias de trabalho com a máquina livre para medir (core ~2, UI ~1, banda e testes ~1). Não cabe com
+  segurança na 1.4.0: mexe em `mesh.rs`/`sfu.rs`, que o branch integrado está alterando, e exige nova rodada de rede.
+
+**Em aberto:** congelamento em queda brusca (últimas rodadas válidas: 2,3 / 2,5 / 5,8 / 7,1 s; meta < 3 s), 4+ espectadores e
+latência de 1080p — não medidos nesta rodada: ~23 `cargo`/`rustc` de outras sessões, criar o NVENC levou 12 s.

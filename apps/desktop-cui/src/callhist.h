@@ -37,4 +37,13 @@ enum { NETQ_OFF, NETQ_CONNECTING, NETQ_GOOD, NETQ_UNSTABLE, NETQ_DOWN };
 typedef struct { const char *state; int peers, authed, failed; bool stun_done, stun_ok; double rtt_ms, loss_pct; } netq_in_t;
 int call_net_quality(const netq_in_t *in);
 const char *call_net_label(int q);                           /* "Rede boa", "Rede instável"... */
+
+/* Transmissão. Aviso "X começou a transmitir · Assistir": só na passagem de desligada para ligada e só para quem NÃO está no modo
+ * Transmissão (lá a imagem já aparece). */
+bool share_notice_wanted(bool was_on, bool now_on, bool viewing);
+/* Zoom de quem assiste. `zoom` = pontos de tela por pixel da imagem (0 = encaixada na moldura); `fit` = o zoom que encaixa.
+ * share_zoom_pct: 100 = encaixada. share_zoom_clamp: abaixo do encaixe volta a encaixada (zoom/cx/cy = 0), acima de max_mult x
+ * o encaixe limita; devolve true se a imagem ficou ampliada. */
+int share_zoom_pct(float zoom, float fit);
+bool share_zoom_clamp(float *zoom, float *cx, float *cy, float fit, float max_mult);
 #endif

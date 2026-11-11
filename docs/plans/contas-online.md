@@ -306,3 +306,19 @@ troca a sessão guardada e apaga a foto em cache da anterior. Nome, @nick e foto
 
 **Não exercitado:** TURN real (não há servidor TURN aqui; só o caminho "não respondeu" foi provado), login Google/Discord
 real e e-mail real com as mudanças desta etapa, dois computadores.
+
+## 9. TURN da conta (Edge Function `turn-credentials`)
+
+Depois do login o core pede `GET <url do projeto>/functions/v1/turn-credentials` com o JWT da sessão (e a chave pública
+no `apikey`), guarda `iceServers` só na memória e renova 5 min antes de vencer (`accounts/turn.rs`). Sem sessão o cache é
+limpo e nada é pedido; função não publicada, 401/404/rede ou resposta sem TURN = silêncio e só STUN ("Somente STUN" na
+tela Rede), nova tentativa em 5 min. Prioridade no ICE: `BRIKS_ICE_SERVERS_JSON`/`ice.json` válidos > TURN da conta > STUN
+padrão (`ice::load_with`). A UI recebe só `source: "account"` ("TURN da sua conta"), nunca endereços nem credenciais.
+Testes com servidor HTTP falso (`fake.rs`): busca, renovação agendada, 404 silencioso, override por ice.json, limpeza no
+logout, credencial vencida não entregue, erro sem token/endereço.
+
+**`livekit-token`**: a função já existe em `supabase/functions/livekit-token` (sessão authenticated, peerId registrado em
+`profile_keys`, sala validada, TTL ≤ 1 h, limite em memória e no banco como a `turn-credentials`). NÃO alterei nem testei
+nesta etapa: não há Deno nem Vitest neste computador. A lacuna de "ser membro da sala" continua como documentada no
+cabeçalho da função: as salas vêm de um segredo do grupo que só os dispositivos conhecem; fechar isso exige uma tabela de
+membros por sala (decisão de produto + migration 0006, não feita).

@@ -223,12 +223,14 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         tag_nofx(ui);
                     }
                     SCARD(ui, "SERVIDOR TURN") {
-                        if (!s->ice_asked && core_state() == CORE_READY) account_ice_get(s);
+                        { static double last; const double now = cui_time(ui);   /* reler: o TURN da conta chega depois do login */
+                          if (core_state() == CORE_READY && (!s->ice_asked || now - last > 5.0)) { account_ice_get(s); last = now; } }
                         cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL) {
                             cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = s->ice_turn ? B_ONLINE : CUI_RGB(0xe8c46a)) {}
-                            cui_text(ui, s->ice_turn ? "TURN configurado" : "Somente STUN", .font = CUI_FONT_MEDIUM, .size = 13);
+                            cui_text(ui, !s->ice_turn ? "Somente STUN" : !strcmp(s->ice_source, "account") ? "TURN da sua conta" : "TURN configurado", .font = CUI_FONT_MEDIUM, .size = 13);
                         }
-                        sub(ui, s->ice_turn ? "Chamadas conseguem passar por um servidor de retransmissão quando a conexão direta falha."
+                        sub(ui, s->ice_turn ? (!strcmp(s->ice_source, "account") ? "Recebido automaticamente da sua conta Briks e renovado sozinho. Preencher os campos abaixo usa o seu servidor no lugar."
+                                                           : "Chamadas conseguem passar por um servidor de retransmissão quando a conexão direta falha.")
                                             : "Funciona na maioria das redes. Em redes restritivas (CGNAT, empresa, 4G) a chamada pode não conectar. Um servidor TURN resolve.");
                         if (!strcmp(s->ice_source, "env")) sub(ui, "Em uso: variável BRIKS_ICE_SERVERS_JSON (tem prioridade sobre o que for salvo aqui).");
                         cui_text(ui, "Endereços (separe por vírgula)", .size = 12, .color = B_MUTED);

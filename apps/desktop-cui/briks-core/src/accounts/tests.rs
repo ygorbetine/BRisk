@@ -1044,3 +1044,79 @@ async fn real_supabase_answers_and_errors_map() {
         assert!(loc.unwrap_or_default().contains(host), "{host}");
     }
 }
+
+// ---------- TURN da conta (Edge Function turn-credentials, servidor HTTP falso) ----------
+
+#[tokio::test]
+async fn account_turn_is_fetched_after_login_cleared_on_logout_and_silent_on_failure() {
+    use super::turn::{self, TurnCache};
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("turn");
+    let a = accounts(&f, &dir);
+    let cache = TurnCache::default();
+
+    // sem login: nada, e nenhuma chamada à função
+    f.state.lock().unwrap().turn_ttl = 3600;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty() && f.state.lock().unwrap().turn_hits == 0);
+
+    // função não publicada (404): silêncio, só STUN
+    f.state.lock().unwrap().turn_ttl = 0;
+    a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let wait = turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty());
+    assert_eq!(wait, Duration::from_secs(300), "tenta de novo em 5 min, sem barulho");
+
+    // publicada: busca com o JWT da sessão, guarda e agenda a renovação antes de vencer
+    f.state.lock().unwrap().turn_ttl = 3600;
+    let wait = turn::step(&a, &cache, &f.url(), "k").await;
+    assert_eq!(wait, Duration::from_secs(3300));
+    let s = cache.servers();
+    assert!(crate::ice::has_turn(&s) && s.len() == 2, "STUN + TURN da conta");
+    assert_eq!(s[1].credential, "cred-falsa-do-turn");
+    assert_eq!(f.state.lock().unwrap().turn_hits, 1);
+
+    // o TURN da conta entra no ICE junto com o STUN padrão; o que o usuário configurou manda mais
+    let noenv = |_: &str| None;
+    let (list, w) = crate::ice::load_with(&noenv, &dir, &s);
+    assert!(w.is_none() && crate::ice::has_turn(&list) && list.len() == 3 + 2);
+    let sum = crate::ice::summary(&noenv, &dir, &s);
+    assert_eq!((sum["source"].as_str(), sum["turn"].as_bool(), sum["urls"].as_str(), sum["has_credential"].as_bool()), (Some("account"), Some(true), Some(""), Some(false)));
+    assert!(!sum.to_string().contains("cred-falsa") && !sum.to_string().contains("turn.exemplo"), "a UI não vê endereços nem senha");
+    std::fs::write(dir.join("ice.json"), r#"[{"urls":"turn:meu.example.com:3478","username":"u","credential":"c"}]"#).unwrap();
+    let (list, _) = crate::ice::load_with(&noenv, &dir, &s);
+    assert!(list.len() == 4 && list[3].urls[0].starts_with("turn:meu.example.com"), "ice.json substitui o TURN da conta");
+    assert_eq!(crate::ice::summary(&noenv, &dir, &s)["source"], "file");
+    std::fs::remove_file(dir.join("ice.json")).unwrap();
+
+    // falha depois de ter credencial: continua usando a que ainda vale
+    f.state.lock().unwrap().turn_ttl = 0;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert_eq!(cache.servers().len(), 2, "credencial ainda válida continua em uso");
+
+    // sair limpa o cache e para de pedir
+    a.sign_out().await;
+    let hits = f.state.lock().unwrap().turn_hits;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty() && f.state.lock().unwrap().turn_hits == hits);
+}
+
+#[test]
+fn account_turn_renewal_is_early_and_responses_are_validated() {
+    use super::turn;
+    assert_eq!(turn::renew_after(3600), Duration::from_secs(3300));
+    assert_eq!(turn::renew_after(900), Duration::from_secs(600));
+    assert_eq!(turn::renew_after(300), Duration::from_secs(150));
+    // credencial vencida não é entregue
+    let c = turn::TurnCache::default();
+    c.set(crate::ice::default_servers(), 1);
+    assert!(c.servers().is_empty());
+    c.set(crate::ice::default_servers(), u64::MAX);
+    assert_eq!(c.servers().len(), 3);
+    c.clear();
+    assert!(c.servers().is_empty());
+    // servidor fora do ar: erro curto, sem endereço nem token
+    let e = turn::fetch("http://127.0.0.1:9", "k", "token-secreto-123").unwrap_err();
+    assert!(!e.contains("token-secreto") && !e.contains("127.0.0.1"), "{e}");
+}

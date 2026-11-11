@@ -42,6 +42,9 @@ pub struct FakeState {
     /// último link "enviado por e-mail" (confirmação/recuperação) e contagem de renovações
     pub last_link: Option<String>,
     pub refresh_count: u32,
+    /// Edge Function turn-credentials simulada: 0 = não publicada (404); senão, validade em segundos
+    pub turn_ttl: u64,
+    pub turn_hits: u32,
     /// amigos de exemplo ao criar o primeiro perfil (modo de desenvolvimento)
     pub demo: bool,
 }
@@ -308,6 +311,18 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
                 st.access.retain(|_, u| *u != user);
             }
             ("204 No Content", String::new(), Value::Null)
+        }
+        ("GET", "/functions/v1/turn-credentials") => {
+            if st.turn_ttl == 0 {
+                return ("404 Not Found", String::new(), json!({ "code": "NOT_FOUND", "message": "Requested function was not found" }));
+            }
+            let Some(user) = st.access.get(bearer).cloned() else { return ("401 Unauthorized", String::new(), json!({ "message": "Entre na sua conta Briks para usar o relay TURN." })) };
+            st.turn_hits += 1;
+            let exp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.turn_ttl;
+            let username = format!("{exp}:{user}");
+            let urls = ["turn:turn.exemplo.test:3478?transport=udp", "turns:turn.exemplo.test:5349?transport=tcp"];
+            ok(json!({ "username": username, "credential": "cred-falsa-do-turn", "ttl": st.turn_ttl, "expiresAt": exp, "urls": urls,
+                "iceServers": [{ "urls": ["stun:turn.exemplo.test:3478"] }, { "urls": urls, "username": username, "credential": "cred-falsa-do-turn" }] }))
         }
         ("POST", p) if p.starts_with("/rest/v1/rpc/") => {
             let Some(me) = st.access.get(bearer).cloned() else { return ("401 Unauthorized", String::new(), json!({ "code": "PGRST301", "message": "JWT expired" })) };

@@ -16,6 +16,7 @@ pub mod provider;
 pub mod service;
 pub mod store;
 pub mod supabase;
+pub mod turn;
 #[cfg(test)]
 mod tests;
 

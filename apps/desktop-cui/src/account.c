@@ -343,7 +343,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         if (json_str(j, "message", "")[0]) copy(s->ice_msg, sizeof s->ice_msg, json_str(j, "message", ""));
         else if (json_str(j, "warn", "")[0]) snprintf(s->ice_msg, sizeof s->ice_msg, "Configuração ignorada: %s", json_str(j, "warn", ""));
         if (!s->ice_edit_init || jbool(j, "ok")) { copy(s->ice_urls, sizeof s->ice_urls, json_str(j, "urls", "")); copy(s->ice_user, sizeof s->ice_user, json_str(j, "username", "")); s->ice_edit_init = true; }
-        s->ice_test_level = 0; s->ice_test_msg[0] = 0;   /* a configuração mudou: o resultado antigo não vale mais */
+        if (json_get(j, "ok")) { s->ice_test_level = 0; s->ice_test_msg[0] = 0; }   /* salvou/removeu: o resultado antigo não vale mais */
     } else if (!strcmp(ev, "ice.test")) {
         s->ice_testing = false;
         const char *lv = json_str(j, "level", "none");

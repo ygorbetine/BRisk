@@ -1,9 +1,10 @@
 ﻿# Provas da interface da transmissão, sem backend e com a janela OCULTA (nada aparece na tela de ninguém):
 #   aviso  -> TRX-10: "X começou a transmitir · Assistir" no modo Call; o clique troca para o modo Transmissão
 #   zoom   -> CHM-12: zoom de quem assiste (roda do mouse, arrastar, selo de % e volta a 100%)
-# Uso: powershell -File prova-transmissao-ui.ps1 [-Out pasta] [-Casos aviso,zoom]
+#   duas   -> dois monitores: duas telas da mesma pessoa, dois blocos, zoom independente
+# Uso: powershell -File prova-transmissao-ui.ps1 [-Out pasta] [-Casos aviso,zoom,duas]
 # Dados, layout, configurações e temporários ficam numa pasta própria, apagada no fim. Sai com código 1 se algum "expect" falhar.
-param([string]$Out = "$PSScriptRoot\..\provas\transmissao-ui", [string[]]$Casos = @("aviso", "zoom"))
+param([string]$Out = "$PSScriptRoot\..\provas\transmissao-ui", [string[]]$Casos = @("aviso", "zoom", "duas"))
 $Casos = $Casos -split ","
 $exe = "$PSScriptRoot\..\build\briks_cui.exe"
 $base = Join-Path $PSScriptRoot "..\build\tmp-prova-transmissao"
@@ -18,7 +19,7 @@ foreach ($c in $Casos) {
     $psi.RedirectStandardError = $true
     $e = $psi.EnvironmentVariables
     $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = "3"; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
-    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "zoom") { "demo-zoom" } else { "demo-remote" })
+    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } else { "demo-remote" })
     $e["BRIKS_SCRIPT"] = (Join-Path $PSScriptRoot "share-$c.txt"); $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
     $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"
     $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")

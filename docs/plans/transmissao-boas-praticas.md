@@ -686,20 +686,16 @@ abaixo do encaixe, estado por transmissão. Lógica em `callhist.c` (11 testes e
 Prova: `scripts/prova-transmissao-ui.ps1` (janela oculta, sem backend, quadro sintético; 10 verificações `expect`), capturas em
 `provas/transmissao-ui/`. A pinça não foi testada à parte.
 
-**Dois monitores ao mesmo tempo — levantamento (nada implementado):**
-- `share.list` já devolve TODAS as telas (`Monitor::enumerate`, com `primary`), não só a principal.
-- O que impede: o core tem UMA transmissão por pessoa de ponta a ponta. Malha: `share: Option<ActiveShare>`, uma `vtrack`, um
-  `idr`, um `net` (estimador), um `vsender` e um `recv` por par; `share.state` no canal de dados não tem identificador. SFU: uma
-  faixa `VIDEO_TRACK_ID`, `known.share` único por participante, `recv` por identidade. IPC/UI: `share.start/stop/watch`,
-  `share.local/remote/stats`, `preview.bin` e `remote-<par>.bin` são por pessoa; `sh.remote[par]` na UI.
-- O que falta: (1) um `slot` (0/1) em `ShareStart/Stop/Watch`, nos eventos e nos arquivos de quadro; (2) malha: segunda faixa por
-  par (nova renegociação), RTCP/NACK/PLI por SSRC, `share.state` com `slot`; (3) SFU: segunda faixa publicada (nome/`cid`
-  próprios) e mapeamento de duas faixas ScreenShare por participante no espectador; (4) banda: os dois estimadores veem o mesmo
-  gargalo — precisa de um orçamento único dividido entre os dois codificadores e de um teto somado no pacer; (5) NVENC: duas
-  sessões simultâneas e a recriação em queda; (6) UI: escolher duas fontes, duas prévias, dois blocos por pessoa no palco;
-  (7) teste com duas fontes sintéticas (`SourceKind::Test` + `TestMotion`) na malha e no SFU.
-- Esforço estimado: 3 a 4 dias de trabalho com a máquina livre para medir (core ~2, UI ~1, banda e testes ~1). Não cabe com
-  segurança na 1.4.0: mexe em `mesh.rs`/`sfu.rs`, que o branch integrado está alterando, e exige nova rodada de rede.
+**Dois monitores ao mesmo tempo — IMPLEMENTADO (core malha + SFU + IPC + UI):**
+- `share.list` já devolvia todas as telas. Agora há dois *slots* por pessoa (0 = 1ª tela, 1 = 2ª tela; a 2ª não tem áudio).
+  Malha: faixa `screen-video-2`, pacer/codificador/estimador/IDR por slot; SFU: segunda ScreenShare com prefixo `[2] `;
+  IPC `share.start/stop/watch` aceitam `"slot":1`, eventos trazem `"slot"`, chave de recepção `par#2`.
+- UI: botão "+ 2ª tela" / "Parar 2ª tela" na barra, dois blocos por pessoa no palco, zoom independente por bloco.
+- Testes: `one_person_shares_two_screens_at_once` (malha) e `sfu_one_person_shares_two_screens_at_once` (SFU) passando;
+  prova de UI `duas` (`share_tiles 2`, zoom independente) com captura oculta.
+- NÃO feito/testado: orçamento único de banda dividido entre os dois codificadores (cada slot tem seu estimador e vê o mesmo
+  gargalo); duas sessões NVENC simultâneas; 2 telas com 4+ espectadores; 2 telas sob perda/queda; layout grade/foco para muitas
+  pessoas com duas telas cada.
 
 **Em aberto:** congelamento em queda brusca (últimas rodadas válidas: 2,3 / 2,5 / 5,8 / 7,1 s; meta < 3 s), 4+ espectadores e
 latência de 1080p — não medidos nesta rodada: ~23 `cargo`/`rustc` de outras sessões, criar o NVENC levou 12 s.

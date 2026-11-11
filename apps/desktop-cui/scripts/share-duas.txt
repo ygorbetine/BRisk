@@ -1,0 +1,11 @@
+# Dois monitores: a mesma pessoa com DUAS telas no ar; quem assiste ve dois blocos, cada um com o proprio zoom
+waitms 1500
+expect share_tiles 2
+expect share_zoom 100
+expect share_zoom2 100
+shot duas-1-dois-blocos
+at 950 380
+wheel 3
+waitms 600
+expect share_zoom 100
+shot duas-2-zoom-so-na-segunda

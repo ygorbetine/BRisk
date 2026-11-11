@@ -80,6 +80,10 @@ typedef struct {
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
     struct { bool on, audio, watching, has_frame, poor; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[BRIKS_MAX_PEERS];
+    /* 2ª tela simultânea (segundo monitor), minha e dos outros: sem áudio próprio (o áudio da transmissão é o da 1ª) */
+    bool pick_second;                          /* o seletor aberto vai iniciar a 2ª tela */
+    struct { bool active, starting; int w, h, fps, kbps; char label[64]; } second;
+    struct { bool on, watching, has_frame; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
 } share_state_t;
 
 typedef struct {
@@ -311,6 +315,7 @@ bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);  
 void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
 void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */
 void share_stop(app_state_t *s);
+void share_stop_second(app_state_t *s);                       /* para só a 2ª tela */
 void share_reset(app_state_t *s);                             /* saiu da sala: esquece tudo */
 void ui_share_dialog(cui_ctx *ui, app_state_t *s);            /* "Compartilhar tela — Escolha a fonte e confirme" */
 void ui_share_bar(cui_ctx *ui, app_state_t *s);               /* botão Compartilhar + chips de áudio e qualidade */

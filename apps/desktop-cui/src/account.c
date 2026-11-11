@@ -216,6 +216,37 @@ void account_logout_others(app_state_t *s) {
     core_send("{\"cmd\":\"account.logout_others\"}");
 }
 
+void account_devices_get(app_state_t *s) {
+    s->dev_asked_at = GetTickCount64();
+    if (core_state() == CORE_READY) core_send("{\"cmd\":\"account.devices\"}");
+}
+
+void account_device_revoke(app_state_t *s, const char *peer_id) {
+    if (core_state() != CORE_READY || !peer_id || !peer_id[0]) return;
+    copy(s->dev_msg, sizeof s->dev_msg, "Desconectando…");
+    send_kv("account.device_revoke", "peer_id", peer_id, NULL, NULL, NULL, NULL);
+}
+
+static void iso_date(char *out, size_t cap, const char *iso) {   /* "2026-11-11T10:20:30Z" -> "11/11/2026" */
+    if (iso && strlen(iso) >= 10 && iso[4] == '-' && iso[7] == '-') snprintf(out, cap, "%.2s/%.2s/%.4s", iso + 8, iso + 5, iso);
+    else out[0] = 0;
+}
+
+static bool jbool(const jval *j, const char *k);
+static void on_devices(app_state_t *s, const jval *j) {
+    s->dev_have = true; s->dev_remote = jbool(j, "remote"); s->dev_n = 0;
+    copy(s->dev_current, sizeof s->dev_current, json_str(j, "current", ""));
+    const jval *d = json_get(j, "devices");
+    for (int i = 0; i < json_len(d) && s->dev_n < 12; i++) {
+        const jval *e = json_at(d, i); int k = s->dev_n++;
+        copy(s->devs[k].peer, sizeof s->devs[k].peer, json_str(e, "peer_id", ""));
+        copy(s->devs[k].name, sizeof s->devs[k].name, json_str(e, "device_name", ""));
+        iso_date(s->devs[k].created, sizeof s->devs[k].created, json_str(e, "created_at", ""));
+        iso_date(s->devs[k].used, sizeof s->devs[k].used, json_str(e, "last_used_at", ""));
+    }
+    s->dev_confirm[0] = 0;
+}
+
 void account_ice_get(app_state_t *s) { s->ice_asked = true; if (core_state() == CORE_READY) core_send("{\"cmd\":\"ice.get\"}"); }
 
 void account_ice_save(app_state_t *s) {
@@ -445,6 +476,9 @@ bool account_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "account.others")) {
         s->others_busy = false; s->others_confirm = false;
         copy(s->others_msg, sizeof s->others_msg, json_str(j, "message", ""));
+    } else if (!strcmp(ev, "account.devices")) on_devices(s, j);
+    else if (!strcmp(ev, "account.device_result")) {
+        copy(s->dev_msg, sizeof s->dev_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "ice.state")) {
         s->ice_busy = false; s->ice_turn = jbool(j, "turn"); s->ice_has_cred = jbool(j, "has_credential");
         copy(s->ice_source, sizeof s->ice_source, json_str(j, "source", "default"));

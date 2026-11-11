@@ -64,6 +64,7 @@ pub struct Layer {
     banned: HashSet<String>,
     muted_idents: HashMap<String, String>,   // identidade silenciada por banimento -> fp
     outbox: HashMap<String, Vec<ChatWire>>,
+    dm_off: HashSet<String>,             // fps cujo chat privado o usuário desconectou (a chamada segue)
     seen_msgs: HashSet<String>,
     seen_events: HashSet<String>,
     ev_last_ts: u64,
@@ -108,7 +109,7 @@ fn short(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 impl Layer {
     pub fn new(cfg: DataCfg, sfu_id: String) -> Self {
         let fp = cfg.identity.fingerprint();
-        Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(),
+        Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(), dm_off: HashSet::new(),
             seen_msgs: HashSet::new(), seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
             rate: HashMap::new(), owner_sent: None, tick_n: 0, resend: vec![],
             hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new() }
@@ -217,6 +218,7 @@ impl Layer {
     }
 
     fn flush(&mut self, fp: &str) -> Vec<Out> {
+        if self.dm_off.contains(fp) { return vec![]; }
         let Some(ident) = self.ident_of_fp(fp) else { return vec![] };
         let Some(list) = self.outbox.get(fp) else { return vec![] };
         list.iter().filter_map(|m| serde_json::to_value(m).ok()).map(|m| Out::Send { to: vec![ident.clone()], msg: json!({ "v": 1, "t": "chat", "msg": m }) }).collect()
@@ -270,6 +272,7 @@ impl Layer {
                 let expected = identity::dm_channel(&self.fp, &fp);
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { return vec![Out::Ev(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into()))]; }
                 let mut out = vec![Out::Send { to: vec![from.into()], msg: json!({ "v": 1, "t": "ack", "id": m.id }) }];
+                if self.dm_off.remove(&fp) { out.push(Out::Ev(MeshEvent::DmLink { fp: fp.clone(), on: true })); }   // a pessoa escreveu: reconecta
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }
                 self.hist.add(&m);
                 if self.seen_msgs.insert(m.id.clone()) { out.push(Out::Ev(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: short(&m.author, 64), content: m.content, id: m.id, ts: m.timestamp })); }
@@ -281,6 +284,7 @@ impl Layer {
                 if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); }
                 if had { vec![Out::Ev(MeshEvent::Ack { id: id.to_string(), from_fp: fp })] } else { vec![] }   // "entregue" na UI, uma vez só
             }
+            "typing" if self.dm_off.contains(&fp) => vec![],
             "typing" => vec![Out::Ev(MeshEvent::Typing { from_fp: fp })],
             "room.chat" => {
                 // chat da chamada: só de quem fez hello, com limite de frequência; o autor é a identidade provada (nada do que vem no JSON)
@@ -416,6 +420,7 @@ impl Layer {
                 self.resend.push((Instant::now(), 0, s.clone()));
                 Some(vec![Out::Send { to: vec![], msg: s }])
             }
+            MeshCmd::DmDisconnect { fp } => Some(if self.dm_off.insert(fp.clone()) { vec![Out::Ev(MeshEvent::DmLink { fp, on: false })] } else { vec![] }),
             MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } => {
                 // a UI pode mandar o id da mensagem (para casar com o estado "enviada/entregue" dela); sem id, o core cria um
                 let (to_fp, text, id) = match c { MeshCmd::ChatWithId { to_fp, text, id } => (to_fp, text, id), MeshCmd::Chat { to_fp, text } => (to_fp, text, uuid::Uuid::new_v4().to_string()), _ => unreachable!() };
@@ -424,7 +429,9 @@ impl Layer {
                     author_peer_id: self.fp.clone(), author: self.cfg.name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
                 self.hist.add(&m);
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
-                Some(self.flush(&to_fp))
+                let mut out = if self.dm_off.remove(&to_fp) { vec![Out::Ev(MeshEvent::DmLink { fp: to_fp.clone(), on: true })] } else { vec![] };   // escrever reconecta
+                out.extend(self.flush(&to_fp));
+                Some(out)
             }
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {
                 match crate::chat_events::create(&self.cfg.identity, &channel, &target, &self.fp, &action, content.as_deref(), reference.as_deref(), emoji.as_deref(), now_ms() as u64, &mut self.ev_last_ts) {
@@ -606,6 +613,29 @@ mod t {
         // conteúdo adulterado
         let mut bad = m.clone(); bad["msg"]["content"] = json!("pague 100");
         assert!(b.on_packet("ida", &bytes(&bad)).iter().all(|o| !matches!(o, Out::Ev(MeshEvent::Chat { .. }))));
+    }
+
+    #[test]
+    fn dm_disconnect_stops_only_the_private_chat_and_reconnects_when_someone_writes() {
+        let (mut a, mut b) = pair();
+        // Ana desconecta o chat privado com Beto: avisa a UI; o estado/voz da chamada (state) segue normal
+        let out = a.on_cmd(MeshCmd::DmDisconnect { fp: b.fp.clone() }, (true, false)).unwrap();
+        assert!(out.iter().any(|o| matches!(o, Out::Ev(MeshEvent::DmLink { fp, on: false }) if *fp == b.fp)));
+        assert!(a.on_cmd(MeshCmd::DmDisconnect { fp: b.fp.clone() }, (true, false)).unwrap().is_empty(), "repetir não avisa de novo");
+        assert!(a.on_cmd(MeshCmd::BroadcastState, (true, false)).is_some(), "a chamada continua");
+        // "digitando" de Beto não chega à UI enquanto desconectado
+        assert!(evs(&a.on_packet("idb", &bytes(&json!({ "v": 1, "t": "typing" })))) == 0);
+        // Beto escreve: a mensagem chega e o chat reconecta sozinho
+        let m = sends(&b.on_cmd(MeshCmd::Chat { to_fp: a.fp.clone(), text: "voltei".into() }, (true, false)).unwrap()).remove(0);
+        let got = a.on_packet("idb", &bytes(&m));
+        assert!(got.iter().any(|o| matches!(o, Out::Ev(MeshEvent::DmLink { on: true, .. }))));
+        assert!(got.iter().any(|o| matches!(o, Out::Ev(MeshEvent::Chat { content, .. }) if content == "voltei")));
+        // desconecta de novo: o que Ana escreve agora fica na outbox (não sai) até ela escrever, o que reconecta e envia
+        a.on_cmd(MeshCmd::DmDisconnect { fp: b.fp.clone() }, (true, false)).unwrap();
+        assert!(a.flush(&b.fp).is_empty(), "desconectado: nada sai");
+        let out = a.on_cmd(MeshCmd::Chat { to_fp: b.fp.clone(), text: "oi de novo".into() }, (true, false)).unwrap();
+        assert!(out.iter().any(|o| matches!(o, Out::Ev(MeshEvent::DmLink { on: true, .. }))));
+        assert_eq!(sends(&out).iter().filter(|m| m["t"] == "chat").count(), 1, "escrever reconecta e envia");
     }
 
     #[test]

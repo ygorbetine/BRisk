@@ -82,6 +82,20 @@ void friends_unblock(app_state_t *s, const char *id) {
     else account_friends(s);
 }
 
+/* ---- AMI-16: chat privado desconectado (o core fecha só a DM; a chamada continua) ---- */
+bool friends_dm_off(const app_state_t *s, const char *fp) {
+    if (!fp || !fp[0]) return false;
+    for (int i = 0; i < s->dmoff_n; i++) if (!strcmp(s->dmoff[i], fp)) return true;
+    return false;
+}
+void friends_dm_link(app_state_t *s, const char *fp, bool on) {
+    for (int i = 0; i < s->dmoff_n; i++) if (!strcmp(s->dmoff[i], fp)) {
+        if (on) { memmove(s->dmoff[i], s->dmoff[i + 1], sizeof s->dmoff[0] * (size_t)(s->dmoff_n - i - 1)); s->dmoff_n--; }
+        return;
+    }
+    if (!on && s->dmoff_n < 8) snprintf(s->dmoff[s->dmoff_n++], sizeof s->dmoff[0], "%s", fp);
+}
+
 /* ---- apresentação ---- */
 static bool in_call(const app_state_t *s, const person_t *p) {   /* está na sua chamada agora */
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado")) && !strcmp(s->rtc_peers[i].name, p->name)) return true;
@@ -175,6 +189,12 @@ static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
         cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
             cui_menu_label(ui, p->name);
             if (cui_menu_item(ui, "Enviar mensagem", .icon = CUI_ICON_MESSAGE_SQUARE)) app_open_friend(s, i);
+            if (p->fp[0] && s->in_room) {   /* só há chat P2P para fechar com a chamada aberta e a identidade da pessoa conhecida */
+                if (friends_dm_off(s, p->fp)) cui_menu_label(ui, "Chat P2P desconectado (volta ao escrever)");
+                else if (cui_menu_item(ui, "Desconectar P2P", .icon = CUI_ICON_WIFI)) {
+                    snprintf(s->dmdisc_fp, sizeof s->dmdisc_fp, "%s", p->fp); snprintf(s->dmdisc_name, sizeof s->dmdisc_name, "%s", p->name); s->dmdisc_open = true;
+                }
+            }
             cui_menu_separator(ui);
             if (cui_menu_item(ui, "Desfazer amizade…", .icon = CUI_ICON_X, .danger = true)) {
                 snprintf(s->unfriend_id, sizeof s->unfriend_id, "%s", p->id); snprintf(s->unfriend_name, sizeof s->unfriend_name, "%s", p->name); s->unfriend_open = true;
@@ -418,6 +438,19 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
 
 void friends_dialogs(cui_ctx *ui, app_state_t *s) {
     friends_notify_tick(s);
+    cui_dialog(ui, "Desconectar P2P", &s->dmdisc_open) {
+        cui_textf(ui, "Fechar o chat privado com %s?", s->dmdisc_name);
+        cui_text(ui, "A amizade e a chamada continuam. A conversa reconecta sozinha quando um de vocês escrever.", .size = 12.5f, .color = B_MUTED);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Desconectar", .variant = CUI_BUTTON_DANGER)) {
+                char fp[200], line[300]; json_escape(s->dmdisc_fp, fp, sizeof fp);
+                snprintf(line, sizeof line, "{\"cmd\":\"chat.disconnect\",\"fp\":\"%s\"}", fp);
+                if (core_state() == CORE_READY) core_send(line);
+                else friends_dm_link(s, s->dmdisc_fp, false);   /* sem o core (captura/teste oculto): só o estado da tela */
+                s->dmdisc_open = false;
+            }
+        }
+    }
     cui_dialog(ui, "Desfazer amizade", &s->unfriend_open) {
         cui_textf(ui, "Remover %s dos seus amigos?", s->unfriend_name);
         cui_text(ui, "As conversas continuam gravadas neste computador. Para voltar a ser amigos, é preciso um novo pedido.", .size = 12.5f, .color = B_MUTED);

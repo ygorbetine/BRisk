@@ -1296,3 +1296,51 @@ async fn service_reports_the_result_of_signing_out_the_others() {
     assert_eq!((e["ev"].as_str(), e["ok"].as_bool()), (Some("account.others"), Some(true)));
     assert!(e["message"].as_str().unwrap().contains("Este continua conectado"));
 }
+
+#[tokio::test]
+async fn devices_list_register_revoke_and_livekit_refuses_the_revoked_peer() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, a2, b) = (accounts(&f, &tmpdir("dv-a")), accounts(&f, &tmpdir("dv-a2")), accounts(&f, &tmpdir("dv-b")));
+    let SignUpOutcome::SignedIn(ua) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let id = crate::identity::Identity::generate();
+    let jwk = serde_json::to_value(id.public_jwk()).unwrap();
+    a.publish_identity(jwk.clone(), &id.fingerprint()).await.unwrap();
+    b.publish_identity(jwk.clone(), &id.fingerprint()).await.unwrap();
+    // a segunda instalação da Ana entra com as mesmas credenciais
+    a2.sign_in_password("ana@exemplo.com", "senha-boa-1").await.unwrap();
+
+    let (pc1, pc2) = ("11111111-aaaa-4bbb-8ccc-000000000001", "22222222-aaaa-4bbb-8ccc-000000000002");
+    a.key_register(pc1, jwk.clone(), "PC da sala").await.unwrap();
+    a2.key_register(pc2, jwk.clone(), "Notebook").await.unwrap();
+    b.key_register("33333333-aaaa-4bbb-8ccc-000000000003", jwk.clone(), "PC da Bia").await.unwrap();
+    assert_eq!(a.key_register(pc1, jwk.clone(), "").await.map(|_| ()), Ok(()), "registrar de novo só atualiza o último uso");
+    assert_eq!(a.key_register("curto", jwk.clone(), "x").await.unwrap_err().code, "server", "peerId inválido é recusado");
+
+    let l = a.keys_list().await.unwrap();
+    assert_eq!(l.len(), 2, "só os computadores da própria conta");
+    let n = l.iter().find(|d| d.peer_id == pc2).unwrap();
+    assert_eq!(n.device_name, "Notebook");
+    assert!(n.created_at.as_deref().unwrap().starts_with("20") && n.last_used_at.is_some());
+    assert_eq!(l.iter().find(|d| d.peer_id == pc1).unwrap().device_name, "PC da sala", "nome vazio não apaga o nome");
+
+    // a Bia não consegue revogar o computador da Ana (o SQL só mexe nas linhas do próprio usuário)
+    b.key_revoke(pc2).await.unwrap();
+    assert!(f.state.lock().unwrap().peer_allowed(&ua.id, pc2));
+    assert_eq!(b.key_register(pc2, jwk.clone(), "x").await.unwrap_err().code, "server", "peerId de outra conta");
+
+    // a Ana revoga o notebook: some da lista, e o livekit-token (peer_allowed) passa a recusar esse peerId
+    assert!(f.state.lock().unwrap().peer_allowed(&ua.id, pc1));
+    a.key_revoke(pc2).await.unwrap();
+    assert_eq!(a.keys_list().await.unwrap().len(), 1);
+    assert!(!f.state.lock().unwrap().peer_allowed(&ua.id, pc2));
+    assert!(f.state.lock().unwrap().peer_allowed(&ua.id, pc1), "o outro computador segue valendo");
+    assert_eq!(a2.key_register(pc2, jwk.clone(), "Notebook").await.unwrap_err().code, "key_revoked", "instalação revogada não volta a se registrar");
+
+    // servidor sem a 0009: a UI recebe server_not_ready e esconde o cartão
+    f.state.lock().unwrap().no_keys_rpc = true;
+    assert_eq!(a.keys_list().await.unwrap_err().code, "server_not_ready");
+    assert_eq!(a.key_revoke(pc1).await.unwrap_err().code, "server_not_ready");
+}

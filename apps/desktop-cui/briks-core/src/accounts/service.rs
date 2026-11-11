@@ -13,6 +13,8 @@
 //!   friends.photos  {photos:[{user_id,path}]}      fotos dos amigos no cache local (PNG/JPEG), depois de friends.list
 //!   presence.beat {invisible} / presence.friends / presence.clear -> presence.list {remote, friends:[{user_id,online,last_seen}]}   (0007)
 //!   friends.blocks  {remote, blocks:[{user_id,nick,display_name}]}   (friends.block/unblock/blocks {user_id}); remote=false: servidor sem a 0006, vale a lista local da UI
+//!   account.devices -> account.devices {remote, current, devices:[{peer_id,device_name,created_at,last_used_at}]}   (0009: computadores ligados à conta)
+//!   account.device_revoke {peer_id} -> account.device_result {ok, peer_id, message|error_code} + account.devices
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
 //!   import.result   {state, friends, groups, messages, message}
 use std::path::PathBuf;
@@ -100,6 +102,38 @@ fn failed(rt: &Runtime, e: &AccountError) -> Value {
 
 /// Depois de entrar: avisa a UI e publica a chave pública da identidade P2P no perfil da conta.
 async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recovery: bool) {
+    signed_in_ex(rt, acc, tx, recovery, true).await
+}
+
+/// Identificador desta instalação (UUID, o "peerId" que o livekit-token confere em profile_keys). Fica na pasta de dados.
+pub fn install_id(dir: &std::path::Path) -> String {
+    let p = dir.join("install-id");
+    if let Ok(t) = std::fs::read_to_string(&p) {
+        let t = t.trim();
+        if uuid::Uuid::parse_str(t).is_ok() { return t.to_string(); }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(&p, &id);
+    id
+}
+fn new_install_id(dir: &std::path::Path) -> String { let _ = std::fs::remove_file(dir.join("install-id")); install_id(dir) }
+fn computer_name() -> String {
+    let n = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let n: String = n.trim().chars().take(64).collect();
+    if n.is_empty() { "Este computador".into() } else { n }
+}
+
+/// Lista os computadores da conta para a UI. `remote=false`: o servidor ainda não tem a 0009 (a UI esconde o cartão).
+async fn devices_event(rt: &Runtime, acc: &Accounts) -> Value {
+    let current = install_id(&rt.data_dir);
+    match acc.keys_list().await {
+        Ok(d) => json!({ "ev": "account.devices", "remote": true, "current": current, "devices": d }),
+        Err(_) => json!({ "ev": "account.devices", "remote": false, "current": current, "devices": [] }),
+    }
+}
+
+async fn signed_in_ex(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recovery: bool, explicit: bool) {
     let Some(u) = acc.user() else { return };
     // troca de conta (entrou com outra por cima): nada da anterior fica à mostra nem em cache
     if let Some(prev) = acc.take_previous_id(&u.id) { avatar::clear(&rt.data_dir, &prev); }
@@ -122,6 +156,17 @@ async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recov
             acc.remember_name(&p.display_name);
             photo_url = p.avatar_url.clone().unwrap_or_default();
             let _ = tx.send(json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name })).await;
+            // liga este computador à conta (profile_keys): sem a 0009 no servidor, segue sem a lista de computadores
+            let jwk = serde_json::to_value(id.public_jwk()).unwrap_or(Value::Null);
+            let mut r = acc.key_register(&install_id(&rt.data_dir), jwk.clone(), &computer_name()).await;
+            if matches!(&r, Err(e) if e.code == "key_revoked") && explicit {
+                // entrou de novo de propósito neste computador: ele ganha uma instalação nova (a revogada continua revogada)
+                r = acc.key_register(&new_install_id(&rt.data_dir), jwk, &computer_name()).await;
+            }
+            if let Err(e) = r {
+                if e.code == "key_revoked" { let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await; }
+            }
+            let _ = tx.send(devices_event(rt, acc).await).await;
         }
         Err(e) => {
             let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
@@ -247,7 +292,7 @@ impl Service {
         match cmd {
             "account.status" => self.start_flow(json!({ "what": "restore" }), async move {
                 match acc.restore().await {
-                    Ok(Some(_)) => signed_in(&rt, &acc, &tx, false).await,
+                    Ok(Some(_)) => signed_in_ex(&rt, &acc, &tx, false, false).await,
                     Ok(None) => { let _ = tx.send(base(&rt, "signed_out")).await; }
                     Err(e) => { let _ = tx.send(failed(&rt, &e)).await; }
                 }
@@ -476,6 +521,25 @@ impl Service {
                     let r = acc.backup_delete().await;
                     let _ = tx.send(backup_result("delete", r.map(|_| "Cópia de segurança apagada do servidor."))).await;
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "account.devices" => {
+                tokio::spawn(async move { let _ = tx.send(devices_event(&rt, &acc).await).await; });
+            }
+            "account.device_revoke" => {
+                // revoga um computador da conta (nunca o atual: para sair deste, a pessoa usa Sair); o livekit-token passa a recusar esse peerId
+                let peer = s("peer_id");
+                tokio::spawn(async move {
+                    let ev = if peer.is_empty() || peer == install_id(&rt.data_dir) {
+                        json!({ "ev": "account.device_result", "ok": false, "peer_id": peer, "error_code": "current", "message": "Este é o computador em uso. Para desligá-lo da conta, use Sair." })
+                    } else {
+                        match acc.key_revoke(&peer).await {
+                            Ok(_) => json!({ "ev": "account.device_result", "ok": true, "peer_id": peer, "message": "Computador desconectado da conta." }),
+                            Err(e) => json!({ "ev": "account.device_result", "ok": false, "peer_id": peer, "error_code": e.code, "message": e.message }),
+                        }
+                    };
+                    let _ = tx.send(ev).await;
+                    let _ = tx.send(devices_event(&rt, &acc).await).await;
                 });
             }
             "friends.lookup" => {

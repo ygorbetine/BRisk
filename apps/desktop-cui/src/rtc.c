@@ -32,7 +32,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
 
 void rtc_leave_room(app_state_t *s) {
     s->rtc_want_room = false;
-    s->in_room = false;
+    s->in_room = false; s->dmoff_n = 0;   /* a malha acaba junto com a sala: chats privados fechados voltam ao normal */
     s->rtc_peer_count = s->rtc_authed_count = 0;
     if (core_state() == CORE_READY) send_cmd("room.leave", NULL);
     copy(s->rtc_state, sizeof s->rtc_state, "");
@@ -223,6 +223,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         }
     } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack")) {
         changed = attach_event(s, ev, j);
+    } else if (!strcmp(ev, "chat.link")) {   /* chat privado fechado/reaberto pelo core (AMI-16) */
+        const jval *on = json_get(j, "on"); friends_dm_link(s, json_str(j, "fp", ""), on && on->type == J_BOOL && on->b); changed = true;
     } else if (!strcmp(ev, "chat.event")) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));

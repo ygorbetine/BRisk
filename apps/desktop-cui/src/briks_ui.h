@@ -182,6 +182,11 @@ typedef struct {
     bool mic_test_on; float mic_test_level; char mic_test_msg[160];
     int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
     char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
+    /* PRF-12: computadores ligados ao @nick (core: account.devices / account.device_revoke; migração 0009) */
+    struct { char peer[48]; char name[72]; char created[16]; char used[16]; } devs[12];
+    int dev_n; bool dev_remote, dev_have; char dev_current[48], dev_msg[160], dev_confirm[48]; unsigned long long dev_asked_at;
+    /* AMI-16: "Desconectar P2P" (fecha só o chat privado com um amigo; a chamada e a amizade ficam) */
+    char dmoff[8][160]; int dmoff_n; bool dmdisc_open; char dmdisc_fp[160], dmdisc_name[96];
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -250,6 +255,10 @@ void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e
 void account_backup_cancel(app_state_t *s);                 /* descarta a frase gerada */
 void account_backup_restore(app_state_t *s);                /* usa s->backup_input */
 void account_backup_delete(app_state_t *s);
+bool friends_dm_off(const app_state_t *s, const char *fp);          /* o chat privado com essa pessoa foi desconectado */
+void friends_dm_link(app_state_t *s, const char *fp, bool on);      /* evento chat.link do core: desconectou (false) ou reconectou (true) */
+void account_devices_get(app_state_t *s);                          /* pede ao core a lista de computadores da conta */
+void account_device_revoke(app_state_t *s, const char *peer_id);   /* revoga um computador (nunca o atual) */
 void ui_others_section(cui_ctx *ui, app_state_t *s);        /* "Sair dos outros computadores" (aba Conta) */
 void ui_backup_section(cui_ctx *ui, app_state_t *s);        /* bloco para Configurações */
 void ui_backup_dialogs(cui_ctx *ui, app_state_t *s);        /* diálogos: frase nova, recuperar, apagar */        /* bloco "foto, nome e @" para o diálogo de Perfil */

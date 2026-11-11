@@ -23,6 +23,9 @@ pub struct FakeUser {
     pub provider: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct FakeKey { pub user: String, pub peer_id: String, pub name: String, pub created: u64, pub last_used: u64, pub revoked: bool }
+
 #[derive(Default)]
 pub struct FakeState {
     pub users: Vec<FakeUser>,
@@ -44,6 +47,9 @@ pub struct FakeState {
     /// buscas por @nick feitas por conta (0008: máximo 30 por hora) e servidor sem a 0008
     lookups: HashMap<String, u32>,
     pub no_lookup_rpc: bool,
+    /// computadores ligados às contas (profile_keys + 0009): usuário, peerId, nome, criado, último uso, revogado
+    pub keys: Vec<FakeKey>,
+    pub no_keys_rpc: bool,
     /// segundos "passados" para os testes envelhecerem os batimentos sem esperar
     pub clock_skew: u64,
     /// validade do access token em segundos (testes de renovação usam valores baixos)
@@ -61,7 +67,22 @@ pub struct FakeState {
     pub demo: bool,
 }
 
+/// "2026-11-11T10:20:30Z" a partir de segundos Unix (algoritmo de dias civis; sem depender de chrono).
+fn iso(secs: u64) -> String {
+    let (days, rem) = ((secs / 86400) as i64, secs % 86400);
+    let z = days + 719468; let era = z.div_euclid(146097); let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1; let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", if m <= 2 { y + 1 } else { y }, m, d, rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
 impl FakeState {
+    /// O que a função livekit-token confere (`peerBelongsToUser`): o peerId está registrado para o usuário e NÃO foi revogado.
+    pub fn peer_allowed(&self, user_id: &str, peer_id: &str) -> bool {
+        self.keys.iter().any(|k| k.user == user_id && k.peer_id == peer_id && !k.revoked)
+    }
+
     /// Revoga todas as sessões (access e refresh), como se o servidor tivesse derrubado o login.
     pub fn drop_all_sessions(&mut self) { self.access.clear(); self.refresh.clear(); }
 }
@@ -383,6 +404,8 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let p = json!({ "user_id": me, "nick": nick, "display_name": keep("display_name", json!(name)), "avatar_url": keep("avatar_url", b["p_avatar_url"].clone()), "fingerprint": b["p_fingerprint"], "public_key": b["p_public_key"], "status": null });
             st.profiles.insert(me.to_string(), p.clone());
             if first && st.demo {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                st.keys.push(FakeKey { user: me.to_string(), peer_id: "7d1f3a52-9c4e-4b0a-8e21-5f6a0c9d2b13".into(), name: "Notebook da sala".into(), created: now.saturating_sub(40 * 86400), last_used: now.saturating_sub(3 * 86400), revoked: false });
                 for (i, (n, nk, accepted)) in [("Marina Costa", "marina", true), ("Rafael Lima", "rafa_lima", false)].iter().enumerate() {
                     let id = format!("00000000-0000-4000-8000-00000000000{i}");
                     st.profiles.insert(id.clone(), json!({ "user_id": id, "nick": nk, "display_name": n, "avatar_url": null, "fingerprint": format!("fp-demo-{i}"), "public_key": null, "status": if *accepted { json!("Bora jogar?") } else { Value::Null } }));
@@ -520,6 +543,34 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
                 json!({ "user_id": x.1, "nick": p["nick"], "display_name": p["display_name"], "blocked_at": "2026-01-01T00:00:00Z" })
             }).collect();
             ok(json!(v))
+        }
+        "account_keys_list" | "account_key_register" | "revoke_key" if st.no_keys_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "account_key_register" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let peer = b["p_peer_id"].as_str().unwrap_or("");
+            if peer.len() < 8 || peer.len() > 128 || !peer.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { return pg("invalid_peer"); }
+            if !st.profiles.contains_key(me) { return pg("no_profile"); }
+            if b["p_public_key"]["kty"] != "EC" || b["p_public_key"].get("d").is_some() { return pg("invalid_public_key"); }
+            let name: String = b["p_device_name"].as_str().unwrap_or("").trim().chars().take(64).collect();
+            match st.keys.iter_mut().find(|k| k.peer_id == peer) {
+                Some(k) if k.user != me => return pg("key_owned_by_other"),
+                Some(k) if k.revoked => return pg("key_revoked"),
+                Some(k) => { k.last_used = now; if !name.is_empty() { k.name = name; } }
+                None => st.keys.push(FakeKey { user: me.to_string(), peer_id: peer.to_string(), name, created: now, last_used: now, revoked: false }),
+            }
+            ok(Value::Null)
+        }
+        "account_keys_list" => {
+            let v: Vec<Value> = st.keys.iter().filter(|k| k.user == me && !k.revoked)
+                .map(|k| json!({ "peer_id": k.peer_id, "device_name": k.name, "created_at": iso(k.created), "last_used_at": iso(k.last_used) })).collect();
+            ok(json!(v))
+        }
+        "revoke_key" => {
+            let peer = b["p_peer_id"].as_str().unwrap_or("");
+            for k in st.keys.iter_mut().filter(|k| k.peer_id == peer && k.user == me) { k.revoked = true; }   // de outra conta: não faz nada, como o SQL
+            ok(Value::Null)
         }
         "friend_remove" => {
             let other = b["p_user"].as_str().unwrap_or("");

@@ -44,6 +44,8 @@ pub enum MeshEvent {
     /// Estado de um peer: "negociando" | "conectado" | "autenticado" | "falhou" | "fechado".
     Peer { peer_id: String, state: String },
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// O chat privado com `from_fp` foi fechado (`on` = false) ou voltou (`on` = true) sem mexer na chamada.
+    DmLink { fp: String, on: bool },
     /// Mensagem antiga recebida na sincronização de histórico (assinatura do autor já verificada); `mine` = eu escrevi (em outro aparelho/sessão).
     History { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64, mine: bool },
     /// Evento de chat assinado (reação, edição, exclusão, resposta, fixação) já verificado; `local` = criado por mim.
@@ -112,6 +114,9 @@ pub enum MeshCmd {
     AcceptFile { id: String },
     /// Pausa ou retoma uma transferência (minha ou recebida).
     PauseFile { id: String, paused: bool },
+    /// AMI-16 "Desconectar P2P": fecha só o chat privado com `fp` (a chamada e a amizade ficam). O chat volta sozinho quando
+    /// eu escrever para essa pessoa ou ela escrever para mim.
+    DmDisconnect { fp: String },
     /// Avisa os peers autenticados que estou digitando.
     Typing,
     /// Chat da sala: texto para todos os peers autenticados (não fica gravado).
@@ -224,6 +229,7 @@ struct Actor {
     irx: Option<mpsc::Receiver<Internal>>,
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
+    dm_off: HashSet<String>,                   // fps cujo chat privado o usuário desconectou (a chamada segue)
     /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
     watch_intent: HashMap<String, std::path::PathBuf>,
     hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
@@ -263,7 +269,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -498,7 +504,13 @@ impl Actor {
         for c in q { let _ = p.pc.add_ice_candidate(c).await; }
     }
 
+    /// Religa o chat privado com `fp` se estava desconectado (escrever, de qualquer lado, reconecta).
+    async fn dm_reconnect(&mut self, fp: &str) {
+        if self.dm_off.remove(fp) { self.emit(MeshEvent::DmLink { fp: fp.to_string(), on: true }).await; }
+    }
+
     async fn chat_send(&mut self, to_fp: String, text: String, id: String) {
+        self.dm_reconnect(&to_fp).await;
         let my_fp = self.identity.fingerprint();
         let m = identity::sign_message(&self.identity, ChatWire {
             version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id,
@@ -511,6 +523,7 @@ impl Actor {
     async fn on_cmd(&mut self, c: MeshCmd) {
         match c {
             MeshCmd::ForceOffer { peer_id } => self.start_offer(&peer_id, false).await,
+            MeshCmd::DmDisconnect { fp } => { if self.dm_off.insert(fp.clone()) { self.emit(MeshEvent::DmLink { fp, on: false }).await; } }
             MeshCmd::Chat { to_fp, text } => self.chat_send(to_fp, text, uuid::Uuid::new_v4().to_string()).await,
             MeshCmd::ChatWithId { to_fp, text, id } => self.chat_send(to_fp, text, id).await,
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {
@@ -1037,6 +1050,7 @@ impl Actor {
     }
 
     async fn flush_outbox(&mut self, fp: &str) {
+        if self.dm_off.contains(fp) { return; }
         let Some(list) = self.outbox.get(fp) else { return };
         let Some(peer) = self.peers.values().find(|p| p.fp.as_deref() == Some(fp) && p.sent_proof && p.proven) else { return };
         let Some(dc) = peer.dc.clone() else { return };
@@ -1121,6 +1135,7 @@ impl Actor {
                 let (Some(jwk), Some(fp)) = (p.jwk.clone(), p.fp.clone()) else { return };   // sem identidade provada, ignora
                 let expected = identity::dm_channel(&self.identity.fingerprint(), &fp);
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { self.emit(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into())).await; return; }
+                self.dm_reconnect(&fp).await;   // a pessoa escreveu: o chat privado reconecta
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
                 self.hist.add(&m);
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }   // dedupe só precisa cobrir as reenvios recentes; sem teto crescia para sempre
@@ -1128,6 +1143,7 @@ impl Actor {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
             }
+            "chat.history.request" | "chat.history.chunk" if self.peers.get(peer).and_then(|p| p.fp.as_ref()).is_some_and(|f| self.dm_off.contains(f)) => {}   // chat desconectado: sem sincronizar
             "chat.history.request" => self.on_history_request(peer, &v).await,
             "chat.history.chunk" => self.on_history_chunk(peer, &v).await,
             "chat.history.complete" => {
@@ -1144,6 +1160,7 @@ impl Actor {
             "chat.typing" => {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                if self.dm_off.contains(&fp) { return; }
                 self.emit(MeshEvent::Typing { from_fp: fp }).await;
             }
             "room.chat" => {
@@ -1273,7 +1290,7 @@ impl Actor {
             let me = self.identity.fingerprint();
             if let Some(o) = self.owner() { let mine = o == me; self.emit(MeshEvent::Owner { fp: o, me: mine }).await; }
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
-            if let Some(fp) = fp { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; }
+            if let Some(fp) = fp { if !self.dm_off.contains(&fp) { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; } }
             self.send_state(peer).await;
             if self.share.is_some() { self.attach_share(peer).await; }
         }

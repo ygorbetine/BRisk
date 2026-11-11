@@ -225,9 +225,10 @@ async fn sfu_token_service_flow_with_user_session() {
     assert!(sfu::fetch_token("http://exemplo.com/t", "x", "room:a").is_err());
 }
 
-/// IPC: Automático com SFU configurado mas sem conta/servidor cai no P2P e diz por quê; "P2P" nem tenta; `net.mode.set` persiste.
+/// IPC, regra sem salas divididas: com o SFU configurado mas sem conta (token não sai), Automático e "SFU" NÃO abrem a chamada em P2P:
+/// erro visível com o motivo. "P2P" nem tenta o SFU. Com a reserva ligada no `net-mode.json`, aí sim cai no P2P. `net.mode.set` persiste.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ipc_net_mode_auto_falls_back_to_p2p_and_reports_why() {
+async fn ipc_net_mode_never_splits_the_room_silently() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let dir = std::env::temp_dir().join(format!("briks-netmode-ipc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
@@ -243,30 +244,57 @@ async fn ipc_net_mode_auto_falls_back_to_p2p_and_reports_why() {
         loop {
             let l = timeout(Duration::from_secs(15), lines.next_line()).await.expect("tempo").expect("io").expect("fim");
             let v: serde_json::Value = serde_json::from_str(&l).unwrap();
+            assert_ne!(v["ev"], "room.joining", "abriu uma sala quando não devia (esperando {ev}): {v}");
             if v["ev"] == ev { return v; }
+        }
+    }
+    async fn until_joining(lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>) {
+        loop {
+            let l = timeout(Duration::from_secs(15), lines.next_line()).await.expect("tempo").expect("io").expect("fim");
+            if serde_json::from_str::<serde_json::Value>(&l).unwrap()["ev"] == "room.joining" { return; }
         }
     }
     wr.write_all(b"{\"cmd\":\"hello\",\"token\":\"segredo\"}\n").await.unwrap();
     until(&mut lines, "hello.ok").await;
     wr.write_all(b"{\"cmd\":\"session.start\",\"display_name\":\"T\"}\n").await.unwrap();
     until(&mut lines, "session.ready").await;
-    // automático: tenta o SFU, sem conta falha e cai no P2P
-    wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-a\",\"net\":\"sfu\"}\n").await.unwrap();
-    let nm = until(&mut lines, "net.mode").await;
-    eprintln!("net.mode (sfu manual, sem conta): {nm}");
-    assert_eq!((nm["mode"].as_str(), nm["fallback"].as_bool(), nm["configured"].as_bool()), (Some("p2p"), Some(true), Some(true)));
-    assert!(nm["error"].as_str().unwrap().contains("conta"), "{nm}");
-    until(&mut lines, "room.joining").await;
+    // Automático (padrão, sem campo "net") e "SFU": configurado, mas sem conta o token não sai -> erro visível, nenhuma sala P2P
+    for net in ["", ",\"net\":\"auto\"", ",\"net\":\"sfu\""] {
+        wr.write_all(format!("{{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-a\"{net}}}\n").as_bytes()).await.unwrap();
+        let nm = until(&mut lines, "net.mode").await;
+        eprintln!("net.mode ({}): {nm}", if net.is_empty() { "padrão" } else { net });
+        assert_eq!((nm["mode"].as_str(), nm["fallback"].as_bool(), nm["configured"].as_bool()), (Some("none"), Some(false), Some(true)));
+        assert!(nm["error"].as_str().unwrap().contains("conta"), "{nm}");
+        let er = until(&mut lines, "error").await;
+        assert_eq!(er["where"], "room.join");
+        assert!(er["message"].as_str().unwrap().contains("conta"), "{er}");
+    }
+    // prova de que nenhuma sala abriu: o próximo comando responde sem room.joining no caminho (o `until` acima falharia)
+    wr.write_all(b"{\"cmd\":\"ping\"}\n").await.unwrap();
+    until(&mut lines, "pong").await;
     // P2P escolhido: não tenta o SFU
     wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-b\",\"net\":\"p2p\"}\n").await.unwrap();
     let nm = until(&mut lines, "net.mode").await;
     assert_eq!((nm["mode"].as_str(), nm["fallback"].as_bool()), (Some("p2p"), Some(false)));
     assert!(nm["reason"].as_str().unwrap().contains("escolhido"), "{nm}");
-    // persistência da escolha
+    until_joining(&mut lines).await;
+    // chat de amigo (namespace "friend") nunca passa pelo SFU: segue P2P mesmo no Automático com SFU configurado
+    wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"friend\",\"room\":\"amigo-x\"}\n").await.unwrap();
+    until_joining(&mut lines).await;
+    // reserva P2P ligada de propósito: aí o Automático cai no P2P e avisa
+    std::fs::write(dir.join("net-mode.json"), r#"{"mode":"auto","fallback":"p2p"}"#).unwrap();
+    wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-c\"}\n").await.unwrap();
+    let nm = until(&mut lines, "net.mode").await;
+    eprintln!("net.mode (automático com reserva): {nm}");
+    assert_eq!((nm["mode"].as_str(), nm["fallback"].as_bool(), nm["configured"].as_bool()), (Some("p2p"), Some(true), Some(true)));
+    assert!(nm["error"].as_str().unwrap().contains("conta") && nm["reason"].as_str().unwrap().contains("reserva"), "{nm}");
+    until_joining(&mut lines).await;
+    // persistência da escolha (sem apagar a reserva)
     wr.write_all(b"{\"cmd\":\"net.mode.set\",\"mode\":\"sfu\"}\n").await.unwrap();
     let c = until(&mut lines, "net.config").await;
     assert_eq!((c["mode"].as_str(), c["configured"].as_bool()), (Some("sfu"), Some(true)));
     assert_eq!(crate::sfu_cfg::load_mode(&|_| None, &dir), crate::sfu_cfg::NetMode::Sfu);
+    assert!(crate::sfu_cfg::fallback_p2p(&|_| None, &dir));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

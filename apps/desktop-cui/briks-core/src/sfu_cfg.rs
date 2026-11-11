@@ -84,20 +84,38 @@ pub fn load_mode(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> NetMo
 
 pub fn save_mode(data_dir: &Path, m: NetMode) -> std::io::Result<()> {
     std::fs::create_dir_all(data_dir)?;
-    std::fs::write(data_dir.join("net-mode.json"), serde_json::json!({ "mode": m.name() }).to_string())
+    let p = data_dir.join("net-mode.json");
+    // preserva as outras chaves do arquivo (ex.: "fallback")
+    let mut v = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).filter(|v| v.is_object()).unwrap_or_else(|| serde_json::json!({}));
+    v["mode"] = serde_json::json!(m.name());
+    std::fs::write(p, v.to_string())
 }
 
-/// Modo efetivo de uma chamada. `sfu_ready` = configurado e válido. `sfu_failed` = a tentativa de entrar no SFU falhou (reserva P2P).
-/// Devolve ("sfu" | "p2p", motivo para o diagnóstico).
-pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool) -> (&'static str, String) {
+/// Reserva P2P quando o SFU está configurado mas a entrada falha. DESLIGADA por padrão: quem caísse sozinho no P2P ficaria em
+/// outra "sala" (a malha P2P e o SFU não se enxergam), falando com ninguém sem saber. Liga com `BRIKS_NET_FALLBACK=p2p` ou
+/// `"fallback":"p2p"` no `net-mode.json` (útil só se TODOS os participantes combinarem o mesmo).
+pub fn fallback_p2p(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> bool {
+    if let Some(v) = env("BRIKS_NET_FALLBACK") { return v.trim().eq_ignore_ascii_case("p2p"); }
+    std::fs::read_to_string(data_dir.join("net-mode.json")).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .map(|v| v["fallback"].as_str().map(|f| f.eq_ignore_ascii_case("p2p")).unwrap_or(false)).unwrap_or(false)
+}
+
+/// Modo efetivo de uma chamada, sem salas divididas. `sfu_ready` = configuração presente e válida. `sfu_failed` = configurado, mas
+/// o token não saiu ou o servidor não aceitou a entrada. `fallback` = reserva P2P ligada (ver `fallback_p2p`).
+/// Devolve ("sfu" | "p2p" | "none", motivo para o diagnóstico); "none" = a chamada NÃO abre (erro visível, o usuário tenta de novo).
+///
+/// Regra: com o SFU configurado, a sala É do SFU, no Automático e no "SFU": só entra nele quem tem configuração válida E conseguiu
+/// o token/entrada; quem não conseguiu não é jogado em silêncio no P2P. Sem configuração, tudo é P2P, como sempre.
+pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool, fallback: bool) -> (&'static str, String) {
     match (mode, sfu_ready, sfu_failed) {
         (NetMode::P2p, _, _) => ("p2p", "escolhido: P2P".into()),
         (NetMode::Sfu, true, false) => ("sfu", "escolhido: SFU".into()),
+        (NetMode::Auto, true, false) => ("sfu", "automático: servidor de chamadas (SFU)".into()),
         (NetMode::Sfu, false, _) => ("p2p", "SFU escolhido, mas não configurado: usando P2P".into()),
-        (NetMode::Sfu, true, true) => ("p2p", "SFU escolhido, mas indisponível: usando P2P".into()),
-        // Enquanto o chat/presença no modo SFU não estiver validado, o Automático NÃO escolhe SFU (só escolha manual ou "Sempre SFU").
-        (NetMode::Auto, true, _) => ("p2p", "automático: P2P (SFU só por escolha manual)".into()),
         (NetMode::Auto, false, _) => ("p2p", "automático: SFU não configurado".into()),
+        (_, true, true) if fallback => ("p2p", "servidor de chamadas indisponível: usando P2P (reserva ligada; só fala com quem também caiu no P2P)".into()),
+        (_, true, true) => ("none", "servidor de chamadas indisponível: a chamada não foi aberta em P2P para não dividir a sala".into()),
     }
 }
 
@@ -145,10 +163,37 @@ mod t {
         assert_eq!(load_mode(&env_of(vec![]), &d), NetMode::Sfu);
         assert_eq!(load_mode(&env_of(vec![("BRIKS_NET_MODE", "p2p")]), &d), NetMode::P2p);
         let _ = std::fs::remove_dir_all(&d);
-        assert_eq!(decide(NetMode::Auto, true, false).0, "p2p", "Automático não escolhe SFU por padrão");
-        assert_eq!(decide(NetMode::Auto, true, true).0, "p2p");
-        assert_eq!(decide(NetMode::Auto, false, false).0, "p2p");
-        assert_eq!(decide(NetMode::Sfu, false, false).0, "p2p");
-        assert_eq!(decide(NetMode::P2p, true, false).0, "p2p");
+    }
+
+    #[test]
+    fn auto_rule_never_splits_a_room() {
+        // SFU é o padrão quando configurado e a entrada deu certo, no Automático e no "SFU"
+        assert_eq!(decide(NetMode::Auto, true, false, false).0, "sfu");
+        assert_eq!(decide(NetMode::Sfu, true, false, false).0, "sfu");
+        // configurado, mas sem token/entrada: NÃO cai no P2P em silêncio (ficaria sozinho em outra sala)
+        assert_eq!(decide(NetMode::Auto, true, true, false).0, "none");
+        assert_eq!(decide(NetMode::Sfu, true, true, false).0, "none");
+        // reserva só quando ligada de propósito
+        assert_eq!(decide(NetMode::Auto, true, true, true).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, true, true, true).0, "p2p");
+        // sem configuração (ou inválida): P2P, como antes; a escolha P2P nunca tenta o SFU
+        assert_eq!(decide(NetMode::Auto, false, false, false).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, false, false, false).0, "p2p");
+        for (ready, failed) in [(true, false), (true, true), (false, false)] { assert_eq!(decide(NetMode::P2p, ready, failed, false).0, "p2p"); }
+    }
+
+    #[test]
+    fn fallback_is_off_by_default_and_survives_mode_changes() {
+        let d = std::env::temp_dir().join(format!("briks-netfb-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(!fallback_p2p(&env_of(vec![]), &d));
+        assert!(fallback_p2p(&env_of(vec![("BRIKS_NET_FALLBACK", "p2p")]), &d));
+        std::fs::write(d.join("net-mode.json"), r#"{"mode":"auto","fallback":"p2p"}"#).unwrap();
+        assert!(fallback_p2p(&env_of(vec![]), &d));
+        assert!(!fallback_p2p(&env_of(vec![("BRIKS_NET_FALLBACK", "off")]), &d), "ambiente vence o arquivo");
+        save_mode(&d, NetMode::Sfu).unwrap();
+        assert_eq!(load_mode(&env_of(vec![]), &d), NetMode::Sfu);
+        assert!(fallback_p2p(&env_of(vec![]), &d), "trocar o modo não apaga a reserva");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

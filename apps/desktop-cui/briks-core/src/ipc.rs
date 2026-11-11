@@ -132,6 +132,11 @@ pub async fn bind() -> Result<(TcpListener, u16)> {
 pub async fn serve(l: TcpListener, token: String, cfg: Config) -> Result<()> {
     let realtime = cfg.realtime_url.clone().zip(cfg.realtime_key.clone());
     let accounts = crate::accounts::service::Runtime::build(cfg.data_dir.clone(), realtime).await;
+    serve_with(l, token, cfg, accounts).await
+}
+
+/// Como `serve`, com o serviço de contas já montado (os testes entram com uma conta do servidor simulado).
+pub async fn serve_with(l: TcpListener, token: String, cfg: Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     loop {
         let (s, _) = l.accept().await?;
         let _ = handle(s, &token, &cfg, accounts.clone()).await; // uma UI por vez; ao cair, aceita a próxima
@@ -215,7 +220,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "session.start primeiro" })).await?;
                             continue;
                         };
-                        // Modo de rede (Automático / SFU / P2P): chamadas de voz tentam o SFU quando configurado; P2P é a reserva.
+                        // Modo de rede (Automático / SFU / P2P). Com o SFU configurado, Automático e SFU entram pelo servidor de chamadas;
+                        // se o token ou a entrada falharem, a chamada NÃO abre em P2P (sala dividida), a não ser com a reserva ligada.
                         let sfu_ns = v["namespace"].as_str().map(|n| n == "room" || n == "group").unwrap_or(true);
                         let net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
                         let mut sfu_err = String::new();
@@ -225,7 +231,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let sfu_conf = crate::sfu_cfg::resolve(&net_env, &cfg.data_dir);
                         let sfu_ready = matches!(sfu_conf, Ok(Some(_)));
                         if let Err(e) = &sfu_conf { sfu_err = e.clone(); }
-                        if sfu_ns && net_mode == crate::sfu_cfg::NetMode::Sfu {
+                        if sfu_ns && net_mode != crate::sfu_cfg::NetMode::P2p {
                             if let Ok(Some(sc)) = &sfu_conf {
                                 let (ns, room) = (v["namespace"].as_str().unwrap_or("room").to_string(), v["room"].as_str().unwrap_or("").to_string());
                                 if !room.is_empty() && room.len() <= 200 && !kicked_rooms.contains(&format!("{ns}:{room}")) {
@@ -239,7 +245,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     match try_sfu(sc, &accounts, &ns, &room, au.clone().zip(au_rx), dcfg).await {
                                         Ok(h) if !with_mesh => {
                                             // SFU puro: sem malha nem Realtime. O peer_id local é a identidade no SFU.
-                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
+                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false, false);
                                             out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
                                             cur_room = format!("{ns}:{room}");
                                             local_peer = h.identity.clone();
@@ -248,10 +254,21 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                             mesh_ev = Some(h.events);
                                             rt_status = None;
                                             out(&mut wr, json!({ "ev": "room.joining", "peer_id": local_peer })).await?;
+                                            // no SFU a sinalização é a própria sessão com o servidor: já está de pé (quedas viram "reconectando")
+                                            out(&mut wr, json!({ "ev": "signaling.status", "state": "conectado", "message": "" })).await?;
                                             if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
                                             continue;
                                         }
                                         Ok(h) => { hybrid = Some(h); sfu_au = au; }
+                                        Err(e) if !crate::sfu_cfg::fallback_p2p(&net_env, &cfg.data_dir) => {
+                                            // sem reserva: erro visível em vez de uma sala P2P à parte
+                                            mesh_ev = None;
+                                            rt_status = None;
+                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, true, false);
+                                            out(&mut wr, json!({ "ev": "net.mode", "mode": "none", "reason": reason, "error": e, "configured": true, "fallback": false })).await?;
+                                            out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": format!("Não foi possível entrar pelo servidor de chamadas: {e}") })).await?;
+                                            continue;
+                                        }
                                         Err(e) => { sfu_failed = true; sfu_err = e; }
                                     }
                                 }
@@ -272,10 +289,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             continue;
                         }
                         if let Some(h) = &hybrid {
-                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false, false);
                             out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
                         } else if sfu_ns {
-                            let (_, reason) = crate::sfu_cfg::decide(net_mode, sfu_ready, sfu_failed);
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, sfu_ready, sfu_failed, true);
                             out(&mut wr, json!({ "ev": "net.mode", "mode": "p2p", "reason": reason, "error": sfu_err, "configured": sfu_ready, "fallback": sfu_failed })).await?;
                         }
                         cur_room = format!("{ns}:{room}");
@@ -347,6 +364,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let fp = v["fp"].as_str().unwrap_or("").to_string();
                         if let (false, Some(c)) = (fp.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::Allow { fp }).await; }
                     }
+                    "room.mute" => {
+                        // o dono fecha (ou reabre) o microfone de outra pessoa para TODOS: pedido assinado pela camada de dados do SFU
+                        let fp = v["fp"].as_str().unwrap_or("").to_string();
+                        if let (false, Some(c)) = (fp.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::RemoteMute { fp, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
+                    }
                     "peer.mute" => {
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
@@ -410,7 +432,15 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     }
                     Some(MeshEvent::Speaking { peer_id, level }) => out(&mut wr, json!({ "ev": "speaking", "peer": peer_id, "level": level })).await?,
                     Some(MeshEvent::PeerState { peer_id, microphone, deafened, status, presence }) => out(&mut wr, json!({ "ev": "peer.state", "peer_id": peer_id, "microphone": microphone, "deafened": deafened, "status": status, "presence": presence })).await?,
-                    Some(MeshEvent::Share(v)) => out(&mut wr, v).await?,
+                    Some(MeshEvent::Share(v)) => {
+                        // mudo pedido pelo dono: o core já fechou/abriu o microfone; o estado local e a UI acompanham
+                        let muted_by_owner = if v["ev"] == "room.muted" { v["muted"].as_bool() } else { None };
+                        out(&mut wr, v).await?;
+                        if let Some(m) = muted_by_owner {
+                            mic_muted = m;
+                            out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
+                        }
+                    }
                     Some(MeshEvent::Error(m)) => out(&mut wr, json!({ "ev": "error", "where": "mesh", "message": m })).await?,
                     None => { mesh_ev = None; }
                 }

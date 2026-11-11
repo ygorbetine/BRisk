@@ -1,0 +1,16 @@
+# Amigos: convite P2P por codigo assinado no dialogo Adicionar amigo. Gera o codigo no core (sobe sob demanda), copia, cola o PROPRIO codigo e o core recusa. Demo social + BRIKS_DEV_OPEN=add + core real (briks-core.exe novo ao lado do exe).
+waitms 800
+snap am0
+expect add_friend 1
+expect amg_code_len 0
+tap 535 525
+waitms 9000
+snap am1
+expect amg_code_len 557
+tap 647 503
+tap 686 590
+tap 772 590
+waitms 2500
+snap am2
+expect amg_in_len 557
+expect amg_own 1

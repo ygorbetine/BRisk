@@ -509,7 +509,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     sys_settings_system(ui);   /* winstate.c: fechar para a bandeja e iniciar com o Windows */
                     SCARD(ui, "BRIKS") {
                         cui_text(ui, "Briks", .font = CUI_FONT_DISPLAY, .size = 20);
-                        sub(ui, "Chamadas e chat ponto a ponto, com grupos assinados e @nick. Compartilhamento de tela: em breve.");
+                        sub(ui, "Chamadas e chat ponto a ponto, com grupos assinados e @nick. Compartilhamento de tela em beta.");
                         sw(ui, "Ajudar a melhorar as chamadas", "Envia só contadores anônimos por dia: se a conexão deu certo e se foi direta ou pelo relay. Nunca quem, com quem, sala, IP ou conteúdo.", &g_set.telemetry);
                         tag_nofx(ui);
                         sub(ui, "Feito por Becine Tools · Código-fonte: github.com/ygorbetine/Briks · Licença AGPL");

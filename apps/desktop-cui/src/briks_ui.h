@@ -181,6 +181,7 @@ typedef struct {
     /* Voz e atalhos: teste do microfone fora da chamada e resultado do registro dos atalhos globais */
     bool mic_test_on; float mic_test_level; char mic_test_msg[160];
     int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
+    char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -221,6 +222,13 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);
 void groups_create_json(const app_state_t *s, char *out, size_t cap);
+void groups_overlay(cui_ctx *ui, app_state_t *s);                              /* menu de contexto do grupo (camada de cima, junto do menu da mensagem) */
+void friends_code_card(cui_ctx *ui, app_state_t *s);   /* cartão "Por código" (gerar/copiar/aceitar), usado no diálogo e no hub */
+void friends_p2p_event(app_state_t *s, const struct jval *j);   /* friend.result do core */
+void groups_demo_roster(void);                                                  /* dados demo da presença por sala (BRIKS_DEMO_GROSTER) */
+int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
+bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
+void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
 void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
@@ -457,12 +465,15 @@ static inline bool briks_hover(cui_ctx *ui, const char *id) {
 }
 /* Realce de hover/clique para TODO controle feito de caixa simples: quem chama briks_clicked registra o retângulo sob o mouse (o menor vence);
    briks_tip_draw pinta um véu claro por cima no fim do quadro (mais forte com o botão apertado) e põe o cursor de mão. Não mexe no layout. */
-__declspec(selectany) float g_hot[4]; __declspec(selectany) bool g_hot_on;
-static inline bool briks_clicked(cui_ctx *ui, const char *id) {
+__declspec(selectany) float g_hot[5]; __declspec(selectany) bool g_hot_on;   /* g_hot[4] = raio dos cantos do realce */
+/* O véu de realce precisa ter o MESMO raio do controle, senão os cantos dele aparecem para fora de pílulas e círculos.
+   Quem desenha um controle com raio diferente de 12 chama briks_clicked_r com o raio real (use h/2 para pílula/círculo). */
+static inline bool briks_clicked_r(cui_ctx *ui, const char *id, float radius) {
     if (briks_blocked() || briks_covered(ui)) return false;
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     bool in = r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
-    if (in && (!g_hot_on || r.w * r.h < g_hot[2] * g_hot[3])) { g_hot[0] = r.x; g_hot[1] = r.y; g_hot[2] = r.w; g_hot[3] = r.h; g_hot_on = true; }
+    if (in && (!g_hot_on || r.w * r.h < g_hot[2] * g_hot[3])) { g_hot[0] = r.x; g_hot[1] = r.y; g_hot[2] = r.w; g_hot[3] = r.h; g_hot[4] = radius; g_hot_on = true; }
     return in && cui_mouse_clicked(ui, CUI_MOUSE_LEFT);
 }
+static inline bool briks_clicked(cui_ctx *ui, const char *id) { return briks_clicked_r(ui, id, 12.0f); }
 #endif

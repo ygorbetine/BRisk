@@ -6,6 +6,7 @@
 #include "backend.h"
 #include "json.h"
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -397,7 +398,8 @@ void groups_tick(app_state_t *s) {
 
 /* convida: entra na lista (precisa ter publicado a identidade) e o core assina; o código volta no evento */
 static void send_group_code(app_state_t *s, int gi) {
-    char *snap = stored_snap(&s->groups[gi], NULL); if (!snap) { snprintf(s->notice, sizeof s->notice, "Este grupo ainda não tem convite assinado: faça uma alteração (ex.: convidar um amigo) para gerar."); return; }
+    char *snap = stored_snap(&s->groups[gi], NULL);
+    if (!snap) { group_publish(s, gi, true); return; }   /* ainda sem convite assinado: o core assina o estado atual e o código volta no evento (ou o aviso diz o que falta) */
     send_obj("group.code", snap, NULL, NULL); free(snap);
 }
 
@@ -468,30 +470,111 @@ static void leave_or_delete(app_state_t *s, int gi) {
 /* ---- interface ---- */
 static const char *role_of(const group_t *g, const gmember_t *m) { return !strcmp(m->id, g->owner) ? "Dono" : m->admin ? "Administrador" : "Membro"; }
 
+/* ---- quem está em cada sala de voz do grupo (GRP-17) ----
+ * Fontes: (1) a sala em que EU estou (eu + participantes autenticados, com "Ao vivo" de share_peer_live); (2) a tabela g_ros, alimentada pelo evento
+ * group.roster do core ({"room":"...","members":[{"name":"...","live":bool}]}) e pelos dados demo. LIMITE: o core de hoje ainda NÃO emite group.roster
+ * (a presença dele é por sala já aberta), então das salas em que não estou só se vê o que o demo ou um core futuro entregar. */
+typedef struct { char name[48]; bool live; } rmem_t;
+typedef struct { char room[96]; int n; rmem_t m[8]; } rroster_t;
+static rroster_t g_ros[16];
+static rroster_t *ros_slot(const char *room, bool create) {
+    for (int i = 0; i < 16; i++) if (!strcmp(g_ros[i].room, room)) return &g_ros[i];
+    if (create) for (int i = 0; i < 16; i++) if (!g_ros[i].room[0]) { snprintf(g_ros[i].room, sizeof g_ros[i].room, "%s", room); return &g_ros[i]; }
+    return NULL;
+}
+static void ros_add(const char *room, const char *name, bool live) {
+    rroster_t *r = ros_slot(room, true); if (!r || r->n >= 8) return;
+    snprintf(r->m[r->n].name, sizeof r->m[r->n].name, "%s", name); r->m[r->n].live = live; r->n++;
+}
+void groups_demo_roster(void) {   /* BRIKS_DEMO: o demo tem canais c0..c3 (c2 e c3 são de voz) */
+    ros_add("c2", "Marina Costa", true); ros_add("c2", "Rafael Lima", false); ros_add("c3", "Bia Nogueira", false);
+}
+static int roster_get(const app_state_t *s, const channel_t *c, rmem_t out[8], bool *mine) {
+    const char *key = c->room[0] ? c->room : c->id;
+    char rn[96]; snprintf(rn, sizeof rn, "g-%s", key);
+    int n = 0; *mine = false;
+    if (s->in_room && !strcmp(s->room_name, rn)) {
+        *mine = true;
+        snprintf(out[n].name, sizeof out[n].name, "%s", s->user_name); out[n].live = s->sh.active; n++;
+        for (int q = 0; q < BRIKS_MAX_PEERS && n < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) {
+            snprintf(out[n].name, sizeof out[n].name, "%s", s->rtc_peers[q].name); out[n].live = s->sh.remote[q].on; n++;
+        }
+        return n;
+    }
+    const rroster_t *r = ros_slot(key, false);
+    for (int i = 0; r && i < r->n; i++) out[n++] = r->m[i];
+    return n;
+}
+
+/* estado só de interface (diálogos do canal e do membro); os dados continuam no group_t */
+static bool g_ren_open, g_del_open, g_memrm_open;
+static int g_ren_ci = -1, g_del_ci = -1, g_mem_sel = -1;
+static char g_ren_name[48];
+
+static void rename_channel(app_state_t *s, int gi, int ci, const char *name) {
+    group_t *g = &s->groups[gi];
+    if (!g->can_moderate || ci < 0 || ci >= g->nch || !name[0]) return;
+    snprintf(g->ch[ci].name, sizeof g->ch[ci].name, "%s", name);
+    group_save(s, gi);
+}
+
+/* botão de ícone pequeno (24 px) que só aparece no hover da linha */
+static bool mini_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip, bool danger) {
+    cui_box(ui, .id = id, .width = CUI_PX(24), .height = CUI_PX(24), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+            .bg = briks_hover(ui, id) ? CUI_RGBA(0xffffff20) : CUI_RGBA(0x00000000)) { cui_icon(ui, icon, 14, danger ? B_DANGER : B_MUTED); }
+    if (briks_hover(ui, id)) briks_tip(tip);
+    return briks_clicked(ui, id);
+}
+
+static bool last_text_channel(const group_t *g, int ci) {
+    int texts = 0; for (int i = 0; i < g->nch; i++) if (!g->ch[i].voice) texts++;
+    return !g->ch[ci].voice && texts <= 1;
+}
+
 void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo aberto, sob a linha dele na barra lateral */
     group_t *g = &s->groups[gi];
     cui_box(ui, .width = CUI_FILL, .pad_left = 14, .gap = 2) {
         for (int i = 0; i < g->nch; i++) {
             cui_push_id_int(ui, 2500 + i);
-            cui_box(ui, .id = "ch", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 5, .gap = 8, .radius = 10, .align = CUI_ALIGN_CENTER,
+            const bool hov = g->can_moderate && briks_hover(ui, "ch");
+            bool ren = false, del = false;
+            cui_box(ui, .id = "ch", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 6, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER,
                     .bg = (!g->ch[i].voice && g->active_ch == i) ? B_A(B_C1, 0x30) : CUI_RGBA(0x00000000)) {
-                cui_icon(ui, g->ch[i].voice ? CUI_ICON_VOLUME_2 : CUI_ICON_HASH, 14, B_MUTED);
-                cui_text(ui, g->ch[i].name, .nowrap = true, .width = CUI_FILL, .size = 13.5f);
-            }
-            if (briks_clicked(ui, "ch")) select_channel(s, gi, i);
-            if (g->ch[i].voice) {   /* quem está na sala de voz (só da sala em que eu estou: sem presença por sala, o resto é desconhecido) */
-                char rn[96]; snprintf(rn, sizeof rn, "g-%s", g->ch[i].room);
-                if (s->in_room && !strcmp(s->room_name, rn)) cui_box(ui, .width = CUI_FILL, .pad_left = 26, .gap = 1) {
-                    cui_text(ui, s->user_name, .size = 12, .color = B_ONLINE, .nowrap = true);
-                    for (int q = 0; q < BRIKS_MAX_PEERS; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) cui_text(ui, s->rtc_peers[q].name, .size = 12, .color = B_MUTED, .nowrap = true);
+                cui_icon(ui, g->ch[i].voice ? CUI_ICON_VOLUME_2 : CUI_ICON_HASH, 15, B_MUTED);
+                cui_text(ui, g->ch[i].name, .nowrap = true, .width = CUI_FILL, .size = 14);
+                if (hov) {
+                    ren = mini_icon(ui, "chr", CUI_ICON_PENCIL, "Renomear", false);
+                    del = mini_icon(ui, "chd", CUI_ICON_TRASH_2, "Apagar", true);
                 }
+            }
+            if (ren) { g_ren_ci = i; g_ren_open = true; snprintf(g_ren_name, sizeof g_ren_name, "%s", g->ch[i].name); }
+            else if (del) { g_del_ci = i; g_del_open = true; }
+            else if (briks_clicked(ui, "ch")) select_channel(s, gi, i);
+            if (g->ch[i].voice) {   /* quem está na sala de voz, com "Ao vivo" e Assistir (ver roster_get para a origem dos dados) */
+                rmem_t who[8]; bool mine; const int nw = roster_get(s, &g->ch[i], who, &mine);
+                bool watch = false;
+                if (nw) cui_box(ui, .width = CUI_FILL, .pad_left = 14, .gap = 3) {
+                    for (int w = 0; w < nw; w++) {
+                        cui_push_id_int(ui, 100 + w);
+                        cui_box(ui, .width = CUI_FILL, .gap = 3) {
+                            cui_text(ui, who[w].name, .size = 13, .color = (mine && w == 0) ? B_ONLINE : B_MUTED, .nowrap = true);
+                            if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
+                                cui_text(ui, "AO VIVO", .size = 10, .color = B_C3, .nowrap = true);
+                                cui_box(ui, .id = "wt", .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(B_C1, 0x55)) { cui_text(ui, "Assistir", .size = 11, .nowrap = true); }
+                                if (briks_clicked(ui, "wt")) watch = true;
+                            }
+                        }
+                        cui_pop_id(ui);
+                    }
+                }
+                if (watch) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
             }
             cui_pop_id(ui);
         }
         if (g->can_moderate && g->nch < GROUP_MAX_CH) {
             cui_push_id(ui, "newch");
-            cui_box(ui, .id = "nc", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 5, .gap = 8, .radius = 10, .align = CUI_ALIGN_CENTER) {
-                cui_icon(ui, CUI_ICON_PLUS, 14, B_MUTED); cui_text(ui, "Novo canal", .size = 13, .color = B_MUTED);
+            cui_box(ui, .id = "nc", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 6, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER) {
+                cui_icon(ui, CUI_ICON_PLUS, 15, B_MUTED); cui_text(ui, "Novo canal", .size = 13.5f, .color = B_MUTED);
             }
             if (briks_clicked(ui, "nc")) { s->chan_open = true; s->chan_name[0] = 0; s->chan_kind = 0; }
             cui_pop_id(ui);
@@ -508,6 +591,7 @@ void groups_header(cui_ctx *ui, app_state_t *s) {   /* botões do cabeçalho do 
     cui_menu(ui, "Grupo", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
         cui_menu_label(ui, g->name);
         if (cui_menu_item(ui, "Membros e convites", .icon = CUI_ICON_USER_PLUS)) s->members_open = true;
+        if (g->can_moderate && cui_menu_item(ui, "Convidar (gerar código)", .icon = CUI_ICON_LINK)) send_group_code(s, gi);
         if (g->can_moderate) {
             if (cui_menu_item(ui, "Novo canal", .icon = CUI_ICON_HASH)) { s->chan_open = true; s->chan_name[0] = 0; s->chan_kind = 0; }
             if (cui_menu_item(ui, "Personalizar grupo", .icon = CUI_ICON_PENCIL)) { snprintf(s->grp_name_edit, sizeof s->grp_name_edit, "%s", g->name); s->gren_open = true; }
@@ -539,7 +623,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) { if (cui_button(ui, "Copiar código", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_COPY) && s->ginv_code) set_clip(s->ginv_code); }
     }
     int gi = s->active_group; group_t *g = (gi >= 0 && gi < s->group_count) ? &s->groups[gi] : NULL;
-    if (!g) { s->chan_open = s->members_open = s->gren_open = s->gleave_open = false; return; }
+    if (!g) { s->chan_open = s->members_open = s->gren_open = s->gleave_open = g_ren_open = g_del_open = g_memrm_open = false; return; }
 
     cui_dialog(ui, "Novo canal", &s->chan_open) {
         cui_text(ui, "Canais de texto guardam a conversa; canais de voz abrem uma sala de chamada do grupo.", .size = 12.5f, .color = B_MUTED);
@@ -584,6 +668,31 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         cui_textf(ui, g->is_owner ? "Apagar “%s” deste computador?" : "Sair de “%s”?", g->name);
         cui_text(ui, g->is_owner ? "Você é o dono. O grupo deixa de existir aqui; as mensagens gravadas continuam no seu histórico." : "O grupo some da sua lista. Para voltar, um administrador precisa te convidar de novo.", .size = 12.5f, .color = B_MUTED);
         cui_dialog_footer(ui) { if (cui_button(ui, g->is_owner ? "Apagar grupo" : "Sair", .variant = CUI_BUTTON_DANGER, .loading = s->busy)) leave_or_delete(s, gi); }
+    }
+
+    if (g_ren_ci >= g->nch) g_ren_open = false;
+    cui_dialog(ui, "Renomear canal", &g_ren_open, .width = 420.0f) {
+        cui_text(ui, g_ren_ci >= 0 && g_ren_ci < g->nch && g->ch[g_ren_ci].voice ? "Novo nome da sala de voz." : "Novo nome do canal de texto.", .size = 13, .color = B_MUTED);
+        int r = cui_input(ui, "ren-name", g_ren_name, sizeof g_ren_name, .autofocus = true);
+        cui_dialog_footer(ui) {
+            if ((cui_button(ui, "Salvar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED)) && g_ren_name[0]) { rename_channel(s, gi, g_ren_ci, g_ren_name); g_ren_open = false; }
+        }
+    }
+    if (g_del_ci >= g->nch) g_del_open = false;
+    cui_dialog(ui, "Apagar canal", &g_del_open, .width = 420.0f) {
+        const bool ok_del = g_del_ci >= 0 && g_del_ci < g->nch;
+        cui_textf(ui, "Apagar “%s”?", ok_del ? g->ch[g_del_ci].name : "");
+        const bool last = ok_del && last_text_channel(g, g_del_ci);
+        cui_text(ui, last ? "Este é o único canal de texto: o grupo precisa de pelo menos um. Crie outro antes de apagar este." : "O canal some para todos os membros. As mensagens já gravadas continuam nos computadores de quem as recebeu.", .size = 13, .color = last ? B_DANGER : B_MUTED);
+        cui_dialog_footer(ui) {
+            if (!last && cui_button(ui, "Apagar canal", .variant = CUI_BUTTON_DANGER, .loading = s->busy)) { remove_channel(s, gi, g_del_ci); g_del_open = false; }
+        }
+    }
+    if (g_mem_sel >= g->nm) g_memrm_open = false;
+    cui_dialog(ui, "Remover membro", &g_memrm_open, .width = 420.0f) {
+        cui_textf(ui, "Remover %s do grupo?", g_mem_sel >= 0 && g_mem_sel < g->nm ? g->m[g_mem_sel].name : "");
+        cui_text(ui, "A pessoa deixa de receber o grupo e some da lista de membros. Para voltar, precisa de um novo convite.", .size = 13, .color = B_MUTED);
+        cui_dialog_footer(ui) { if (cui_button(ui, "Remover membro", .variant = CUI_BUTTON_DANGER, .loading = s->busy)) { remove_member(s, gi, g_mem_sel); g_memrm_open = false; } }
     }
 
     cui_dialog(ui, "Membros", &s->members_open, .width = 460.0f) {
@@ -660,10 +769,168 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     else if (rst_img) reset_group_image(g->id);
     else if (rm_ch >= 0) remove_channel(s, gi, rm_ch);
     else if (adm_i >= 0) set_admin(s, gi, adm_i, adm_on);
-    else if (rm_mem >= 0) remove_member(s, gi, rm_mem);
+    else if (rm_mem >= 0) { g_mem_sel = rm_mem; g_memrm_open = true; }   /* pede confirmação (como o Expulsar da chamada) */
     else if (inv == -2) { person_t p = s->gnick_hit; s->gnick_found = false; s->gnick[0] = 0; s->gnick_msg[0] = 0; add_member(s, gi, &p, true); }
     else if (inv >= 0) { person_t p = s->friends[inv]; add_member(s, gi, &p, true); }
     else if (want_code) send_group_code(s, gi);
+}
+
+/* ---- painel Membros do dock: membros do GRUPO aberto (não só amigos) ---- */
+/* o mesmo membro duas vezes (mesmo id ou mesma impressão digital): vem de convites repetidos / reimportação */
+static bool is_dup_at(const group_t *g, int i) {
+    for (int k = 0; k < i; k++) if (!strcmp(g->m[k].id, g->m[i].id) || (g->m[i].fp[0] && !strcmp(g->m[k].fp, g->m[i].fp))) return true;
+    return false;
+}
+static int dup_count(const group_t *g) { int n = 0; for (int i = 1; i < g->nm; i++) if (is_dup_at(g, i)) n++; return n; }
+static void remove_duplicates(app_state_t *s, int gi) {
+    group_t *g = &s->groups[gi]; if (!g->can_moderate || s->busy) return;
+    bool any = false;
+    for (int i = g->nm - 1; i >= 1; i--) if (is_dup_at(g, i) && strcmp(g->m[i].id, g->owner)) {   /* fica o primeiro; o dono nunca sai */
+        memmove(&g->m[i], &g->m[i + 1], sizeof(gmember_t) * (size_t)(g->nm - i - 1)); g->nm--; any = true;
+    }
+    if (any) group_save(s, gi);
+}
+
+static void role_pill(cui_ctx *ui, const char *t, cui_color c) {
+    cui_box(ui, .dir = CUI_ROW, .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(c, 0x38), .border = 1, .border_color = B_A(c, 0x70), .align = CUI_ALIGN_CENTER) {
+        cui_text(ui, t, .size = 10.5f, .color = CUI_RGB(0xffffff), .nowrap = true);
+    }
+}
+
+bool groups_members_panel(cui_ctx *ui, app_state_t *s) {
+    int gi = s->active_group; if (gi < 0 || gi >= s->group_count) return false;
+    group_t *g = &s->groups[gi];
+    int act = 0, act_i = -1; bool reload = false, add = false, dedup = false;
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 18, .pad_y = 8, .gap = 8, .align = CUI_ALIGN_CENTER) {
+        cui_column(ui, .width = CUI_FILL, .gap = 0) {
+            cui_text(ui, g->name, .font = CUI_FONT_MEDIUM, .size = 14, .nowrap = true);
+            cui_textf(ui, g->nm == 1 ? "%d membro" : "%d membros", g->nm);
+        }
+        if (cui_icon_button(ui, CUI_ICON_REFRESH_CW, .tooltip = "Recarregar lista", .size = CUI_SIZE_SM)) reload = true;
+        if (g->can_moderate && cui_icon_button(ui, CUI_ICON_USER_PLUS, .tooltip = "Adicionar membro", .size = CUI_SIZE_SM)) add = true;
+    }
+    cui_scroll(ui, .id = "gmembers-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
+        for (int i = 0; i < g->nm; i++) {
+            gmember_t *m = &g->m[i]; const bool owner = !strcmp(m->id, g->owner), me = !strcmp(m->id, s->user_id);
+            const bool manage = !owner && !me && g->can_moderate && (g->is_owner || !m->admin);
+            bool online = me;
+            for (int f = 0; !online && f < s->friend_count; f++) if (!strcmp(s->friends[f].id, m->id)) online = friends_online(s, &s->friends[f]);
+            cui_push_id_int(ui, 7600 + i);
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 14, .align = CUI_ALIGN_CENTER) {
+                cui_avatar(ui, m->name, .size = 34);
+                cui_column(ui, .gap = 2, .width = CUI_FILL) {
+                    cui_text(ui, m->name, .nowrap = true, .size = 14);
+                    cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
+                        if (owner) role_pill(ui, "DONO", B_C3);
+                        else if (m->admin) role_pill(ui, "ADMIN", B_C1);
+                        if (me) role_pill(ui, "VOCÊ", B_ONLINE);
+                        if (online && !me) cui_text(ui, "online", .size = 11.5f, .color = B_ONLINE);
+                    }
+                }
+                if (manage) {
+                    int a = 0;
+                    cui_menu(ui, "Gerenciar", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
+                        cui_menu_label(ui, m->name);
+                        if (g->is_owner && cui_menu_item(ui, m->admin ? "Remover administrador" : "Tornar administrador", .icon = CUI_ICON_SHIELD)) a = 1;
+                        if (cui_menu_item(ui, "Remover do grupo", .icon = CUI_ICON_X, .danger = true)) a = 2;
+                    }
+                    if (a) { act = a; act_i = i; }
+                }
+            }
+            cui_pop_id(ui);
+        }
+        const int nd = dup_count(g);
+        if (nd && g->can_moderate && cui_button(ui, nd == 1 ? "Limpar 1 duplicado" : "Limpar duplicados", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_X)) dedup = true;
+    }
+    if (reload) s->reload_groups = true;
+    if (add) s->members_open = true;
+    if (dedup) remove_duplicates(s, gi);
+    if (act == 1) set_admin(s, gi, act_i, !g->m[act_i].admin);
+    else if (act == 2) { g_mem_sel = act_i; g_memrm_open = true; }
+    return true;
+}
+
+/* menu de contexto (botão direito) da linha de um grupo na barra lateral; r = retângulo da linha. Chamar dentro do id do grupo. */
+static bool g_ctx_open; static int g_ctx_gi; static float g_ctx_x, g_ctx_y;
+void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r) {
+    (void)s;
+    cui_vec2 mp = cui_mouse_pos(ui);
+    if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && r.w > 0 && mp.x >= r.x && mp.y >= r.y && mp.x < r.x + r.w && mp.y < r.y + r.h) {
+        g_ctx_open = true; g_ctx_gi = gi; g_ctx_x = mp.x; g_ctx_y = mp.y;
+    }
+}
+
+static bool ctx_item(cui_ctx *ui, const char *id, const char *icon, const char *label, bool danger) {
+    cui_box(ui, .id = id, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .gap = 10, .radius = 11, .align = CUI_ALIGN_CENTER,
+            .bg = briks_hover_top(ui, id) ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) {
+        cui_icon(ui, icon, 16, danger ? B_DANGER : B_MUTED);
+        cui_text(ui, label, .size = 14, .color = danger ? B_DANGER : B_TEXT, .nowrap = true);
+    }
+    return briks_clicked_top(ui, id);
+}
+
+/* o menu é um painel de vidro absoluto ancorado no mouse (como o menu da mensagem) e conta como modal: nada por baixo recebe clique */
+void groups_overlay(cui_ctx *ui, app_state_t *s) {
+    if (!g_ctx_open) return;
+    if (g_ctx_gi < 0 || g_ctx_gi >= s->group_count) { g_ctx_open = false; return; }
+    const int gi = g_ctx_gi; group_t *g = &s->groups[gi]; int act = 0;
+    cui_vec2 vp = cui_viewport_size(ui), mp = cui_mouse_pos(ui);
+    const float mw = 270.0f, mh = 20.0f + 28.0f + 40.0f * (1.0f + (g->can_moderate ? 2.0f : 0.0f) + 1.0f) + 10.0f;
+    const float x = fminf(fmaxf(g_ctx_x, 8), fmaxf(vp.x - mw - 8, 8)), y = fminf(fmaxf(g_ctx_y, 8), fmaxf(vp.y - mh - 8, 8));
+    g_modal_now = true; g_in_modal++;
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
+        cui_box(ui, .id = "gctx", .width = CUI_PX(mw), .height = CUI_FIT, .pad = 6, .gap = 2, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
+                .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
+            cui_box(ui, .width = CUI_FILL, .pad_x = 12, .pad_y = 6) { cui_text(ui, g->name, .size = 12.5f, .color = B_MUTED, .nowrap = true); }
+            if (ctx_item(ui, "c-mem", CUI_ICON_USERS, "Membros", false)) act = 1;
+            if (g->can_moderate && ctx_item(ui, "c-inv", CUI_ICON_LINK, "Convidar (gerar código)", false)) act = 2;
+            if (g->can_moderate && ctx_item(ui, "c-cus", CUI_ICON_PENCIL, "Personalizar grupo", false)) act = 3;
+            cui_box(ui, .width = CUI_FILL, .height = CUI_PX(1), .bg = CUI_RGBA(0xffffff14)) {}
+            if (ctx_item(ui, "c-out", CUI_ICON_X, g->is_owner ? "Apagar grupo…" : "Sair do grupo…", true)) act = 4;
+        }
+    }
+    g_in_modal--;
+    cui_rect mr = cui_get_rect(ui, cui_make_id(ui, "gctx"));    const bool outside = mr.w > 0 && !(mp.x >= mr.x && mp.y >= mr.y && mp.x < mr.x + mr.w && mp.y < mr.y + mr.h);
+    if (cui_key_pressed(ui, CUI_KEY_ESCAPE) || (outside && (cui_mouse_clicked(ui, CUI_MOUSE_LEFT) || cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)))) g_ctx_open = false;
+    if (!act) return;
+    g_ctx_open = false;
+    if (s->active_group != gi) app_open_group(s, gi);
+    if (act == 1) s->members_open = true;
+    else if (act == 2) send_group_code(s, gi);
+    else if (act == 3) { snprintf(s->grp_name_edit, sizeof s->grp_name_edit, "%s", g->name); s->gren_open = true; }
+    else s->gleave_open = true;
+}
+
+/* roteiro oculto: `expect grp_<estado> <valor>` confere o grupo aberto (BRIKS_SCRIPT). -1 = estado desconhecido. */
+int groups_probe(const app_state_t *s, const char *n) {
+    if (!strcmp(n, "grp_ctx_open")) return g_ctx_open;
+    if (!strcmp(n, "grp_members_open")) return s->members_open;
+    if (!strcmp(n, "grp_leave_open")) return s->gleave_open;
+    if (!strcmp(n, "grp_gren_open")) return s->gren_open;
+    if (!strcmp(n, "grp_join_open")) return s->join_open;
+    if (!strcmp(n, "grp_chan_open")) return s->chan_open;
+    if (!strcmp(n, "grp_ren_open")) return g_ren_open;
+    if (!strcmp(n, "grp_del_open")) return g_del_open;
+    if (!strcmp(n, "grp_memrm_open")) return g_memrm_open;
+    if (!strcmp(n, "grp_count")) return s->group_count;
+    if (s->active_group < 0 || s->active_group >= s->group_count) return -1;
+    const group_t *g = &s->groups[s->active_group];
+    if (!strcmp(n, "grp_nch")) return g->nch;
+    if (!strcmp(n, "grp_nm")) return g->nm;
+    if (!strcmp(n, "grp_ntext")) { int t = 0; for (int i = 0; i < g->nch; i++) if (!g->ch[i].voice) t++; return t; }
+    if (!strcmp(n, "grp_nadmin")) { int a = 0; for (int i = 0; i < g->nm; i++) if (g->m[i].admin) a++; return a; }
+    if (!strcmp(n, "grp_dups")) return dup_count(g);
+    if (!strcmp(n, "grp_ch1len")) return g->nch > 1 ? (int)strlen(g->ch[1].name) : -1;   /* comprimento do nome do 2º canal (confere renomear) */
+    if (!strcmp(n, "grp_namelen")) return (int)strlen(g->name);
+    if (!strcmp(n, "grp_moderate")) return g->can_moderate;
+    if (!strcmp(n, "grp_voice_who") || !strcmp(n, "grp_voice_live")) {   /* presença por sala: total de pessoas / de transmissões nas salas de voz */
+        int t = 0; for (int i = 0; i < g->nch; i++) if (g->ch[i].voice) {
+            rmem_t w[8]; bool m; int k = roster_get(s, &g->ch[i], w, &m);
+            for (int q = 0; q < k; q++) t += !strcmp(n, "grp_voice_who") ? 1 : w[q].live;
+        } return t;
+    }
+    if (!strcmp(n, "grp_call_mode")) return s->screen == SCREEN_CALL ? 10 + s->call_mode : -1;   /* 11 = abriu a chamada no modo Transmissão */
+    return -1;
 }
 
 /* criação do grupo: canal "geral" de texto + canal de voz "Sala de voz", com "kind" (formato do Electron) */

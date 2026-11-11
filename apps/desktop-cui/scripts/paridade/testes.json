@@ -1,4 +1,4 @@
-﻿{
+{
   "_ajuda": "Cada caso abre o app OCULTO no modo demo, roda o roteiro e compara capturas: esperado 'muda' = a tela mudou (a ação teve efeito visível); 'igual' = não mudou (voltou ao estado anterior ou o controle é inerte). Itens PRESENTE-SEM-EFEITO só usam 'igual'.",
   "casos": [
     { "id": "auth-a", "demo": "login", "roteiro": "auth-a.txt", "checagens": [
@@ -97,6 +97,31 @@
       { "item": "BAS-06", "de": "e1", "para": "e2", "esperado": "muda" } ] },
     { "id": "lay-min", "demo": "msgs", "roteiro": "lay-min.txt", "env": { "BRIKS_WINDOW": "560x480" }, "checagens": [
       { "item": "LAY-13", "de": "l0", "para": "l0", "esperado": "igual" } ] },
+    { "id": "grupos-canais", "demo": "group", "roteiro": "grupos-canais.txt", "checagens": [
+      { "item": "GRP-06", "de": "gc0", "para": "gc1", "esperado": "muda" },
+      { "item": "GRP-07", "de": "gc3", "para": "gc4", "esperado": "muda" },
+      { "item": "GRP-04", "de": "gc4", "para": "gc5", "esperado": "muda" },
+      { "item": "GRP-05", "de": "gc5", "para": "gc6", "esperado": "muda" },
+      { "item": "GRP-09", "de": "gc6", "para": "gc7", "esperado": "muda" },
+      { "item": "GRP-09", "de": "gc7", "para": "gc8", "esperado": "muda" } ] },
+    { "id": "grupos-membros", "demo": "group", "roteiro": "grupos-membros.txt", "env": { "BRIKS_DOCK": "added", "BRIKS_DEMO_GDUP": "1" }, "checagens": [
+      { "item": ["GRP-10", "GRP-15"], "de": "gm0", "para": "gm1", "esperado": "muda" },
+      { "item": ["GRP-13"], "de": "gm2", "para": "gm3", "esperado": "muda" },
+      { "item": ["GRP-14"], "de": "gm3", "para": "gm4", "esperado": "muda" },
+      { "item": ["GRP-14"], "de": "gm4", "para": "gm5", "esperado": "muda" } ] },
+    { "id": "grupos-menu", "demo": "group", "roteiro": "grupos-menu.txt", "checagens": [
+      { "item": "AMI-17", "de": "gn0", "para": "gn1", "esperado": "muda" },
+      { "item": "GRP-08", "de": "gn1", "para": "gn2", "esperado": "muda" },
+      { "item": "GRP-09", "de": "gn2", "para": "gn3", "esperado": "muda" } ] },
+    { "id": "grupos-comum", "demo": "group", "roteiro": "grupos-comum.txt", "env": { "BRIKS_DOCK": "added", "BRIKS_DEMO_GMEMBER": "1" }, "checagens": [
+      { "item": "GRP-10", "de": "gp0", "para": "gp0", "esperado": "igual" } ] },
+    { "id": "amigos-codigo", "demo": "social", "roteiro": "amigos-codigo.txt", "env": { "BRIKS_DEV_OPEN": "add", "BRIKS_DEV_NOCLIP": "1" }, "checagens": [
+      { "item": "AMI-04", "de": "am0", "para": "am1", "esperado": "muda" },
+      { "item": "AMI-04", "de": "am1", "para": "am2", "esperado": "muda" } ] },
+    { "id": "grupos-voz", "demo": "group", "roteiro": "grupos-voz.txt", "env": { "BRIKS_DEMO_GROSTER": "1" }, "checagens": [
+      { "item": "GRP-17", "de": "gv0", "para": "gv1", "esperado": "muda" } ] },
+    { "id": "grupos-busca", "demo": "group", "roteiro": "grupos-busca.txt", "checagens": [
+      { "item": ["GRP-19", "MSG-15"], "de": "gb0", "para": "gb1", "esperado": "muda" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
       { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
     { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [

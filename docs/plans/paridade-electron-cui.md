@@ -7,13 +7,13 @@ Este arquivo é gerado a partir de `apps/desktop-cui/scripts/paridade/itens.csv`
 
 | Classe | Itens |
 |---|---|
-| PRESENTE-FUNCIONAL | 129 |
-| PRESENTE-SEM-EFEITO | 32 |
-| AUSENTE | 80 |
-| VERIFICAR | 7 |
+| PRESENTE-FUNCIONAL | 204 |
+| PRESENTE-SEM-EFEITO | 9 |
+| AUSENTE | 28 |
+| VERIFICAR | 6 |
 | **Total** | **248** |
 
-Itens PRESENTE-FUNCIONAL com teste automático oculto: 65 de 129 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
+Itens PRESENTE-FUNCIONAL com teste automático oculto: 111 de 204 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
 
 Definição das classes: **PRESENTE-FUNCIONAL** = existe e o clique/fluxo produz o efeito; **PRESENTE-SEM-EFEITO** = existe na tela (ou no core) mas não faz nada de verdade (interruptor que só grava, botão desabilitado, texto "em breve", dado que nada consome); **AUSENTE** = não existe; **VERIFICAR** = não consegui concluir.
 
@@ -78,113 +78,38 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Prio | ID | Área | Item | Classe | No Electron | CUI hoje | Encaixe no CUI e adaptação ao layout novo |
 |---|---|---|---|---|---|---|---|
-| P0 | AMI-17 | Amigos | Entrar em grupo por convite/código | AUSENTE | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | (não existe) | Botão 'Entrar em grupo' no painel Servidores (tile tracejado ao lado de Criar grupo) e na barra lateral; diálogo de vidro com o campo do código |
-| P0 | BAS-12 | Funções básicas de desktop | Ícone na bandeja do sistema (clique abre, menu Sair) | AUSENTE | desktop tray.ts | (não existe) | Ver TRY-01: recurso de sistema no main.c com menu nativo mínimo; o estado (em chamada, mutado) aparece só no tooltip, com o mesmo acento do tema |
-| P0 | BAS-13 | Funções básicas de desktop | Minimizar e fechar para a bandeja (a chamada continua) | AUSENTE | desktop tray.ts | (não existe): fechar derruba o app e a chamada | Ver TRY-02: interruptor em Configurações (cartão de sistema novo); ao fechar em chamada, aviso no estilo do banner de atualização |
-| P0 | BAS-20 | Funções básicas de desktop | Notificações do sistema (nova mensagem, amigo online, transmissão) | AUSENTE | desktop notifications | (não existe); interruptores de Configurações sem efeito | Ver NOT-01..03: toast nativo do Windows com ícone e texto curto; opção por tipo no cartão Notificações; clique abre a conversa |
-| P0 | GRP-16 | Grupos, canais e cargos | Convite para o grupo (código) | AUSENTE | components/GroupInvitePanel.tsx | (não existe) | Item 'Convidar' no cabeçalho do painel do grupo; diálogo de vidro com o código e botão Copiar |
-| P0 | MSG-19 | Mensagens | Enviar mensagem pela aba Chat da chamada | SEM-EFEITO | components/CallWorkspace.tsx | ui_call.c: lista sem campo de texto | Compositor (msgui_composer) no rodape da aba Chat da chamada, vidro, mesma altura do chat social |
-| P0 | TRY-01 | Tray/janela | Ícone na bandeja do sistema | AUSENTE | desktop tray.ts | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao |
-| P0 | TRY-02 | Tray/janela | Menu da bandeja: Abrir app, Reiniciar app, Fechar o app | AUSENTE | desktop tray.ts | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; menu nativo (TrackPopupMenu) com 3 itens |
-| P0 | TRY-03 | Tray/janela | Clique no ícone da bandeja abre a janela | AUSENTE | desktop tray.ts | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao |
-| P0 | TRY-04 | Tray/janela | Fechar a janela envia para a bandeja e a chamada continua | AUSENTE | desktop window.ts (evento close) | (fechar encerra o app) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; opção 'Ao fechar' (bandeja/encerrar) na aba Sobre ou em Notificações |
-| P1 | AMI-04 | Amigos | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | AUSENTE | components/P2PInvitePanel.tsx; services/invites/service.ts | (não existe) | Abas 'Por @nick / Por código' no diálogo Adicionar amigo existente (ui_social.c), código em fonte mono 13 px e botão Copiar; sem janela nova |
 | P1 | AMI-06 | Amigos | Pedidos pendentes: recusar | SEM-EFEITO | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | Segundo ícone (X, secundario) ao lado do check em cada linha de PEDIDOS (ui_social.c), tooltip Recusar |
 | P1 | AMI-07 | Amigos | Desfazer amizade (com confirmacao) | AUSENTE | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | Item 'Desfazer amizade' no menu de contexto da linha do amigo (person_row) + diálogo de confirmacao no estilo Expulsar (ui_call.c) |
 | P1 | AMI-08 | Amigos | Abas Online / Todos / Pendentes com contadores | AUSENTE | views/FriendsView.tsx | ui_social.c: uma lista única AMIGOS e PEDIDOS, sem filtro | cui_segmented no topo do painel Amigos (mesmo componente do 'Limpar depois de'), contadores nos rotulos; pendentes sobem para a aba |
 | P1 | AMI-10 | Amigos | Indicador online/offline do amigo | AUSENTE | views/HomeView.tsx (title Online/Offline) | ui_social.c só mostra 'Disponivel' no próprio rodape | Bolinha 8 px (B_ONLINE / cinza) no canto do avatar em person_row; presença vem do core |
-| P1 | ATL-01 | Atalhos | Atalho global: mutar/desmutar (Ctrl+Shift+M) | SEM-EFEITO | services/input/shortcuts.ts; desktop call-shortcuts.ts | settings.c campo de texto; nada registra o atalho | Já existe; RegisterHotKey no main.c só durante a chamada; o campo vira captura de teclas (cui_input readonly + Gravar) |
-| P1 | ATL-02 | Atalhos | Atalho global: ensurdecer (Ctrl+Shift+D) | SEM-EFEITO | idem | idem | Idem ATL-01 |
-| P1 | ATL-03 | Atalhos | Atalho global: transmitir/parar | SEM-EFEITO | idem | idem | Idem ATL-01 |
-| P1 | ATL-04 | Atalhos | Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar) | SEM-EFEITO | components/ShortcutsPanel.tsx | settings.c; só salvo | Já existe; GetAsyncKeyState no core/UI; captura de tecla e botoes do mouse no campo |
-| P1 | BAS-15 | Funções básicas de desktop | Instância única (abrir de novo traz a janela existente) | AUSENTE | desktop (requestSingleInstanceLock) | (não existe): duas instâncias disputam o banco | Ver TRY-05: mutex nomeado no main.c e foco na janela existente; sem UI própria |
-| P1 | BAS-16 | Funções básicas de desktop | Lembrar posição, tamanho, monitor e maximizado da janela | AUSENTE | desktop-lifecycle.ts (só calcula o tamanho inicial pela área de trabalho; não grava) | (não existe): abre sempre 1280x800 no lugar padrão do Windows; layout.json guarda só os painéis | Gravar no layout.json (mesmo arquivo dos painéis) retângulo, monitor e estado maximizado; restaurar com clamp na área visível dos monitores ligados |
-| P1 | BAS-22 | Funções básicas de desktop | Badge de não lidas (lista de conversas, rail, ícone da barra de tarefas) | AUSENTE | (não existe no Electron também) | msgui.c só mostra "não lida" dentro de tópicos; nada na lista nem na barra de tarefas | Contador em pílula de acento no item da conversa (lista de amigos e grupos) e no rail; barra de tarefas com ITaskbarList3::SetOverlayIcon; zera ao abrir a conversa |
-| P1 | CFG-05 | Configurações | Escolher microfone | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c lista winmm e grava mic; o core usa o padrão | Já existe (dropdown da aba Voz e vídeo); enviar o dispositivo ao core (áudio.rs) |
-| P1 | CFG-07 | Configurações | Testar o microfone fora da chamada | AUSENTE | components/useMicrophoneTest.ts | (o texto da tela diz que 'chega com o áudio nativo') | Botão 'Testar' no cartão ENTRADA, mesma barra de nivel; captura curta no core |
-| P1 | CFG-09 | Configurações | Escolher saida de áudio | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c dropdown; só salvo | Já existe; usar o dispositivo na reprodução do core |
-| P1 | CFG-11 | Configurações | Supressão de ruído (Padrão/RNNoise/Desligada) | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c segmentado; só salvo | Já existe; processar no core |
-| P1 | CFG-13 | Configurações | Cancelamento de eco | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c; só salvo | Já existe; AEC no core |
-| P1 | CFG-21 | Configurações | Apagar histórico de mensagens (com confirmacao) | SEM-EFEITO | components/LocalStoragePanel.tsx | settings.c: confirma e não apaga | Diálogo de confirmacao já existe; chamar o backend local para apagar |
-| P1 | CHM-04 | Chamada | Câmera (ligar e enviar vídeo) | SEM-EFEITO | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera - em breve' | Pílula nova na barra flutuante de controles da chamada (pill() em ui_call.c, raio 28, vidro forte), com rótulo e estado ativo em violeta; captura e envio no core (Media Foundation + encoder já usados na transmissão) |
-| P1 | CHM-10 | Chamada | Disposição Grade / Foco das telas | AUSENTE | components/CallWorkspace.tsx | (não existe) | Aba/segmento no cabeçalho da chamada, ao lado de Call/Transmissão e Chamada/Chat (tab() em ui_call.c) |
-| P1 | CHM-11 | Chamada | Tela cheia da transmissão e da chamada | AUSENTE | components/CallWorkspace.tsx (Tela cheia); ipc window:fullscreen | (não existe) | Ícone Maximize no canto do bloco da transmissão e F11/Esc; ao entrar, a barra flutuante some após 3 s sem mouse |
+| P1 | CFG-13 | Configurações | Cancelamento de eco | AUSENTE | components/VoiceVideoSettingsPanel.tsx | settings.c: interruptor desabilitado com a nota em breve (sem AEC no core) | Já existe; AEC no core |
+| P1 | CHM-04 | Chamada | Câmera (ligar e enviar vídeo) | SEM-EFEITO | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera · em breve' (decisão: sem captura nem envio nesta versão; ver docs/plans/chamada-pacote-c.md) | Pílula nova na barra flutuante de controles da chamada (pill() em ui_call.c, raio 28, vidro forte), com rótulo e estado ativo em violeta; captura e envio no core (Media Foundation + encoder já usados na transmissão) |
 | P1 | CHM-14 | Chamada | Volume por pessoa (slider) lembrado nas próximas chamadas | AUSENTE | services/áudio/person-áudio.ts | só liga/desliga mudo, sem volume e sem memória | Menu de contexto do bloco da pessoa na chamada (pmenu em ui_call.c, cui_menu_item), mais um item com ícone com cui_slider 0-200%; salvar por peerId em settings |
-| P1 | CHM-15 | Chamada | Pedir a alguem que transmita (e aceitar/recusar o pedido) | AUSENTE | call/stream-request.ts | (não existe) | Menu de contexto do bloco da pessoa na chamada (pmenu em ui_call.c, cui_menu_item), mais um item com ícone 'Pedir transmissão'; no destino, banner de vidro no topo da chamada com Transmitir / Agora não (no estilo update_banner) |
-| P1 | CHM-18 | Chamada | Ajustes de áudio durante a chamada (mic, ruído, eco, porta) | AUSENTE | components/InCallAudioSettings.tsx | (não existe: só Configurações, e sem efeito) | Pílula nova na barra flutuante de controles da chamada (pill() em ui_call.c, raio 28, vidro forte), com rótulo e estado ativo em violeta 'Áudio' abrindo popup de vidro com os controles da aba Voz e vídeo |
-| P1 | CHM-22 | Chamada | Registro das chamadas (quando, duracao, sala, quem) | SEM-EFEITO | components/CallHistoryPanel.tsx; services/call/call-history.ts | ui_history.c: só o estado vazio; nada grava chamadas | Lista de linhas de vidro dentro do cartão existente de ui_history.c: avatar, sala, duracao, data, selo 'Você transmitiu' |
-| P1 | GRP-04 | Grupos, canais e cargos | Criar canal de texto | AUSENTE | views/HomeView.tsx (Criar canal) | chat.c carrega canais, mas não há UI para criar | Botão + ao lado do título CANAIS DE TEXTO na barra lateral do grupo (section_title), diálogo de vidro com nome e tipo em cui_segmented |
-| P1 | GRP-05 | Grupos, canais e cargos | Criar sala de voz do grupo | AUSENTE | views/HomeView.tsx | a sala de voz e uma única 'Sala geral' fixa, fora dos grupos | Mesmo diálogo do canal, tipo Voz; aparece sob SALAS DE VOZ da barra lateral do grupo |
-| P1 | GRP-08 | Grupos, canais e cargos | Personalizar grupo (nome e imagem, sincroniza aos membros) | AUSENTE | components/GroupEditor.tsx | (não existe) | Diálogo de vidro 'Personalizar grupo' aberto da engrenagem no topo do painel do grupo; avatar 96 px como no editor de perfil |
-| P1 | GRP-09 | Grupos, canais e cargos | Apagar ou sair do grupo | AUSENTE | views/HomeView.tsx (Apagar ou sair do grupo) | (não existe) | Item perigoso (vermelho) no menu de contexto do grupo no painel Servidores + confirmacao |
-| P1 | GRP-10 | Grupos, canais e cargos | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | SEM-EFEITO | views/HomeView.tsx (membros) | ui_social.c panel_members mostra você + seus amigos, não os membros do grupo | Painel Membros (já no dock): trocar a fonte para os membros do grupo ativo, com selos pequenos (pills 10,5 px) DONO/ADMIN/VOCÊ e @nick |
-| P1 | GRP-12 | Grupos, canais e cargos | Adicionar membro (amigo) ao grupo | AUSENTE | views/HomeView.tsx (Adicionar membro) | (não existe) | Menu de contexto da linha do membro/amigo e botão + no painel Membros; escolhe amigo em lista de vidro |
-| P1 | GRP-13 | Grupos, canais e cargos | Gerenciar membro: tornar/remover administrador | AUSENTE | views/HomeView.tsx (Gerenciar membro) | (não existe) | Menu de contexto da linha no painel Membros (só dono), itens com ícone escudo |
-| P1 | GRP-14 | Grupos, canais e cargos | Remover membro do grupo | AUSENTE | views/HomeView.tsx removeSelectedMember | (não existe) | Mesmo menu de contexto, item vermelho + diálogo de confirmacao |
-| P1 | GRP-17 | Grupos, canais e cargos | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | AUSENTE | views/HomeView.tsx | (não existe: Sala geral não mostra participantes) | Avatares empilhados 24 px sob a linha da sala na barra lateral (como a pilha do drag_stack_ui), chip Ao vivo violeta e botão Assistir |
-| P1 | LAY-04 | Layout novo (trilho, lista, conversa, hub) | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | AUSENTE | (padrão novo do usuário) | layout_default (layout.c) cria só trilho, lista e conversa; Membros e Sala de voz existem como painéis, mas só entram pelo botão + do dock e o de Membros lista amigos, não o grupo (GRP-10) | Quarto painel do layout_default, à direita da conversa (largura ~270 px, mesmo vidro e cantos), com abas Membros / Sala de voz / Fixadas; abre sozinho em grupos e fecha em DM; o usuário ainda pode fechar (X do dock) e o estado é salvo no layout.json |
 | P1 | LAY-05 | Layout novo (trilho, lista, conversa, hub) | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | AUSENTE | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | Painel central em vez do estado vazio: cabeçalho com abas em pílula (padrão do seletor Call/Transmissão da chamada), linhas largas de amigo com ações e a lista de pedidos; hub à direita mostra "Ativos agora" |
-| P1 | LAY-07 | Layout novo (trilho, lista, conversa, hub) | Aba Chat da chamada no padrão de conversa (balões, avatares, horário, composer embaixo) | AUSENTE | (padrão novo do usuário) | ui_call.c: texto cru "Nome / frase" sem balão, avatar, hora nem campo de envio (MSG-19) | Reutilizar o renderizador de mensagens do painel de conversa (msgui.c) dentro do cartão da aba Chat e o composer fixo sobre a barra de controles; mesmo vidro e cantos do cartão atual |
-| P1 | NOT-01 | Notificações | Aviso: amigo ficou online | SEM-EFEITO | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | Já existe (aba Notificações); toast nativo do Windows + opcional toast de vidro no canto do app |
-| P1 | NOT-02 | Notificações | Aviso: amigo comecou a transmitir | SEM-EFEITO | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | Idem NOT-01 |
-| P1 | NOT-03 | Notificações | Notificação de nova mensagem (DM e grupo) com o app em segundo plano | AUSENTE | services/chat/background-manager.ts | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; texto 'Autor: trecho' como no Electron; toast nativo |
-| P1 | PRF-03 | Perfil | Mostrar a foto dos OUTROS em amigos, membros, tiles da chamada e mensagens | AUSENTE | components/ProfileAvatar.tsx | ui_social.c: só a sua foto aparece (user_photo); os demais usam iniciais | cui_avatar_ex com .image também em person_row, tiles (ui_call.c) e bolhas (msgui.c); 32-40 px, circulo, mesma borda; baixar a foto do amigo pelo core |
 | P1 | RDE-01 | Rede | Modo da chamada (Automático, Sempre P2P, Sempre SFU) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; passar o modo ao core ao entrar na sala |
 | P1 | RDE-02 | Rede | Preferência de conexão (Automático, Internet direta, VPN) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; filtrar interfaces/candidatos ICE no core (ice.rs) |
 | P1 | RDE-04 | Rede | Teste de rede (STUN/relay, variacao, perda, 'precisa de relay') | AUSENTE | components/NetworkSettingsPanel.tsx | (não existe) | Botão 'Testar rede' no cartão DIAGNOSTICO de Configurações > Rede, resultado em linhas 13 px com selos de cor |
 | P1 | RDE-06 | Rede | TURN com credenciais da conta / configuração na interface | AUSENTE | services/rtc/turn-credentials.ts | só por BRIKS_ICE_SERVERS_JSON ou ice.json | Campos no cartão PREFERENCIA DE CONEXAO (URL, usuário, senha) ou credenciais automaticas da conta; indicador 'Somente STUN' como chip |
 | P1 | TRX-11 | Transmissão | SFU (LiveKit) como padrão para salas grandes e redes dificeis | AUSENTE | services/rtc/transport-factory | só malha P2P; a opção 'Sempre SFU' em Configurações não faz nada | Sem UI nova: o seletor Modo da chamada (Rede) passa a valer; indicador 'via servidor' no chip de rede da chamada |
-| P1 | TRY-05 | Tray/janela | Instância única (segunda abertura foca a primeira) | AUSENTE | desktop main.ts requestSingleInstanceLock | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao |
-| P1 | TRY-06 | Tray/janela | Iniciar com o Windows | AUSENTE | desktop (setLoginItemSettings) | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; interruptor 'Iniciar com o Windows' em Configurações (cartão no topo de Sobre) |
 | P2 | AMI-09 | Amigos | Buscar amigo | AUSENTE | views/FriendsView.tsx | (não existe) | cui_input com lupa no topo do painel Amigos (altura 36, raio 12), filtra a lista ao digitar |
 | P2 | AMI-11 | Amigos | Painel Atividade (quem está em sala de voz nos grupos) | AUSENTE | views/FriendsView.tsx | (não existe) | Painel novo 'Atividade' no dock (menu + Painel), cartões de vidro por grupo com avatares de quem está na sala |
 | P2 | AMI-15 | Amigos | Sino para silenciar avisos de cada amigo | AUSENTE | services/profile/use-friend-notifications.ts | (não existe) | Ícone de sino 14 px no menu de contexto do amigo (person_row); depende de NOT-01/02 |
-| P2 | ATL-05 | Atalhos | Remover atalho e aviso de atalho ocupado | AUSENTE | components/ShortcutsPanel.tsx (Remover) | (não existe) | Botão Remover (ghost, 12 px) ao lado de cada campo + mensagem 'ocupado' em B_DANGER |
 | P2 | ATU-04 | Atualização | Botão 'Verificar agora' | AUSENTE | components/UpdatesPanel.tsx; ipc updater:check | (não existe: só verifica sozinho a cada 4 h) | Botão secundario no cartão ATUALIZACOES (settings.c) com estado 'Verificando...' (loading) e resultado em 12 px |
-| P2 | AUT-03 | Auth | Data de nascimento no cadastro (só maiores de 18) | AUSENTE | views/AuthView.tsx; services/account/age.ts | (não existe) | Campo no formulario de criar conta (ui_auth.c, modo signup), mesmo cui_input da senha; texto de ajuda 13 px; a data não e guardada |
-| P2 | AUT-11 | Auth | Entrar digitando o @nick (dica local de e-mail) | AUSENTE | services/account/login-hints.ts | (não existe) | Aceitar @nick no campo de e-mail do formulario de entrar (ui_auth.c); dica 12 px abaixo do campo; sem tela nova |
-| P2 | BAS-14 | Funções básicas de desktop | Iniciar com o Windows | AUSENTE | desktop (loginItemSettings) | (não existe) | Ver TRY-06: interruptor no cartão de sistema de Configurações; chave Run do registro do usuário |
-| P2 | BAS-21 | Funções básicas de desktop | Som de notificação e sons de entrar/sair da chamada | AUSENTE | services/audio/call-sounds.ts | (não existe) | Ver CHM-20: PlaySound de WAV curto, com volume e interruptor em Configurações > Notificações |
-| P2 | BAS-32 | Funções básicas de desktop | Estado offline / sem internet visível ao usuário (banner persistente) | AUSENTE | Electron | Só o aviso de erro pontual (account.c) e o texto de Diagnóstico; sem banner persistente na janela principal | Banner fino de vidro no topo do painel de conversa (mesmo padrão do banner de atualização, ui_update.c), com "Sem conexão. Tentando reconectar" e botão Tentar agora; some sozinho ao voltar |
-| P2 | BAS-39 | Funções básicas de desktop | Tamanho de texto ajustável pelo usuário (zoom da interface) | AUSENTE | Chromium (nativo, sem código próprio) (Ctrl+roda/Ctrl+mais) | (não existe): só segue a escala do Windows (BAS-18); sem Ctrl+mais/menos nem opção | Controle deslizante de 90% a 150% no cartão Temas ou Desempenho de Configurações e atalhos Ctrl+mais/Ctrl+menos/Ctrl+0; aplica a escala da biblioteca (cui_dpi_scale) e guarda em settings |
-| P2 | CFG-08 | Configurações | Volume de entrada (ganho) | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c slider; só salvo | Já existe; aplicar ganho no core (áudio.rs) |
-| P2 | CFG-10 | Configurações | Volume de saida | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c slider; só salvo | Já existe; aplicar na reprodução |
-| P2 | CFG-12 | Configurações | Porta de ruído com limite | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c; só salvo | Já existe; aplicar no core |
-| P2 | CFG-20 | Configurações | Limpar anexos | SEM-EFEITO | components/LocalStoragePanel.tsx | settings.c: mostra 'Sem efeito real ainda' | Botão já existe; apagar a pasta de anexos pelo core e atualizar o tamanho |
-| P2 | CFG-22 | Configurações | Exportar meus dados | SEM-EFEITO | components/LocalStoragePanel.tsx | settings.c: botão sem ação real | Botão já existe; abrir 'Salvar como' (GetSaveFileName) e gravar JSON sem senhas/chaves |
-| P2 | CFG-23 | Configurações | Sobreposição em jogos: interruptor geral | SEM-EFEITO | components/OverlaySettingsPanel.tsx | settings.c; briks_overlay.exe existe mas o app não o abre | Já existe; iniciar/encerrar briks_overlay.exe e alimenta-lo com quem fala |
-| P2 | CFG-24 | Configurações | Sobreposição: o que aparece (4 itens) e opacidade | SEM-EFEITO | components/OverlaySettingsPanel.tsx | settings.c; só salvo | Já existe; repassar ao overlay |
 | P2 | CFG-29 | Configurações | Novidades da versão em uso | AUSENTE | components/release-notes.ts | (não existe) | Cartão NOVIDADES na aba Sobre/Atualizacoes, lista de 12-13 px, e diálogo de vidro 'O que há de novo' após atualizar |
-| P2 | CHM-07 | Chamada | Mini-painel 'Voz conectada' na lateral (mic, fone, desligar, abrir) | SEM-EFEITO | views/HomeView.tsx | ui_social.c panel_voice só tem Voltar a sala | Rodape do painel Menu/Sala de voz: cartão de vidro 56 px com 3 icon_buttons (mic, fone, sair) e nome da sala |
 | P2 | CHM-12 | Chamada | Zoom na transmissão (roda, pinca, arrastar, selo de %) | AUSENTE | components/vídeo-zoom.tsx | (não existe) | Selo de vidro 11 px no canto superior esquerdo do bloco (dica de zoom); arrastar move; sem painel |
 | P2 | CHM-16 | Chamada | Desconexao após 1 h sem falar, com aviso e Continuar | AUSENTE | CallWorkspace.tsx; release 1.1.0 | (não existe) | Banner de vidro no topo da chamada nos últimos 5 min com botão Continuar (update_banner), contagem 13 px |
-| P2 | CHM-17 | Chamada | Diagnóstico da conexão e indicador Rede Boa dentro da chamada | AUSENTE | components/CallWorkspace.tsx (Rede, Diagnóstico) | só em Configurações > Rede | Chip 'Rede boa/ruim' no cabeçalho da chamada que abre cartão de vidro com Signaling/Canal/Transporte (reusa o cartão DIAGNOSTICO de Configurações) |
-| P2 | CHM-20 | Chamada | Sons de entrar e sair da chamada | AUSENTE | services/áudio/call-sounds.ts | (não existe) | Sem UI; PlaySound de dois WAV curtos no rtc.c; opção 'Sons da chamada' no cartão de Notificações |
-| P2 | CHM-23 | Chamada | Guardar histórico on/off e apagar histórico | AUSENTE | components/CallHistoryPanel.tsx | (não existe) | Interruptor e botão Apagar no topo da tela de Histórico, cartão de vidro 14 px |
-| P2 | CHM-24 | Chamada | Vídeo remoto, câmera dos outros e 2a tela | AUSENTE | components/CallWorkspace.tsx | (não existe) | Tile de vídeo no palco da chamada no lugar do avatar; 2a tela como tile extra com selo |
-| P2 | GRP-06 | Grupos, canais e cargos | Renomear canal/sala | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de lapis ao passar o mouse na linha do canal (hover do nav_item) + diálogo curto |
-| P2 | GRP-07 | Grupos, canais e cargos | Apagar canal/sala | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de lixeira no hover do canal + confirmacao no estilo Expulsar |
-| P2 | GRP-11 | Grupos, canais e cargos | Recarregar lista de membros | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de refresh no panel_shell do painel Membros |
-| P2 | GRP-15 | Grupos, canais e cargos | Reparar/limpar identidades duplicadas de membros | AUSENTE | views/HomeView.tsx removeDuplicateMembers | (não existe) | Botão secundario no rodape do painel Membros, visivel só quando há duplicados |
-| P2 | GRP-19 | Grupos, canais e cargos | Buscar mensagens do canal | AUSENTE | views/GroupView.tsx (Buscar) | (não existe) | Lupa no cabeçalho do chat (ao lado de Fixadas) abre cui_input embutido |
-| P2 | LAY-06 | Layout novo (trilho, lista, conversa, hub) | Histórico de chamadas como painel do layout (hoje cobre a janela inteira, sem trilho nem lista) | AUSENTE | (padrão novo do usuário) | ui_history.c: o item da lista abre tela cheia com seta de voltar e só o estado vazio; existe também o painel Histórico do dock (+ painel), mas o item da lista não o usa | Abrir no painel central (no lugar da conversa) mantendo trilho e lista, com cartões de vidro por chamada (duração, participantes, botão Ligar de novo); seta de voltar só no modo estreito |
-| P2 | LAY-11 | Layout novo (trilho, lista, conversa, hub) | Texto sempre legível: tamanho mínimo nas etiquetas (rótulos de seção em 10 a 11 px) | AUSENTE | (padrão novo do usuário) | Rótulos "SALAS DE VOZ", "GRUPOS", "AMIGOS", dicas e legendas dos balões usam 10 a 11 px, abaixo do padrão de "textos maiores" pedido; corpo e títulos estão bons | Subir etiquetas de seção para 12 px e dicas/horários para 12 px nos painéis lista e conversa (a constante está espalhada por .size nos .c; vale centralizar em briks_ui.h) |
+| P2 | CHM-24 | Chamada | Vídeo remoto, câmera dos outros e 2a tela | AUSENTE | components/CallWorkspace.tsx | (não existe; depende da câmera e do pacote de transmissão: ver docs/plans/chamada-pacote-c.md) | Tile de vídeo no palco da chamada no lugar do avatar; 2a tela como tile extra com selo |
 | P2 | LAY-12 | Layout novo (trilho, lista, conversa, hub) | Dica "Sair" (tooltip) presa no topo da tela e círculo no canto inferior esquerdo em todas as capturas | AUSENTE | (padrão novo do usuário) | Nas capturas ocultas o tooltip do botão sair do rodapé aparece fixo em x=640 y=20; já listado em plano-pos-1.3.0 (frente D) | Corrigir a âncora do tooltip do rodapé (cui_tooltip) para o botão, e esconder o ponteiro do roteiro nas capturas |
 | P2 | MSG-08 | Mensagens | Indicador 'digitando...' | AUSENTE | components/ConversationTimeline.tsx | (não existe) | Linha de 12 px cor B_MUTED acima do compositor, com três pontos animados (respeita reduced motion) |
-| P2 | NOT-04 | Notificações | Notificação 'pediu para você transmitir' | AUSENTE | components/CallWorkspace.tsx | (não existe) | Junto de CHM-15 |
-| P2 | NOT-05 | Notificações | Nada e avisado durante a chamada nem logo ao abrir | AUSENTE | release 1.2.0 | (sem avisos) | Regra de supressao no mesmo modulo de NOT-01 |
 | P2 | PRF-06 | Perfil | Limpar o status depois de 30 min/1 h/4 h/hoje | SEM-EFEITO | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | Aplicar a expiracao em profile.c (timer) e mostrar 'some em X' sob o campo, 11 px, cor B_MUTED |
 | P2 | PRF-12 | Perfil | Outros computadores ligados ao @nick (listar e revogar) | AUSENTE | components/AccountPanel.tsx (Revogar) | (não existe) | Cartão 'Computadores' na aba Conta do diálogo Perfil e conta: linhas com nome do PC, data e botão Revogar secundario, confirmacao em diálogo |
 | P2 | RDE-03 | Rede | Redes privadas detectadas (ZeroTier, Tailscale, WireGuard) | AUSENTE | desktop network-interfaces.ts | (não existe) | Linha 'Detectado' com selo verde dentro do cartão PREFERENCIA DE CONEXAO |
-| P2 | TRY-07 | Tray/janela | Links briks:// (convites e mensagens) | AUSENTE | desktop protocol.ts | msgui.c só COPIA briks://mensagem; o protocolo não está registrado | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; abre o diálogo de convite/mensagem correspondente |
 | P3 | AMI-16 | Amigos | Desconectar só o chat privado (Desconectar P2P) | AUSENTE | views/HomeView.tsx | (não existe) | Item no menu de contexto do amigo; texto 13 px; confirmacao simples |
 | P3 | ATL-06 | Atalhos | Ctrl+Shift+O: editar posições do overlay em qualquer tela | AUSENTE | components/OverlaySettingsPanel.tsx | (não existe) | Depende de CFG-25 |
 | P3 | BAS-27 | Funções básicas de desktop | Tema claro e escuro (e seguir o do Windows) | AUSENTE | (Electron: só tema escuro com cores) | Temas por gradiente (Configurações > Temas), sempre escuros; sem tema claro nem seguir o Windows | Opção nova no cartão Temas: "Claro" e "Seguir o Windows"; o gerador de tema (themes.c) precisa de uma variante clara com o mesmo contraste mínimo; fora do escopo do Electron |
 | P3 | BAS-28 | Funções básicas de desktop | Idioma da interface (pt-BR, inglês) | AUSENTE | (não existe no Electron também) | (não existe): textos fixos em português no código | Tabela de strings e seletor de idioma no cartão Sobre de Configurações; só depois do conteúdo final dos painéis |
-| P3 | BAS-37 | Funções básicas de desktop | Licenças de software de terceiros dentro do app | AUSENTE | (não existe no Electron também) | (não existe): THIRD_PARTY.md existe no repositório da biblioteca, não dentro do app | Botão "Licenças de terceiros" no cartão Sobre abrindo diálogo de vidro com rolagem e o texto empacotado |
 | P3 | BAS-40 | Funções básicas de desktop | Leitor de tela e navegação assistiva (UI Automation / MSAA) | AUSENTE | Chromium (nativo, sem código próprio) (árvore de acessibilidade) | (não existe): a interface é desenhada pela biblioteca, sem UIA | Sem tela: provedor UIA mínimo na plataforma (nome, papel e estado de botões e campos); alto custo, vale só depois do resto |
-| P3 | CFG-19 | Configurações | Divisão do espaco por tipo (mensagens, grupos, anexos) | AUSENTE | components/LocalStoragePanel.tsx | settings.c: 'depende do backend de dados' | Barra segmentada 8 px dentro do cartão USO NESTE COMPUTADOR, legenda 12 px |
-| P3 | CFG-25 | Configurações | Sobreposição: editar posições (arrastar, redimensionar) | SEM-EFEITO | components/OverlaySettingsPanel.tsx | settings.c: botão sem ação | Botão já existe; modo de edicao do overlay com atalho Ctrl+Shift+O (ATL-06) |
+| P3 | CFG-25 | Configurações | Sobreposição: editar posições (arrastar, redimensionar) | AUSENTE | components/OverlaySettingsPanel.tsx | settings.c: nota em breve; só os 4 cantos são reais (CFG-24) | Botão já existe; modo de edicao do overlay com atalho Ctrl+Shift+O (ATL-06) |
 | P3 | CFG-26 | Configurações | Aba Avisos: lista e limpar | SEM-EFEITO | views/SettingsView.tsx | settings.c: lista existe, mas nada gera avisos | Cartão já existe; chamar settings_notice() para erros reais (backend, core, atualizacao) |
 | P3 | CFG-28 | Configurações | Telemetria anonima ligar/desligar | SEM-EFEITO | components/AboutPanel.tsx; services/telemetry | settings.c; só salvo, nada e enviado | Interruptor já existe; contadores diarios no core |
 | P3 | EXT-07 | Extras do CUI (sem equivalente no Electron) | Lembrete de mensagem | SEM-EFEITO | (novo) | msgui.c: grava o lembrete mas não notifica ('sem efeito') | Disparar toast quando o prazo chega (depende de NOT-03) |
@@ -199,7 +124,6 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 - **BAS-19** Vários monitores: abrir no monitor onde estava e janela fora da área visível voltar para dentro. Electron: desktop-lifecycle.ts. CUI: (não existe): sem restauração de posição, então depende do Windows.
 - **BAS-30** Estado de carregamento (spinner ou esqueleto) enquanto o core sobe, entra na sala ou carrega o histórico. Electron: Electron. CUI: VERIFICAR: há texto de status ("Conectando", "Baixando a atualização"), mas não vi spinner ou esqueleto nas listas; depende do core real.
 - **BAS-42** IME (japonês, chinês, coreano) e emoji do teclado do Windows (Win+.). Electron: Chromium (nativo, sem código próprio). CUI: VERIFICAR: a plataforma trata WM_CHAR mas não WM_IME_COMPOSITION; o texto final de IME e o painel de emoji provavelmente entram, mas sem janela de composição junto ao cursor.
-- **LAY-08** Tela de chamada em tela cheia (imersiva) em vez de dentro do layout trilho/lista/hub. Electron: (padrão novo do usuário). CUI: ui_call.c: cabeçalho próprio, grade de participantes e barra de controles flutuante; esconde trilho e lista. Decisão de design, não defeito.
 
 ## Tabela completa por área
 
@@ -209,7 +133,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 |---|---|---|---|---|---|
 | AUT-01 | Entrar com e-mail e senha | views/AuthView.tsx | ui_auth.c + account.c (account.login) | PRESENTE-FUNCIONAL | auth-a |
 | AUT-02 | Criar conta com e-mail (nome, e-mail, senha, repetir senha) | views/AuthView.tsx | ui_auth.c (signup) | PRESENTE-FUNCIONAL | auth-b |
-| AUT-03 | Data de nascimento no cadastro (só maiores de 18) | views/AuthView.tsx; services/account/age.ts | (não existe) | AUSENTE | sonda |
+| AUT-03 | Data de nascimento no cadastro (só maiores de 18) | views/AuthView.tsx; services/account/age.ts | Campo Data de nascimento no cadastro (accountx.c, ui_auth.c): só maiores de 18; valida na hora e a data não é guardada | PRESENTE-FUNCIONAL | auth-nasc |
 | AUT-04 | Esqueci minha senha (e-mail de recuperação) | views/AuthView.tsx | ui_auth.c (recover) | PRESENTE-FUNCIONAL | auth-a |
 | AUT-05 | Código de 6 digitos / link de recuperação e nova senha | views/AuthView.tsx | ui_auth.c (code, recovery) | PRESENTE-FUNCIONAL | - |
 | AUT-06 | Continuar com Google (navegador) | components/AccountPanel.tsx; services/account/account-service.ts | ui_auth.c account_oauth(google); não testado com provedor real | PRESENTE-FUNCIONAL | - |
@@ -217,7 +141,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AUT-08 | Cancelar a espera do navegador | views/AuthView.tsx | ui_auth.c (Cancelar / account.cancel) | PRESENTE-FUNCIONAL | - |
 | AUT-09 | Mostrar/ocultar a senha (olho) | views/AuthView.tsx | ui_auth.c (cui_input password) | PRESENTE-FUNCIONAL | auth-c |
 | AUT-10 | Alternar entre entrar, criar conta e Google/Discord | views/AuthView.tsx | ui_auth.c (links) | PRESENTE-FUNCIONAL | auth-c |
-| AUT-11 | Entrar digitando o @nick (dica local de e-mail) | services/account/login-hints.ts | (não existe) | AUSENTE | sonda |
+| AUT-11 | Entrar digitando o @nick (dica local de e-mail) | services/account/login-hints.ts | Campo de e-mail do login aceita @nick (dica guardada só neste computador em login-hints.txt, accountx.c); @nick desconhecido mostra mensagem clara | PRESENTE-FUNCIONAL | auth-nick |
 | AUT-12 | Tela de carregamento ao restaurar a sessao | App.tsx (Restaurando sua sessao) | ui_auth.c (Preparando seu espaco) | PRESENTE-FUNCIONAL | - |
 | AUT-13 | Sair da conta (rodape, Perfil e Configurações) | views/HomeView.tsx (Sair, Desconectar) | ui_social.c / settings.c / app.c app_logout | PRESENTE-FUNCIONAL | perfil |
 | AUT-14 | Erros de login em português claro | views/auth-errors.ts | account.c (mensagens) | PRESENTE-FUNCIONAL | - |
@@ -228,7 +152,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 |---|---|---|---|---|---|
 | PRF-01 | Editar nome exibido | components/ProfileEditor.tsx | ui_social.c / ui_account.c (Nome, Salvar) | PRESENTE-FUNCIONAL | perfil |
 | PRF-02 | Escolher/trocar foto de perfil | components/ProfileEditor.tsx; ProfileAvatar.tsx | ui_account.c account_pick_photo | PRESENTE-FUNCIONAL | - |
-| PRF-03 | Mostrar a foto dos OUTROS em amigos, membros, tiles da chamada e mensagens | components/ProfileAvatar.tsx | ui_social.c: só a sua foto aparece (user_photo); os demais usam iniciais | AUSENTE | sonda |
+| PRF-03 | Mostrar a foto dos OUTROS em amigos, membros, tiles da chamada e mensagens | components/ProfileAvatar.tsx | Foto dos amigos (core: friends.photos baixa para o cache; UI: lista lateral, hub de Amigos, membros e bolhas das mensagens). Tiles da chamada ainda com iniciais | PRESENTE-FUNCIONAL | perfil-fotos |
 | PRF-04 | Status personalizado (texto e emoji) | components/StatusEditor.tsx | ui_social.c (STATUS) | PRESENTE-FUNCIONAL | perfil |
 | PRF-05 | Chips rapidos de status (Jogando, Estudando...) | components/StatusEditor.tsx | ui_social.c (CHIPS) | PRESENTE-FUNCIONAL | perfil |
 | PRF-06 | Limpar o status depois de 30 min/1 h/4 h/hoje | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | PRESENTE-SEM-EFEITO | sonda |
@@ -247,7 +171,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AMI-01 | Lista de amigos na barra lateral | views/HomeView.tsx; FriendsView.tsx | ui_social.c (AMIGOS) | PRESENTE-FUNCIONAL | social-a |
 | AMI-02 | Abrir conversa direta ao clicar no amigo | views/HomeView.tsx | ui_social.c app_open_friend | PRESENTE-FUNCIONAL | social-a |
 | AMI-03 | Adicionar amigo pelo @nick | components/NickInvite.tsx | ui_social.c (Adicionar amigo) / account.c | PRESENTE-FUNCIONAL | social-a |
-| AMI-04 | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | components/P2PInvitePanel.tsx; services/invites/service.ts | (não existe) | AUSENTE | sonda |
+| AMI-04 | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | components/P2PInvitePanel.tsx; services/invites/service.ts | ui_friends.c friends_code_card (dialogo Adicionar amigo e aba Adicionar do hub): Gerar meu codigo, Copiar, Colar e Adicionar; core friend_invite.rs (friend.invite/friend.accept, codigo briks-amg1.*, assinado, vale 7 dias) [teste amigos-codigo + cargo friend_invite]. LIMITES: sem aba "Por @nick/Por codigo" (e um cartao abaixo do @nick); aceitar grava em friends-p2p.json do core e entra na lista so nesta sessao; o amigo P2P ainda nao e usado em chamadas; aceitar codigo de OUTRA pessoa so testado em Rust (o roteiro oculto aceita o proprio codigo e ve a recusa); convite nao e de uso unico (sem servidor) | PRESENTE-FUNCIONAL | amigos-codigo |
 | AMI-05 | Pedidos pendentes: aceitar | views/FriendsView.tsx (Aceitar) | ui_social.c (ícone check) | PRESENTE-FUNCIONAL | - |
 | AMI-06 | Pedidos pendentes: recusar | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | PRESENTE-SEM-EFEITO | sonda |
 | AMI-07 | Desfazer amizade (com confirmacao) | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | AUSENTE | sonda |
@@ -260,7 +184,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AMI-14 | Status e programa em uso visiveis na lista | components/StatusEditor.tsx | ui_social.c person_row | PRESENTE-FUNCIONAL | - |
 | AMI-15 | Sino para silenciar avisos de cada amigo | services/profile/use-friend-notifications.ts | (não existe) | AUSENTE | sonda |
 | AMI-16 | Desconectar só o chat privado (Desconectar P2P) | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| AMI-17 | Entrar em grupo por convite/código | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | (não existe) | AUSENTE | sonda |
+| AMI-17 | Entrar em grupo por convite/código | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | ui_social.c panel_servers: tile Entrar em grupo (+ item Entrar com convite da lateral) [teste grupos-menu] | PRESENTE-FUNCIONAL | grupos-menu |
 
 ### Grupos, canais e cargos
 
@@ -269,22 +193,22 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | GRP-01 | Criar grupo | views/HomeView.tsx (Criar grupo) | ui_social.c (create_group_open) | PRESENTE-FUNCIONAL | social-b |
 | GRP-02 | Lista de grupos e abrir o grupo | views/HomeView.tsx | ui_social.c / painel Servidores | PRESENTE-FUNCIONAL | social-b |
 | GRP-03 | Conversa do canal de texto geral do grupo | views/GroupView.tsx | ui_social.c (Grupo P2P canal geral) | PRESENTE-FUNCIONAL | social-b |
-| GRP-04 | Criar canal de texto | views/HomeView.tsx (Criar canal) | chat.c carrega canais, mas não há UI para criar | AUSENTE | sonda |
-| GRP-05 | Criar sala de voz do grupo | views/HomeView.tsx | a sala de voz e uma única 'Sala geral' fixa, fora dos grupos | AUSENTE | sonda |
-| GRP-06 | Renomear canal/sala | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-07 | Apagar canal/sala | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-08 | Personalizar grupo (nome e imagem, sincroniza aos membros) | components/GroupEditor.tsx | (não existe) | AUSENTE | sonda |
-| GRP-09 | Apagar ou sair do grupo | views/HomeView.tsx (Apagar ou sair do grupo) | (não existe) | AUSENTE | sonda |
-| GRP-10 | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | views/HomeView.tsx (membros) | ui_social.c panel_members mostra você + seus amigos, não os membros do grupo | PRESENTE-SEM-EFEITO | sonda |
-| GRP-11 | Recarregar lista de membros | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-12 | Adicionar membro (amigo) ao grupo | views/HomeView.tsx (Adicionar membro) | (não existe) | AUSENTE | sonda |
-| GRP-13 | Gerenciar membro: tornar/remover administrador | views/HomeView.tsx (Gerenciar membro) | (não existe) | AUSENTE | sonda |
-| GRP-14 | Remover membro do grupo | views/HomeView.tsx removeSelectedMember | (não existe) | AUSENTE | sonda |
-| GRP-15 | Reparar/limpar identidades duplicadas de membros | views/HomeView.tsx removeDuplicateMembers | (não existe) | AUSENTE | sonda |
-| GRP-16 | Convite para o grupo (código) | components/GroupInvitePanel.tsx | (não existe) | AUSENTE | sonda |
-| GRP-17 | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | views/HomeView.tsx | (não existe: Sala geral não mostra participantes) | AUSENTE | sonda |
+| GRP-04 | Criar canal de texto | views/HomeView.tsx (Criar canal) | ui_groups.c groups_sidebar/groups_dialogs: Novo canal (texto) [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-05 | Criar sala de voz do grupo | views/HomeView.tsx | ui_groups.c: Novo canal aba Voz; sala de voz do grupo [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-06 | Renomear canal/sala | views/HomeView.tsx | ui_groups.c: lápis no hover do canal + diálogo Renomear canal [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-07 | Apagar canal/sala | views/HomeView.tsx | ui_groups.c: lixeira no hover + confirmação Apagar canal (sempre sobra um de texto) [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-08 | Personalizar grupo (nome e imagem, sincroniza aos membros) | components/GroupEditor.tsx | ui_groups.c: Personalizar grupo (nome, imagem, canais) pelo menu do grupo/cabeçalho [teste grupos-menu] | PRESENTE-FUNCIONAL | grupos-menu |
+| GRP-09 | Apagar ou sair do grupo | views/HomeView.tsx (Apagar ou sair do grupo) | ui_groups.c groups_overlay: menu de contexto (botão direito) da linha do grupo + Sair/Apagar com confirmação [testes grupos-canais, grupos-menu] | PRESENTE-FUNCIONAL | grupos-canais, grupos-menu |
+| GRP-10 | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | views/HomeView.tsx (membros) | ui_groups.c groups_members_panel: painel Membros do dock mostra os membros do GRUPO aberto com DONO/ADMIN/VOCÊ [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros, grupos-comum |
+| GRP-11 | Recarregar lista de membros | views/HomeView.tsx | ui_groups.c: ícone recarregar no painel Membros (reload_groups); sem teste (precisa do backend) | PRESENTE-FUNCIONAL | - |
+| GRP-12 | Adicionar membro (amigo) ao grupo | views/HomeView.tsx (Adicionar membro) | ui_groups.c: botão + do painel Membros e diálogo Membros (amigos e @nick); sem teste de ponta a ponta (convite assinado precisa do core) | PRESENTE-FUNCIONAL | - |
+| GRP-13 | Gerenciar membro: tornar/remover administrador | views/HomeView.tsx (Gerenciar membro) | ui_groups.c: menu ... da linha no painel Membros (só o dono) [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-14 | Remover membro do grupo | views/HomeView.tsx removeSelectedMember | ui_groups.c: Remover do grupo + confirmação [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-15 | Reparar/limpar identidades duplicadas de membros | views/HomeView.tsx removeDuplicateMembers | ui_groups.c: botão Limpar duplicados no painel Membros (só aparece com duplicados) [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-16 | Convite para o grupo (código) | components/GroupInvitePanel.tsx | ui_groups.c: Convidar (gerar código) no cabeçalho e no menu do grupo; o código vem do core (group.sign/group.code); sem teste ponta a ponta | PRESENTE-FUNCIONAL | - |
+| GRP-17 | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | views/HomeView.tsx | ui_groups.c roster_get: lista, sob cada sala de voz do grupo, quem esta nela + AO VIVO e Assistir (abre a chamada no modo Transmissao) [teste grupos-voz]. LIMITE: o core ainda nao emite group.roster; so a sala em que EU estou tem dado real, as outras vem do demo (BRIKS_DEMO_GROSTER) | PRESENTE-FUNCIONAL | grupos-voz |
 | GRP-18 | Entrar na sala de voz pela barra lateral | views/HomeView.tsx | ui_social.c (Sala geral, voz-geral): sala única, não por grupo | PRESENTE-FUNCIONAL | social-b |
-| GRP-19 | Buscar mensagens do canal | views/GroupView.tsx (Buscar) | (não existe) | AUSENTE | sonda |
+| GRP-19 | Buscar mensagens do canal | views/GroupView.tsx (Buscar) | attach.c attach_search_button: lupa do cabecalho vale para grupo e DM; abre o campo (bug do dock corrigido) [teste grupos-busca] | PRESENTE-FUNCIONAL | grupos-busca |
 | GRP-20 | Estado vazio do canal | views/GroupView.tsx | ui_social.c | PRESENTE-FUNCIONAL | - |
 | GRP-21 | Permissões: dono/admin podem fixar e excluir de outros | chat/GroupChatService.ts | msgui.c can_pin / can_delete | PRESENTE-FUNCIONAL | - |
 | GRP-22 | Sincronização do manifesto do grupo, cargos e revogacoes entre pares | chat/GroupChatService.ts; SyncService.ts | briks-core: parte em chat_events.rs; trabalho em andamento no branch cui-ui-paridade (grupos-p2p-core.md); sem teste de interop | VERIFICAR | - |
@@ -307,11 +231,11 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | MSG-12 | Pré-visualização de link | components/SafeMessageContent.tsx | msg-rico.txt: cartão de prévia (site, título, descrição, miniatura) sob o balão; busca segura feita pelo núcleo (link.preview); sem rede mostra só o link | PRESENTE-FUNCIONAL | msg-rico |
 | MSG-13 | Links e formatacao Markdown seguros no texto | components/SafeMessageContent.tsx | msg-rico.txt: markdown (negrito, código, link, menção) na bolha; link só http(s) abre no navegador padrão; "Selecionar texto…" no menu para copiar trecho | PRESENTE-FUNCIONAL | msg-rico |
 | MSG-14 | Estados da mensagem: enviando, entregue, falhou e reenvio (outbox) | chat/OutboxService.ts | msg-estados.txt: relógio (enviando), check (gravada), check duplo (entregue: chat.ack do núcleo com o id da mensagem, DM com sala aberta), alerta (falhou; clique reenvia). Entrega ponta a ponta só testada no núcleo (teste Rust do id) | PRESENTE-FUNCIONAL | msg-estados |
-| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | lupa no cabeçalho + Ctrl+F (campos-busca.txt) filtra as mensagens | PRESENTE-FUNCIONAL | campos-busca |
+| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | lupa no cabeçalho + Ctrl+F (campos-busca.txt) filtra as mensagens | PRESENTE-FUNCIONAL | grupos-busca, campos-busca |
 | MSG-16 | Mensagens ficam gravadas neste computador | services/offline/chat-storage.ts | msgui.c / backend local | PRESENTE-FUNCIONAL | - |
 | MSG-17 | Histórico sincronizado com o par (pedir/responder histórico) | chat/HistoryService.ts | briks-core chat_events.rs; sem teste de interop | VERIFICAR | - |
 | MSG-18 | Aba Chat da chamada mostra as mensagens da sala | components/CallWorkspace.tsx (Chat da chamada) | ui_call.c (call_view 1) | PRESENTE-FUNCIONAL | call |
-| MSG-19 | Enviar mensagem pela aba Chat da chamada | components/CallWorkspace.tsx | ui_call.c: lista sem campo de texto | PRESENTE-SEM-EFEITO | sonda |
+| MSG-19 | Enviar mensagem pela aba Chat da chamada | components/CallWorkspace.tsx | ui_call.c (stage_chat: balões de briks_bubble + campo de escrever) / rtc.c room.chat.send / core roomchat.rs; vale só durante a chamada | PRESENTE-FUNCIONAL | call-chat |
 
 ### Chamada
 
@@ -320,27 +244,27 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | CHM-01 | Entrar na sala de voz | views/HomeView.tsx | ui_social.c / rtc.c (rtc_join_room) | PRESENTE-FUNCIONAL | social-b |
 | CHM-02 | Mutar/desmutar o microfone | components/CallWorkspace.tsx | ui_call.c (Microfone) | PRESENTE-FUNCIONAL | call |
 | CHM-03 | Ensurdecer | components/CallWorkspace.tsx | ui_call.c (Ensurdecer) | PRESENTE-FUNCIONAL | call |
-| CHM-04 | Câmera (ligar e enviar vídeo) | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera - em breve' | PRESENTE-SEM-EFEITO | call |
+| CHM-04 | Câmera (ligar e enviar vídeo) | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera · em breve' (decisão: sem captura nem envio nesta versão; ver docs/plans/chamada-pacote-c.md) | PRESENTE-SEM-EFEITO | call |
 | CHM-05 | Sair da chamada | components/CallWorkspace.tsx (Sair) | ui_call.c (Sair) | PRESENTE-FUNCIONAL | call-sair |
 | CHM-06 | Voltar ao menu sem sair da chamada | components/CallWorkspace.tsx (Voltar ao menu) | ui_call.c (ícone minimizar) | PRESENTE-FUNCIONAL | call |
-| CHM-07 | Mini-painel 'Voz conectada' na lateral (mic, fone, desligar, abrir) | views/HomeView.tsx | ui_social.c panel_voice só tem Voltar a sala | PRESENTE-SEM-EFEITO | sonda |
+| CHM-07 | Mini-painel 'Voz conectada' na lateral (mic, fone, desligar, abrir) | views/HomeView.tsx | ui_voice.c ui_voice_mini: cartão Voz conectada no rodapé do menu (mic, fone, sair, abrir) | PRESENTE-FUNCIONAL | historico |
 | CHM-08 | Modo Call / Transmissão | components/CallWorkspace.tsx | ui_call.c (Call / Transmissão) | PRESENTE-FUNCIONAL | call |
 | CHM-09 | Chamada / Chat | components/CallWorkspace.tsx | ui_call.c (Chamada / Chat) | PRESENTE-FUNCIONAL | call |
-| CHM-10 | Disposição Grade / Foco das telas | components/CallWorkspace.tsx | (não existe) | AUSENTE | sonda |
-| CHM-11 | Tela cheia da transmissão e da chamada | components/CallWorkspace.tsx (Tela cheia); ipc window:fullscreen | (não existe) | AUSENTE | sonda |
+| CHM-10 | Disposição Grade / Foco das telas | components/CallWorkspace.tsx | ui_call.c: segmento Grade/Foco no cabeçalho; foco segue quem fala ou fica fixado por clique (só participantes; a transmissão tem palco próprio) | PRESENTE-FUNCIONAL | call-grade |
+| CHM-11 | Tela cheia da transmissão e da chamada | components/CallWorkspace.tsx (Tela cheia); ipc window:fullscreen | ui_call.c call_set_fullscreen: botão, F11 e Esc; a barra some após 3 s sem mouse (tela cheia da chamada; o palco da transmissão é do pacote de transmissão) | PRESENTE-FUNCIONAL | call-grade |
 | CHM-12 | Zoom na transmissão (roda, pinca, arrastar, selo de %) | components/vídeo-zoom.tsx | (não existe) | AUSENTE | sonda |
 | CHM-13 | Silenciar uma pessoa só para mim | components/CallWorkspace.tsx | ui_call.c (Silenciar para mim) | PRESENTE-FUNCIONAL | - |
 | CHM-14 | Volume por pessoa (slider) lembrado nas próximas chamadas | services/áudio/person-áudio.ts | só liga/desliga mudo, sem volume e sem memória | AUSENTE | sonda |
-| CHM-15 | Pedir a alguem que transmita (e aceitar/recusar o pedido) | call/stream-request.ts | (não existe) | AUSENTE | sonda |
+| CHM-15 | Pedir a alguem que transmita (e aceitar/recusar o pedido) | call/stream-request.ts | ui_call.c: menu do bloco > Pedir transmissão; aviso com Transmitir / Agora não; core stream.request/stream.reply (roomchat.rs) | PRESENTE-FUNCIONAL | call-pedir |
 | CHM-16 | Desconexao após 1 h sem falar, com aviso e Continuar | CallWorkspace.tsx; release 1.1.0 | (não existe) | AUSENTE | sonda |
-| CHM-17 | Diagnóstico da conexão e indicador Rede Boa dentro da chamada | components/CallWorkspace.tsx (Rede, Diagnóstico) | só em Configurações > Rede | AUSENTE | sonda |
-| CHM-18 | Ajustes de áudio durante a chamada (mic, ruído, eco, porta) | components/InCallAudioSettings.tsx | (não existe: só Configurações, e sem efeito) | AUSENTE | sonda |
+| CHM-17 | Diagnóstico da conexão e indicador Rede Boa dentro da chamada | components/CallWorkspace.tsx (Rede, Diagnóstico) | ui_call.c net_chip: chip no cabeçalho + cartão com sinalização, pessoas, transporte e teste STUN (callhist.c call_net_quality) | PRESENTE-FUNCIONAL | call-rede |
+| CHM-18 | Ajustes de áudio durante a chamada (mic, ruído, eco, porta) | components/InCallAudioSettings.tsx | ui_call.c audio_popover: volume de entrada/saída e porta de ruído (valem na hora); supressão de ruído e eco seguem sem efeito | PRESENTE-FUNCIONAL | call-rede |
 | CHM-19 | Anel/nivel de quem está falando | components/CallWorkspace.tsx | ui_call.c (me_level, rtc_peers.level) | PRESENTE-FUNCIONAL | - |
-| CHM-20 | Sons de entrar e sair da chamada | services/áudio/call-sounds.ts | (não existe) | AUSENTE | sonda |
-| CHM-21 | Tela Histórico de chamadas abre e volta | components/CallHistoryPanel.tsx | ui_history.c | PRESENTE-FUNCIONAL | social-b |
-| CHM-22 | Registro das chamadas (quando, duracao, sala, quem) | components/CallHistoryPanel.tsx; services/call/call-history.ts | ui_history.c: só o estado vazio; nada grava chamadas | PRESENTE-SEM-EFEITO | sonda |
-| CHM-23 | Guardar histórico on/off e apagar histórico | components/CallHistoryPanel.tsx | (não existe) | AUSENTE | sonda |
-| CHM-24 | Vídeo remoto, câmera dos outros e 2a tela | components/CallWorkspace.tsx | (não existe) | AUSENTE | sonda |
+| CHM-20 | Sons de entrar e sair da chamada | services/áudio/call-sounds.ts | notify.c: sons de entrar/sair (eu e outros) por transicao de in_room/peers; opcao em Notificacoes; reproducao real nao testada | PRESENTE-FUNCIONAL | - |
+| CHM-21 | Tela Histórico de chamadas abre e volta | components/CallHistoryPanel.tsx | ui_history.c | PRESENTE-FUNCIONAL | historico |
+| CHM-22 | Registro das chamadas (quando, duracao, sala, quem) | components/CallHistoryPanel.tsx; services/call/call-history.ts | ui_history.c history_tick + callhist.c: grava quando, duração, sala, quem estava e se transmiti em call_history.json | PRESENTE-FUNCIONAL | historico |
+| CHM-23 | Guardar histórico on/off e apagar histórico | components/CallHistoryPanel.tsx | ui_history.c: interruptor Guardar histórico e Apagar histórico (com confirmação) | PRESENTE-FUNCIONAL | historico |
+| CHM-24 | Vídeo remoto, câmera dos outros e 2a tela | components/CallWorkspace.tsx | (não existe; depende da câmera e do pacote de transmissão: ver docs/plans/chamada-pacote-c.md) | AUSENTE | sonda |
 | CHM-25 | Expulsar da chamada (dono) e bloqueio de volta | (novo no CUI) | ui_call.c / rtc.c peer.kick | PRESENTE-FUNCIONAL | - |
 
 ### Transmissão
@@ -368,27 +292,27 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | CFG-02 | Navegar pelas abas | views/SettingsView.tsx | settings.c (13 abas) | PRESENTE-FUNCIONAL | config-abas |
 | CFG-03 | Fechar com X ou Esc | components/Modal.tsx | settings.c cui_dialog | PRESENTE-FUNCIONAL | config-abas |
 | CFG-04 | Desconectar na lateral das Configurações | views/HomeView.tsx | settings.c (Desconectar) | PRESENTE-FUNCIONAL | - |
-| CFG-05 | Escolher microfone | components/VoiceVideoSettingsPanel.tsx | settings.c lista winmm e grava mic; o core usa o padrão | PRESENTE-SEM-EFEITO | sonda |
-| CFG-06 | Nivel do microfone ao vivo | components/VoiceVideoSettingsPanel.tsx | settings.c (barra ligada a me_level na sala) | PRESENTE-FUNCIONAL | - |
-| CFG-07 | Testar o microfone fora da chamada | components/useMicrophoneTest.ts | (o texto da tela diz que 'chega com o áudio nativo') | AUSENTE | sonda |
-| CFG-08 | Volume de entrada (ganho) | components/VoiceVideoSettingsPanel.tsx | settings.c slider; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-09 | Escolher saida de áudio | components/VoiceVideoSettingsPanel.tsx | settings.c dropdown; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-10 | Volume de saida | components/VoiceVideoSettingsPanel.tsx | settings.c slider; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-11 | Supressão de ruído (Padrão/RNNoise/Desligada) | components/VoiceVideoSettingsPanel.tsx | settings.c segmentado; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-12 | Porta de ruído com limite | components/VoiceVideoSettingsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-13 | Cancelamento de eco | components/VoiceVideoSettingsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
+| CFG-05 | Escolher microfone | components/VoiceVideoSettingsPanel.tsx | settings.c (aba Voz): lista dispositivos e envia o nome ao core (audio.cfg); o core abre o microfone escolhido e avisa se sumiu | PRESENTE-FUNCIONAL | - |
+| CFG-06 | Nivel do microfone ao vivo | components/VoiceVideoSettingsPanel.tsx | settings.c (barra ligada a me_level na sala) | PRESENTE-FUNCIONAL | voz-teste-mic |
+| CFG-07 | Testar o microfone fora da chamada | components/useMicrophoneTest.ts | settings.c (Voz): botão Testar + medidor; core mic.test (testado com tom falso no roteiro voz-teste-mic) | PRESENTE-FUNCIONAL | voz-teste-mic |
+| CFG-08 | Volume de entrada (ganho) | components/VoiceVideoSettingsPanel.tsx | settings.c slider; ganho aplicado em audio.rs (push_capture) | PRESENTE-FUNCIONAL | - |
+| CFG-09 | Escolher saida de áudio | components/VoiceVideoSettingsPanel.tsx | settings.c dropdown; core abre a saída escolhida (audio.rs, match_device) | PRESENTE-FUNCIONAL | - |
+| CFG-10 | Volume de saida | components/VoiceVideoSettingsPanel.tsx | settings.c slider; ganho de saída aplicado em audio.rs | PRESENTE-FUNCIONAL | - |
+| CFG-11 | Supressão de ruído (Padrão/RNNoise/Desligada) | components/VoiceVideoSettingsPanel.tsx | settings.c: Padrão (passa-altas + expansor suave, audio.rs NoiseFilter) e Desligada reais; RNNoise NÃO existe | PRESENTE-FUNCIONAL | - |
+| CFG-12 | Porta de ruído com limite | components/VoiceVideoSettingsPanel.tsx | settings.c; porta de ruído aplicada em audio.rs | PRESENTE-FUNCIONAL | - |
+| CFG-13 | Cancelamento de eco | components/VoiceVideoSettingsPanel.tsx | settings.c: interruptor desabilitado com a nota em breve (sem AEC no core) | AUSENTE | sonda |
 | CFG-14 | Salvamento automatico das configurações | components/VoiceVideoSettingsPanel.tsx | settings.c (settings.cfg) | PRESENTE-FUNCIONAL | - |
 | CFG-15 | Temas prontos (presets) e troca na hora | components/ThemePanel.tsx | themes.c | PRESENTE-FUNCIONAL | config-abas |
 | CFG-16 | Criar, salvar, editar, duplicar e excluir temas personalizados | components/ThemePanel.tsx | themes.c (Meus gradientes) | PRESENTE-FUNCIONAL | - |
 | CFG-17 | Restaurar o tema padrão | components/ThemePanel.tsx (Restaurar tema Briks) | themes.c | PRESENTE-FUNCIONAL | - |
 | CFG-18 | Uso de disco local | components/LocalStoragePanel.tsx | settings.c (tamanho da pasta) | PRESENTE-FUNCIONAL | config-abas |
-| CFG-19 | Divisão do espaco por tipo (mensagens, grupos, anexos) | components/LocalStoragePanel.tsx | settings.c: 'depende do backend de dados' | AUSENTE | sonda |
-| CFG-20 | Limpar anexos | components/LocalStoragePanel.tsx | settings.c: mostra 'Sem efeito real ainda' | PRESENTE-SEM-EFEITO | sonda |
-| CFG-21 | Apagar histórico de mensagens (com confirmacao) | components/LocalStoragePanel.tsx | settings.c: confirma e não apaga | PRESENTE-SEM-EFEITO | sonda |
-| CFG-22 | Exportar meus dados | components/LocalStoragePanel.tsx | settings.c: botão sem ação real | PRESENTE-SEM-EFEITO | sonda |
-| CFG-23 | Sobreposição em jogos: interruptor geral | components/OverlaySettingsPanel.tsx | settings.c; briks_overlay.exe existe mas o app não o abre | PRESENTE-SEM-EFEITO | sonda |
-| CFG-24 | Sobreposição: o que aparece (4 itens) e opacidade | components/OverlaySettingsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| CFG-25 | Sobreposição: editar posições (arrastar, redimensionar) | components/OverlaySettingsPanel.tsx | settings.c: botão sem ação | PRESENTE-SEM-EFEITO | sonda |
+| CFG-19 | Divisão do espaco por tipo (mensagens, grupos, anexos) | components/LocalStoragePanel.tsx | settings_data.c: barra por tipo (anexos, histórico) medida nas pastas locais | PRESENTE-FUNCIONAL | dados-limpar-exportar |
+| CFG-20 | Limpar anexos | components/LocalStoragePanel.tsx | settings_data.c: limpar anexos com confirmação, apaga a pasta e atualiza o tamanho (roteiro dados-limpar-exportar) | PRESENTE-FUNCIONAL | dados-limpar-exportar |
+| CFG-21 | Apagar histórico de mensagens (com confirmacao) | components/LocalStoragePanel.tsx | settings_data.c: confirma e apaga os arquivos locais de histórico; apagar no banco do backend NÃO foi testado (sem backend no teste) | PRESENTE-FUNCIONAL | dados-limpar-exportar |
+| CFG-22 | Exportar meus dados | components/LocalStoragePanel.tsx | settings_data.c: Salvar como (GetSaveFileName) e JSON com contatos, grupos e ajustes; sem mensagens, anexos nem segredos | PRESENTE-FUNCIONAL | dados-limpar-exportar |
+| CFG-23 | Sobreposição em jogos: interruptor geral | components/OverlaySettingsPanel.tsx | overlay_host.c: abre/fecha briks_overlay.exe --stdin na chamada; protocolo testado (overlay-stdin.ps1, --protocol-test) | PRESENTE-FUNCIONAL | overlay-quadro |
+| CFG-24 | Sobreposição: o que aparece (4 itens) e opacidade | components/OverlaySettingsPanel.tsx | overlay_host.c: quem está na sala, sala, transmissão, mudo, opacidade e canto vão por stdin (roteiro overlay-quadro) | PRESENTE-FUNCIONAL | overlay-quadro |
+| CFG-25 | Sobreposição: editar posições (arrastar, redimensionar) | components/OverlaySettingsPanel.tsx | settings.c: nota em breve; só os 4 cantos são reais (CFG-24) | AUSENTE | sonda |
 | CFG-26 | Aba Avisos: lista e limpar | views/SettingsView.tsx | settings.c: lista existe, mas nada gera avisos | PRESENTE-SEM-EFEITO | sonda |
 | CFG-27 | Sobre: versão, licenca e código-fonte | components/AboutPanel.tsx | settings.c (Sobre) | PRESENTE-FUNCIONAL | config-abas |
 | CFG-28 | Telemetria anonima ligar/desligar | components/AboutPanel.tsx; services/telemetry | settings.c; só salvo, nada e enviado | PRESENTE-SEM-EFEITO | sonda |
@@ -419,14 +343,14 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | ID | Item | Electron | CUI | Classe | Teste automático |
 |---|---|---|---|---|---|
-| TRY-01 | Ícone na bandeja do sistema | desktop tray.ts | (não existe) | AUSENTE | sonda |
-| TRY-02 | Menu da bandeja: Abrir app, Reiniciar app, Fechar o app | desktop tray.ts | (não existe) | AUSENTE | sonda |
-| TRY-03 | Clique no ícone da bandeja abre a janela | desktop tray.ts | (não existe) | AUSENTE | sonda |
-| TRY-04 | Fechar a janela envia para a bandeja e a chamada continua | desktop window.ts (evento close) | (fechar encerra o app) | AUSENTE | sonda |
-| TRY-05 | Instância única (segunda abertura foca a primeira) | desktop main.ts requestSingleInstanceLock | (não existe) | AUSENTE | sonda |
-| TRY-06 | Iniciar com o Windows | desktop (setLoginItemSettings) | (não existe) | AUSENTE | sonda |
-| TRY-07 | Links briks:// (convites e mensagens) | desktop protocol.ts | msgui.c só COPIA briks://mensagem; o protocolo não está registrado | AUSENTE | sonda |
-| TRY-08 | Abrir links externos no navegador | desktop ipc shell:open-external | msg-rico.txt: clique em link http(s) da mensagem abre o navegador padrão (ShellExecute); verificado com gancho de teste que só registra o endereço | PRESENTE-FUNCIONAL | msg-rico |
+| TRY-01 | Ícone na bandeja do sistema | desktop tray.ts | winstate.c/tray.c: Shell_NotifyIcon; prova sistema/bandeja-fecha (tray_visible) | PRESENTE-FUNCIONAL | - |
+| TRY-02 | Menu da bandeja: Abrir app, Reiniciar app, Fechar o app | desktop tray.ts | tray.c: menu nativo Abrir/Silenciar/Reiniciar/Sair; comandos provados por roteiro (menu nativo bloqueia: nao aberto no teste) | PRESENTE-FUNCIONAL | - |
+| TRY-03 | Clique no ícone da bandeja abre a janela | desktop tray.ts | tray.c/winstate.c: clique no icone abre; provado postando NIN_SELECT (nao clique real do mouse) | PRESENTE-FUNCIONAL | - |
+| TRY-04 | Fechar a janela envia para a bandeja e a chamada continua | desktop window.ts (evento close) | winstate.c: WM_CLOSE vai para a bandeja (opcao em Sobre); prova bandeja-fecha; com atualizacao pronta fecha de verdade | PRESENTE-FUNCIONAL | - |
+| TRY-05 | Instância única (segunda abertura foca a primeira) | desktop main.ts requestSingleInstanceLock | winstate.c: mutex nomeado + mensagem registrada; prova instancia | PRESENTE-FUNCIONAL | - |
+| TRY-06 | Iniciar com o Windows | desktop (setLoginItemSettings) | winstate.c: chave Run (--minimizado); provado so em chave de teste, nunca registrado de verdade | PRESENTE-FUNCIONAL | - |
+| TRY-07 | Links briks:// (convites e mensagens) | desktop protocol.ts | winstate.c: briks://mensagem/canal/id (WM_COPYDATA da 2a instancia + registro HKCU Classes); convites briks://friend e group NAO tratados | PRESENTE-FUNCIONAL | - |
+| TRY-08 | Abrir links externos no navegador | desktop ipc shell:open-external | attach.c (clique no link, rich_safe_url) + sys_open_url (http/https); prova links | PRESENTE-FUNCIONAL | msg-rico |
 | TRY-09 | Barra de título própria com minimizar/maximizar/fechar e versão | desktop window.ts | (janela do SO) | AUSENTE | sonda |
 | TRY-10 | Janela com tamanho mínimo e redimensionavel | desktop window.ts | main.c (min 560x480) | PRESENTE-FUNCIONAL | - |
 | TRY-11 | Aviso de recuperação quando o backend cai | components/DesktopRecoveryNotice.tsx | ui_auth.c ('Quase la', 'Tentar de novo') | PRESENTE-FUNCIONAL | - |
@@ -435,21 +359,21 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | ID | Item | Electron | CUI | Classe | Teste automático |
 |---|---|---|---|---|---|
-| NOT-01 | Aviso: amigo ficou online | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| NOT-02 | Aviso: amigo comecou a transmitir | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| NOT-03 | Notificação de nova mensagem (DM e grupo) com o app em segundo plano | services/chat/background-manager.ts | (não existe) | AUSENTE | sonda |
-| NOT-04 | Notificação 'pediu para você transmitir' | components/CallWorkspace.tsx | (não existe) | AUSENTE | sonda |
-| NOT-05 | Nada e avisado durante a chamada nem logo ao abrir | release 1.2.0 | (sem avisos) | AUSENTE | sonda |
+| NOT-01 | Aviso: amigo ficou online | services/profile/use-friend-notifications.ts | notify.c: balao quando amigo fica online (respeita interruptor/foco/chamada) | PRESENTE-FUNCIONAL | - |
+| NOT-02 | Aviso: amigo comecou a transmitir | services/profile/use-friend-notifications.ts | notify.c: balao ao iniciar transmissao, suprimido em chamada (NOT-05) e so ha transmissao dentro da chamada: quase nunca dispara | PRESENTE-FUNCIONAL | - |
+| NOT-03 | Notificação de nova mensagem (DM e grupo) com o app em segundo plano | services/chat/background-manager.ts | rtc.c chat.message -> notify.c (mensagem + nao lidas); depende do core entregar chat.message | PRESENTE-FUNCIONAL | - |
+| NOT-04 | Notificação 'pediu para você transmitir' | components/CallWorkspace.tsx | ui_call.c call_banner: aviso dentro do app (na chamada e no menu); notificação do sistema fica com o pacote de janela/notificações | PRESENTE-FUNCIONAL | call-pedir |
+| NOT-05 | Nada e avisado durante a chamada nem logo ao abrir | release 1.2.0 | sysmodel.h sm_toast_allowed: nada em chamada nem nos 15 s iniciais; teste unitario + avisos/avisos-espera | PRESENTE-FUNCIONAL | - |
 
 ### Atalhos
 
 | ID | Item | Electron | CUI | Classe | Teste automático |
 |---|---|---|---|---|---|
-| ATL-01 | Atalho global: mutar/desmutar (Ctrl+Shift+M) | services/input/shortcuts.ts; desktop call-shortcuts.ts | settings.c campo de texto; nada registra o atalho | PRESENTE-SEM-EFEITO | sonda |
-| ATL-02 | Atalho global: ensurdecer (Ctrl+Shift+D) | idem | idem | PRESENTE-SEM-EFEITO | sonda |
-| ATL-03 | Atalho global: transmitir/parar | idem | idem | PRESENTE-SEM-EFEITO | sonda |
-| ATL-04 | Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar) | components/ShortcutsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| ATL-05 | Remover atalho e aviso de atalho ocupado | components/ShortcutsPanel.tsx (Remover) | (não existe) | AUSENTE | sonda |
+| ATL-01 | Atalho global: mutar/desmutar (Ctrl+Shift+M) | services/input/shortcuts.ts; desktop call-shortcuts.ts | hotkeys_win.c + hotkeys_rt.c: RegisterHotKey só na chamada; Gravar/Alterar/Remover na aba Atalhos | PRESENTE-FUNCIONAL | atalhos-gravar |
+| ATL-02 | Atalho global: ensurdecer (Ctrl+Shift+D) | idem | idem ATL-01 | PRESENTE-FUNCIONAL | atalhos-gravar |
+| ATL-03 | Atalho global: transmitir/parar | idem | idem ATL-01 | PRESENTE-FUNCIONAL | atalhos-gravar |
+| ATL-04 | Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar) | components/ShortcutsPanel.tsx | hotkeys_rt.c: PTT por sondagem (GetAsyncKeyState), tecla ou botão do mouse; atraso ao soltar não existe ainda | PRESENTE-FUNCIONAL | atalhos-gravar |
+| ATL-05 | Remover atalho e aviso de atalho ocupado | components/ShortcutsPanel.tsx (Remover) | settings.c: Remover, aviso de conflito e de combinação ocupada (hkw_probe) | PRESENTE-FUNCIONAL | atalhos-gravar |
 | ATL-06 | Ctrl+Shift+O: editar posições do overlay em qualquer tela | components/OverlaySettingsPanel.tsx | (não existe) | AUSENTE | sonda |
 
 ### Extras do CUI (sem equivalente no Electron)
@@ -481,17 +405,17 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | BAS-09 | Tab e Shift+Tab percorrem os campos e botões na ordem visual | Chromium (nativo) | biblioteca (cui_core.c): ordem de foco por quadro, Tab e Shift+Tab; Esc solta o Tab no editor de código | PRESENTE-FUNCIONAL | - |
 | BAS-10 | Foco visível (anel no elemento focado) e Enter/Espaço ativando botões | Chromium (nativo) | biblioteca: anel de foco e ativação por teclado nos widgets | PRESENTE-FUNCIONAL | - |
 | BAS-11 | Alt+F4 e botão X da janela fecham o app | Electron (BrowserWindow) | Win32 nativo: WM_CLOSE encerra o app e a chamada; sem confirmação durante a chamada | PRESENTE-FUNCIONAL | - |
-| BAS-12 | Ícone na bandeja do sistema (clique abre, menu Sair) | desktop tray.ts | (não existe) | AUSENTE | sonda |
-| BAS-13 | Minimizar e fechar para a bandeja (a chamada continua) | desktop tray.ts | (não existe): fechar derruba o app e a chamada | AUSENTE | sonda |
-| BAS-14 | Iniciar com o Windows | desktop (loginItemSettings) | (não existe) | AUSENTE | sonda |
-| BAS-15 | Instância única (abrir de novo traz a janela existente) | desktop (requestSingleInstanceLock) | (não existe): duas instâncias disputam o banco | AUSENTE | sonda |
-| BAS-16 | Lembrar posição, tamanho, monitor e maximizado da janela | desktop-lifecycle.ts (só calcula o tamanho inicial pela área de trabalho; não grava) | (não existe): abre sempre 1280x800 no lugar padrão do Windows; layout.json guarda só os painéis | AUSENTE | sonda |
+| BAS-12 | Ícone na bandeja do sistema (clique abre, menu Sair) | desktop tray.ts | ver TRY-01 | PRESENTE-FUNCIONAL | - |
+| BAS-13 | Minimizar e fechar para a bandeja (a chamada continua) | desktop tray.ts | ver TRY-04 | PRESENTE-FUNCIONAL | - |
+| BAS-14 | Iniciar com o Windows | desktop (loginItemSettings) | ver TRY-06 | PRESENTE-FUNCIONAL | - |
+| BAS-15 | Instância única (abrir de novo traz a janela existente) | desktop (requestSingleInstanceLock) | ver TRY-05 | PRESENTE-FUNCIONAL | - |
+| BAS-16 | Lembrar posição, tamanho, monitor e maximizado da janela | desktop-lifecycle.ts (só calcula o tamanho inicial pela área de trabalho; não grava) | winstate.c/sysmodel.h: sistema.cfg (x,y,w,h,max) + wf_fit no monitor atual; prova janela-* e teste unitario; maximizado nao verificado em janela oculta | PRESENTE-FUNCIONAL | - |
 | BAS-17 | Redimensionar, maximizar e restaurar a janela com mínimo de 560x480 | Electron | Win32: WM_SIZE e WM_GETMINMAXINFO; os painéis se reajustam | PRESENTE-FUNCIONAL | - |
 | BAS-18 | DPI alto e escala do Windows (PerMonitorV2, troca de monitor com DPI diferente) | Chromium (nativo, sem código próprio) | biblioteca: SetProcessDpiAwarenessContext, WM_DPICHANGED, cui_dpi_scale | PRESENTE-FUNCIONAL | - |
 | BAS-19 | Vários monitores: abrir no monitor onde estava e janela fora da área visível voltar para dentro | desktop-lifecycle.ts | (não existe): sem restauração de posição, então depende do Windows | VERIFICAR | - |
-| BAS-20 | Notificações do sistema (nova mensagem, amigo online, transmissão) | desktop notifications | (não existe); interruptores de Configurações sem efeito | AUSENTE | sonda |
-| BAS-21 | Som de notificação e sons de entrar/sair da chamada | services/audio/call-sounds.ts | (não existe) | AUSENTE | sonda |
-| BAS-22 | Badge de não lidas (lista de conversas, rail, ícone da barra de tarefas) | (não existe no Electron também) | msgui.c só mostra "não lida" dentro de tópicos; nada na lista nem na barra de tarefas | AUSENTE | sonda |
+| BAS-20 | Notificações do sistema (nova mensagem, amigo online, transmissão) | desktop notifications | notify.c: balao nativo pelo icone da bandeja; regras provadas (avisos); balao real nao exibido em teste | PRESENTE-FUNCIONAL | - |
+| BAS-21 | Som de notificação e sons de entrar/sair da chamada | services/audio/call-sounds.ts | notify.c: WAV sintetizado + PlaySound; tocar de verdade nao testado (teste so conta) | PRESENTE-FUNCIONAL | - |
+| BAS-22 | Badge de não lidas (lista de conversas, rail, ícone da barra de tarefas) | (não existe no Electron também) | notify.c/tray.c: contador na dica+icone da bandeja e selo da barra de tarefas; NAO ha pilula na lista de conversas/trilho | PRESENTE-FUNCIONAL | - |
 | BAS-23 | Arrastar e soltar arquivos na janela ou no composer | components/MessageComposer.tsx (Solte para enviar) | campos-anexos.txt: arquivo solto envia (com sala) ou fica preparado no cartão; "Solte para enviar" aparece quando a plataforma informa o arraste (Windows ainda não informa) | PRESENTE-FUNCIONAL | campos-anexos |
 | BAS-24 | Colar imagem da área de transferência no composer | Chromium (nativo, sem código próprio) | campos-anexos.txt: Ctrl+V / Colar com imagem na área de transferência cria cartão de anexo preparado (CF_DIB); envio exige sala de voz | PRESENTE-FUNCIONAL | campos-anexos |
 | BAS-25 | Rolagem com a roda do mouse e o touchpad (vertical e horizontal) | Chromium (nativo, sem código próprio) | biblioteca: WM_MOUSEWHEEL e WM_MOUSEHWHEEL; cui_scroll nas listas e na conversa | PRESENTE-FUNCIONAL | - |
@@ -501,14 +425,14 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | BAS-29 | Estados vazios com ícone e texto (sem amigos, sem mensagens, sem histórico) | Electron | ui_social.c e ui_history.c: ícone grande e texto de apoio | PRESENTE-FUNCIONAL | - |
 | BAS-30 | Estado de carregamento (spinner ou esqueleto) enquanto o core sobe, entra na sala ou carrega o histórico | Electron | VERIFICAR: há texto de status ("Conectando", "Baixando a atualização"), mas não vi spinner ou esqueleto nas listas; depende do core real | VERIFICAR | - |
 | BAS-31 | Mensagens de erro compreensíveis (login, rede, sem conexão com o core) | Electron | account.c e ui_auth.c: avisos em português claro ("Sem conexão com o Briks. Tente de novo…") | PRESENTE-FUNCIONAL | - |
-| BAS-32 | Estado offline / sem internet visível ao usuário (banner persistente) | Electron | Só o aviso de erro pontual (account.c) e o texto de Diagnóstico; sem banner persistente na janela principal | AUSENTE | sonda |
+| BAS-32 | Estado offline / sem internet visível ao usuário (banner persistente) | Electron | Pílula no topo (net_state.c): sem conexão (sonda TCP em segundo plano, 2 falhas seguidas) com Tentar agora, reconectando à chamada e conexão restabelecida | PRESENTE-FUNCIONAL | net-offline, net-restaurada |
 | BAS-33 | Reconexão automática da chamada e do signaling com aviso | Electron | rtc.c: estado "Reconectando…" mostrado; reconexão feita pelo core | PRESENTE-FUNCIONAL | - |
 | BAS-34 | Sair da conta e trocar de conta | Electron | Botão sair do rodapé e Desconectar em Configurações (AUT-13) | PRESENTE-FUNCIONAL | - |
 | BAS-35 | Aviso de atualização disponível/pronta | Electron (electron-updater) | ui_update.c e Configurações > Atualizações (ATU-01) | PRESENTE-FUNCIONAL | - |
 | BAS-36 | Sobre: versão do app e licença | Electron | Configurações > Sobre e Atualizações mostram versão e licença AGPL | PRESENTE-FUNCIONAL | - |
-| BAS-37 | Licenças de software de terceiros dentro do app | (não existe no Electron também) | (não existe): THIRD_PARTY.md existe no repositório da biblioteca, não dentro do app | AUSENTE | sonda |
+| BAS-37 | Licenças de software de terceiros dentro do app | (não existe no Electron também) | Configurações > Sobre > Licenças de software de terceiros: diálogo de vidro com rolagem e o texto empacotado (assets\licenses.txt) | PRESENTE-FUNCIONAL | config-licencas |
 | BAS-38 | Contraste legível do texto sobre o fundo dos temas | Electron | themes.c limita a opacidade das manchas pela luminância e avisa quando clareia demais | PRESENTE-FUNCIONAL | - |
-| BAS-39 | Tamanho de texto ajustável pelo usuário (zoom da interface) | Chromium (nativo, sem código próprio) (Ctrl+roda/Ctrl+mais) | (não existe): só segue a escala do Windows (BAS-18); sem Ctrl+mais/menos nem opção | AUSENTE | sonda |
+| BAS-39 | Tamanho de texto ajustável pelo usuário (zoom da interface) | Chromium (nativo, sem código próprio) (Ctrl+roda/Ctrl+mais) | Configurações > Temas > Aparência (4 tamanhos, vale na hora e fica salvo) e atalhos Ctrl+mais, Ctrl+menos e Ctrl+0 | PRESENTE-FUNCIONAL | config-texto |
 | BAS-40 | Leitor de tela e navegação assistiva (UI Automation / MSAA) | Chromium (nativo, sem código próprio) (árvore de acessibilidade) | (não existe): a interface é desenhada pela biblioteca, sem UIA | AUSENTE | sonda |
 | BAS-41 | Acentos, AltGr e teclas mortas (ç, ã, é) digitados no teclado ABNT2 | Chromium (nativo, sem código próprio) | biblioteca: WM_CHAR entrega o caractere final; funciona em todos os campos | PRESENTE-FUNCIONAL | - |
 | BAS-42 | IME (japonês, chinês, coreano) e emoji do teclado do Windows (Win+.) | Chromium (nativo, sem código próprio) | VERIFICAR: a plataforma trata WM_CHAR mas não WM_IME_COMPOSITION; o texto final de IME e o painel de emoji provavelmente entram, mas sem janela de composição junto ao cursor | VERIFICAR | - |
@@ -520,14 +444,14 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | LAY-01 | Trilho à esquerda: Início e grupos como cartões arredondados, "Criar grupo" no fim | (padrão novo do usuário) | ui_social.c (P_SERVERS): cartões com avatar e texto; conforme | PRESENTE-FUNCIONAL | - |
 | LAY-02 | Lista ao lado do trilho: Amigos, Adicionar amigo, Histórico, salas de voz, grupos, amigos e cartão do usuário embaixo | (padrão novo do usuário) | ui_social.c (P_NAV): conforme; item ativo em vidro com acento | PRESENTE-FUNCIONAL | - |
 | LAY-03 | Conversa larga com cabeçalho (nome, tipo, Fixadas), mensagens e composer fixo embaixo | (padrão novo do usuário) | ui_social.c (P_CHAT) e msgui.c: conforme, com anexar, campo e enviar na mesma barra | PRESENTE-FUNCIONAL | - |
-| LAY-04 | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | (padrão novo do usuário) | layout_default (layout.c) cria só trilho, lista e conversa; Membros e Sala de voz existem como painéis, mas só entram pelo botão + do dock e o de Membros lista amigos, não o grupo (GRP-10) | AUSENTE | sonda |
+| LAY-04 | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | (padrão novo do usuário) | layout.c layout_app_default (cui-paineis, 895bc9c): grupos  |  menu  | - |
 | LAY-05 | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | AUSENTE | sonda |
-| LAY-06 | Histórico de chamadas como painel do layout (hoje cobre a janela inteira, sem trilho nem lista) | (padrão novo do usuário) | ui_history.c: o item da lista abre tela cheia com seta de voltar e só o estado vazio; existe também o painel Histórico do dock (+ painel), mas o item da lista não o usa | AUSENTE | sonda |
-| LAY-07 | Aba Chat da chamada no padrão de conversa (balões, avatares, horário, composer embaixo) | (padrão novo do usuário) | ui_call.c: texto cru "Nome / frase" sem balão, avatar, hora nem campo de envio (MSG-19) | AUSENTE | - |
-| LAY-08 | Tela de chamada em tela cheia (imersiva) em vez de dentro do layout trilho/lista/hub | (padrão novo do usuário) | ui_call.c: cabeçalho próprio, grade de participantes e barra de controles flutuante; esconde trilho e lista. Decisão de design, não defeito | VERIFICAR | - |
+| LAY-06 | Histórico de chamadas como painel do layout (hoje cobre a janela inteira, sem trilho nem lista) | (padrão novo do usuário) | ui_history.c ui_history_panel: abre no painel central com trilho e menu à vista; tela inteira só sem painel de conversa | PRESENTE-FUNCIONAL | historico |
+| LAY-07 | Aba Chat da chamada no padrão de conversa (balões, avatares, horário, composer embaixo) | (padrão novo do usuário) | ui_call.c stage_chat: mesmo balão do painel de conversa (briks_bubble), horário, avatar e campo fixo embaixo | PRESENTE-FUNCIONAL | call-chat |
+| LAY-08 | Tela de chamada em tela cheia (imersiva) em vez de dentro do layout trilho/lista/hub | (padrão novo do usuário) | ui_call.c: chamada ocupa a janela (sem trilho/lista) e tem tela cheia real (F11) | PRESENTE-FUNCIONAL | call-grade |
 | LAY-09 | Diálogos (Configurações, perfil, criar grupo, excluir mensagem) em vidro, cantos arredondados, fundo escurecido | (padrão novo do usuário) | cui_dialog em settings.c, profile.c, msgui.c: conforme; 13 abas de Configurações em coluna à esquerda | PRESENTE-FUNCIONAL | - |
 | LAY-10 | Tela de entrada (login, criar conta, recuperar) em cartão central de vidro | (padrão novo do usuário) | ui_auth.c: cartão central, título grande, botões Google/Discord e links: conforme | PRESENTE-FUNCIONAL | - |
-| LAY-11 | Texto sempre legível: tamanho mínimo nas etiquetas (rótulos de seção em 10 a 11 px) | (padrão novo do usuário) | Rótulos "SALAS DE VOZ", "GRUPOS", "AMIGOS", dicas e legendas dos balões usam 10 a 11 px, abaixo do padrão de "textos maiores" pedido; corpo e títulos estão bons | AUSENTE | - |
+| LAY-11 | Texto sempre legível: tamanho mínimo nas etiquetas (rótulos de seção em 10 a 11 px) | (padrão novo do usuário) | Piso de 12 px no cui_text (briks_ui.h): nenhuma etiqueta abaixo disso; o tamanho do texto de Configurações multiplica por cima | PRESENTE-FUNCIONAL | - |
 | LAY-12 | Dica "Sair" (tooltip) presa no topo da tela e círculo no canto inferior esquerdo em todas as capturas | (padrão novo do usuário) | Nas capturas ocultas o tooltip do botão sair do rodapé aparece fixo em x=640 y=20; já listado em plano-pos-1.3.0 (frente D) | AUSENTE | - |
 | LAY-13 | Janela mínima 560x480 sem corte ou sobreposição (captura gerada pelo roteiro) | (padrão novo do usuário) | O roteiro abre o app em 560x480 e captura; o teste só prova que abre e captura, a análise do desenho é visual na captura lay-min/capturas/l0.png | PRESENTE-FUNCIONAL | lay-min |
 
@@ -540,12 +464,11 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Resultado | Itens |
 |---|---|
-| AUSENTE | 66 |
-| FALHOU | 5 |
-| PASSOU | 60 |
-| REVER | 18 |
-| SEM-EFEITO | 28 |
-| SEM-TESTE | 64 |
+| AUSENTE | 18 |
+| PASSOU | 111 |
+| REVER | 13 |
+| SEM-EFEITO | 6 |
+| SEM-TESTE | 93 |
 | VERIFICAR | 7 |
 
 PASSOU = a ação teve o efeito visível esperado no app oculto; SEM-TESTE = item PRESENTE-FUNCIONAL sem roteiro automático (depende do core, da rede, de GPU ou de conferência manual); SEM-EFEITO/AUSENTE = confirmado pelo clique e/ou pela sonda; REVER = sonda ou clique indica que algo mudou; reclassifique.

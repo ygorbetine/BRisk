@@ -452,6 +452,33 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         };
                         out(&mut wr, ev).await?;
                     }
+                    "friend.invite" | "friend.accept" | "friend.list" => {
+                        // amigo P2P por código assinado (friend_invite.rs): criar o convite, aceitar um código, listar quem já foi aceito
+                        let op = v["cmd"].as_str().unwrap_or("").trim_start_matches("friend.").to_string();
+                        let me = match &identity { Some(i) => Some(i.clone()), None => load_or_create_identity(&cfg.data_dir).ok().map(Arc::new) };
+                        let Some(me) = me else { out(&mut wr, json!({ "ev": "friend.result", "op": op, "ok": false, "message": "identidade indisponível" })).await?; continue };
+                        identity = Some(me.clone());
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                        let ev = match op.as_str() {
+                            "invite" => {
+                                let nonce = format!("{:016x}{:016x}", now, rand_core::RngCore::next_u64(&mut rand_core::OsRng));
+                                match crate::friend_invite::create(&me, v["name"].as_str().unwrap_or(""), now, &nonce) {
+                                    Ok(i) => json!({ "ev": "friend.result", "op": "invite", "ok": true, "code": crate::friend_invite::to_code(&i), "exp": i.exp }),
+                                    Err(e) => json!({ "ev": "friend.result", "op": "invite", "ok": false, "message": e.to_string() }),
+                                }
+                            }
+                            "accept" => {
+                                let r = crate::friend_invite::from_code(v["code"].as_str().unwrap_or("")).and_then(|i| crate::friend_invite::check(&i, &me.fingerprint(), now))
+                                    .and_then(|f| crate::friend_invite::save(&cfg.data_dir, &f).map(|existed| (f, existed)));
+                                match r {
+                                    Ok((f, existed)) => json!({ "ev": "friend.result", "op": "accept", "ok": true, "fp": f.fp, "name": f.name, "existed": existed }),
+                                    Err(e) => json!({ "ev": "friend.result", "op": "accept", "ok": false, "message": e.to_string() }),
+                                }
+                            }
+                            _ => json!({ "ev": "friend.result", "op": "list", "ok": true, "friends": crate::friend_invite::load(&cfg.data_dir) }),
+                        };
+                        out(&mut wr, ev).await?;
+                    }
                     "group.code" => {
                         let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
                             Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),

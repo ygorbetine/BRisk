@@ -26,7 +26,7 @@ static void hot_paint(cui_ctx *ui, cui_rect r, void *user) {
     (void)r; const float *q = (const float *)user;
     if (q[2] <= 0) return;
     cui_rect z = { q[0], q[1], q[2], q[3] };
-    cui_draw_rect(ui, z, CUI_CORNERS(fminf(12.0f, q[3] * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
+    cui_draw_rect(ui, z, CUI_CORNERS(fminf(q[5], fminf(q[2], q[3]) * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
 }
 /* Dentro de diálogo/menu a camada de baixo fica coberta: aqui só o cursor de mão; o realce é do próprio item (menus de Configurações e Perfil). */
 void briks_hot_modal_draw(cui_ctx *ui) { if (g_hot_on) { cui_set_cursor(ui, CUI_CURSOR_HAND); g_hot_on = false; } }
@@ -35,16 +35,17 @@ void briks_tip_draw(cui_ctx *ui) {
         g_hot_on = false;
         cui_set_cursor(ui, CUI_CURSOR_HAND);
         if (g_hot[2] * g_hot[3] < 70000.0f) {   /* cartões/áreas grandes: só o cursor */
-            float q[5] = { g_hot[0], g_hot[1], g_hot[2], g_hot[3], cui_mouse_down(ui, CUI_MOUSE_LEFT) ? 1.0f : 0.0f };
+            float q[6] = { g_hot[0], g_hot[1], g_hot[2], g_hot[3], cui_mouse_down(ui, CUI_MOUSE_LEFT) ? 1.0f : 0.0f, g_hot[4] };
             cui_canvas(ui, "briks-hot", CUI_FILL, CUI_FILL, hot_paint, q, sizeof q);
         }
     }
     if (!g_tip[0]) return;
     cui_vec2 vp = cui_viewport_size(ui), m = cui_mouse_pos(ui);
     cui_text_metrics tm = cui_measure_text(ui, CUI_FONT_BODY, 12.0f, g_tip, (int)strlen(g_tip));
-    float w = fminf(tm.width, 320.0f) + 24, h = 28, x = m.x + 14, y = m.y + 20;
+    /* folga na medida: a largura medida ficava um pouco menor que a desenhada e o fim da dica virava reticências */
+    float w = fminf(tm.width * 1.05f + 4.0f, 360.0f) + 26, h = 28, x = m.x + 14, y = m.y + 20;
     if (x + w + 6 > vp.x) x = m.x - w - 8;
-    if (y + h + 6 > vp.y) y = m.y - h - 10;
+    if (y + h + 6 > vp.y || m.y > vp.y * 0.72f) y = m.y - h - 12;   /* perto do rodapé (painel de voz, barra de mensagem): a dica sobe em vez de cobrir o que está embaixo */
     x = fmaxf(x, 6); y = fmaxf(y, 6);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
         cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 14, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xffffff30), .clip = true,
@@ -173,6 +174,7 @@ static void bubbles_draw(cui_ctx *ui) {
     g_bub_n = 0;
 }
 
+static cui_rect g_last_row;   /* retângulo (quadro anterior) da última linha desenhada por person_row_ex: o menu de contexto do grupo usa */
 static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_texture img) {
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
@@ -192,6 +194,7 @@ static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_textu
         }
     }
     bool hit = briks_clicked(ui, "b");
+    g_last_row = cui_get_rect(ui, cui_make_id(ui, "b"));
     cui_pop_id(ui);
     return hit;
 }
@@ -247,6 +250,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
                 if (person_row_ex(ui, &g, s->active_group == i, groups_image(s, s->groups[i].id))) app_open_group(s, i);
+                groups_row_menu(ui, s, i, g_last_row);
                 if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);
             }
@@ -468,6 +472,8 @@ static void panel_servers(cui_ctx *ui, app_state_t *s) {
                 space_button(ui, ini, s->communities[i].name, sub, s->active_space == i + 1, false, &click, i + 1);
             }
             space_button(ui, "+", "Criar grupo", "", false, true, &click, 999);
+            space_button(ui, "»","Entrar em grupo", "", false, true, &click, 998);
+            if (click == 998) { s->join_open = true; s->join_code[0] = 0; s->join_err[0] = 0; click = -1; }
             if (click == 999) { s->create_group_open = true; click = -1; }
             if (click >= 0) s->active_space = click;
         }
@@ -491,11 +497,13 @@ static void panel_friends(cui_ctx *ui, app_state_t *s) {   /* painel Amigos: a t
 static void panel_members(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, GLASS_PANEL) {
         panel_shell(ui, "Membros", CUI_ICON_USERS);
-        g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
-        cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            person_t me; memset(&me, 0, sizeof me); snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
-            person_row_ex(ui, &me, false, s->user_photo);
-            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row_ex(ui, &s->friends[i], false, friend_photo(s->friends[i].id)); cui_pop_id(ui); }
+        if (!groups_members_panel(ui, s)) {   /* grupo aberto: membros do grupo, com cargos e gestão; sem grupo: você e seus amigos */
+            g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
+            cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
+                person_t me; memset(&me, 0, sizeof me); snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
+                person_row_ex(ui, &me, false, s->user_photo);
+                for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row_ex(ui, &s->friends[i], false, friend_photo(s->friends[i].id)); cui_pop_id(ui); }
+            }
         }
     }
 }
@@ -747,6 +755,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Enviar pedido", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy)) app_add_friend(s);
         }
+        friends_code_card(ui, s);   /* AMI-04: por código assinado */
     }
     cui_dialog(ui, "Criar grupo", &s->create_group_open) {
         cui_text(ui, "O grupo fica gravado neste computador. Para chamar alguém, abra “Membros” e convide um amigo: você recebe um código para mandar a ele.", .color = B_MUTED);
@@ -768,6 +777,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     }
     bubbles_draw(ui);
     call_banner(ui, s);   /* "pediu para você transmitir" também com a chamada minimizada */
+    groups_overlay(ui, s);
     msgui_overlay(ui, s);
     attach_overlay(ui, s);
     attach_palette_keys(ui);

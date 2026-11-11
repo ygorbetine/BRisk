@@ -236,7 +236,7 @@ static bool tab(cui_ctx *ui, int id, const char *icon, const char *label, bool a
         }
     }
     if (compact && briks_hover(ui, "b")) briks_tip(label);
-    bool hit = briks_clicked(ui, "b");
+    bool hit = briks_clicked_r(ui, "b", 9.0f);
     cui_pop_id(ui);
     return hit;
 }
@@ -253,7 +253,7 @@ static bool pill(cui_ctx *ui, int id, const char *icon, const char *label, int k
         if (label) cui_text(ui, label, .font = CUI_FONT_DISPLAY, .size = 15, .color = fg, .nowrap = true);
     }
     if (tip && briks_hover(ui, "b")) briks_tip(tip);
-    bool hit = briks_clicked(ui, "b");
+    bool hit = briks_clicked_r(ui, "b", 25.0f);   /* o realce segue a pílula/círculo de 50 px (raio 25), sem cantos sobrando */
     cui_pop_id(ui);
     return hit;
 }

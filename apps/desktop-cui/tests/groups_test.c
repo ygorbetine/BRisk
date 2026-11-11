@@ -7,6 +7,7 @@ int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui
 static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }
+char g_tip[160]; void app_open_group(app_state_t *s, int i) { s->active_group = i; } bool friends_online(const app_state_t *s, const person_t *p) { (void)s; (void)p; return false; }
 static char core_sent[16384]; static int core_n;
 core_status_t core_state(void) { return CORE_STOPPED; }
 bool core_send(const char *l) { snprintf(core_sent, sizeof core_sent, "%s", l); core_n++; return true; }
@@ -104,6 +105,19 @@ int main(void) {
     groups_core_event(&s, e4, "group.snapshot"); json_free(e4);
     CHECK(core_n == 1 && strstr(core_sent, "\"cmd\":\"group.verify\"") && strstr(core_sent, "\"trusted\":{\"v\":1") && strstr(core_sent, "\"tag\":\"dc\""));
     json_free(sn);
+    /* canais: renomear, apagar (sempre sobra um de texto), membro: admin, remover, duplicados */
+    groups_load(&s, GROUP); s.active_group = 0; sent_n = 0;
+    rename_channel(&s, 0, 0, "novidades");
+    CHECK(!strcmp(s.groups[0].ch[0].name, "novidades") && sent_n == 1 && strstr(sent, "\"name\":\"novidades\"") && strstr(sent, "\"x\":1"));
+    CHECK(last_text_channel(&s.groups[0], 0) && !last_text_channel(&s.groups[0], 1));
+    remove_channel(&s, 0, 0); CHECK(s.groups[0].nch == 2);                       /* único canal de texto: recusa */
+    s.groups[0].m[1].admin = false; set_admin(&s, 0, 1, true); CHECK(s.groups[0].m[1].admin);
+    s.groups[0].nm = 3; s.groups[0].m[2] = s.groups[0].m[1]; CHECK(dup_count(&s.groups[0]) == 1);
+    s.busy = false; remove_duplicates(&s, 0); CHECK(s.groups[0].nm == 2 && dup_count(&s.groups[0]) == 0);
+    s.busy = false; remove_member(&s, 0, 0); CHECK(s.groups[0].nm == 2);          /* o dono não sai */
+    s.busy = false; remove_member(&s, 0, 1); CHECK(s.groups[0].nm == 1);
+    s.groups[0].can_moderate = s.groups[0].is_owner = false; s.busy = false; rename_channel(&s, 0, 0, "x"); CHECK(strcmp(s.groups[0].ch[0].name, "x"));   /* membro comum não edita */
+    CHECK(groups_probe(&s, "grp_nm") == 1 && groups_probe(&s, "grp_moderate") == 0);
     printf(fails ? "groups_test: %d falha(s)\n" : "groups_test: ok\n", fails);
     return fails ? 1 : 0;
 }

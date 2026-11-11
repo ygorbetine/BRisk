@@ -1,0 +1,7 @@
+# Grupos: membro comum (BRIKS_DEMO_GMEMBER=1, BRIKS_DOCK=added) não vê gestão: sem lápis/lixeira no canal, sem "Novo canal", sem menu "..." nos membros.
+waitms 600
+expect grp_moderate 0
+at 380 504
+waitms 400
+shot gp0
+snap gp1

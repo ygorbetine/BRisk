@@ -57,6 +57,12 @@ int script_probe(const char *n) {
     }
     if (!strncmp(n, "open_is:", 8)) return strstr(attach_last_open(), n + 8) != NULL;   /* link aberto por clique contém o texto (teste) */
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
+    if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
+    if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
+    if (!strcmp(n, "amg_in_len")) return (int)strlen(state.amg_in);
+    if (!strcmp(n, "amg_own")) return strstr(state.amg_msg, "próprio") != NULL;   /* aceitar o meu próprio código é recusado pelo core */
+    if (!strcmp(n, "amg_friends")) return state.friend_count;
+    if (!strcmp(n, "search_on")) return attach_search_is_on();
     return dock_probe(n);
 }
 

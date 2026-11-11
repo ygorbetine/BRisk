@@ -27,6 +27,8 @@ pub enum AudioEvent {
     /// `peer` = "me" para o microfone local. `level` 0..1 (0 = parou de falar).
     Speaking { peer: String, level: f32 },
     Error(String),
+    /// Aviso para a interface (JSON pronto para o IPC): `audio.mic` (estado do microfone) ou `audio.device` (troca/queda de dispositivo)
+    Notice(serde_json::Value),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -92,6 +94,12 @@ pub struct Audio {
     mic_dev: Mutex<String>,
     out_dev: Mutex<String>,
     dev_gen: AtomicU32,
+    /// Microfone falso (BRIKS_FAKE_MIC ou definido pelos testes), aberturas já feitas dele, último estado avisado, aviso de fallback pendente e espera base das reaberturas (ms)
+    fake_mic: Mutex<Option<FakeMic>>,
+    fake_opens: AtomicU32,
+    mic_code: Mutex<String>,
+    pending_notice: Mutex<Option<String>>,
+    retry_ms: AtomicU64,
     pub stats: Mutex<HashMap<String, RxStat>>,
     pub sent_frames: AtomicU64,
     ev: mpsc::Sender<AudioEvent>,
@@ -145,11 +153,14 @@ impl Audio {
             "briks".into(),
         ));
         let a = Arc::new(Audio { track, mic_muted: AtomicBool::new(false), deaf: AtomicBool::new(false), stop: AtomicBool::new(false), fake,
-            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), noise: AtomicU8::new(0), nf: Mutex::new(NoiseFilter::new()), echo: AtomicBool::new(true), aec: Default::default(), aec_ref: Default::default(), mic_dev: Default::default(), out_dev: Default::default(), dev_gen: AtomicU32::new(0), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
+            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), noise: AtomicU8::new(0), nf: Mutex::new(NoiseFilter::new()), echo: AtomicBool::new(true), aec: Default::default(), aec_ref: Default::default(), mic_dev: Default::default(), out_dev: Default::default(), dev_gen: AtomicU32::new(0), fake_mic: Mutex::new(FakeMic::from_env()), fake_opens: AtomicU32::new(0), mic_code: Default::default(), pending_notice: Default::default(), retry_ms: AtomicU64::new(std::env::var("BRIKS_AUDIO_RETRY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(500)), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
         (a, rx)
     }
 
     pub fn fake_from_env() -> bool { std::env::var("BRIKS_CORE_FAKE_AUDIO").map(|v| v == "1").unwrap_or(false) }
+    /// Para os testes: microfone falso e espera base das reaberturas, sem mexer em variável de ambiente (que é global ao processo).
+    pub fn set_fake_mic(&self, m: Option<FakeMic>) { *self.fake_mic.lock().unwrap() = m; }
+    pub fn set_retry_ms(&self, ms: u64) { self.retry_ms.store(ms.max(1), Ordering::Relaxed); }
 
     pub fn set_mic_muted(&self, m: bool) { self.mic_muted.store(m, Ordering::Relaxed); }
     /// Ensurdecer implica mutar o microfone (o estado `mic_muted` do usuário é preservado e volta ao desligar).
@@ -187,9 +198,9 @@ impl Audio {
 
     /// Inicia captura + envio (e a saída cpal, se não for o modo falso).
     pub fn start(self: &Arc<Self>) {
-        if !self.fake {
+        if !self.fake || self.fake_mic.lock().unwrap().is_some() {
             let me = self.clone();
-            std::thread::spawn(move || { if let Err(e) = me.run_cpal() { let _ = me.ev.try_send(AudioEvent::Error(e)); } });
+            std::thread::spawn(move || me.run_cpal());
         }
         let me = self.clone();
         tokio::spawn(async move { me.capture_loop().await });
@@ -352,74 +363,233 @@ impl Audio {
     }
 
     // ---------- dispositivos (cpal), numa thread própria porque o Stream do WASAPI não é Send ----------
-    fn run_cpal(self: &Arc<Self>) -> Result<(), String> {
-        // Reabre os fluxos quando a pessoa troca de microfone/saída nas Configurações (dev_gen sobe).
-        while !self.stop.load(Ordering::Relaxed) {
-            let gen = self.dev_gen.load(Ordering::Relaxed);
-            let keep = self.open_streams()?;
-            while !self.stop.load(Ordering::Relaxed) && self.dev_gen.load(Ordering::Relaxed) == gen { std::thread::sleep(Duration::from_millis(100)); }
-            drop(keep);
+    /// Aviso do microfone para a interface (só quando o estado muda): `audio.mic` com state ok | no_device | denied | busy | error.
+    fn notice_mic(&self, p: Option<&MicProblem>) {
+        let (code, text) = match p { None => ("ok", String::new()), Some(p) => (p.code(), p.text()) };
+        let mut last = self.mic_code.lock().unwrap();
+        if *last == code { return; }
+        *last = code.to_string();
+        let _ = self.ev.try_send(AudioEvent::Notice(serde_json::json!({ "ev": "audio.mic", "state": code, "text": text, "hint": MIC_PRIVACY_URI })));
+    }
+    fn notice_device(&self, text: String) { let _ = self.ev.try_send(AudioEvent::Notice(serde_json::json!({ "ev": "audio.device", "text": text }))); }
+
+    /// Espera `d` (acordando se a chamada acabar ou os dispositivos forem trocados); true = esperou tudo.
+    fn nap(&self, gen: u32, d: Duration) -> bool {
+        let end = std::time::Instant::now() + d;
+        while std::time::Instant::now() < end {
+            if self.stop.load(Ordering::Relaxed) || self.dev_gen.load(Ordering::Relaxed) != gen { return false; }
+            std::thread::sleep(Duration::from_millis(25));
         }
-        Ok(())
+        true
     }
 
-    /// Escolhe o dispositivo pelo nome salvo; se sumiu, usa o padrão e avisa.
-    fn pick(&self, host: &cpal::Host, input: bool, want: &str) -> Option<cpal::Device> {
+    /// Supervisor: abre os fluxos e os reabre sozinho quando o dispositivo some, o padrão do sistema muda, ou o dispositivo escolhido
+    /// nas Configurações (`dev_gen`) muda. Reaberturas por erro têm espera crescente e um teto de tentativas (sem laço apertado).
+    fn run_cpal(self: &Arc<Self>) {
+        let mut fails = 0u32;
+        let mut cause: Option<&'static str> = None;
+        while !self.stop.load(Ordering::Relaxed) {
+            let gen = self.dev_gen.load(Ordering::Relaxed);
+            let fault = Arc::new(AtomicBool::new(false));
+            let t0 = std::time::Instant::now();
+            let op = self.open_streams(&fault);
+            self.notice_mic(op.mic.as_ref());
+            let pend = self.pending_notice.lock().unwrap().take();
+            if let Some(why) = cause.take() {
+                let used = match (&op.in_name, &op.out_name) {
+                    (Some(i), Some(o)) if i != o => Some(format!("{i} (entrada) e {o} (saída)")),
+                    (Some(n), _) | (None, Some(n)) => Some(n.clone()),
+                    _ => None,
+                };
+                self.notice_device(pend.unwrap_or_else(|| match used { Some(u) => format!("{why}, usando {u}"), None => format!("{why}; nenhum outro dispositivo de áudio foi encontrado") }));
+            } else if let Some(t) = pend { self.notice_device(t); }
+            let retry_slow = Duration::from_millis(self.retry_ms.load(Ordering::Relaxed) * 6);
+            let problem = op.mic.is_some() || op.out_err;
+            let mut last_poll = std::time::Instant::now();
+            enum Wake { Stop, Gen, Fault, Changed, Retry }
+            let wake = loop {
+                std::thread::sleep(Duration::from_millis(50));
+                if self.stop.load(Ordering::Relaxed) { break Wake::Stop; }
+                if self.dev_gen.load(Ordering::Relaxed) != gen { break Wake::Gen; }
+                if fault.load(Ordering::Relaxed) { break Wake::Fault; }
+                if problem && t0.elapsed() >= retry_slow { break Wake::Retry; }
+                if last_poll.elapsed() >= Duration::from_secs(1) {
+                    last_poll = std::time::Instant::now();
+                    if self.default_changed(&op) { break Wake::Changed; }
+                }
+            };
+            drop(op.keep);
+            match wake {
+                Wake::Stop => break,
+                Wake::Gen => { fails = 0; }
+                Wake::Retry => {}
+                Wake::Changed => { cause = Some("O dispositivo de áudio padrão do Windows mudou"); }
+                Wake::Fault => {
+                    if t0.elapsed() > Duration::from_secs(5) { fails = 0; }
+                    fails += 1;
+                    if fails > MAX_REOPEN {
+                        self.notice_device("Não foi possível reabrir o áudio depois de várias tentativas. Reconecte o dispositivo ou escolha outro em Configurações > Voz e vídeo.".into());
+                        while !self.stop.load(Ordering::Relaxed) && self.dev_gen.load(Ordering::Relaxed) == gen { std::thread::sleep(Duration::from_millis(100)); }
+                        fails = 0;
+                        continue;
+                    }
+                    cause = Some("Dispositivo de áudio desconectado");
+                    let wait = Duration::from_millis((self.retry_ms.load(Ordering::Relaxed) << (fails - 1)).min(8000));
+                    if !self.nap(gen, wait) && self.dev_gen.load(Ordering::Relaxed) != gen { fails = 0; cause = None; }
+                }
+            }
+        }
+    }
+
+    /// O padrão do sistema mudou desde a abertura (só vale para quem usa "padrão").
+    fn default_changed(&self, op: &Opened) -> bool {
         use cpal::traits::{DeviceTrait, HostTrait};
+        if !op.in_default && !op.out_default { return false; }
+        let host = cpal::default_host();
+        let name = |d: Option<cpal::Device>| d.and_then(|d| d.name().ok());
+        (op.in_default && name(host.default_input_device()) != op.in_name) || (op.out_default && name(host.default_output_device()) != op.out_name)
+    }
+
+    /// Escolhe o dispositivo pelo nome salvo; se sumiu, usa o padrão e avisa. O bool diz se é o padrão do sistema.
+    fn pick(&self, host: &cpal::Host, input: bool, want: &str) -> Option<(cpal::Device, bool)> {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let what = if input { "O microfone" } else { "A saída" };
         if !want.trim().is_empty() {
             let list: Vec<cpal::Device> = if input { host.input_devices().map(|d| d.collect()).unwrap_or_default() } else { host.output_devices().map(|d| d.collect()).unwrap_or_default() };
             let names: Vec<String> = list.iter().map(|d| d.name().unwrap_or_default()).collect();
-            if let Some(i) = match_device(&names, want) { return list.into_iter().nth(i); }
-            let _ = self.ev.try_send(AudioEvent::Error(format!("{} \"{}\" não encontrado; usando o padrão do sistema", if input { "microfone" } else { "saída" }, want)));
+            if let Some(i) = match_device(&names, want) { return list.into_iter().nth(i).map(|d| (d, false)); }
+            let def = if input { host.default_input_device() } else { host.default_output_device() };
+            let dn = def.as_ref().and_then(|d| d.name().ok());
+            *self.pending_notice.lock().unwrap() = Some(match dn {
+                Some(n) => format!("{what} \"{want}\" não está mais disponível; usando o padrão do sistema ({n})"),
+                None => format!("{what} \"{want}\" não está mais disponível e não há outro dispositivo"),
+            });
+            return def.map(|d| (d, true));
         }
-        if input { host.default_input_device() } else { host.default_output_device() }
+        (if input { host.default_input_device() } else { host.default_output_device() }).map(|d| (d, true))
     }
 
-    fn open_streams(self: &Arc<Self>) -> Result<Vec<cpal::Stream>, String> {
-        use cpal::traits::{DeviceTrait, StreamTrait};
-        use cpal::SampleFormat;
-        let host = cpal::default_host();
-        let mut keep: Vec<cpal::Stream> = vec![];
-        let (want_in, want_out) = (self.mic_dev.lock().unwrap().clone(), self.out_dev.lock().unwrap().clone());
-        if let Some(dev) = self.pick(&host, true, &want_in) {
-            let cfg = dev.default_input_config().map_err(|e| format!("microfone: {e}"))?;
-            let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
-            let me = self.clone();
-            let mut rs = Resampler::new(rate as f64 / RATE as f64);
-            let mut push = move |mono: Vec<f32>| { let mut o = vec![]; rs.process(&mono, &mut o); me.push_capture(&o); };
-            let err = |e| eprintln!("áudio (entrada): {e}");
-            let st = match cfg.sample_format() {
-                SampleFormat::F32 => dev.build_input_stream(&cfg.config(), move |d: &[f32], _| push(mono(d, ch, |v| v)), err, None),
-                SampleFormat::I16 => dev.build_input_stream(&cfg.config(), move |d: &[i16], _| push(mono(d, ch, |v| v as f32 / 32768.0)), err, None),
-                SampleFormat::U16 => dev.build_input_stream(&cfg.config(), move |d: &[u16], _| push(mono(d, ch, |v| (v as f32 - 32768.0) / 32768.0)), err, None),
-                f => return Err(format!("formato de microfone não suportado: {f:?}")),
+    /// Microfone falso (BRIKS_FAKE_MIC): nunca toca no hardware. `unplug-after-N`: "desplugado" depois de N ms na primeira abertura.
+    fn open_mic_fake(&self, fm: &FakeMic, fault: &Arc<AtomicBool>) -> Result<String, MicProblem> {
+        match fm {
+            FakeMic::Denied => Err(MicProblem::Denied),
+            FakeMic::Missing => Err(MicProblem::NoDevice),
+            FakeMic::Busy => Err(MicProblem::Busy),
+            FakeMic::UnplugAfter(ms) => {
+                if self.fake_opens.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let (f, ms) = (fault.clone(), *ms);
+                    std::thread::spawn(move || { std::thread::sleep(Duration::from_millis(ms)); f.store(true, Ordering::Relaxed); });
+                    Ok("Microfone de teste".into())
+                } else { Ok("Microfone de teste (reserva)".into()) }
             }
-            .map_err(|e| format!("microfone: {e}"))?;
-            st.play().map_err(|e| format!("microfone: {e}"))?;
-            keep.push(st);
-        } else {
-            let _ = self.ev.try_send(AudioEvent::Error("nenhum microfone encontrado".into()));
         }
-        if let Some(dev) = self.pick(&host, false, &want_out) {
-            let cfg = dev.default_output_config().map_err(|e| format!("saída: {e}"))?;
-            let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
-            let me = self.clone();
-            let mut up = Upsampler::new(rate as f64 / RATE as f64);
-            let err = |e| eprintln!("áudio (saída): {e}");
-            let st = match cfg.sample_format() {
-                // 2+ canais: esquerda e direita nos dois primeiros (demais recebem a média); 1 canal: a média
-                SampleFormat::F32 => dev.build_output_stream(&cfg.config(), move |d: &mut [f32], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }; }); }, err, None),
-                SampleFormat::I16 => dev.build_output_stream(&cfg.config(), move |d: &mut [i16], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = ((if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }) * 32767.0) as i16; }); }, err, None),
-                f => return Err(format!("formato de saída não suportado: {f:?}")),
-            }
-            .map_err(|e| format!("saída: {e}"))?;
-            st.play().map_err(|e| format!("saída: {e}"))?;
-            keep.push(st);
-        } else {
-            let _ = self.ev.try_send(AudioEvent::Error("nenhuma saída de áudio encontrada".into()));
-        }
-        Ok(keep)
     }
+
+    fn open_streams(self: &Arc<Self>, fault: &Arc<AtomicBool>) -> Opened {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use cpal::SampleFormat;
+        let mut op = Opened { keep: vec![], in_name: None, out_name: None, in_default: false, out_default: false, mic: None, out_err: false };
+        let fm = self.fake_mic.lock().unwrap().clone();
+        if let Some(fm) = fm {
+            match self.open_mic_fake(&fm, fault) { Ok(n) => op.in_name = Some(n), Err(p) => op.mic = Some(p) }
+            return op;
+        }
+        let host = cpal::default_host();
+        let (want_in, want_out) = (self.mic_dev.lock().unwrap().clone(), self.out_dev.lock().unwrap().clone());
+        let mark = |f: &Arc<AtomicBool>, what: &'static str| { let f = f.clone(); move |e: cpal::StreamError| { eprintln!("áudio ({what}): {e}"); f.store(true, Ordering::Relaxed); } };
+        // entrada
+        match self.pick(&host, true, &want_in) {
+            None => op.mic = Some(MicProblem::NoDevice),
+            Some((dev, is_def)) => {
+                let name = dev.name().unwrap_or_default();
+                let r: Result<cpal::Stream, MicProblem> = (|| {
+                    let cfg = dev.default_input_config().map_err(|e| classify_mic_error(&e.to_string()))?;
+                    let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
+                    let me = self.clone();
+                    let mut rs = Resampler::new(rate as f64 / RATE as f64);
+                    let mut push = move |mono: Vec<f32>| { let mut o = vec![]; rs.process(&mono, &mut o); me.push_capture(&o); };
+                    let err = mark(fault, "entrada");
+                    let st = match cfg.sample_format() {
+                        SampleFormat::F32 => dev.build_input_stream(&cfg.config(), move |d: &[f32], _| push(mono(d, ch, |v| v)), err, None),
+                        SampleFormat::I16 => dev.build_input_stream(&cfg.config(), move |d: &[i16], _| push(mono(d, ch, |v| v as f32 / 32768.0)), err, None),
+                        SampleFormat::U16 => dev.build_input_stream(&cfg.config(), move |d: &[u16], _| push(mono(d, ch, |v| (v as f32 - 32768.0) / 32768.0)), err, None),
+                        f => return Err(MicProblem::Other(format!("formato de microfone não suportado: {f:?}"))),
+                    }.map_err(|e| classify_mic_error(&e.to_string()))?;
+                    st.play().map_err(|e| classify_mic_error(&e.to_string()))?;
+                    Ok(st)
+                })();
+                match r { Ok(st) => { op.keep.push(st); op.in_name = Some(name); op.in_default = is_def; } Err(p) => op.mic = Some(p) }
+            }
+        }
+        // saída
+        match self.pick(&host, false, &want_out) {
+            None => { op.out_err = true; let _ = self.ev.try_send(AudioEvent::Error("nenhuma saída de áudio encontrada".into())); }
+            Some((dev, is_def)) => {
+                let name = dev.name().unwrap_or_default();
+                let r: Result<cpal::Stream, String> = (|| {
+                    let cfg = dev.default_output_config().map_err(|e| format!("saída: {e}"))?;
+                    let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
+                    let me = self.clone();
+                    let mut up = Upsampler::new(rate as f64 / RATE as f64);
+                    let err = mark(fault, "saída");
+                    let st = match cfg.sample_format() {
+                        // 2+ canais: esquerda e direita nos dois primeiros (demais recebem a média); 1 canal: a média
+                        SampleFormat::F32 => dev.build_output_stream(&cfg.config(), move |d: &mut [f32], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }; }); }, err, None),
+                        SampleFormat::I16 => dev.build_output_stream(&cfg.config(), move |d: &mut [i16], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = ((if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }) * 32767.0) as i16; }); }, err, None),
+                        f => return Err(format!("formato de saída não suportado: {f:?}")),
+                    }.map_err(|e| format!("saída: {e}"))?;
+                    st.play().map_err(|e| format!("saída: {e}"))?;
+                    Ok(st)
+                })();
+                match r { Ok(st) => { op.keep.push(st); op.out_name = Some(name); op.out_default = is_def; } Err(e) => { op.out_err = true; let _ = self.ev.try_send(AudioEvent::Error(e)); } }
+            }
+        }
+        op
+    }
+}
+
+/// Resultado de uma abertura dos fluxos: o que ficou aberto, com quais nomes, e se o microfone teve problema.
+struct Opened { keep: Vec<cpal::Stream>, in_name: Option<String>, out_name: Option<String>, in_default: bool, out_default: bool, mic: Option<MicProblem>, out_err: bool }
+
+const MAX_REOPEN: u32 = 5;
+pub const MIC_PRIVACY_URI: &str = "ms-settings:privacy-microphone";
+
+/// Por que o microfone não abriu. O app mostra o texto (em português) e, no acesso negado, aponta para a privacidade do Windows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MicProblem { NoDevice, Denied, Busy, Other(String) }
+impl MicProblem {
+    pub fn code(&self) -> &'static str { match self { MicProblem::NoDevice => "no_device", MicProblem::Denied => "denied", MicProblem::Busy => "busy", MicProblem::Other(_) => "error" } }
+    pub fn text(&self) -> String {
+        match self {
+            MicProblem::NoDevice => "Não encontramos um microfone neste computador. Conecte um e o Briks passa a usá-lo sozinho.".into(),
+            MicProblem::Denied => "O Windows não deixou o Briks usar o microfone. Abra Configurações > Privacidade e segurança > Microfone e permita o acesso (inclusive para aplicativos de área de trabalho).".into(),
+            MicProblem::Busy => "Outro aplicativo está usando o microfone em modo exclusivo. Feche-o e o Briks tenta de novo sozinho.".into(),
+            MicProblem::Other(e) => format!("Não foi possível abrir o microfone: {e}"),
+        }
+    }
+}
+
+/// Classifica o texto de um erro do cpal/WASAPI: E_ACCESSDENIED (0x80070005) = privacidade; AUDCLNT_E_DEVICE_IN_USE = em uso; indisponível = sem dispositivo.
+pub fn classify_mic_error(msg: &str) -> MicProblem {
+    let m = msg.to_lowercase();
+    if m.contains("0x80070005") || m.contains("access is denied") || m.contains("access denied") || m.contains("acesso negado") || m.contains("acesso foi negado") { MicProblem::Denied }
+    else if m.contains("0x8889000a") || m.contains("0x88890008") || m.contains("in use") || m.contains("em uso") || m.contains("exclusive") || m.contains("busy") { MicProblem::Busy }
+    else if m.contains("no longer available") || m.contains("unplugged") || m.contains("0x88890004") || m.contains("0x80070490") || m.contains("not found") || m.contains("no device") { MicProblem::NoDevice }
+    else { MicProblem::Other(msg.to_string()) }
+}
+
+/// Microfone falso por `BRIKS_FAKE_MIC`: `denied` | `missing` | `busy` | `unplug-after-N` (N ms; depois do "desplugar" o fluxo reabre com um dispositivo reserva).
+#[derive(Debug, Clone, PartialEq)]
+pub enum FakeMic { Denied, Missing, Busy, UnplugAfter(u64) }
+impl FakeMic {
+    pub fn parse(s: &str) -> Option<FakeMic> {
+        let s = s.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "denied" => Some(FakeMic::Denied), "missing" => Some(FakeMic::Missing), "busy" => Some(FakeMic::Busy),
+            _ => s.strip_prefix("unplug-after-").and_then(|n| n.parse().ok()).map(FakeMic::UnplugAfter),
+        }
+    }
+    pub fn from_env() -> Option<FakeMic> { std::env::var("BRIKS_FAKE_MIC").ok().and_then(|v| FakeMic::parse(&v)) }
 }
 
 /// Teste do microfone fora da chamada: captura curta só para medir o nível (nada é gravado nem enviado).
@@ -431,7 +601,10 @@ impl MicTest {
         let stop = Arc::new(AtomicBool::new(false));
         let st = stop.clone();
         std::thread::spawn(move || {
-            let send = |level: f32, error: Option<String>| { let mut j = serde_json::json!({ "ev": "mic.test", "level": level }); if let Some(e) = error { j["error"] = e.into(); } let _ = tx.try_send(j); };
+            let send = |level: f32, error: Option<MicProblem>| { let mut j = serde_json::json!({ "ev": "mic.test", "level": level }); if let Some(p) = error { j["error"] = p.text().into(); j["code"] = p.code().into(); j["hint"] = MIC_PRIVACY_URI.into(); } let _ = tx.try_send(j); };
+            let fm = FakeMic::from_env();
+            match &fm { Some(FakeMic::Denied) => { send(0.0, Some(MicProblem::Denied)); return } Some(FakeMic::Missing) => { send(0.0, Some(MicProblem::NoDevice)); return } Some(FakeMic::Busy) => { send(0.0, Some(MicProblem::Busy)); return } _ => {} }
+            let fake = fake || fm.is_some();
             let buf: Arc<Mutex<VecDeque<f32>>> = Default::default();
             let mut nf = NoiseFilter::new();
             let mut keep: Option<cpal::Stream> = None;
@@ -442,7 +615,7 @@ impl MicTest {
                 let list: Vec<cpal::Device> = host.input_devices().map(|d| d.collect()).unwrap_or_default();
                 let names: Vec<String> = list.iter().map(|d| d.name().unwrap_or_default()).collect();
                 let dev = match_device(&names, &cfg.mic).and_then(|i| list.into_iter().nth(i)).or_else(|| host.default_input_device());
-                let Some(dev) = dev else { send(0.0, Some("nenhum microfone encontrado".into())); return };
+                let Some(dev) = dev else { send(0.0, Some(MicProblem::NoDevice)); return };
                 let r = dev.default_input_config().map_err(|e| e.to_string()).and_then(|c| {
                     let (ch, rate) = (c.channels() as usize, c.sample_rate().0);
                     let b = buf.clone();
@@ -458,7 +631,7 @@ impl MicTest {
                     s.play().map_err(|e| e.to_string())?;
                     Ok(s)
                 });
-                match r { Ok(s) => keep = Some(s), Err(e) => { send(0.0, Some(format!("não foi possível abrir o microfone: {e}"))); return } }
+                match r { Ok(s) => keep = Some(s), Err(e) => { send(0.0, Some(classify_mic_error(&e))); return } }
             }
             let mut phase = 0.0f32;
             let started = std::time::Instant::now();
@@ -537,6 +710,89 @@ mod unit {
         assert_eq!(match_device(&n, "usb audio"), Some(1));
         assert_eq!(match_device(&n, ""), None);
         assert_eq!(match_device(&n, "Inexistente"), None);
+    }
+
+    // ---------- microfone: permissão/ausência e troca de dispositivo (SEM hardware: microfone falso) ----------
+    #[test]
+    fn mic_error_classification_and_fake_parse() {
+        assert_eq!(classify_mic_error("A backend-specific error has occurred: HRESULT 0x80070005 Acesso negado."), MicProblem::Denied);
+        assert_eq!(classify_mic_error("Access is denied."), MicProblem::Denied);
+        assert_eq!(classify_mic_error("AUDCLNT_E_DEVICE_IN_USE 0x8889000A"), MicProblem::Busy);
+        assert_eq!(classify_mic_error("The requested device is no longer available. For example, it has been unplugged."), MicProblem::NoDevice);
+        assert!(matches!(classify_mic_error("algo estranho"), MicProblem::Other(_)));
+        assert_eq!(FakeMic::parse("denied"), Some(FakeMic::Denied));
+        assert_eq!(FakeMic::parse(" Missing "), Some(FakeMic::Missing));
+        assert_eq!(FakeMic::parse("busy"), Some(FakeMic::Busy));
+        assert_eq!(FakeMic::parse("unplug-after-250"), Some(FakeMic::UnplugAfter(250)));
+        assert_eq!(FakeMic::parse("unplug-after-x"), None);
+        assert_eq!(FakeMic::parse("0"), None);
+        assert!(MicProblem::Denied.text().contains("Privacidade") && MicProblem::Denied.text().contains("Microfone"));
+    }
+
+    async fn next_notice(rx: &mut mpsc::Receiver<AudioEvent>, ev: &str, secs: u64) -> Option<serde_json::Value> {
+        let end = std::time::Instant::now() + Duration::from_secs(secs);
+        loop {
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            match tokio::time::timeout(left, rx.recv()).await { Ok(Some(AudioEvent::Notice(v))) if v["ev"] == ev => return Some(v), Ok(Some(_)) => {} _ => return None }
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_mic_problems_are_reported_once_with_the_privacy_hint() {
+        for (fm, code) in [(FakeMic::Denied, "denied"), (FakeMic::Missing, "no_device"), (FakeMic::Busy, "busy")] {
+            let (a, mut rx) = Audio::new(true);
+            a.set_fake_mic(Some(fm));
+            a.set_retry_ms(10);
+            a.start();
+            let v = next_notice(&mut rx, "audio.mic", 3).await.unwrap_or_else(|| panic!("sem aviso para {code}"));
+            assert_eq!(v["state"], code);
+            assert_eq!(v["hint"], MIC_PRIVACY_URI);
+            assert!(v["text"].as_str().unwrap().len() > 20);
+            // o microfone continua com problema e a thread tenta de novo (retry lento), mas o aviso não se repete
+            assert!(next_notice(&mut rx, "audio.mic", 1).await.is_none(), "aviso repetido para {code}");
+            a.stop();
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_unplug_reopens_with_notice_and_bounded_attempts() {
+        let (a, mut rx) = Audio::new(true);
+        a.set_fake_mic(Some(FakeMic::UnplugAfter(200)));
+        a.set_retry_ms(20);
+        a.start();
+        let ok = next_notice(&mut rx, "audio.mic", 3).await.expect("estado do microfone");
+        assert_eq!(ok["state"], "ok");
+        assert_eq!(a.fake_opens.load(Ordering::SeqCst), 1);
+        let d = next_notice(&mut rx, "audio.device", 5).await.expect("aviso de dispositivo desconectado");
+        let t = d["text"].as_str().unwrap();
+        assert!(t.starts_with("Dispositivo de áudio desconectado, usando") && t.contains("reserva"), "texto: {t}");
+        assert_eq!(a.fake_opens.load(Ordering::SeqCst), 2, "reabriu exatamente uma vez");
+        // estável depois da reabertura: nada de laço de reaberturas nem de avisos repetidos
+        assert!(next_notice(&mut rx, "audio.device", 1).await.is_none());
+        assert_eq!(a.fake_opens.load(Ordering::SeqCst), 2);
+        a.stop();
+    }
+
+    /// Dispositivo que cai de novo e de novo: para depois de MAX_REOPEN tentativas e avisa (sem girar em laço).
+    #[tokio::test]
+    async fn repeated_faults_stop_after_the_attempt_cap() {
+        let (a, mut rx) = Audio::new(true);
+        a.set_fake_mic(Some(FakeMic::UnplugAfter(5)));
+        a.set_retry_ms(5);
+        // faz toda abertura "cair": o contador só dispara a queda na primeira, então forçamos zerando-o a cada abertura
+        let a2 = a.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let t = std::thread::spawn(move || while !s2.load(Ordering::Relaxed) { a2.fake_opens.store(0, Ordering::SeqCst); std::thread::sleep(Duration::from_millis(1)); });
+        a.start();
+        let mut gave_up = false;
+        let end = std::time::Instant::now() + Duration::from_secs(15);
+        while std::time::Instant::now() < end {
+            if let Ok(Some(AudioEvent::Notice(v))) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await { if v["ev"] == "audio.device" && v["text"].as_str().unwrap_or("").contains("várias tentativas") { gave_up = true; break; } }
+        }
+        stop.store(true, Ordering::Relaxed); t.join().unwrap();
+        assert!(gave_up, "devia desistir e avisar depois de {MAX_REOPEN} tentativas");
+        a.stop();
     }
 
     #[test]

@@ -9,6 +9,7 @@
 #include "call.h"
 #include <math.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
 void rtc_leave_room(app_state_t *s) {
     s->rtc_want_room = false;
     s->in_room = false; s->dmoff_n = 0;   /* a malha acaba junto com a sala: chats privados fechados voltam ao normal */
+    s->mic_state[0] = 0; s->mic_text[0] = 0; s->dev_notice[0] = 0;   /* avisos de áudio são da chamada que acabou */
     s->rtc_peer_count = s->rtc_authed_count = 0;
     if (core_state() == CORE_READY) send_cmd("room.leave", NULL);
     copy(s->rtc_state, sizeof s->rtc_state, "");
@@ -243,8 +245,20 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         else for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
     } else if (!strcmp(ev, "mic.test")) {
         const jval *lv = json_get(j, "level"); const char *er = json_str(j, "error", "");
-        if (er[0]) { s->mic_test_on = false; s->mic_test_level = 0; copy(s->mic_test_msg, sizeof s->mic_test_msg, er); }
-        else if (s->mic_test_on) s->mic_test_level = lv && lv->type == J_NUM ? (float)lv->num : 0;
+        if (er[0]) {
+            s->mic_test_on = false; s->mic_test_level = 0;
+            if (json_str(j, "code", "")[0]) { copy(s->mic_state, sizeof s->mic_state, json_str(j, "code", "")); copy(s->mic_text, sizeof s->mic_text, er); s->mic_test_msg[0] = 0; }   /* motivo conhecido: o aviso do microfone cuida do texto */
+            else copy(s->mic_test_msg, sizeof s->mic_test_msg, er);
+        }
+        else if (s->mic_test_on) { s->mic_test_level = lv && lv->type == J_NUM ? (float)lv->num : 0; if (!strcmp(s->mic_state, "denied") || !strcmp(s->mic_state, "no_device") || !strcmp(s->mic_state, "busy")) s->mic_state[0] = 0; }   /* mediu nível: o microfone funciona */
+    } else if (!strcmp(ev, "audio.mic")) {
+        const char *st = json_str(j, "state", "");
+        copy(s->mic_state, sizeof s->mic_state, st);
+        copy(s->mic_text, sizeof s->mic_text, json_str(j, "text", ""));
+        if (strcmp(st, "ok") && st[0]) call_toast(!strcmp(st, "denied") ? "Sem acesso ao microfone: o Windows bloqueou. Veja o aviso em Configurações > Voz e vídeo." : !strcmp(st, "no_device") ? "Nenhum microfone encontrado neste computador." : !strcmp(st, "busy") ? "Outro aplicativo está usando o microfone." : "Não foi possível abrir o microfone.");
+    } else if (!strcmp(ev, "audio.device")) {
+        copy(s->dev_notice, sizeof s->dev_notice, json_str(j, "text", ""));
+        if (s->dev_notice[0]) call_toast(s->dev_notice);
     } else if (!strcmp(ev, "peer.info")) {
         const char *p = json_str(j, "peer_id", "");
         for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
@@ -362,6 +376,8 @@ void rtc_pump(app_state_t *s) {
         const char *nm[8] = { "Marina Costa", "Rafael Lima", "Bia Nogueira", "Caio Ramos", "Helena Dias", "Lucas Prado", "Duda Reis", "Téo Farias" };
         int dn = atoi(getenv("BRIKS_DEMO_PEERS")); if (dn < 2) dn = 2; if (dn > BRIKS_MAX_PEERS) dn = BRIKS_MAX_PEERS;   /* =N: N participantes (grade/foco nas capturas) */
         if (getenv("BRIKS_DEMO_REQ")) call_request_in("demo-0", nm[0]);                      /* captura do aviso "pediu para você transmitir" */
+        if (getenv("BRIKS_DEMO_MIC")) { const char *m = getenv("BRIKS_DEMO_MIC"); copy(s->mic_state, sizeof s->mic_state, m); copy(s->mic_text, sizeof s->mic_text, "O Windows não deixou o Briks usar o microfone. Abra Configurações > Privacidade e segurança > Microfone e permita o acesso (inclusive para aplicativos de área de trabalho)."); }   /* captura do aviso do microfone na chamada */
+        if (getenv("BRIKS_DEMO_DEVNOTICE")) { copy(s->dev_notice, sizeof s->dev_notice, !strcmp(getenv("BRIKS_DEMO_DEVNOTICE"), "1") ? "Dispositivo de áudio desconectado, usando Fone de teste" : getenv("BRIKS_DEMO_DEVNOTICE")); call_toast(s->dev_notice); }
         if (getenv("BRIKS_DEMO_ROOMCHAT")) { call_chat_add("d1", nm[0], "Cheguei! Alguém me ouve?", 0, false); call_chat_add("d2", nm[1], "Ouvindo bem daqui.", 0, false); g_call.unread = 2; }
         for (int i = 0; i < dn; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i % 8]); snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); }
@@ -472,3 +488,6 @@ void rtc_chat_event(const char *fields) {
     snprintf(line, sizeof line, "{\"cmd\":\"chat.event.send\",%s}", fields);
     core_send(line);
 }
+
+bool rtc_mic_problem(const app_state_t *s) { return s->mic_state[0] && strcmp(s->mic_state, "ok") != 0; }
+void rtc_open_mic_privacy(void) { ShellExecuteA(NULL, "open", "ms-settings:privacy-microphone", NULL, NULL, SW_SHOWNORMAL); }

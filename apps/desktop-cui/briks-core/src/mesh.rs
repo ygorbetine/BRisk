@@ -308,6 +308,7 @@ impl Actor {
                 ae = async { match arx.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => match ae {
                     Some(AudioEvent::Speaking { peer, level }) => self.emit(MeshEvent::Speaking { peer_id: peer, level }).await,
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
+                    Some(AudioEvent::Notice(v)) => self.emit(MeshEvent::Share(v)).await,
                     None => { arx = None; }
                 },
                 sv = srx.recv() => if let Some(v) = sv { self.on_share_event(v).await },

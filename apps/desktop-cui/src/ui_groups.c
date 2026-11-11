@@ -11,6 +11,7 @@
 #include <time.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <commdlg.h>
 #include "core.h"
 
 static void new_id(char *out, size_t cap) {
@@ -40,6 +41,39 @@ static void dump(sbuf *b, const jval *v) {
     case J_ARR: sb_put(b, "["); for (int i = 0; i < v->count; i++) { if (i) sb_put(b, ","); dump(b, &v->items[i]); } sb_put(b, "]"); break;
     case J_OBJ: sb_put(b, "{"); for (int i = 0; i < v->count; i++) { if (i) sb_put(b, ","); sb_str(b, v->keys[i]); sb_put(b, ":"); dump(b, &v->items[i]); } sb_put(b, "}"); break;
     }
+}
+
+/* ---- imagem do grupo: só neste computador (o core recorta em quadrado 256 px e guarda em avatar-cache/grp-<id>) ---- */
+static struct { char id[48]; cui_texture tex; bool asked; } g_gimg[MAX_GROUPS];
+static int gimg_slot(const char *gid) {
+    for (int i = 0; i < MAX_GROUPS; i++) if (!strcmp(g_gimg[i].id, gid)) return i;
+    for (int i = 0; i < MAX_GROUPS; i++) if (!g_gimg[i].id[0]) { snprintf(g_gimg[i].id, sizeof g_gimg[i].id, "%s", gid); return i; }
+    return -1;
+}
+cui_texture groups_image(app_state_t *s, const char *gid) {
+    (void)s; int i = gimg_slot(gid); if (i < 0) return 0;
+    if (!g_gimg[i].asked && core_state() == CORE_READY) {
+        g_gimg[i].asked = true;
+        char line[160]; snprintf(line, sizeof line, "{\"cmd\":\"group.image_get\",\"group_id\":\"%.60s\"}", gid); core_send(line);
+    }
+    return g_gimg[i].tex;
+}
+static void pick_group_image(const char *gid) {
+    wchar_t wpath[1024] = L""; char path[3072];
+    OPENFILENAMEW of = { sizeof of };
+    of.hwndOwner = GetActiveWindow();
+    of.lpstrFilter = L"Imagens (PNG, JPEG)\0*.png;*.jpg;*.jpeg\0";
+    of.lpstrFile = wpath; of.nMaxFile = (DWORD)(sizeof wpath / sizeof wpath[0]);
+    of.lpstrTitle = L"Escolher imagem do grupo";
+    of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&of)) return;
+    if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)sizeof path, NULL, NULL)) return;
+    char line[6400], esc[6200], eg[80]; json_escape(path, esc, sizeof esc); json_escape(gid, eg, sizeof eg);
+    snprintf(line, sizeof line, "{\"cmd\":\"group.image\",\"group_id\":\"%s\",\"path\":\"%s\"}", eg, esc);
+    core_send(line);
+}
+static void reset_group_image(const char *gid) {
+    char line[160], eg[80]; json_escape(gid, eg, sizeof eg); snprintf(line, sizeof line, "{\"cmd\":\"group.image_reset\",\"group_id\":\"%s\"}", eg); core_send(line);
 }
 
 /* ---- leitura ---- */
@@ -304,6 +338,17 @@ void groups_core_event(app_state_t *s, const jval *j, const char *ev) {
         sbuf b = { 0 }; dump(&b, sn); send_obj("group.verify", b.p, trusted, "dc"); free(b.p); free(trusted);
         return;
     }
+    if (!strcmp(ev, "group.image")) {
+        int i = gimg_slot(json_str(j, "group_id", "")); if (i < 0) return;
+        g_gimg[i].asked = true;
+        const jval *ok = json_get(j, "ok");
+        if (!ok || ok->type != J_BOOL || !ok->b) { snprintf(s->notice, sizeof s->notice, "%s", json_str(j, "message", "Não foi possível usar essa imagem.")); return; }
+        cui_ctx *ui = cui_app_ui(s->app);
+        if (g_gimg[i].tex) { cui_image_destroy(ui, g_gimg[i].tex); g_gimg[i].tex = 0; }
+        const char *p = json_str(j, "path", ""); if (p[0]) { int w = 0, h = 0; g_gimg[i].tex = cui_image_load(ui, p, &w, &h); }
+        cui_request_redraw(ui);
+        return;
+    }
     if (strcmp(ev, "group.result")) return;
     const char *op = json_str(j, "op", ""); const jval *okv = json_get(j, "ok"); const bool ok = okv && okv->type == J_BOOL && okv->b;
     if (!strcmp(op, "sign")) {
@@ -504,8 +549,18 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) { if (cui_button(ui, "Criar canal", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED)) add_channel(s, gi); }
     }
 
-    int rm_ch = -1, rm_mem = -1, inv = -1, adm_i = -1; bool adm_on = false, want_code = false;
+    int rm_ch = -1, rm_mem = -1, inv = -1, adm_i = -1; bool adm_on = false, want_code = false, pick_img = false, rst_img = false;
     cui_dialog(ui, "Personalizar grupo", &s->gren_open) {
+        cui_row(ui, .gap = 12, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            cui_avatar_ex(ui, g->name, &(cui_avatar_opts){ .size = 64, .image = groups_image(s, g->id) });
+            cui_column(ui, .gap = 6) {
+                cui_text(ui, "Imagem do grupo", .size = 12.5f, .color = B_MUTED);
+                cui_row(ui, .gap = 8) {
+                    if (cui_button(ui, "Trocar imagem", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_IMAGE)) pick_img = true;
+                    if (groups_image(s, g->id) && cui_button(ui, "Remover", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rst_img = true;
+                }
+            }
+        }
         cui_text(ui, "Nome do grupo", .size = 12.5f, .color = B_MUTED);
         int r = cui_input(ui, "grp-name", s->grp_name_edit, sizeof s->grp_name_edit, .autofocus = true);
         if (g->nch) cui_text(ui, "Canais", .size = 12.5f, .color = B_MUTED);
@@ -601,7 +656,9 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         }
     }
     /* ações adiadas: mexem nos vetores, então só depois de fechar os blocos de interface */
-    if (rm_ch >= 0) remove_channel(s, gi, rm_ch);
+    if (pick_img) pick_group_image(g->id);
+    else if (rst_img) reset_group_image(g->id);
+    else if (rm_ch >= 0) remove_channel(s, gi, rm_ch);
     else if (adm_i >= 0) set_admin(s, gi, adm_i, adm_on);
     else if (rm_mem >= 0) remove_member(s, gi, rm_mem);
     else if (inv == -2) { person_t p = s->gnick_hit; s->gnick_found = false; s->gnick[0] = 0; s->gnick_msg[0] = 0; add_member(s, gi, &p, true); }

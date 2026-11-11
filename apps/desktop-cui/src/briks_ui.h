@@ -195,6 +195,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s);
 void friends_dialogs(cui_ctx *ui, app_state_t *s);
 /* ui_groups.c: canais, cargos, membros e convites dos grupos */
 void groups_load(app_state_t *s, const char *body);
+cui_texture groups_image(app_state_t *s, const char *gid);                     /* imagem do grupo (0 = só iniciais); pede ao core na 1ª vez */
 void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   /* group.result / group.snapshot do core */
 void groups_resend(app_state_t *s);                                            /* reenvia snapshots aos membros presentes (peer novo na sala) */
 void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */

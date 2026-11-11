@@ -7,6 +7,7 @@ static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }
 static char core_sent[16384]; static int core_n;
+core_status_t core_state(void) { return CORE_STOPPED; }
 bool core_send(const char *l) { snprintf(core_sent, sizeof core_sent, "%s", l); core_n++; return true; }
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FALHOU: %s (linha %d)\n  enviado: %s\n", #c, __LINE__, sent); fails++; } } while (0)

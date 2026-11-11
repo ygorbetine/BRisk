@@ -275,6 +275,28 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         };
                         out(&mut wr, ev).await?;
                     }
+                    "group.image" | "group.image_reset" | "group.image_get" => {
+                        // imagem do grupo: só neste computador (cache em avatar-cache/grp-<id>); mesmo recorte quadrado/256px da foto de perfil
+                        let gid: String = v["group_id"].as_str().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect();
+                        let key = format!("grp-{gid}");
+                        let ev = if gid.is_empty() { json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": "grupo inválido" }) } else {
+                            match v["cmd"].as_str().unwrap_or("") {
+                                "group.image_reset" => { crate::accounts::avatar::clear(&cfg.data_dir, &key); json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": Value::Null }) }
+                                "group.image_get" => json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": crate::accounts::avatar::cached(&cfg.data_dir, &key) }),
+                                _ => {
+                                    let path = PathBuf::from(v["path"].as_str().unwrap_or(""));
+                                    let dir = cfg.data_dir.clone();
+                                    let r = tokio::task::spawn_blocking(move || crate::accounts::avatar::prepare(&path).and_then(|j| crate::accounts::avatar::store(&dir, &key, &j))).await;
+                                    match r {
+                                        Ok(Ok(p)) => json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": p }),
+                                        Ok(Err(e)) => json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": e.message }),
+                                        Err(_) => json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": "Não foi possível preparar a imagem." }),
+                                    }
+                                }
+                            }
+                        };
+                        out(&mut wr, ev).await?;
+                    }
                     "group.code" => {
                         let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
                             Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),

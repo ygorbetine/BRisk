@@ -540,6 +540,24 @@ async fn nick_lookup_is_exact_hides_blocked_and_rate_limited() {
     assert_eq!(b.nick_lookup("ana_01").await.unwrap_err().code, "server_not_ready");
 }
 
+#[test]
+fn group_image_is_cropped_stored_per_group_and_cleared() {
+    let dir = tmpdir("grp-img");
+    let src = dir.join("origem.png");
+    image::RgbImage::from_pixel(300, 120, image::Rgb([200, 30, 90])).save(&src).unwrap();
+    let jpeg = super::avatar::prepare(&src).unwrap();
+    let p = super::avatar::store(&dir, "grp-g1", &jpeg).unwrap();
+    assert!(p.exists() && p.to_string_lossy().contains("grp-g1"));
+    assert_eq!(super::avatar::cached(&dir, "grp-g1"), Some(p));
+    assert!(super::avatar::cached(&dir, "grp-g2").is_none(), "cada grupo tem a sua imagem");
+    let img = image::open(super::avatar::cached(&dir, "grp-g1").unwrap()).unwrap();
+    assert_eq!((img.width(), img.height()), (120, 120), "recorte quadrado central");
+    super::avatar::clear(&dir, "grp-g1");
+    assert!(super::avatar::cached(&dir, "grp-g1").is_none());
+    std::fs::write(dir.join("ruim.png"), b"nao e imagem").unwrap();
+    assert!(super::avatar::prepare(&dir.join("ruim.png")).is_err());
+}
+
 #[tokio::test]
 async fn local_bridge_password_is_stable_per_account_and_encrypted() {
     let _g = FLOW.lock().await;

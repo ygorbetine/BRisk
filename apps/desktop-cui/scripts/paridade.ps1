@@ -73,7 +73,7 @@ function Expand-Roteiro([string]$origem, [string]$destino) {
         switch ($t[0]) {
             "snap" { $out.Add("at 2 790"); $out.Add("waitms 450"); $out.Add("shot $($t[1])") }
             "tap"  { $out.Add("click $($t[1]) $($t[2])"); $out.Add("at 2 790"); $out.Add("waitms 500") }
-            default { $out.Add($s) }
+            default { $out.Add($s.Replace("{ASSETS}", (Join-Path $dir "ativos"))) }
         }
     }
     [IO.File]::WriteAllLines($destino, $out, (New-Object Text.UTF8Encoding($false)))

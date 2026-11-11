@@ -16,12 +16,18 @@
  *   waitms N               espera N milissegundos de relógio (independe da taxa de quadros)
  *   shot <nome>            salva <nome>.png (com BRIKS_SCRIPT_SHOTS=1 só estes são salvos, não um PNG por quadro)
  *   type <texto>           digita o texto no campo com foco (como o teclado; usado pelo roteiro de paridade)
- *   key enter|tab|backspace|esc   aperta e solta a tecla (idem)
+ *   key enter|tab|backspace|esc   aperta e solta a tecla (idem); também com modificadores: key ctrl+a, ctrl+shift+z, ctrl+v, home, shift+end...
+ *   rclick X Y | rclick <ponto>   clique com o botão direito de verdade (abre menus de contexto)
+ *   drop <arquivo>         solta o arquivo na janela, na posição do cursor (cui_input_file_drop)
+ *   hover on|off           simula o arraste de arquivos passando pela janela (cui_input_file_hover)
+ *   clip <texto>           põe o texto na área de transferência FALSA (só com BRIKS_FAKE_CLIPBOARD; nunca toca na do usuário); sem texto, esvazia
+ *   clipimg <png>          imagem "copiada" na área de transferência falsa (idem); sem argumento, remove
  *   signal <nome>          cria o arquivo <nome>.flag na pasta de saída (um roteiro externo espera por ele para agir) */
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
 #include "layout.h"
 #include "sysint.h"
+#include "attach.h"
 static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdio.h>
 #include <string.h>
@@ -35,7 +41,8 @@ static bool timed_move; static float mx0, my0, mx1, my1;
 static float cx, cy; static bool mdown;
 static char caption[200];
 static int frame_no, tail;
-static bool esc_up; static int key_up = -1;
+static bool esc_up, mods_reset; static int key_up = -1;
+static int click_btn = CUI_MOUSE_LEFT;   /* botão do clique em andamento (click_phase) */
 static double wait_until; static int click_phase; static char shot_name[96]; static bool shots_only;
 static char outdir[512];
 static unsigned char *px;
@@ -72,13 +79,14 @@ static bool resolve(const char *tok, const char *tok2, float *x, float *y, const
 void script_tick(cui_ctx *ui) {
     if (esc_up) { cui_input_key(ui, CUI_KEY_ESCAPE, false, 0); esc_up = false; }
     if (key_up >= 0) { cui_input_key(ui, (cui_key)key_up, false, 0); key_up = -1; }
+    if (mods_reset) { cui_input_key(ui, CUI_KEY_NONE, false, 0); mods_reset = false; }   /* solta os modificadores do atalho (o CUI só os relê quando uma tecla cai) */
     /* o mouse real do usuário não pode interferir na gravação: o roteiro reafirma posição e botão a cada quadro */
     cui_input_mouse_move(ui, cx, cy);
     cui_input_mouse_button(ui, CUI_MOUSE_LEFT, mdown);
     if (click_phase) {   /* clique em andamento: 3 quadros parado em cima (para o controle ver o cursor), 3 apertado, 3 solto */
         click_phase++;
-        if (click_phase == 4) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, true); mdown = true; }
-        if (click_phase == 7) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, false); mdown = false; }
+        if (click_phase == 4) { cui_input_mouse_button(ui, (cui_mouse_button)click_btn, true); if (click_btn == CUI_MOUSE_LEFT) mdown = true; }
+        if (click_phase == 7) { cui_input_mouse_button(ui, (cui_mouse_button)click_btn, false); if (click_btn == CUI_MOUSE_LEFT) mdown = false; }
         if (click_phase >= 10) click_phase = 0;
         cui_request_redraw(ui);
         return;
@@ -94,8 +102,19 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "click")) {   /* click X Y | click <ponto> (ex.: plus:chat, close:chat, header:nav) */
             char *a = strtok(NULL, " "), *b = a && a[0] >= '0' && a[0] <= '9' ? strtok(NULL, " ") : NULL;
             float tx, ty; bool ok = a && (b ? (tx = (float)atof(a), ty = (float)atof(b), true) : dock_script_point(a, &tx, &ty));
-            if (ok) { cx = tx; cy = ty; cui_input_mouse_move(ui, cx, cy); click_phase = 1; }
+            if (ok) { cx = tx; cy = ty; cui_input_mouse_move(ui, cx, cy); click_phase = 1; click_btn = CUI_MOUSE_LEFT; }
         }
+        else if (!strcmp(cmd, "rclick")) {   /* rclick X Y | rclick <ponto>: como o click, com o botão direito */
+            char *a = strtok(NULL, " "), *b = a && a[0] >= '0' && a[0] <= '9' ? strtok(NULL, " ") : NULL;
+            float tx, ty; bool ok = a && (b ? (tx = (float)atof(a), ty = (float)atof(b), true) : dock_script_point(a, &tx, &ty));
+            if (ok) { cx = tx; cy = ty; cui_input_mouse_move(ui, cx, cy); click_phase = 1; click_btn = CUI_MOUSE_RIGHT; }
+        }
+        else if (!strcmp(cmd, "drop")) { char *r = strtok(NULL, ""); if (r) { const char *ps[1] = { r }; cui_input_file_drop(ui, ps, 1, cx, cy); } }
+        else if (!strcmp(cmd, "hover")) { char *r = strtok(NULL, " "); cui_input_file_hover(ui, r && !strcmp(r, "on"), cx, cy); }
+        else if (!strcmp(cmd, "clip")) { char *r = strtok(NULL, ""); if (briks_clip_fake()) briks_clip_set(r ? r : ""); else fputs("roteiro: clip ignorado (sem BRIKS_FAKE_CLIPBOARD)\n", stderr); }
+        else if (!strcmp(cmd, "wheel")) { char *a = strtok(NULL, " "); cui_input_mouse_move(ui, cx, cy); cui_input_scroll(ui, 0, a ? (float)atof(a) : -3); }   /* wheel <linhas> sobre o ponto atual (negativo desce) */
+        else if (!strcmp(cmd, "msgstate")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) attach_script_state(NULL, atoi(a), b); }   /* msgstate <n> sending|sent|failed|delivered|ack */
+        else if (!strcmp(cmd, "clipimg")) { char *r = strtok(NULL, ""); if (briks_clip_fake()) attach_fake_image(r); else fputs("roteiro: clipimg ignorado (sem BRIKS_FAKE_CLIPBOARD)\n", stderr); }
         else if (!strcmp(cmd, "expect")) {   /* expect <estado> <valor>: confere e conta falha (o processo sai com código 1) */
             char *n = strtok(NULL, " "), *v = strtok(NULL, " ");
             int got = n ? script_probe(n) : -1, want = v ? atoi(v) : 0;
@@ -117,8 +136,16 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }
         else if (!strcmp(cmd, "type")) { char *r = strtok(NULL, ""); if (r) cui_input_text(ui, r); }
         else if (!strcmp(cmd, "key")) {
-            char *k = strtok(NULL, " "); int kc = !k ? -1 : !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE : -1;
-            if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, 0); key_up = kc; }
+            char *k = strtok(NULL, " "); int mods = 0, kc = -1;
+            while (k) {   /* ctrl+shift+z: modificadores antes do + final */
+                char *pl = strchr(k, '+');
+                if (pl && pl[1]) { *pl = 0; if (!_stricmp(k, "ctrl")) mods |= CUI_MOD_CTRL; else if (!_stricmp(k, "shift")) mods |= CUI_MOD_SHIFT; else if (!_stricmp(k, "alt")) mods |= CUI_MOD_ALT; k = pl + 1; continue; }
+                kc = !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE
+                   : !strcmp(k, "home") ? CUI_KEY_HOME : !strcmp(k, "end") ? CUI_KEY_END : !strcmp(k, "left") ? CUI_KEY_LEFT : !strcmp(k, "right") ? CUI_KEY_RIGHT : !strcmp(k, "delete") ? CUI_KEY_DELETE
+                   : (strlen(k) == 1 && k[0] >= 'a' && k[0] <= 'z') ? (int)CUI_KEY_A + (k[0] - 'a') : -1;
+                break;
+            }
+            if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, mods); key_up = kc; if (mods) mods_reset = true; }
         }
         else if (!strcmp(cmd, "restore")) dock_script_restore();
         else if (!strcmp(cmd, "art")) { char *n = strtok(NULL, " "); drag_stack_set_art(n ? panel_from_name(n) : -1); }

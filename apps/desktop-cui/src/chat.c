@@ -2,6 +2,7 @@
  * As mensagens ficam só neste computador até o briks-core (marco 3) entregá-las pelo DataChannel. */
 #include "briks_ui.h"
 #include "backend.h"
+#include "core.h"
 #include "json.h"
 #include "msgui.h"
 #include "attach.h"
@@ -61,11 +62,18 @@ void app_send_message(app_state_t *s) {
     snprintf(b, sizeof b, "{\"id\":\"%s\",\"channelId\":\"%s\",\"author\":\"%s\",\"content\":\"%s\",\"createdAt\":\"%s\",\"reactions\":{}}",
              id, s->chat_channel, a, c, iso);
     snprintf(path, sizeof path, "/p2p/messages/%s", s->chat_channel);
+    char c_text[256]; snprintf(c_text, sizeof c_text, "%s", s->draft);
     add_msg(s, id, s->user_name, s->draft, iso, true);   /* otimista: some se a gravação falhar */
     msgui_after_send(id);                                 /* liga a resposta pendente (citação) ao id novo */
     s->draft[0] = 0;
     attach_set_inflight(id);
     app_begin(s, OP_MSG_SEND, "POST", path, b);
+    /* DM com a sala aberta: o mesmo id segue pelo DataChannel assinado; o chat.ack do peer vira "entregue" (check duplo) */
+    if (s->active_friend >= 0 && s->active_friend < s->friend_count && s->in_room && s->friends[s->active_friend].fp[0] && core_state() == CORE_READY) {
+        char fp[160], t[1100], line[1500]; json_escape(s->friends[s->active_friend].fp, fp, sizeof fp); json_escape(c_text, t, sizeof t);
+        snprintf(line, sizeof line, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
+        core_send(line);
+    }
 }
 
 void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text) {

@@ -7,13 +7,13 @@ Este arquivo é gerado a partir de `apps/desktop-cui/scripts/paridade/itens.csv`
 
 | Classe | Itens |
 |---|---|
-| PRESENTE-FUNCIONAL | 116 |
-| PRESENTE-SEM-EFEITO | 33 |
-| AUSENTE | 92 |
+| PRESENTE-FUNCIONAL | 129 |
+| PRESENTE-SEM-EFEITO | 32 |
+| AUSENTE | 80 |
 | VERIFICAR | 7 |
 | **Total** | **248** |
 
-Itens PRESENTE-FUNCIONAL com teste automático oculto: 52 de 116 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
+Itens PRESENTE-FUNCIONAL com teste automático oculto: 65 de 129 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
 
 Definição das classes: **PRESENTE-FUNCIONAL** = existe e o clique/fluxo produz o efeito; **PRESENTE-SEM-EFEITO** = existe na tela (ou no core) mas não faz nada de verdade (interruptor que só grava, botão desabilitado, texto "em breve", dado que nada consome); **AUSENTE** = não existe; **VERIFICAR** = não consegui concluir.
 
@@ -97,12 +97,9 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P1 | ATL-02 | Atalhos | Atalho global: ensurdecer (Ctrl+Shift+D) | SEM-EFEITO | idem | idem | Idem ATL-01 |
 | P1 | ATL-03 | Atalhos | Atalho global: transmitir/parar | SEM-EFEITO | idem | idem | Idem ATL-01 |
 | P1 | ATL-04 | Atalhos | Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar) | SEM-EFEITO | components/ShortcutsPanel.tsx | settings.c; só salvo | Já existe; GetAsyncKeyState no core/UI; captura de tecla e botoes do mouse no campo |
-| P1 | BAS-02 | Funções básicas de desktop | Menu de contexto (clique direito) nos campos de texto: Recortar, Copiar, Colar, Selecionar tudo | AUSENTE | Chromium (nativo, sem código próprio) | (não existe): clique direito num campo não faz nada; só as mensagens têm menu | Popover de vidro no ponto do clique, mesmo desenho e componente do menu de mensagem (msgui.c, linhas com ícone, cantos arredondados), com Desfazer, Recortar, Copiar, Colar e Selecionar tudo; entra num wrapper do app sobre cui_input para valer em login, composer e Configurações |
-| P1 | BAS-04 | Funções básicas de desktop | Selecionar e copiar trecho de texto dentro das mensagens (arrastar o mouse sobre o balão) | AUSENTE | Chromium (nativo, sem código próprio); MessageList.tsx | (não existe): texto do balão não é selecionável; só "Copiar texto" da mensagem inteira no menu | No balão da mensagem (msgui.c): seleção por arrasto com realce na cor de acento translúcida e Ctrl+C; o menu de contexto ganha "Copiar seleção" quando há trecho marcado. Mantém o menu atual como atalho para copiar tudo |
 | P1 | BAS-15 | Funções básicas de desktop | Instância única (abrir de novo traz a janela existente) | AUSENTE | desktop (requestSingleInstanceLock) | (não existe): duas instâncias disputam o banco | Ver TRY-05: mutex nomeado no main.c e foco na janela existente; sem UI própria |
 | P1 | BAS-16 | Funções básicas de desktop | Lembrar posição, tamanho, monitor e maximizado da janela | AUSENTE | desktop-lifecycle.ts (só calcula o tamanho inicial pela área de trabalho; não grava) | (não existe): abre sempre 1280x800 no lugar padrão do Windows; layout.json guarda só os painéis | Gravar no layout.json (mesmo arquivo dos painéis) retângulo, monitor e estado maximizado; restaurar com clamp na área visível dos monitores ligados |
 | P1 | BAS-22 | Funções básicas de desktop | Badge de não lidas (lista de conversas, rail, ícone da barra de tarefas) | AUSENTE | (não existe no Electron também) | msgui.c só mostra "não lida" dentro de tópicos; nada na lista nem na barra de tarefas | Contador em pílula de acento no item da conversa (lista de amigos e grupos) e no rail; barra de tarefas com ITaskbarList3::SetOverlayIcon; zera ao abrir a conversa |
-| P1 | BAS-23 | Funções básicas de desktop | Arrastar e soltar arquivos na janela ou no composer | AUSENTE | components/MessageComposer.tsx (Solte para enviar) | (não existe): a biblioteca já entrega os arquivos soltos (cui_dropped_file) e o app não usa | Ver MSG-09: dropzone de vidro cobrindo o painel de conversa com "Solte para enviar" (borda tracejada de acento, cantos arredondados); também aceita imagem para o avatar do perfil |
 | P1 | CFG-05 | Configurações | Escolher microfone | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c lista winmm e grava mic; o core usa o padrão | Já existe (dropdown da aba Voz e vídeo); enviar o dispositivo ao core (áudio.rs) |
 | P1 | CFG-07 | Configurações | Testar o microfone fora da chamada | AUSENTE | components/useMicrophoneTest.ts | (o texto da tela diz que 'chega com o áudio nativo') | Botão 'Testar' no cartão ENTRADA, mesma barra de nivel; captura curta no core |
 | P1 | CFG-09 | Configurações | Escolher saida de áudio | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c dropdown; só salvo | Já existe; usar o dispositivo na reprodução do core |
@@ -128,9 +125,6 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P1 | LAY-04 | Layout novo (trilho, lista, conversa, hub) | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | AUSENTE | (padrão novo do usuário) | layout_default (layout.c) cria só trilho, lista e conversa; Membros e Sala de voz existem como painéis, mas só entram pelo botão + do dock e o de Membros lista amigos, não o grupo (GRP-10) | Quarto painel do layout_default, à direita da conversa (largura ~270 px, mesmo vidro e cantos), com abas Membros / Sala de voz / Fixadas; abre sozinho em grupos e fecha em DM; o usuário ainda pode fechar (X do dock) e o estado é salvo no layout.json |
 | P1 | LAY-05 | Layout novo (trilho, lista, conversa, hub) | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | AUSENTE | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | Painel central em vez do estado vazio: cabeçalho com abas em pílula (padrão do seletor Call/Transmissão da chamada), linhas largas de amigo com ações e a lista de pedidos; hub à direita mostra "Ativos agora" |
 | P1 | LAY-07 | Layout novo (trilho, lista, conversa, hub) | Aba Chat da chamada no padrão de conversa (balões, avatares, horário, composer embaixo) | AUSENTE | (padrão novo do usuário) | ui_call.c: texto cru "Nome / frase" sem balão, avatar, hora nem campo de envio (MSG-19) | Reutilizar o renderizador de mensagens do painel de conversa (msgui.c) dentro do cartão da aba Chat e o composer fixo sobre a barra de controles; mesmo vidro e cantos do cartão atual |
-| P1 | MSG-09 | Mensagens | Anexar arquivo (botão, arrastar e soltar) | SEM-EFEITO | components/MessageComposer.tsx (Anexar arquivo, Solte para enviar) | ui_social.c: botão clip desabilitado 'Anexar (marco 3)' | Habilitar o clip do compositor (mesmo botão) + overlay de vidro 'Solte para enviar' sobre a área do chat; progresso como chip na bolha |
-| P1 | MSG-10 | Mensagens | Cartão de anexo (baixar, pausar, retomar, cancelar, abrir) | AUSENTE | components/AttachmentCard.tsx | (não existe) | Cartão de vidro dentro da bolha (raio 14, ícone do tipo, nome, tamanho, barra de progresso violeta) |
-| P1 | MSG-14 | Mensagens | Estados da mensagem: enviando, entregue, falhou e reenvio (outbox) | AUSENTE | chat/OutboxService.ts | (não existe: s->notice 'Não foi possivel gravar') | Ícone de 12 px no canto da bolha própria (relogio, check, alerta); toque no alerta reenvia |
 | P1 | NOT-01 | Notificações | Aviso: amigo ficou online | SEM-EFEITO | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | Já existe (aba Notificações); toast nativo do Windows + opcional toast de vidro no canto do app |
 | P1 | NOT-02 | Notificações | Aviso: amigo comecou a transmitir | SEM-EFEITO | services/profile/use-friend-notifications.ts | settings.c interruptor; só salvo | Idem NOT-01 |
 | P1 | NOT-03 | Notificações | Notificação de nova mensagem (DM e grupo) com o app em segundo plano | AUSENTE | services/chat/background-manager.ts | (não existe) | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; texto 'Autor: trecho' como no Electron; toast nativo |
@@ -149,10 +143,8 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P2 | ATU-04 | Atualização | Botão 'Verificar agora' | AUSENTE | components/UpdatesPanel.tsx; ipc updater:check | (não existe: só verifica sozinho a cada 4 h) | Botão secundario no cartão ATUALIZACOES (settings.c) com estado 'Verificando...' (loading) e resultado em 12 px |
 | P2 | AUT-03 | Auth | Data de nascimento no cadastro (só maiores de 18) | AUSENTE | views/AuthView.tsx; services/account/age.ts | (não existe) | Campo no formulario de criar conta (ui_auth.c, modo signup), mesmo cui_input da senha; texto de ajuda 13 px; a data não e guardada |
 | P2 | AUT-11 | Auth | Entrar digitando o @nick (dica local de e-mail) | AUSENTE | services/account/login-hints.ts | (não existe) | Aceitar @nick no campo de e-mail do formulario de entrar (ui_auth.c); dica 12 px abaixo do campo; sem tela nova |
-| P2 | BAS-08 | Funções básicas de desktop | Busca global / troca rápida (Ctrl+K) e busca dentro da conversa (Ctrl+F) | AUSENTE | (não existe no Electron também) | (não existe): nenhuma busca de mensagens, amigos ou grupos | Item novo (o Electron também não tinha): paleta de vidro centralizada, aberta por Ctrl+K, com campo grande e resultados em linhas de amigos, grupos e mensagens, no estilo do popover de Adicionar painel; Ctrl+F abre uma barra de busca no topo do painel de conversa |
 | P2 | BAS-14 | Funções básicas de desktop | Iniciar com o Windows | AUSENTE | desktop (loginItemSettings) | (não existe) | Ver TRY-06: interruptor no cartão de sistema de Configurações; chave Run do registro do usuário |
 | P2 | BAS-21 | Funções básicas de desktop | Som de notificação e sons de entrar/sair da chamada | AUSENTE | services/audio/call-sounds.ts | (não existe) | Ver CHM-20: PlaySound de WAV curto, com volume e interruptor em Configurações > Notificações |
-| P2 | BAS-24 | Funções básicas de desktop | Colar imagem da área de transferência no composer | AUSENTE | Chromium (nativo, sem código próprio) | (não existe): o clipboard da plataforma lê só texto (CF_UNICODETEXT) | Composer (ui_social.c): Ctrl+V com imagem cria a prévia do anexo no cartão acima do campo; depende de MSG-09/MSG-10 |
 | P2 | BAS-32 | Funções básicas de desktop | Estado offline / sem internet visível ao usuário (banner persistente) | AUSENTE | Electron | Só o aviso de erro pontual (account.c) e o texto de Diagnóstico; sem banner persistente na janela principal | Banner fino de vidro no topo do painel de conversa (mesmo padrão do banner de atualização, ui_update.c), com "Sem conexão. Tentando reconectar" e botão Tentar agora; some sozinho ao voltar |
 | P2 | BAS-39 | Funções básicas de desktop | Tamanho de texto ajustável pelo usuário (zoom da interface) | AUSENTE | Chromium (nativo, sem código próprio) (Ctrl+roda/Ctrl+mais) | (não existe): só segue a escala do Windows (BAS-18); sem Ctrl+mais/menos nem opção | Controle deslizante de 90% a 150% no cartão Temas ou Desempenho de Configurações e atalhos Ctrl+mais/Ctrl+menos/Ctrl+0; aplica a escala da biblioteca (cui_dpi_scale) e guarda em settings |
 | P2 | CFG-08 | Configurações | Volume de entrada (ganho) | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c slider; só salvo | Já existe; aplicar ganho no core (áudio.rs) |
@@ -179,17 +171,12 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P2 | LAY-11 | Layout novo (trilho, lista, conversa, hub) | Texto sempre legível: tamanho mínimo nas etiquetas (rótulos de seção em 10 a 11 px) | AUSENTE | (padrão novo do usuário) | Rótulos "SALAS DE VOZ", "GRUPOS", "AMIGOS", dicas e legendas dos balões usam 10 a 11 px, abaixo do padrão de "textos maiores" pedido; corpo e títulos estão bons | Subir etiquetas de seção para 12 px e dicas/horários para 12 px nos painéis lista e conversa (a constante está espalhada por .size nos .c; vale centralizar em briks_ui.h) |
 | P2 | LAY-12 | Layout novo (trilho, lista, conversa, hub) | Dica "Sair" (tooltip) presa no topo da tela e círculo no canto inferior esquerdo em todas as capturas | AUSENTE | (padrão novo do usuário) | Nas capturas ocultas o tooltip do botão sair do rodapé aparece fixo em x=640 y=20; já listado em plano-pos-1.3.0 (frente D) | Corrigir a âncora do tooltip do rodapé (cui_tooltip) para o botão, e esconder o ponteiro do roteiro nas capturas |
 | P2 | MSG-08 | Mensagens | Indicador 'digitando...' | AUSENTE | components/ConversationTimeline.tsx | (não existe) | Linha de 12 px cor B_MUTED acima do compositor, com três pontos animados (respeita reduced motion) |
-| P2 | MSG-11 | Mensagens | Galeria de anexos do canal | AUSENTE | components/ConversationTimeline.tsx (Galeria do canal) | (não existe) | Painel novo 'Anexos' no dock (grade de miniaturas, raio 14) ou botão no cabeçalho do chat |
-| P2 | MSG-12 | Mensagens | Pré-visualização de link | AUSENTE | components/SafeMessageContent.tsx | (não existe) | Cartão de vidro sob o texto da bolha (título 13 px, URL 11 px) |
-| P2 | MSG-13 | Mensagens | Links e formatacao Markdown seguros no texto | AUSENTE | components/SafeMessageContent.tsx | msgui.c exibe texto puro; links não abrem | Renderizar na bolha (texto rico) com link em B_C3 sublinhado; clique abre no navegador padrão |
-| P2 | MSG-15 | Mensagens | Buscar mensagens na conversa | AUSENTE | views/HomeView.tsx (Buscar) | (não existe) | Mesma lupa do GRP-19 no cabeçalho do chat |
 | P2 | NOT-04 | Notificações | Notificação 'pediu para você transmitir' | AUSENTE | components/CallWorkspace.tsx | (não existe) | Junto de CHM-15 |
 | P2 | NOT-05 | Notificações | Nada e avisado durante a chamada nem logo ao abrir | AUSENTE | release 1.2.0 | (sem avisos) | Regra de supressao no mesmo modulo de NOT-01 |
 | P2 | PRF-06 | Perfil | Limpar o status depois de 30 min/1 h/4 h/hoje | SEM-EFEITO | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | Aplicar a expiracao em profile.c (timer) e mostrar 'some em X' sob o campo, 11 px, cor B_MUTED |
 | P2 | PRF-12 | Perfil | Outros computadores ligados ao @nick (listar e revogar) | AUSENTE | components/AccountPanel.tsx (Revogar) | (não existe) | Cartão 'Computadores' na aba Conta do diálogo Perfil e conta: linhas com nome do PC, data e botão Revogar secundario, confirmacao em diálogo |
 | P2 | RDE-03 | Rede | Redes privadas detectadas (ZeroTier, Tailscale, WireGuard) | AUSENTE | desktop network-interfaces.ts | (não existe) | Linha 'Detectado' com selo verde dentro do cartão PREFERENCIA DE CONEXAO |
 | P2 | TRY-07 | Tray/janela | Links briks:// (convites e mensagens) | AUSENTE | desktop protocol.ts | msgui.c só COPIA briks://mensagem; o protocolo não está registrado | Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; abre o diálogo de convite/mensagem correspondente |
-| P2 | TRY-08 | Tray/janela | Abrir links externos no navegador | AUSENTE | desktop ipc shell:open-external | (não existe: links não são clicaveis) | Ver MSG-13 |
 | P3 | AMI-16 | Amigos | Desconectar só o chat privado (Desconectar P2P) | AUSENTE | views/HomeView.tsx | (não existe) | Item no menu de contexto do amigo; texto 13 px; confirmacao simples |
 | P3 | ATL-06 | Atalhos | Ctrl+Shift+O: editar posições do overlay em qualquer tela | AUSENTE | components/OverlaySettingsPanel.tsx | (não existe) | Depende de CFG-25 |
 | P3 | BAS-27 | Funções básicas de desktop | Tema claro e escuro (e seguir o do Windows) | AUSENTE | (Electron: só tema escuro com cores) | Temas por gradiente (Configurações > Temas), sempre escuros; sem tema claro nem seguir o Windows | Opção nova no cartão Temas: "Claro" e "Seguir o Windows"; o gerador de tema (themes.c) precisa de uma variante clara com o mesmo contraste mínimo; fora do escopo do Electron |
@@ -314,13 +301,13 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | MSG-06 | Reagir com emoji | components/ConversationTimeline.tsx | msgui.c (picker e chips) | PRESENTE-FUNCIONAL | msg-reagir |
 | MSG-07 | Fixar/desafixar e ver Fixadas | components/ConversationTimeline.tsx | msgui.c (Fixar, chip Fixadas) | PRESENTE-FUNCIONAL | msg-fixadas |
 | MSG-08 | Indicador 'digitando...' | components/ConversationTimeline.tsx | (não existe) | AUSENTE | sonda |
-| MSG-09 | Anexar arquivo (botão, arrastar e soltar) | components/MessageComposer.tsx (Anexar arquivo, Solte para enviar) | ui_social.c: botão clip desabilitado 'Anexar (marco 3)' | PRESENTE-SEM-EFEITO | msg-anexar |
-| MSG-10 | Cartão de anexo (baixar, pausar, retomar, cancelar, abrir) | components/AttachmentCard.tsx | (não existe) | AUSENTE | sonda |
-| MSG-11 | Galeria de anexos do canal | components/ConversationTimeline.tsx (Galeria do canal) | (não existe) | AUSENTE | sonda |
-| MSG-12 | Pré-visualização de link | components/SafeMessageContent.tsx | (não existe) | AUSENTE | sonda |
-| MSG-13 | Links e formatacao Markdown seguros no texto | components/SafeMessageContent.tsx | msgui.c exibe texto puro; links não abrem | AUSENTE | sonda |
-| MSG-14 | Estados da mensagem: enviando, entregue, falhou e reenvio (outbox) | chat/OutboxService.ts | (não existe: s->notice 'Não foi possivel gravar') | AUSENTE | sonda |
-| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | (não existe) | AUSENTE | sonda |
+| MSG-09 | Anexar arquivo (botão, arrastar e soltar) | components/MessageComposer.tsx (Anexar arquivo, Solte para enviar) | botão do clipe (seletor múltiplo) + arquivo solto + imagem colada; sem sala de voz o anexo fica preparado | PRESENTE-FUNCIONAL | msg-anexar, campos-anexos |
+| MSG-10 | Cartão de anexo (baixar, pausar, retomar, cancelar, abrir) | components/AttachmentCard.tsx | msg-galeria.txt: cartão (ícone, nome, tamanho, barra de progresso, Pausar/Retomar/Cancelar/Abrir com aviso, mostrar na pasta) no fluxo da conversa; transferência real testada só no núcleo (teste Rust) | PRESENTE-FUNCIONAL | msg-galeria |
+| MSG-11 | Galeria de anexos do canal | components/ConversationTimeline.tsx (Galeria do canal) | msg-galeria.txt: botão "Galeria de imagens" com miniaturas das imagens recebidas na sessão (o Electron guarda por canal; aqui só desta sessão) | PRESENTE-FUNCIONAL | msg-galeria |
+| MSG-12 | Pré-visualização de link | components/SafeMessageContent.tsx | msg-rico.txt: cartão de prévia (site, título, descrição, miniatura) sob o balão; busca segura feita pelo núcleo (link.preview); sem rede mostra só o link | PRESENTE-FUNCIONAL | msg-rico |
+| MSG-13 | Links e formatacao Markdown seguros no texto | components/SafeMessageContent.tsx | msg-rico.txt: markdown (negrito, código, link, menção) na bolha; link só http(s) abre no navegador padrão; "Selecionar texto…" no menu para copiar trecho | PRESENTE-FUNCIONAL | msg-rico |
+| MSG-14 | Estados da mensagem: enviando, entregue, falhou e reenvio (outbox) | chat/OutboxService.ts | msg-estados.txt: relógio (enviando), check (gravada), check duplo (entregue: chat.ack do núcleo com o id da mensagem, DM com sala aberta), alerta (falhou; clique reenvia). Entrega ponta a ponta só testada no núcleo (teste Rust do id) | PRESENTE-FUNCIONAL | msg-estados |
+| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | lupa no cabeçalho + Ctrl+F (campos-busca.txt) filtra as mensagens | PRESENTE-FUNCIONAL | campos-busca |
 | MSG-16 | Mensagens ficam gravadas neste computador | services/offline/chat-storage.ts | msgui.c / backend local | PRESENTE-FUNCIONAL | - |
 | MSG-17 | Histórico sincronizado com o par (pedir/responder histórico) | chat/HistoryService.ts | briks-core chat_events.rs; sem teste de interop | VERIFICAR | - |
 | MSG-18 | Aba Chat da chamada mostra as mensagens da sala | components/CallWorkspace.tsx (Chat da chamada) | ui_call.c (call_view 1) | PRESENTE-FUNCIONAL | call |
@@ -439,7 +426,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | TRY-05 | Instância única (segunda abertura foca a primeira) | desktop main.ts requestSingleInstanceLock | (não existe) | AUSENTE | sonda |
 | TRY-06 | Iniciar com o Windows | desktop (setLoginItemSettings) | (não existe) | AUSENTE | sonda |
 | TRY-07 | Links briks:// (convites e mensagens) | desktop protocol.ts | msgui.c só COPIA briks://mensagem; o protocolo não está registrado | AUSENTE | sonda |
-| TRY-08 | Abrir links externos no navegador | desktop ipc shell:open-external | (não existe: links não são clicaveis) | AUSENTE | sonda |
+| TRY-08 | Abrir links externos no navegador | desktop ipc shell:open-external | msg-rico.txt: clique em link http(s) da mensagem abre o navegador padrão (ShellExecute); verificado com gancho de teste que só registra o endereço | PRESENTE-FUNCIONAL | msg-rico |
 | TRY-09 | Barra de título própria com minimizar/maximizar/fechar e versão | desktop window.ts | (janela do SO) | AUSENTE | sonda |
 | TRY-10 | Janela com tamanho mínimo e redimensionavel | desktop window.ts | main.c (min 560x480) | PRESENTE-FUNCIONAL | - |
 | TRY-11 | Aviso de recuperação quando o backend cai | components/DesktopRecoveryNotice.tsx | ui_auth.c ('Quase la', 'Tentar de novo') | PRESENTE-FUNCIONAL | - |
@@ -484,13 +471,13 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | ID | Item | Electron | CUI | Classe | Teste automático |
 |---|---|---|---|---|---|
 | BAS-01 | Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+Z e Ctrl+Y em todos os campos de texto | Chromium (nativo, sem código próprio) | biblioteca CUI (cui_textedit.c): seleção, copiar, recortar, colar (texto), desfazer e refazer; senha não copia | PRESENTE-FUNCIONAL | - |
-| BAS-02 | Menu de contexto (clique direito) nos campos de texto: Recortar, Copiar, Colar, Selecionar tudo | Chromium (nativo, sem código próprio) | (não existe): clique direito num campo não faz nada; só as mensagens têm menu | AUSENTE | sonda |
+| BAS-02 | Menu de contexto (clique direito) nos campos de texto: Recortar, Copiar, Colar, Selecionar tudo | Chromium (nativo, sem código próprio) | campos-menu.txt: clique direito em qualquer cui_input (briks_input_ex em msgui.c) abre Desfazer/Refazer/Recortar/Copiar/Colar/Selecionar tudo; modal | PRESENTE-FUNCIONAL | campos-menu |
 | BAS-03 | Selecionar com mouse (arrastar, duplo clique para palavra) e Shift+setas nos campos | Chromium (nativo, sem código próprio) | biblioteca CUI (cui_textedit.c): âncora e cursor, Shift+setas, Ctrl+setas por palavra | PRESENTE-FUNCIONAL | - |
-| BAS-04 | Selecionar e copiar trecho de texto dentro das mensagens (arrastar o mouse sobre o balão) | Chromium (nativo, sem código próprio); MessageList.tsx | (não existe): texto do balão não é selecionável; só "Copiar texto" da mensagem inteira no menu | AUSENTE | sonda |
+| BAS-04 | Selecionar e copiar trecho de texto dentro das mensagens (arrastar o mouse sobre o balão) | Chromium (nativo, sem código próprio); MessageList.tsx | campos-selecao.txt: texto puro do balão selecionável por arrasto (Ctrl+C e Copiar seleção); mensagens com formatação: menu "Selecionar texto…" abre o texto cru selecionável (msg-rico.txt) | PRESENTE-FUNCIONAL | msg-rico, campos-selecao |
 | BAS-05 | Copiar a mensagem inteira, o link e o ID pelo menu da mensagem | components/MessageList.tsx | msgui.c: Copiar texto, Copiar link da mensagem, Copiar ID | PRESENTE-FUNCIONAL | - |
 | BAS-06 | Esc fecha diálogos, menus, popovers e seletor de emoji | Chromium (nativo, sem código próprio); modais do app | biblioteca (cui_dialog, popover) e msgui.c tratam Esc | PRESENTE-FUNCIONAL | bas-esc |
 | BAS-07 | Enter envia a mensagem (Shift+Enter quebra a linha) | components/MessageComposer.tsx | ui_social.c: composer; coberto por MSG-01 | PRESENTE-FUNCIONAL | - |
-| BAS-08 | Busca global / troca rápida (Ctrl+K) e busca dentro da conversa (Ctrl+F) | (não existe no Electron também) | (não existe): nenhuma busca de mensagens, amigos ou grupos | AUSENTE | sonda |
+| BAS-08 | Busca global / troca rápida (Ctrl+K) e busca dentro da conversa (Ctrl+F) | (não existe no Electron também) | campos-busca.txt: Ctrl+K paleta (amigos, grupos, mensagens) e Ctrl+F busca na conversa | PRESENTE-FUNCIONAL | campos-busca |
 | BAS-09 | Tab e Shift+Tab percorrem os campos e botões na ordem visual | Chromium (nativo) | biblioteca (cui_core.c): ordem de foco por quadro, Tab e Shift+Tab; Esc solta o Tab no editor de código | PRESENTE-FUNCIONAL | - |
 | BAS-10 | Foco visível (anel no elemento focado) e Enter/Espaço ativando botões | Chromium (nativo) | biblioteca: anel de foco e ativação por teclado nos widgets | PRESENTE-FUNCIONAL | - |
 | BAS-11 | Alt+F4 e botão X da janela fecham o app | Electron (BrowserWindow) | Win32 nativo: WM_CLOSE encerra o app e a chamada; sem confirmação durante a chamada | PRESENTE-FUNCIONAL | - |
@@ -505,8 +492,8 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | BAS-20 | Notificações do sistema (nova mensagem, amigo online, transmissão) | desktop notifications | (não existe); interruptores de Configurações sem efeito | AUSENTE | sonda |
 | BAS-21 | Som de notificação e sons de entrar/sair da chamada | services/audio/call-sounds.ts | (não existe) | AUSENTE | sonda |
 | BAS-22 | Badge de não lidas (lista de conversas, rail, ícone da barra de tarefas) | (não existe no Electron também) | msgui.c só mostra "não lida" dentro de tópicos; nada na lista nem na barra de tarefas | AUSENTE | sonda |
-| BAS-23 | Arrastar e soltar arquivos na janela ou no composer | components/MessageComposer.tsx (Solte para enviar) | (não existe): a biblioteca já entrega os arquivos soltos (cui_dropped_file) e o app não usa | AUSENTE | sonda |
-| BAS-24 | Colar imagem da área de transferência no composer | Chromium (nativo, sem código próprio) | (não existe): o clipboard da plataforma lê só texto (CF_UNICODETEXT) | AUSENTE | sonda |
+| BAS-23 | Arrastar e soltar arquivos na janela ou no composer | components/MessageComposer.tsx (Solte para enviar) | campos-anexos.txt: arquivo solto envia (com sala) ou fica preparado no cartão; "Solte para enviar" aparece quando a plataforma informa o arraste (Windows ainda não informa) | PRESENTE-FUNCIONAL | campos-anexos |
+| BAS-24 | Colar imagem da área de transferência no composer | Chromium (nativo, sem código próprio) | campos-anexos.txt: Ctrl+V / Colar com imagem na área de transferência cria cartão de anexo preparado (CF_DIB); envio exige sala de voz | PRESENTE-FUNCIONAL | campos-anexos |
 | BAS-25 | Rolagem com a roda do mouse e o touchpad (vertical e horizontal) | Chromium (nativo, sem código próprio) | biblioteca: WM_MOUSEWHEEL e WM_MOUSEHWHEEL; cui_scroll nas listas e na conversa | PRESENTE-FUNCIONAL | - |
 | BAS-26 | Barras de rolagem visíveis e arrastáveis | Chromium (nativo, sem código próprio) | biblioteca: cui_scroll desenha o polegar; editor de código tem barras próprias | PRESENTE-FUNCIONAL | - |
 | BAS-27 | Tema claro e escuro (e seguir o do Windows) | (Electron: só tema escuro com cores) | Temas por gradiente (Configurações > Temas), sempre escuros; sem tema claro nem seguir o Windows | AUSENTE | sonda |
@@ -553,16 +540,15 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Resultado | Itens |
 |---|---|
-| AUSENTE | 90 |
-| PASSOU | 52 |
-| REVER | 2 |
-| SEM-EFEITO | 33 |
+| AUSENTE | 66 |
+| FALHOU | 5 |
+| PASSOU | 60 |
+| REVER | 18 |
+| SEM-EFEITO | 28 |
 | SEM-TESTE | 64 |
 | VERIFICAR | 7 |
 
 PASSOU = a ação teve o efeito visível esperado no app oculto; SEM-TESTE = item PRESENTE-FUNCIONAL sem roteiro automático (depende do core, da rede, de GPU ou de conferência manual); SEM-EFEITO/AUSENTE = confirmado pelo clique e/ou pela sonda; REVER = sonda ou clique indica que algo mudou; reclassifique.
-
-Nota: os 2 REVER dessa execução (BAS-32 e LAY-06) eram sondas largas demais (achavam o texto "sem internet" do modo de desenvolvimento e o painel Histórico do dock). Corrigi as sondas no `itens.csv` e conferi com nova passada das sondas: nenhum REVER. Nenhum caso executável com FALHOU.
 
 ## Roteiro automatizado oculto
 

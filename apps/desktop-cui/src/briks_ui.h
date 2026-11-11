@@ -382,6 +382,20 @@ static inline void briks_pop_end(cui_ctx *ui) { g_in_modal--; cui_popover_end(ui
 #define cui_menu(ui, label, ...) CUI__SCOPE_IF(briks_menu_begin((ui), (label), CUI__OPTS(cui_menu_opts, __VA_ARGS__)), briks_menu_end(ui))
 #undef cui_popover
 #define cui_popover(ui, id, ...) CUI__SCOPE_IF(briks_pop_begin((ui), (id), CUI__OPTS(cui_popover_opts, __VA_ARGS__)), briks_pop_end(ui))
+/* Menu de clique direito dos campos de texto (BAS-02): todo cui_input do app passa por briks_input_ex (msgui.c), que oferece
+   Desfazer, Recortar, Copiar, Colar e Selecionar tudo. O menu também é modal: nada por baixo recebe clique enquanto está aberto. */
+static inline bool briks_ctx_begin(cui_ctx *ui, const char *id) { bool b = cui_context_menu_begin(ui, id); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_ctx_end(cui_ctx *ui) { g_in_modal--; cui_context_menu_end(ui); }
+#undef cui_context_menu
+#define cui_context_menu(ui, id) CUI__SCOPE_IF(briks_ctx_begin((ui), (id)), briks_ctx_end(ui))
+int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *o);
+#undef cui_input
+#define cui_input(ui, id, buf, cap, ...) briks_input_ex((ui), (id), (buf), (cap), CUI__OPTS(cui_input_opts, __VA_ARGS__))
+/* Área de transferência do app (msgui.c): com BRIKS_FAKE_CLIPBOARD=1 é uma cópia em memória, nunca a do usuário (testes). */
+void briks_clip_install(cui_ctx *ui);                      /* main.c, depois de criar a janela */
+void briks_clip_set(const char *utf8);
+const char *briks_clip_probe(void);                        /* texto da área falsa ("" se desligada; script.c: expect/clip) */
+bool briks_clip_fake(void);
 #undef cui_dialog
 #define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
 /* Texto sempre legível (LAY-11): nenhuma etiqueta abaixo de BRIKS_MIN_TEXT px (antes havia 10 a 11 px espalhados). O piso fica aqui, no cui_text, para valer

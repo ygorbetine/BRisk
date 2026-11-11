@@ -91,6 +91,8 @@ pub enum MeshCmd {
     AudioCfg { in_gain: f32, out_gain: f32, gate_db: Option<f32> },
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
     Chat { to_fp: String, text: String },
+    /// como `Chat`, mas com o id da mensagem escolhido pela UI (o `chat.ack` volta com o mesmo id: estado "entregue")
+    ChatWithId { to_fp: String, text: String, id: String },
     /// Assina e envia um evento de chat (`chat.event` v3) a todos os peers autenticados da sala.
     /// Envia um arquivo (caminho local) a todos os peers autenticados, ou só a `to_fp`.
     SendFile { path: String, to_fp: Option<String> },
@@ -470,18 +472,21 @@ impl Actor {
         for c in q { let _ = p.pc.add_ice_candidate(c).await; }
     }
 
+    async fn chat_send(&mut self, to_fp: String, text: String, id: String) {
+        let my_fp = self.identity.fingerprint();
+        let m = identity::sign_message(&self.identity, ChatWire {
+            version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id,
+            author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
+        self.hist.add(&m);
+        self.outbox.entry(to_fp.clone()).or_default().push(m);
+        self.flush_outbox(&to_fp).await;
+    }
+
     async fn on_cmd(&mut self, c: MeshCmd) {
         match c {
             MeshCmd::ForceOffer { peer_id } => self.start_offer(&peer_id, false).await,
-            MeshCmd::Chat { to_fp, text } => {
-                let my_fp = self.identity.fingerprint();
-                let m = identity::sign_message(&self.identity, ChatWire {
-                    version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id: uuid::Uuid::new_v4().to_string(),
-                    author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
-                self.hist.add(&m);
-                self.outbox.entry(to_fp.clone()).or_default().push(m);
-                self.flush_outbox(&to_fp).await;
-            }
+            MeshCmd::Chat { to_fp, text } => self.chat_send(to_fp, text, uuid::Uuid::new_v4().to_string()).await,
+            MeshCmd::ChatWithId { to_fp, text, id } => self.chat_send(to_fp, text, id).await,
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {
                 let my_fp = self.identity.fingerprint();
                 match crate::chat_events::create(&self.identity, &channel, &target, &my_fp, &action, content.as_deref(), reference.as_deref(), emoji.as_deref(), now_ms() as u64, &mut self.ev_last_ts) {

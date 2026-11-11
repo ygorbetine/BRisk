@@ -1,0 +1,2 @@
+# Cabeçalho do chat na janela mínima com texto Máximo: "Fixadas" não quebra em duas linhas
+snap p0

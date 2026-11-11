@@ -94,6 +94,33 @@
       { "item": "BAS-39", "de": "t0", "para": "t1", "esperado": "muda", "min": 2000 },
       { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] },
     { "id": "perfil-fotos", "demo": "social", "roteiro": "perfil-fotos.txt", "env": { "BRIKS_DEV_FPHOTO": "assets/login/discord.png", "BRIKS_DEV_FPHOTO_DELAY": "1300" }, "checagens": [
-      { "item": "PRF-03", "de": "p0", "para": "p1", "esperado": "muda", "regiao": [270, 500, 230, 140], "min": 150 } ] }
+      { "item": "PRF-03", "de": "p0", "para": "p1", "esperado": "muda", "regiao": [270, 500, 230, 140], "min": 150 } ] },
+    { "id": "msg-estados", "demo": "msgs", "roteiro": "msg-estados.txt", "checagens": [
+      { "item": "MSG-14", "de": "e1", "para": "e2", "esperado": "muda", "min": 20 },
+      { "item": "MSG-14", "de": "e1", "para": "e4", "esperado": "muda", "min": 20 },
+      { "item": "MSG-14", "de": "e3", "para": "e4", "esperado": "muda", "min": 20 } ] },
+    { "id": "msg-rico", "demo": "msgs", "roteiro": "msg-rico.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1", "BRIKS_DEMO_ATTACH": "1" }, "checagens": [
+      { "item": ["MSG-12", "MSG-13"], "de": "r0", "para": "r1", "esperado": "muda" },
+      { "item": "TRY-08", "de": "r1", "para": "r2", "esperado": "muda" },
+      { "item": "BAS-04", "de": "r2", "para": "r3", "esperado": "muda" },
+      { "item": "BAS-04", "de": "r3", "para": "r4", "esperado": "muda" } ] },
+    { "id": "msg-fixadas-min", "demo": "msgs", "roteiro": "msg-fixadas-min.txt", "env": { "BRIKS_WINDOW": "560x480", "BRIKS_TEXT_SIZE": "3" }, "checagens": [] },
+    { "id": "msg-galeria", "demo": "msgs", "roteiro": "msg-galeria.txt", "env": { "BRIKS_DEMO_ATTACH": "1", "BRIKS_DEMO_GALERIA": "1" }, "checagens": [
+      { "item": ["MSG-10", "MSG-11"], "de": "g0", "para": "g1", "esperado": "muda" } ] },
+    { "id": "campos-menu", "demo": "msgs", "roteiro": "campos-menu.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-02", "de": "c1", "para": "c2", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c2", "para": "c3", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c3", "para": "c4", "esperado": "muda" } ] },
+    { "id": "campos-selecao", "demo": "msgs", "roteiro": "campos-selecao.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-04", "de": "s0", "para": "s1", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s2", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s3", "esperado": "muda" } ] },
+    { "id": "campos-anexos", "demo": "msgs", "roteiro": "campos-anexos.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-24", "de": "a0", "para": "a1", "esperado": "muda" },
+      { "item": "BAS-23", "de": "a1", "para": "a2", "esperado": "muda" },
+      { "item": ["BAS-23", "MSG-09"], "de": "a2", "para": "a3", "esperado": "muda" } ] },
+    { "id": "campos-busca", "demo": "msgs", "roteiro": "campos-busca.txt", "checagens": [
+      { "item": "BAS-08", "de": "b0", "para": "b1", "esperado": "muda" },
+      { "item": ["BAS-08", "MSG-15"], "de": "b0", "para": "b2", "esperado": "muda" } ] }
   ]
 }

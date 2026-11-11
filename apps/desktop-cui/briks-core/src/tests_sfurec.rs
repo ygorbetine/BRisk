@@ -136,6 +136,7 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
     let before = (voice(&b, A, 2).await, d.audio.rx_stat(B).frames, frame_n());
     assert!(before.0 > 40 && before.1 > 20 && before.2 > 0, "mídia antes da queda: {before:?}");
 
+    let mut video_back: Vec<(Option<Duration>, [u64; 5])> = vec![];
     for round in 1..=2u64 {
         // garante que o token de entrada já venceu (só na 1ª rodada importa)
         while t_tok.elapsed() < Duration::from_secs(8) { tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -160,8 +161,17 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
             assert_eq!(c.renewals.load(Ordering::Relaxed), round, "{}: um token novo por queda", c.ident);
         }
         eprintln!("rodada {round}: os 3 clientes voltaram {:.1} s depois de o servidor subir (fora do ar por {:.1} s); tokens renovados: {}", t_up.elapsed().as_secs_f32(), t_kill.elapsed().as_secs_f32(), cs.iter().map(|c| c.renewals.load(Ordering::Relaxed)).sum::<u64>());
+        // vídeo do espectador logo depois de voltar: quanto demora o 1º quadro novo e a que taxa os quadros chegam, segundo a segundo
+        // (o contador recomeça do zero quando o receptor é recriado; conta-se cada mudança de valor)
+        let (t_rec, mut last, mut first, mut per_s) = (Instant::now(), frame_n(), None, [0u64; 5]);
+        while t_rec.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let n = frame_n();
+            if n != last { last = n; let el = t_rec.elapsed(); if first.is_none() { first = Some(el); } per_s[(el.as_secs() as usize).min(4)] += 1; }
+        }
+        eprintln!("rodada {round}: vídeo do espectador depois de reconectar: 1º quadro novo em {} ms; quadros por segundo nos 5 s seguintes: {per_s:?}", first.map(|d| d.as_millis() as i64).unwrap_or(-1));
+        video_back.push((first, per_s));
         // voz nos dois sentidos, para todos
-        tokio::time::sleep(Duration::from_secs(3)).await;
         for c in cs { for o in cs { if c.ident != o.ident { let f = voice(c, &o.ident, 1).await; assert!(f > 25, "rodada {round}: {} sem voz de {} depois de voltar ({f} quadros/s)", c.ident, o.ident); } } }
         // a transmissão volta para quem assistia, sem novo share.watch
         let end = Instant::now() + Duration::from_secs(25);

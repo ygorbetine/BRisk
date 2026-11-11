@@ -23,6 +23,7 @@ mod ipc;
 mod mesh;
 mod mfenc;
 mod mock;
+mod netmode;
 mod phoenix;
 mod procaudio;
 mod realtime;

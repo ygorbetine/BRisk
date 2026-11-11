@@ -176,8 +176,10 @@ pub async fn probe(servers: Vec<RTCIceServer>, timeout: Duration) -> Value {
     let counts = std::sync::Arc::new(std::sync::Mutex::new([0u32; 3]));   // host, srflx, relay
     let done = std::sync::Arc::new(tokio::sync::Notify::new());
     let run = async {
-        let api = webrtc::api::APIBuilder::new().build();
-        let pc = api.new_peer_connection(webrtc::peer_connection::configuration::RTCConfiguration { ice_servers: servers, ..Default::default() }).await?;
+        let mut se = webrtc::api::setting_engine::SettingEngine::default();
+        crate::netmode::apply(&mut se);
+        let api = webrtc::api::APIBuilder::new().with_setting_engine(se).build();
+        let pc = api.new_peer_connection(webrtc::peer_connection::configuration::RTCConfiguration { ice_servers: crate::netmode::ice_servers(&servers), ..Default::default() }).await?;
         let (c2, d2) = (counts.clone(), done.clone());
         pc.on_ice_candidate(Box::new(move |c| {
             match c {

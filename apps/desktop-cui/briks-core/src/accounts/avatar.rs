@@ -27,6 +27,7 @@ pub fn fetch(url: &str) -> AResult<(Vec<u8>, &'static str)> {
     if !(url.starts_with("https://") || url.starts_with("http://127.0.0.1:")) {
         return Err(bad("endereço da foto recusado"));
     }
+    if crate::netmode::deny_url(url).is_some() { return Err(AccountError::network()); }
     let agent = ureq::AgentBuilder::new().redirects(0).timeout_connect(Duration::from_secs(8)).timeout(Duration::from_secs(15)).build();
     let res = agent.get(url).call().map_err(|_| AccountError::network())?;
     if res.status() != 200 {

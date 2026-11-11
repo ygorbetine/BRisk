@@ -8,7 +8,7 @@ foreach ($c in $Cenarios) {
     $frames = Join-Path $env:TEMP "briks-msgs-$c"; Remove-Item -Recurse -Force $frames -ErrorAction SilentlyContinue
     $env:BRIKS_DEMO = "msgs"; $env:BRIKS_DOCK = "default"
     $env:BRIKS_SCRIPT = "$PSScriptRoot\msgs-$c.txt"; $env:BRIKS_SCRIPT_OUT = $frames
-    $env:BRIKS_HIDDEN = "1"   # janela oculta: nada aparece na tela de ninguém
+    $env:BRIKS_NET_LOOPBACK_ONLY = "1"; $env:BRIKS_HIDDEN = "1"   # janela oculta: nada aparece na tela de ninguém
     if ($c -like "*admin*") { $env:BRIKS_DEMO_ADMIN = "1" }
     if ($c -like "*anexos*") { $env:BRIKS_DEMO_ATTACH = "1" }
     $p = Start-Process -FilePath $exe -PassThru

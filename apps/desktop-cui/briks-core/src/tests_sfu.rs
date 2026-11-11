@@ -16,14 +16,39 @@ use crate::audio::Audio;
 use crate::mesh::{MeshCmd, MeshEvent};
 use crate::sfu::{self, SfuHandle, SfuJoin};
 
+/// Porta HTTP do livekit-server de teste: `BRIKS_LIVEKIT_TEST_PORT` (padrão 7880). O TCP de mídia fica desligado e o UDP usa porta+2.
+pub fn lk_port() -> u16 { std::env::var("BRIKS_LIVEKIT_TEST_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
+
+/// Argumentos do livekit-server de teste: tudo preso a 127.0.0.1 (HTTP, ICE UDP só em 127.0.0.0/8, TCP de mídia desligado, sem IP externo,
+/// sem TURN). O arquivo de configuração vai para a pasta temporária do processo (TMP/TEMP próprios dos agentes).
+pub fn lk_args() -> Vec<String> {
+    let p = lk_port();
+    let cfg = std::env::temp_dir().join(format!("briks-lk-{p}-{}.yaml", std::process::id()));
+    let yaml = format!("port: {p}
+bind_addresses:
+  - 127.0.0.1
+keys:
+  devkey: secret
+rtc:
+  tcp_port: 0
+  udp_port: {}
+  use_external_ip: false
+  ips:
+    includes:
+      - 127.0.0.0/8
+", p as u32 + 2);
+    let _ = std::fs::write(&cfg, yaml);
+    vec!["--dev".into(), "--bind".into(), "127.0.0.1".into(), "--config".into(), cfg.to_string_lossy().into_owned()]
+}
+
 struct Server { child: Child, port: u16 }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
-    let child = Command::new(bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
-    let port = 7880;
+    let child = Command::new(bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+    let port = lk_port();
     // espera a porta HTTP abrir
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {

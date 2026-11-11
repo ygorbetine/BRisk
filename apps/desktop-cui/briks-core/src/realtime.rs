@@ -77,6 +77,7 @@ pub(crate) fn parse_target(url: &str) -> Result<Target> {
 }
 
 pub(crate) async fn open_io(t: &Target) -> Result<Box<dyn Io>> {
+    if let Some(m) = crate::netmode::deny_url(&format!("{}://{}", if t.tls { "https" } else { "http" }, t.host)) { return Err(anyhow!(m)); }
     let tcp = TcpStream::connect((t.host.as_str(), t.port)).await?;
     tcp.set_nodelay(true).ok();
     if !t.tls {

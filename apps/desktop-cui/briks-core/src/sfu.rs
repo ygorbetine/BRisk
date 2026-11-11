@@ -170,8 +170,9 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
     // O webrtc-rs 0.12 anuncia AEAD_AES_256_GCM mas o SRTP dele entra em pânico com chave de 256 bits (generic-array, key_derivation.rs);
     // o LiveKit/pion prefere esse perfil. Anunciando só os de 128 bits a negociação cai num perfil que funciona.
     se.set_srtp_protection_profiles(vec![SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm, SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80]);
+    crate::netmode::apply(&mut se);
     let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
-    Ok(Arc::new(api.new_peer_connection(RTCConfiguration { ice_servers: ice.to_vec(), ..Default::default() }).await?))
+    Ok(Arc::new(api.new_peer_connection(RTCConfiguration { ice_servers: crate::netmode::ice_servers(ice), ..Default::default() }).await?))
 }
 
 fn wire_pc(pc: &Arc<RTCPeerConnection>, epoch: u32, target: i32, itx: &mpsc::Sender<Internal>) {
@@ -308,6 +309,7 @@ pub fn fetch_token_ex(token_url: &str, access_token: &str, room: &str) -> Result
 
 fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
     crate::sfu_cfg::check_token_url(token_url)?;
+    if let Some(m) = crate::netmode::deny_url(token_url) { return Err(m.into()); }
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
         .post(token_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
         .send_json(json!({ "room": room }));
@@ -334,6 +336,7 @@ fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<
 /// Autenticado com a sessão do usuário, como o pedido de token. Bloqueante: chame de `spawn_blocking`.
 pub fn kick_remote(kick_url: &str, access_token: &str, room: &str, identity: &str) -> Result<(), String> {
     crate::sfu_cfg::check_token_url(kick_url)?;
+    if let Some(m) = crate::netmode::deny_url(kick_url) { return Err(m); }
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(8)).build()
         .post(kick_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
         .send_json(json!({ "room": room, "identity": identity }));

@@ -61,7 +61,7 @@ static int forced(void) {
         const char *e = getenv("BRIKS_NET"); f = -1;
         if (e && !strcmp(e, "online")) f = NET_ONLINE;
         else if (e && (!strcmp(e, "offline") || !strcmp(e, "reconnecting") || !strcmp(e, "restored"))) f = NET_OFFLINE;
-        else if (getenv("BRIKS_SCRIPT") || getenv("CUI_SCREENSHOT") || getenv("BRIKS_HIDDEN") || getenv("BRIKS_DISABLE_NETPROBE")) f = NET_ONLINE;
+        else if (getenv("BRIKS_SCRIPT") || getenv("CUI_SCREENSHOT") || getenv("BRIKS_HIDDEN") || getenv("BRIKS_DISABLE_NETPROBE") || (getenv("BRIKS_NET_LOOPBACK_ONLY") && getenv("BRIKS_NET_LOOPBACK_ONLY")[0] == '1')) f = NET_ONLINE;
         if (e && !strcmp(e, "reconnecting")) f = NET_ONLINE;
         if (e && !strcmp(e, "restored")) f = NET_ONLINE;
     }

@@ -22,11 +22,11 @@ pub fn start_server() -> Option<Server> {
     if !std::path::Path::new(&bin).exists() { return None; }
     // a porta do servidor anterior pode demorar um instante para ser liberada
     for _ in 0..3 {
-        let mut child = Command::new(&bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+        let mut child = Command::new(&bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(10) {
             if let Ok(Some(_)) = child.try_wait() { break; }   // morreu (porta ocupada): tenta de novo
-            if std::net::TcpStream::connect(("127.0.0.1", 7880)).is_ok() { return Some(Server { child }); }
+            if std::net::TcpStream::connect(("127.0.0.1", crate::tests_sfu::lk_port())).is_ok() { return Some(Server { child }); }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = child.kill(); let _ = child.wait();
@@ -65,7 +65,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let renewals = Arc::new(AtomicU64::new(0));
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
     let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
-    let h = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", crate::tests_sfu::lk_port()), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);

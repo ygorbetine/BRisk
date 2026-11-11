@@ -87,6 +87,7 @@ fn agent(p: Policy) -> ureq::Agent {
 /// GET com redirecionamento manual revalidado. Devolve (url final, content-type, corpo até `max`).
 fn get_limited(start: &str, p: Policy, max: u64, want: &dyn Fn(&str) -> bool) -> Result<(String, String, Vec<u8>)> {
     let ag = agent(p);
+    if let Some(m) = crate::netmode::deny_url(start) { return Err(anyhow!(m)); }
     let mut url = check_url(start, p)?.2;
     for _ in 0..=MAX_REDIRECTS {
         let resp = match ag.get(&url).set("Accept", "text/html,image/*;q=0.8").call() { Ok(r) => r, Err(ureq::Error::Status(_, r)) => r, Err(e) => return Err(anyhow!("falha de rede: {e}")) };

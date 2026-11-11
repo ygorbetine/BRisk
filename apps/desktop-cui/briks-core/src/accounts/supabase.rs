@@ -25,6 +25,7 @@ impl SupabaseProvider {
     }
 
     fn call(&self, method: &str, path: &str, bearer: Option<&str>, body: Option<Value>) -> AResult<Value> {
+        if crate::netmode::deny_url(&self.base).is_some() { return Err(AccountError::network()); }
         let req = self.agent.request(method, &format!("{}{}", self.base, path))
             .set("apikey", &self.key)
             .set("Authorization", &format!("Bearer {}", bearer.unwrap_or(&self.key)))
@@ -236,6 +237,7 @@ impl AuthProvider for SupabaseProvider {
         serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
     }
     fn upload_avatar(&self, access_token: &str, user_id: &str, jpeg: &[u8]) -> AResult<String> {
+        if crate::netmode::deny_url(&self.base).is_some() { return Err(AccountError::network()); }
         let path = format!("/storage/v1/object/avatars/{user_id}/avatar.jpg");
         let res = self.agent.post(&format!("{}{}", self.base, path))
             .set("apikey", &self.key).set("Authorization", &format!("Bearer {access_token}"))

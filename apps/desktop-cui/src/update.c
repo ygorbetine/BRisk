@@ -87,6 +87,8 @@ static void set_err(const char *m) { snprintf(g_error, sizeof g_error, "%s", m);
 /* baixa `url` para memória (buf, até cap) ou arquivo (fp); devolve bytes ou -1 */
 static long long http_get(const char *url, char *buf, size_t cap, FILE *fp, long long max_bytes, bool progress) {
     if (!update_url_allowed(url)) return -1;
+    { const char *lo = getenv("BRIKS_NET_LOOPBACK_ONLY");   /* testes: so loopback, sem aviso do Firewall (docs/plans/testes-rede-local.md) */
+      if (lo && lo[0] == '1' && _strnicmp(url, "http://127.0.0.1", 16) && _strnicmp(url, "http://localhost", 16) && _strnicmp(url, "http://[::1]", 12)) return -1; }
     wchar_t wurl[1024];
     if (MultiByteToWideChar(CP_UTF8, 0, url, -1, wurl, 1024) <= 0) return -1;
     URL_COMPONENTS uc = { sizeof uc };

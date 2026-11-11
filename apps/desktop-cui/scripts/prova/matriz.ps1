@@ -4,7 +4,7 @@ param([Parameter(Mandatory)][string]$Out, [switch]$Limpo)
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $exe = Join-Path $root 'build\briks_cui.exe'
 $tmp = Join-Path $env:TEMP ('briks_matriz_' + [guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force $tmp | Out-Null
-$env:BRIKS_HIDDEN='1'; $env:BRIKS_SCRIPT_SHOTS='1'; $env:BRIKS_DEV_AUTH='1'; $env:BRIKS_DEMO='social'; $env:BRIKS_DEMO_FTAB='0'
+$env:BRIKS_NET_LOOPBACK_ONLY="1"; $env:BRIKS_HIDDEN='1'; $env:BRIKS_SCRIPT_SHOTS='1'; $env:BRIKS_DEV_AUTH='1'; $env:BRIKS_DEMO='social'; $env:BRIKS_DEMO_FTAB='0'
 if ($Limpo) { $env:BRIKS_PROFILE_FILE = Join-Path $tmp 'perfil.json'; $env:BRIKS_SETTINGS_FILE = Join-Path $tmp 'settings.json' }
 $sizes = '2000x900','1280x800','800x600'; $perfs = 'normal','simples','minimo'; $docks = 'default','stacked','moved','added','unico'
 $log = Join-Path $Out 'execucao.txt'; New-Item -ItemType Directory -Force $Out | Out-Null; '' | Set-Content $log

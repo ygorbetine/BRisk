@@ -369,7 +369,9 @@ static inline bool briks_blocked(void) { return briks_modal_open() && g_in_modal
 static inline bool briks_dlg_begin(cui_ctx *ui, const char *t, bool *open, const cui_dialog_opts *o) {
     bool b = cui_dialog_begin(ui, t, open, o); if (b) { g_modal_now = true; g_in_modal++; } return b;
 }
-static inline void briks_dlg_end(cui_ctx *ui) { g_in_modal--; cui_dialog_end(ui); }
+__declspec(selectany) void (*g_hot_modal_draw)(cui_ctx *);   /* definido pelo app (main.c); os testes ficam sem */
+void briks_hot_modal_draw(cui_ctx *ui);
+static inline void briks_dlg_end(cui_ctx *ui) { if (g_hot_modal_draw) g_hot_modal_draw(ui); g_in_modal--; cui_dialog_end(ui); }
 static inline bool briks_menu_begin(cui_ctx *ui, const char *l, const cui_menu_opts *o) { bool b = cui_menu_begin(ui, l, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }
 static inline void briks_menu_end(cui_ctx *ui) { g_in_modal--; cui_menu_end(ui); }
 static inline bool briks_pop_begin(cui_ctx *ui, const char *id, const cui_popover_opts *o) { bool b = cui_popover_begin(ui, id, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }

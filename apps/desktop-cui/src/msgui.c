@@ -430,7 +430,7 @@ void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     cui_push_id(ui, "pinsbtn");
     cui_box(ui, .id = "b", .dir = CUI_ROW, .gap = 5, .pad_x = 9, .pad_y = 5, .radius = 12, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff12)) {
         cui_icon(ui, CUI_ICON_MAP_PIN, 13, n ? CUI_RGB(0xc4b5fd) : B_MUTED);
-        cui_textf(ui, "Fixadas %d", n);
+        { char lb[24]; snprintf(lb, sizeof lb, "Fixadas %d", n); cui_text(ui, lb, .nowrap = true); }
     }
     if (briks_clicked(ui, "b")) g_dlg_pins = true;
     cui_pop_id(ui);

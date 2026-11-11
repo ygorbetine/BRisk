@@ -747,3 +747,54 @@ async fn screen_audio_is_stereo_and_av_offset_is_measured() {
     eprintln!("volume do espectador: pico {loud:.3} com volume 1; {muted:.3} com volume 0");
     assert!(loud > 0.1 && muted < 0.001);
 }
+
+/// Vários espectadores: A transmite para B (rede boa) e C (atrás de uma rede ruim simulada: 0,5 Mbps e 5% de perda).
+/// O espectador ruim não pode derrubar a qualidade do bom: B continua recebendo perto do FPS cheio e o bitrate do emissor não
+/// desce ao nível de C. Mede também o custo do emissor com 1 e com 2 espectadores.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn slow_viewer_does_not_drag_the_others() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb, pc) = ("aaaaaaaa-1111-4111-8111-0000000000f1", "bbbbbbbb-2222-4222-8222-0000000000f1", "cccccccc-3333-4333-8333-0000000000f1");
+    let sim = crate::netsim::register(&[pc]);   // só os candidatos de C passam pelo proxy: todo o tráfego de/para C
+    let dir = std::env::temp_dir().join(format!("briks-multi-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = node(port, pa, "Ana", "multi1", Arc::new(Identity::generate()));
+    let mut b = node(port, pb, "Beto", "multi1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 720, fps: 30, kbps: 3000, label: "Multi".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("B on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("B quadro");
+    // mede `secs` segundos: (kbps enviado, alvo, fps do emissor, CPU do processo, fps de B, deixados de fora)
+    async fn measure(a: &mut MeshHandle, b: &mut MeshHandle, secs: u64) -> (f64, f64, f64, f64, f64, u64) {
+        let (mut k, mut t, mut f, mut c, mut n, mut bf, mut bn, mut out) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0u64);
+        let end = std::time::Instant::now() + Duration::from_secs(secs);
+        while std::time::Instant::now() < end {
+            tokio::select! {
+                e = a.events.recv() => if let Some(MeshEvent::Share(v)) = e { if v["ev"] == "share.stats" { k += v["kbps"].as_f64().unwrap_or(0.0); t += v["target_kbps"].as_f64().unwrap_or(0.0); f += v["fps"].as_f64().unwrap_or(0.0); c += v["cpu_pct"].as_f64().unwrap_or(0.0); out = out.max(v["left_out"].as_u64().unwrap_or(0)); n += 1.0; } },
+                e = b.events.recv() => if let Some(MeshEvent::Share(v)) = e { if v["ev"] == "share.rxstats" { bf += v["fps"].as_f64().unwrap_or(0.0); bn += 1.0; } },
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+            }
+        }
+        (k / n.max(1.0), t / n.max(1.0), f / n.max(1.0), c / n.max(1.0), bf / bn.max(1.0), out)
+    }
+    let one = measure(&mut a, &mut b, 8).await;
+    eprintln!("1 espectador (rede boa): enviado {:.0} kbps (alvo {:.0}), {:.1} qps no emissor, CPU do processo {:.0}%, B recebe {:.1} qps", one.0, one.1, one.2, one.3, one.4);
+    // C entra por uma rede ruim
+    sim.set(0.5, 5.0);
+    let mut c = node(port, pc, "Caio", "multi1", Arc::new(Identity::generate()));
+    wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "on", 40).await.expect("C on");
+    c.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("c.bin") }).await.unwrap();
+    let _ = measure(&mut a, &mut b, 6).await;   // acomodação
+    let two = measure(&mut a, &mut b, 12).await;
+    let mut cf = (0.0, 0.0);
+    while let Ok(e) = c.events.try_recv() { if let MeshEvent::Share(v) = e { if v["ev"] == "share.rxstats" { cf.0 += v["fps"].as_f64().unwrap_or(0.0); cf.1 += 1.0; } } }
+    eprintln!("2 espectadores (C a 0,5 Mbps com 5% de perda): enviado {:.0} kbps (alvo {:.0}), {:.1} qps no emissor, CPU do processo {:.0}%, B recebe {:.1} qps, C recebe {:.1} qps, deixados de fora do cálculo: {}",
+        two.0, two.1, two.2, two.3, two.4, cf.0 / f64::max(cf.1, 1.0), two.5);
+    assert!(two.4 >= one.4 * 0.8, "o espectador bom perdeu quadros por causa do ruim: {:.1} → {:.1} qps", one.4, two.4);
+    assert!(two.1 >= one.1 * 0.7, "o bitrate de todos caiu por causa de um: {:.0} → {:.0} kbps", one.1, two.1);
+    assert_eq!(two.5, 1, "o espectador ruim deveria ter ficado fora do cálculo");
+}

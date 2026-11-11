@@ -518,7 +518,7 @@ impl Actor {
                         for pk in pkts {
                             let any = pk.as_any();
                             let mut n = net.lock().unwrap();
-                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0 });
+                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0 });
                             if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
                                 e.plis += 1; idr2.store(true, std::sync::atomic::Ordering::Relaxed);
                             } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
@@ -530,7 +530,7 @@ impl Actor {
                                         // RTT = agora − LSR − DLSR, em unidades de 1/65536 s (32 bits do meio do NTP)
                                         let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
                                         let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
-                                        if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; }
+                                        if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); } }
                                     }
                                     e.updated = std::time::Instant::now();
                                 }

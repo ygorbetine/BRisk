@@ -31,6 +31,8 @@ pub struct PeerNet {
     pub updated: Instant,
     pub nacks: u64,      // pacotes pedidos de novo (acumulado)
     pub plis: u64,       // pedidos de quadro-chave (acumulado)
+    /// menor RTT já visto deste espectador (a base dele): serve para dizer se ESTE caminho está congestionado
+    pub rtt_min: f32,
 }
 
 #[derive(Default)]
@@ -42,6 +44,19 @@ impl NetShared {
         let fresh: Vec<&PeerNet> = self.peers.values().filter(|p| p.updated.elapsed() < Duration::from_millis(3500)).collect();
         if fresh.is_empty() { return None; }
         Some((fresh.iter().map(|p| p.loss).fold(0.0, f32::max), fresh.iter().map(|p| p.rtt_ms).fold(0.0, f32::max), fresh.iter().map(|p| p.jitter_ms).fold(0.0, f32::max)))
+    }
+    /// Regra da maioria numa malha: se pelo menos metade dos espectadores está bem, quem está congestionado (perda alta ou RTT
+    /// muito acima da própria base) deixa de ditar o bitrate — fica com a imagem pior em vez de derrubar a de todos.
+    /// Devolve (pior entre os que contam, quantos foram deixados de fora).
+    pub fn majority(&self) -> (Option<(f32, f32, f32)>, usize) {
+        let fresh: Vec<&PeerNet> = self.peers.values().filter(|p| p.updated.elapsed() < Duration::from_millis(3500)).collect();
+        if fresh.is_empty() { return (None, 0); }
+        let bad = |p: &&PeerNet| p.loss > 0.08 || (p.rtt_ms > 0.0 && p.rtt_min > 0.0 && p.rtt_ms > p.rtt_min + (p.rtt_min * 0.5).max(80.0));
+        let healthy: Vec<&&PeerNet> = fresh.iter().filter(|p| !bad(p)).collect();
+        let worst = |v: &[&&PeerNet]| (v.iter().map(|p| p.loss).fold(0.0, f32::max), v.iter().map(|p| p.rtt_ms).fold(0.0, f32::max), v.iter().map(|p| p.jitter_ms).fold(0.0, f32::max));
+        if fresh.len() >= 2 && healthy.len() < fresh.len() && healthy.len() * 2 >= fresh.len() { return (Some(worst(&healthy)), fresh.len() - healthy.len()); }
+        let all: Vec<&&PeerNet> = fresh.iter().collect();
+        (Some(worst(&all)), 0)
     }
     pub fn totals(&self) -> (u64, u64) { (self.peers.values().map(|p| p.nacks).sum(), self.peers.values().map(|p| p.plis).sum()) }
 }
@@ -274,6 +289,22 @@ mod tests {
         let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0);
         let _ = c;
         assert_eq!(w, v);
+    }
+
+    #[test]
+    fn one_congested_viewer_does_not_drag_the_majority() {
+        let peer = |loss: f32, rtt: f32| PeerNet { loss, rtt_ms: rtt, jitter_ms: 1.0, updated: Instant::now(), nacks: 0, plis: 0, rtt_min: 20.0 };
+        let mut n = NetShared::default();
+        n.peers.insert("bom1".into(), peer(0.0, 25.0));
+        n.peers.insert("ruim".into(), peer(0.30, 400.0));
+        // 1 bom + 1 ruim: metade está bem → o ruim fica de fora
+        assert_eq!(n.majority(), (Some((0.0, 25.0, 1.0)), 1));
+        n.peers.insert("bom2".into(), peer(0.01, 30.0));
+        assert_eq!(n.majority(), (Some((0.01, 30.0, 1.0)), 1));
+        // a maioria está mal: aí o problema é do emissor ou da rede de todos → vale o pior
+        n.peers.insert("ruim2".into(), peer(0.2, 300.0));
+        n.peers.insert("ruim3".into(), peer(0.5, 500.0));
+        assert_eq!(n.majority(), (Some((0.5, 500.0, 1.0)), 0));
     }
 
     #[test]

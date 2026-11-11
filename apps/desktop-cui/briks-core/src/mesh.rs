@@ -275,7 +275,7 @@ impl Actor {
         use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
         for parameter in ["", "pli"] { m.register_feedback(webrtc::rtp_transceiver::RTCPFeedback { typ: "nack".into(), parameter: parameter.into() }, RTPCodecType::Video); }
         let mut registry = Registry::new();
-        registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder()));
+        registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder().with_interval(std::time::Duration::from_millis(20)).with_log2_size_minus_6(5)));   // intervalo padrão de 100 ms: cada buraco esperava até 100 ms só para ser pedido; janela 2048 (padrão 8192): com perda por congestionamento o gerador repetia pedidos de milhares de pacotes velhos (34 mil por segundo medidos)
         let registry = webrtc::api::interceptor_registry::configure_rtcp_reports(registry);
         let registry = webrtc::api::interceptor_registry::configure_twcc_receiver_only(registry, &mut m)?;
         // janela anti-replay do SRTP: o padrão (64 pacotes) rejeita retransmissões — a 12 Mbps, um pacote de 100 ms atrás já está

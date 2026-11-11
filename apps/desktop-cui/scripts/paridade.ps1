@@ -18,7 +18,8 @@ param(
     [string]$Filtro = "",
     [switch]$SoInventario,
     [string]$Exe = "",
-    [int]$TimeoutSeg = 60
+    [int]$TimeoutSeg = 60,
+    [int]$Dy = 39        # deslocamento vertical dos cliques dos roteiros (escritos antes da barra de título própria: 36 px + filete de 3 px)
 )
 $ErrorActionPreference = "Stop"
 $cui = Split-Path -Parent $PSScriptRoot                  # apps\desktop-cui
@@ -72,8 +73,13 @@ function Expand-Roteiro([string]$origem, [string]$destino) {
         $t = $s -split "\s+", 3
         switch ($t[0]) {
             "snap" { $out.Add("at 2 790"); $out.Add("waitms 450"); $out.Add("shot $($t[1])") }
-            "tap"  { $out.Add("click $($t[1]) $($t[2])"); $out.Add("at 2 790"); $out.Add("waitms 500") }
-            default { $out.Add($s.Replace("{ASSETS}", (Join-Path $dir "ativos"))) }
+            "tap"  { $out.Add("click $($t[1]) $([int]$t[2] + $Dy)"); $out.Add("at 2 790"); $out.Add("waitms 500") }
+            default {
+                $s = $s.Replace("{ASSETS}", (Join-Path $dir "ativos"))
+                $m = [regex]::Match($s, '^(click|rclick|at)\s+(-?\d+)\s+(-?\d+)(.*)$')
+                if ($m.Success -and -not ($m.Groups[1].Value -eq "at" -and $m.Groups[2].Value -eq "2" -and $m.Groups[3].Value -eq "790")) { $s = "$($m.Groups[1].Value) $($m.Groups[2].Value) $([int]$m.Groups[3].Value + $Dy)$($m.Groups[4].Value)" }
+                $out.Add($s)
+            }
         }
     }
     [IO.File]::WriteAllLines($destino, $out, (New-Object Text.UTF8Encoding($false)))

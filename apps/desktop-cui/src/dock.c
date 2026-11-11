@@ -293,6 +293,14 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         if (snap_all || resizing >= 0) anim[k] = tgt[k];
         else moving |= lrect_step(&anim[k], tgt[k], dt, g_perf == PERF_SIMPLE ? ANIM_TAU_SIMPLE : ANIM_TAU);
     }
+    {   /* prova de cantos: BRIKS_DUMP_RECTS=arquivo grava os retângulos reais dos painéis (px da janela, só leitura) a cada quadro */
+        static const char *dump; static bool dump_read;
+        if (!dump_read) { dump_read = true; dump = getenv("BRIKS_DUMP_RECTS"); }
+        if (dump && dump[0]) {
+            FILE *df = fopen(dump, "wb");
+            if (df) { for (int k = 0; k < P_COUNT; k++) if (anim_on[k]) fprintf(df, "%d %.2f %.2f %.2f %.2f %.1f\n", k, anim[k].x, anim[k].y + g_oy, anim[k].w, anim[k].h, g_th.panel_radius); fclose(df); }
+        }
+    }
     if (pile_end == 1) {   /* desce até o centro do slot onde o painel se acomoda */
         int k = pile_kind;
         if (k >= 0 && present[k]) pile_release(&pile, tgt[k].x + tgt[k].w * 0.5f, tgt[k].y + tgt[k].h * 0.5f);

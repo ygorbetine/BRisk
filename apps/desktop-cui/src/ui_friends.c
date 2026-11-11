@@ -1,0 +1,252 @@
+/* Hub de Amigos (paridade com a tela Amigos do Electron): abas Todos, Online, Pendentes, Bloqueados e Adicionar, busca, e ações por linha
+ * (mensagem, desfazer amizade, bloquear). Amizades e pedidos vêm do Supabase pelo briks-core (account.c); o bloqueio é uma lista LOCAL gravada em
+ * %APPDATA%\Briks-CUI\blocked.json (o servidor ainda não tem bloqueio: supabase/migrations/0006_friend_blocks.sql prepara isso, sem estar aplicada). */
+#include "briks_ui.h"
+#include "json.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <windows.h>
+#include <shlobj.h>
+
+/* ---- lista local de bloqueados ---- */
+static bool blocked_path(char *out, size_t cap) {
+    const char *over = getenv("BRIKS_BLOCKED_FILE");
+    if (over && over[0]) { snprintf(out, cap, "%s", over); return true; }
+    char appdata[MAX_PATH];
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) return false;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", appdata);
+    CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\\blocked.json", dir);
+    return true;
+}
+
+static void blocked_save(const app_state_t *s) {
+    char p[MAX_PATH]; if (!blocked_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "wb"); if (!f) return;
+    fputs("[", f);
+    for (int i = 0; i < s->blocked_count; i++) {
+        char id[100], nm[200]; json_escape(s->blocked[i].id, id, sizeof id); json_escape(s->blocked[i].name, nm, sizeof nm);
+        fprintf(f, "%s{\"id\":\"%s\",\"name\":\"%s\"}", i ? "," : "", id, nm);
+    }
+    fputs("]", f); fclose(f);
+}
+
+static void blocked_load(app_state_t *s) {
+    if (s->blocked_loaded) return;
+    s->blocked_loaded = true; s->blocked_count = 0;
+    char p[MAX_PATH]; if (!blocked_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "rb"); if (!f) return;
+    char *buf = malloc(16384); size_t n = buf ? fread(buf, 1, 16383, f) : 0; fclose(f);
+    if (!buf) return;
+    buf[n] = 0;
+    jval *j = json_parse(buf); free(buf);
+    for (int i = 0; i < json_len(j) && s->blocked_count < 64; i++) {
+        const jval *e = json_at(j, i);
+        snprintf(s->blocked[s->blocked_count].id, sizeof s->blocked[0].id, "%s", json_str(e, "id", ""));
+        snprintf(s->blocked[s->blocked_count].name, sizeof s->blocked[0].name, "%s", json_str(e, "name", "?"));
+        if (s->blocked[s->blocked_count].id[0]) s->blocked_count++;
+    }
+    json_free(j);
+}
+
+bool friends_blocked(app_state_t *s, const char *id) {
+    blocked_load(s);
+    if (!id || !id[0]) return false;
+    for (int i = 0; i < s->blocked_count; i++) if (!strcmp(s->blocked[i].id, id)) return true;
+    return false;
+}
+
+void friends_block(app_state_t *s, const char *id, const char *name) {
+    blocked_load(s);
+    if (friends_blocked(s, id) || s->blocked_count >= 64) return;
+    snprintf(s->blocked[s->blocked_count].id, sizeof s->blocked[0].id, "%s", id);
+    snprintf(s->blocked[s->blocked_count].name, sizeof s->blocked[0].name, "%s", name);
+    s->blocked_count++; blocked_save(s);
+    for (int i = 0; i < s->friend_count; i++) if (!strcmp(s->friends[i].id, id)) {   /* some das listas na hora */
+        if (s->active_friend == i) s->active_friend = -1; else if (s->active_friend > i) s->active_friend--;
+        memmove(&s->friends[i], &s->friends[i + 1], sizeof(person_t) * (size_t)(s->friend_count - i - 1)); s->friend_count--; break;
+    }
+    for (int i = 0; i < s->pending_count; i++) if (!strcmp(s->pending[i].id, id)) { memmove(&s->pending[i], &s->pending[i + 1], sizeof(person_t) * (size_t)(s->pending_count - i - 1)); s->pending_count--; break; }
+}
+
+void friends_unblock(app_state_t *s, const char *id) {
+    blocked_load(s);
+    for (int i = 0; i < s->blocked_count; i++) if (!strcmp(s->blocked[i].id, id)) {
+        memmove(&s->blocked[i], &s->blocked[i + 1], sizeof s->blocked[0] * (size_t)(s->blocked_count - i - 1)); s->blocked_count--; blocked_save(s); break;
+    }
+    account_friends(s);   /* a amizade volta pela lista do servidor */
+}
+
+/* ---- apresentação ---- */
+static bool in_call(const app_state_t *s, const person_t *p) {   /* "online" por enquanto = está na sua chamada agora (ainda não há canal de presença) */
+    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "connected") && !strcmp(s->rtc_peers[i].name, p->name)) return true;
+    return false;
+}
+
+static bool matches(const app_state_t *s, const person_t *p) {
+    if (!s->friends_q[0]) return true;
+    char hay[160], q[64];
+    snprintf(hay, sizeof hay, "%s %s", p->name, p->nick); snprintf(q, sizeof q, "%s", s->friends_q);
+    for (char *c = hay; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+    for (char *c = q; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+    return strstr(hay, q[0] == '@' ? q + 1 : q) != NULL;
+}
+
+/* linha de pessoa: avatar, nome + @nick/status, e os botões do chamador; devolve o cartão para os botões irem dentro */
+#define ROW_BEGIN(ui, p) \
+    cui_box((ui), .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .gap = 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER)
+static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override) {
+    cui_avatar(ui, p->name, .size = 36);
+    cui_column(ui, .gap = 1, .width = CUI_FILL) {
+        cui_text(ui, p->name, .nowrap = true);
+        char sub[130] = "";
+        if (sub_override) snprintf(sub, sizeof sub, "%s", sub_override);
+        else if (p->status[0]) snprintf(sub, sizeof sub, "%s", p->status);
+        else if (p->nick[0]) snprintf(sub, sizeof sub, "@%s", p->nick);
+        if (sub[0]) cui_text(ui, sub, .size = 11.5f, .color = B_MUTED, .nowrap = true);
+    }
+}
+
+static void empty_state(cui_ctx *ui, const char *icon, const char *title, const char *sub) {
+    cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 56, .gap = 8) {
+        cui_icon(ui, icon, 34, B_C3);
+        cui_text(ui, title, .font = CUI_FONT_MEDIUM);
+        cui_text(ui, sub, .size = 12, .color = B_MUTED);
+    }
+}
+
+static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
+    person_t *p = &s->friends[i];
+    cui_push_id_int(ui, 9000 + i);
+    ROW_BEGIN(ui, p) {
+        row_ident(ui, p, NULL);
+        if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
+        cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
+            cui_menu_label(ui, p->name);
+            if (cui_menu_item(ui, "Enviar mensagem", .icon = CUI_ICON_MESSAGE_SQUARE)) app_open_friend(s, i);
+            cui_menu_separator(ui);
+            if (cui_menu_item(ui, "Desfazer amizade…", .icon = CUI_ICON_X, .danger = true)) {
+                snprintf(s->unfriend_id, sizeof s->unfriend_id, "%s", p->id); snprintf(s->unfriend_name, sizeof s->unfriend_name, "%s", p->name); s->unfriend_open = true;
+            }
+            if (cui_menu_item(ui, "Bloquear", .icon = CUI_ICON_SHIELD, .danger = true)) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); }
+        }
+    }
+    cui_pop_id(ui);
+}
+
+static void list_tab(cui_ctx *ui, app_state_t *s, bool only_online) {
+    int shown = 0;
+    for (int i = 0; i < s->friend_count; i++) {
+        if (only_online && !in_call(s, &s->friends[i])) continue;
+        if (!matches(s, &s->friends[i])) continue;
+        friend_row(ui, s, i); shown++;
+    }
+    if (shown) return;
+    if (s->friends_q[0]) empty_state(ui, CUI_ICON_SEARCH, "Ninguém encontrado", "Tente outro nome ou @nick.");
+    else if (only_online) empty_state(ui, CUI_ICON_USERS, "Ninguém na sua chamada agora", "Por enquanto “Online” mostra quem está na sua chamada; a presença em tempo real vem depois.");
+    else empty_state(ui, CUI_ICON_USER_PLUS, "Nenhum amigo ainda", "Use a aba Adicionar e digite o @nick de quem você quer ter por perto.");
+}
+
+static void pending_tab(cui_ctx *ui, app_state_t *s) {
+    if (s->pending_count) {
+        cui_text(ui, "RECEBIDOS", .size = 11, .color = B_MUTED);
+        for (int i = 0; i < s->pending_count; i++) {
+            if (!matches(s, &s->pending[i])) continue;
+            person_t *p = &s->pending[i];
+            cui_push_id_int(ui, 9300 + i);
+            ROW_BEGIN(ui, p) {
+                row_ident(ui, p, p->nick[0] ? NULL : "quer ser seu amigo");
+                if (cui_icon_button(ui, CUI_ICON_CHECK, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Aceitar")) app_accept_friend(s, p->request_id);
+                if (cui_icon_button(ui, CUI_ICON_X, .tooltip = "Recusar")) account_respond_friend(s, p->request_id, false);
+                if (cui_icon_button(ui, CUI_ICON_SHIELD, .tooltip = "Bloquear")) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); account_respond_friend(s, p->request_id, false); }
+            }
+            cui_pop_id(ui);
+        }
+    }
+    if (s->outgoing_count) {
+        cui_text(ui, "ENVIADOS", .size = 11, .color = B_MUTED);
+        for (int i = 0; i < s->outgoing_count; i++) {
+            if (!matches(s, &s->outgoing[i])) continue;
+            person_t *p = &s->outgoing[i];
+            cui_push_id_int(ui, 9400 + i);
+            ROW_BEGIN(ui, p) {
+                row_ident(ui, p, p->nick[0] ? NULL : "aguardando resposta");
+                cui_text(ui, "Aguardando", .size = 11.5f, .color = B_MUTED);
+                if (cui_icon_button(ui, CUI_ICON_UNDO_2, .tooltip = "Cancelar pedido")) account_remove_friend(s, p->id);
+            }
+            cui_pop_id(ui);
+        }
+    }
+    if (!s->pending_count && !s->outgoing_count) empty_state(ui, CUI_ICON_INBOX, "Nenhum pedido pendente", "Pedidos que você enviar ou receber aparecem aqui.");
+}
+
+static void blocked_tab(cui_ctx *ui, app_state_t *s) {
+    cui_text(ui, "Bloqueados não aparecem nas suas listas nem podem te mandar pedido por aqui. A lista fica neste computador.", .size = 12, .color = B_MUTED);
+    for (int i = 0; i < s->blocked_count; i++) {
+        person_t p; memset(&p, 0, sizeof p); snprintf(p.name, sizeof p.name, "%s", s->blocked[i].name);
+        if (!matches(s, &p)) continue;
+        cui_push_id_int(ui, 9500 + i);
+        ROW_BEGIN(ui, &p) {
+            row_ident(ui, &p, "bloqueado");
+            if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { char id[48]; snprintf(id, sizeof id, "%s", s->blocked[i].id); friends_unblock(s, id); cui_pop_id(ui); return; }
+        }
+        cui_pop_id(ui);
+    }
+    if (!s->blocked_count) empty_state(ui, CUI_ICON_SHIELD, "Ninguém bloqueado", "Use “Bloquear” no menu de um amigo ou de um pedido.");
+}
+
+static void add_tab(cui_ctx *ui, app_state_t *s) {
+    const bool online = s->acct_user_id[0] != 0;
+    cui_box(ui, .width = CUI_FILL, .pad = 16, .gap = 10, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
+        cui_text(ui, "Adicionar por @nick", .font = CUI_FONT_MEDIUM);
+        cui_text(ui, online ? "Digite o @nick de quem você quer adicionar. A pessoa recebe o pedido e, ao aceitar, vocês passam a se achar pela conta."
+                            : "Entre na sua conta para adicionar amigos pelo @nick.", .size = 12.5f, .color = B_MUTED);
+        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            int r = cui_input(ui, "add-nick", s->add_email, sizeof s->add_email, .placeholder = "@nick", .width = CUI_FILL);
+            if ((cui_button(ui, "Enviar pedido", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED)) && online) app_add_friend(s);
+        }
+        if (online && s->acct_nick[0]) cui_textf(ui, "O seu é @%s", s->acct_nick);
+        if (s->notice[0]) cui_text(ui, s->notice, .size = 12.5f, .color = B_MUTED);
+    }
+}
+
+void friends_hub(cui_ctx *ui, app_state_t *s) {
+    blocked_load(s);
+    static const char *const tabs[] = { "Todos", "Online", "Pendentes", "Bloqueados", "Adicionar" };
+    char pend[24]; snprintf(pend, sizeof pend, "Pendentes %d", s->pending_count);
+    const char *items[5] = { tabs[0], tabs[1], s->pending_count ? pend : tabs[2], tabs[3], tabs[4] };
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 14, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
+            .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1) {
+        cui_icon(ui, CUI_ICON_USERS, 18, B_MUTED);
+        cui_text(ui, "Amigos", .font = CUI_FONT_MEDIUM);
+        cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL);
+    }
+    cui_separator(ui);
+    if (s->friends_tab <= 3 && s->friends_tab != 2) {
+        cui_box(ui, .width = CUI_FILL, .pad_x = 18, .pad_top = 12) {
+            cui_input(ui, "friends-q", s->friends_q, sizeof s->friends_q, .placeholder = "Buscar amigo", .width = CUI_FILL);
+        }
+    }
+    cui_scroll(ui, .id = "friends-hub", .width = CUI_FILL, .height = CUI_FILL, .pad = 18) {
+        cui_column(ui, .gap = 8, .width = CUI_FILL) {
+            switch (s->friends_tab) {
+            case 0: list_tab(ui, s, false); break;
+            case 1: list_tab(ui, s, true); break;
+            case 2: pending_tab(ui, s); break;
+            case 3: blocked_tab(ui, s); break;
+            default: add_tab(ui, s); break;
+            }
+        }
+    }
+}
+
+void friends_dialogs(cui_ctx *ui, app_state_t *s) {
+    cui_dialog(ui, "Desfazer amizade", &s->unfriend_open) {
+        cui_textf(ui, "Remover %s dos seus amigos?", s->unfriend_name);
+        cui_text(ui, "As conversas continuam gravadas neste computador. Para voltar a ser amigos, é preciso um novo pedido.", .size = 12.5f, .color = B_MUTED);
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Desfazer amizade", .variant = CUI_BUTTON_DANGER)) { account_remove_friend(s, s->unfriend_id); s->unfriend_open = false; }
+        }
+    }
+}

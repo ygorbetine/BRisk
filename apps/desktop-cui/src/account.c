@@ -112,6 +112,11 @@ void account_add_friend(app_state_t *s) {
     send_kv("friends.request", "nick", s->add_email, NULL, NULL, NULL, NULL);
 }
 
+void account_remove_friend(app_state_t *s, const char *user_id) {
+    if (core_state() != CORE_READY) { copy(s->notice, sizeof s->notice, "Sem conexão com o Briks. Tente de novo."); return; }
+    send_kv("friends.remove", "user_id", user_id, NULL, NULL, NULL, NULL);
+}
+
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept) {
     (void)s;
     char line[160], id[96]; json_escape(request_id, id, sizeof id);
@@ -247,17 +252,20 @@ static void on_state(app_state_t *s, const jval *j) {
 static void on_friends(app_state_t *s, const jval *j) {
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
-    s->friend_count = s->pending_count = 0;
+    s->friend_count = s->pending_count = s->outgoing_count = 0;
     for (int i = 0; i < json_len(f); i++) {
         const jval *p = json_at(f, i); const char *state = json_str(p, "state", "");
         person_t *d = NULL;
+        if (friends_blocked(s, json_str(p, "user_id", ""))) continue;   /* bloqueados saem de todas as listas (ficam só na aba Bloqueados) */
         if (!strcmp(state, "friend") && s->friend_count < MAX_FRIENDS) d = &s->friends[s->friend_count++];
         else if (!strcmp(state, "incoming") && s->pending_count < MAX_FRIENDS) d = &s->pending[s->pending_count++];
-        if (!d) continue;   /* pedidos enviados ("outgoing") não entram nas listas */
+        else if (!strcmp(state, "outgoing") && s->outgoing_count < MAX_FRIENDS) d = &s->outgoing[s->outgoing_count++];
+        if (!d) continue;
         memset(d, 0, sizeof *d);
         copy(d->id, sizeof d->id, json_str(p, "user_id", ""));
         copy(d->name, sizeof d->name, json_str(p, "display_name", "?"));
         copy(d->request_id, sizeof d->request_id, json_str(p, "request_id", ""));
+        copy(d->nick, sizeof d->nick, json_str(p, "nick", ""));
         copy(d->status, sizeof d->status, json_str(p, "status", ""));
     }
     int idx = -1;

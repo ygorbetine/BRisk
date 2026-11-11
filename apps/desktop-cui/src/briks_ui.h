@@ -27,7 +27,7 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
-typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
+typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; char nick[32]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
 typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
@@ -93,6 +93,10 @@ typedef struct {
     bool rp_enabled; int rp_audience;           /* rich presence ligado; 0 = todos os amigos, 1 = só quem está na mesma chamada */
     person_t friends[MAX_FRIENDS]; int friend_count;
     person_t pending[MAX_FRIENDS]; int pending_count;
+    person_t outgoing[MAX_FRIENDS]; int outgoing_count;              /* pedidos que eu enviei e ainda não foram respondidos */
+    struct { char id[48]; char name[96]; } blocked[64]; int blocked_count;   /* bloqueados: lista local (ui_friends.c); 0006 prepara o servidor */
+    int friends_tab; char friends_q[64];                            /* aba do hub de Amigos (0 todos, 1 online, 2 pendentes, 3 bloqueados, 4 adicionar) e a busca */
+    bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
     int active_group;              /* -1 = nenhum */
@@ -170,7 +174,14 @@ void account_submit_code(app_state_t *s);                   /* código de 6 díg
 void account_cancel(app_state_t *s);
 void account_logout(app_state_t *s);
 void account_retry(app_state_t *s);                         /* pede o estado de novo (erro de rede ao abrir) */
+/* ui_friends.c: hub de Amigos e bloqueio local */
+bool friends_blocked(app_state_t *s, const char *id);
+void friends_block(app_state_t *s, const char *id, const char *name);
+void friends_unblock(app_state_t *s, const char *id);
+void friends_hub(cui_ctx *ui, app_state_t *s);
+void friends_dialogs(cui_ctx *ui, app_state_t *s);
 void account_friends(app_state_t *s);
+void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
 void account_add_friend(app_state_t *s);
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept);
 void account_set_nick(app_state_t *s);

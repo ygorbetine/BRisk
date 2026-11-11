@@ -275,8 +275,11 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let (audio, audio_rx) = match j.audio { Some((a, r)) => (Some(a), Some(r)), None => (None, None) };
     let sub = make_sub(&ice, 0, &itx, audio.clone(), shared.clone(), etx.clone(), sev_tx.clone(), stats.clone()).await?;
     let identity = me.identity.clone();
+    let (ftx, frx) = mpsc::channel::<crate::sfufiles::FileOut>(8);
+    let files = j.data.as_ref().map(|c| crate::sfufiles::Files::new(c.identity.clone(), etx.clone(), ftx.clone()));
     let data = j.data.map(|c| crate::sfudata::Layer::new(c, me.identity.clone()));
     let mut actor = Actor {
+        files, _ftx: ftx,
         data, dc_pub: None, dc_queue: vec![], leave: false,
         url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
@@ -286,7 +289,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
     actor.handle_join(join, false).await;
-    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx).await; });
+    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx, frx).await; });
     Ok(SfuHandle { cmd: ctx, events: erx, stats, identity, server })
 }
 
@@ -384,6 +387,9 @@ struct Actor {
     dc_pub: Option<Arc<webrtc::data_channel::RTCDataChannel>>,
     dc_queue: Vec<Vec<u8>>,
     leave: bool,
+    /// anexos pela camada de dados (só com ela ligada); `_ftx` mantém a fila aberta mesmo sem transferências
+    files: Option<crate::sfufiles::Files>,
+    _ftx: mpsc::Sender<crate::sfufiles::FileOut>,
     // reconexão
     url: String,
     token: String,
@@ -480,6 +486,9 @@ impl Actor {
         self.mic_sid = None;
         self.stats.sub_connected.store(false, Ordering::Relaxed);
         self.stats.pub_connected.store(false, Ordering::Relaxed);
+        // transferências em curso não sobrevivem à queda (pacotes perdidos quebrariam a sequência): falham de forma visível
+        let peers = self.data.as_ref().map(|l| l.authed_idents()).unwrap_or_default();
+        if let Some(f) = self.files.as_mut() { for (ident, fp) in peers { f.peer_gone(&ident, &fp, "a conexão com o servidor de chamadas caiu").await; } }
         let reason = self.down.as_ref().map(|d| d.reason.clone()).unwrap_or_default();
         self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "reconnecting", "reason": reason }))).await;
         self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "reconectando", "message": reason }))).await;
@@ -542,6 +551,8 @@ impl Actor {
         self.stale.remove(identity);
         { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); }
         if let Some(a) = &self.audio { a.remove_peer(identity); }
+        let gone_fp = self.data.as_ref().and_then(|l| l.peer_key(identity)).map(|k| k.0);
+        if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
         if let Some(l) = self.data.as_mut() { l.left(identity); }
         self.emit(MeshEvent::Peer { peer_id: identity.to_string(), state: "fechado".into() }).await;
     }
@@ -789,7 +800,7 @@ impl Actor {
         self.send(rq::Message::Subscription(req)).await;
     }
 
-    async fn run(&mut self, rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>) {
+    async fn run(&mut self, rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>, mut frx: mpsc::Receiver<crate::sfufiles::FileOut>) {
         let mut rx = Some(rx);   // None = fora do ar, esperando a próxima tentativa
         let mut ping = tokio::time::interval(Duration::from_millis(self.ping_ms));
         let mut dtick = tokio::time::interval(Duration::from_secs(1));
@@ -809,6 +820,11 @@ impl Actor {
                 c = cmds.recv() => match c { Some(MeshCmd::Close) | None => break, Some(c) => self.on_cmd(c).await },
                 i = irx.recv() => if let Some(i) = i { self.on_internal(i).await },
                 v = srx.recv() => if let Some(v) = v { self.on_share_event(v).await },
+                // pacotes de anexo: só saem com a sessão de pé e com folga no canal de dados (é isso que freia quem envia)
+                f = frx.recv(), if self.down.is_none() => if let Some((to, m)) = f {
+                    self.publish_data(vec![to], json!({ "v": 1, "t": "file", "m": m })).await;
+                    if let Some(dc) = self.dc_pub.clone() { let t0 = std::time::Instant::now(); while dc.buffered_amount().await > 256 * 1024 && t0.elapsed() < Duration::from_secs(2) { tokio::time::sleep(Duration::from_millis(5)).await; } }
+                },
                 ae = async { match arx.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => match ae {
                     Some(AudioEvent::Speaking { peer, level }) => self.emit(MeshEvent::Speaking { peer_id: peer, level }).await,
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
@@ -866,7 +882,27 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
-        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+            let media = self.media();
+            let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
+            self.apply(outs).await;
+            return;
+        }
+        if self.files.is_some() && matches!(c, MeshCmd::SendFile { .. } | MeshCmd::AcceptFile { .. } | MeshCmd::PauseFile { .. } | MeshCmd::CancelFile { .. }) {
+            let peers = self.data.as_ref().map(|l| l.authed_idents()).unwrap_or_default();
+            if let Some(f) = self.files.as_mut() {
+                match c {
+                    MeshCmd::SendFile { path, to_fp } => f.send_file(path, peers.into_iter().filter(|(_, fp)| to_fp.as_ref().map_or(true, |t| t == fp)).collect()).await,
+                    MeshCmd::AcceptFile { id } => f.accept(id).await,
+                    MeshCmd::PauseFile { id, paused } => f.pause(id, paused).await,
+                    MeshCmd::CancelFile { id } => f.cancel(id).await,
+                    _ => {}
+                }
+            }
+            return;
+        }
+        #[cfg(test)]
+        if self.data.is_some() && matches!(c, MeshCmd::HistSeed { .. } | MeshCmd::HistAsk) {
             let media = self.media();
             let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
             self.apply(outs).await;
@@ -887,7 +923,11 @@ impl Actor {
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
             MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
-            MeshCmd::PeerVolume { key, gain } => { if let Some(a) = &self.audio { a.set_peer_gain(&key, gain); } }
+            MeshCmd::PeerVolume { key, gain } => {
+                // a UI manda a impressão digital (ou o id do participante): no SFU o áudio é indexado pela identidade
+                let id = self.data.as_ref().and_then(|l| l.ident_for(&key)).unwrap_or(key);
+                if let Some(a) = &self.audio { a.set_peer_gain(&id, gain); }
+            }
             // Ainda só na malha P2P: anexos, "digitando", grupos e histórico não viajam pela camada de dados do SFU.
             MeshCmd::SendFile { .. } => self.emit(MeshEvent::Error("anexos ainda não estão disponíveis em chamadas pelo servidor".into())).await,
             MeshCmd::CancelFile { .. } | MeshCmd::AcceptFile { .. } | MeshCmd::PauseFile { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } => {}
@@ -969,6 +1009,7 @@ impl Actor {
                 }
                 Out::MuteLocal { ident, muted } => { if let Some(a) = &self.audio { a.mute_peer(&ident, muted); } }
                 Out::Leave => self.leave = true,
+                Out::File { from, fp, jwk, m } => { if let Some(f) = self.files.as_mut() { f.on_msg(&from, &fp, &jwk, &m).await; } }
             }
         }
     }

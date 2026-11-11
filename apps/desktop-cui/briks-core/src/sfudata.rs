@@ -48,6 +48,8 @@ pub enum Out {
     MuteLocal { ident: String, muted: bool },
     /// fui expulso: sair do SFU
     Leave,
+    /// mensagem do protocolo de anexos vinda de um participante autenticado (tratada em `sfufiles`)
+    File { from: String, fp: String, jwk: PublicJwk, m: Value },
 }
 
 struct Peer { fp: String, jwk: PublicJwk, name: String, joined_at: u64, last_state: i64 }
@@ -73,6 +75,23 @@ pub struct Layer {
     tick_n: u64,
     /// difusões (estado/evento) a repetir: o canal confiável do SFU pode perder um pacote para um receptor sobrecarregado; os receptores deduplicam
     resend: Vec<(Instant, u8, Value)>,
+    /// histórico de DMs (o mesmo armazenamento da malha P2P) e o pedido em andamento por participante
+    hist: crate::history::Store,
+    hist_reqs: HashMap<String, String>,
+    seen_groups: HashSet<String>,
+}
+
+/// Parte uma lista de mensagens em lotes que cabem num pacote de dados do LiveKit (o lote de 40 KB da malha não cabe).
+fn hist_batches(msgs: Vec<ChatWire>) -> Vec<Vec<ChatWire>> {
+    let (mut out, mut cur, mut size) = (vec![], vec![], 0usize);
+    for m in msgs {
+        let len = serde_json::to_string(&m).map(|s| s.len()).unwrap_or(MAX_PACKET);
+        if len + 400 > MAX_PACKET { continue; }   // uma mensagem sozinha maior que o pacote não viaja
+        if !cur.is_empty() && (size + len > 11_000 || cur.len() >= crate::history::MAX_CHUNK_MESSAGES) { out.push(std::mem::take(&mut cur)); size = 0; }
+        size += len; cur.push(m);
+    }
+    if !cur.is_empty() { out.push(cur); }
+    out
 }
 
 fn now_ms() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0) }
@@ -91,7 +110,8 @@ impl Layer {
         let fp = cfg.identity.fingerprint();
         Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(),
             seen_msgs: HashSet::new(), seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
-            rate: HashMap::new(), owner_sent: None, tick_n: 0, resend: vec![] }
+            rate: HashMap::new(), owner_sent: None, tick_n: 0, resend: vec![],
+            hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new() }
     }
 
     pub fn set_media(&mut self, m: (bool, bool)) { self.media = m; }
@@ -118,6 +138,21 @@ impl Layer {
         let (h, s) = (self.hello_ack(true), self.state_msg());
         vec![Out::Send { to: vec![to.into()], msg: h }, Out::Send { to: vec![to.into()], msg: s }]
     }
+
+    /// Pede ao participante o que ele tem da nossa DM e eu não (mesmo protocolo da malha: ids conhecidos -> lotes -> fim).
+    fn request_history(&mut self, ident: &str, fp: &str) -> Vec<Out> {
+        let ch = identity::dm_channel(&self.fp, fp);
+        let rid = uuid::Uuid::new_v4().to_string();
+        self.hist_reqs.insert(ident.to_string(), rid.clone());
+        vec![Out::Send { to: vec![ident.into()], msg: json!({ "v": 1, "t": "hist.req", "channelId": ch, "requestId": rid, "knownIds": self.hist.known_ids(&ch) }) }]
+    }
+
+    /// Dados do participante autenticado (para os anexos, que rodam fora desta camada).
+    pub fn peer_key(&self, ident: &str) -> Option<(String, PublicJwk)> { self.peers.get(ident).map(|p| (p.fp.clone(), p.jwk.clone())) }
+    pub fn ident_for(&self, fp: &str) -> Option<String> { self.ident_of_fp(fp) }
+    pub fn authed_idents(&self) -> Vec<(String, String)> { self.peers.iter().map(|(k, p)| (k.clone(), p.fp.clone())).collect() }
+    pub fn my_fp(&self) -> &str { &self.fp }
+    pub fn identity(&self) -> Arc<Identity> { self.cfg.identity.clone() }
 
     fn ident_of_fp(&self, fp: &str) -> Option<String> { self.peers.iter().find(|(_, p)| p.fp == fp).map(|(k, _)| k.clone()) }
 
@@ -209,10 +244,13 @@ impl Layer {
 
     /// Pacote recebido; `from` é a identidade carimbada pelo servidor.
     pub fn on_packet(&mut self, from: &str, payload: &[u8]) -> Vec<Out> {
-        if from.is_empty() || from == self.me || payload.len() > MAX_PACKET || !self.rate_ok(from) { return vec![]; }
-        let Ok(v) = serde_json::from_slice::<Value>(payload) else { return vec![] };
-        if v["v"] != 1 { return vec![]; }
+        if from.is_empty() || from == self.me || payload.len() > MAX_PACKET { return vec![]; }
+        let Ok(v) = serde_json::from_slice::<Value>(payload) else { self.rate_ok(from); return vec![] };
         let t = v["t"].as_str().unwrap_or("");
+        // Pedaços de arquivo não entram no limite de mensagens (um anexo são milhares de pacotes): só valem de quem já fez hello e
+        // para uma transferência que o usuário aceitou; o resto é descartado sem custo em `sfufiles`.
+        if !(t == "file" && self.peers.contains_key(from)) && !self.rate_ok(from) { return vec![]; }
+        if v["v"] != 1 { return vec![]; }
         if t == "hello" { return self.on_hello(from, &v); }
         // tudo abaixo exige hello válido anterior
         let Some(p) = self.peers.get(from) else { return vec![] };
@@ -233,14 +271,53 @@ impl Layer {
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { return vec![Out::Ev(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into()))]; }
                 let mut out = vec![Out::Send { to: vec![from.into()], msg: json!({ "v": 1, "t": "ack", "id": m.id }) }];
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }
+                self.hist.add(&m);
                 if self.seen_msgs.insert(m.id.clone()) { out.push(Out::Ev(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: short(&m.author, 64), content: m.content, id: m.id, ts: m.timestamp })); }
                 out
             }
             "ack" => {
                 let id = v["id"].as_str().unwrap_or("");
+                let had = self.outbox.get(&fp).map(|l| l.iter().any(|m| m.id == id)).unwrap_or(false);
                 if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); }
-                vec![]
+                if had { vec![Out::Ev(MeshEvent::Ack { id: id.to_string(), from_fp: fp })] } else { vec![] }   // "entregue" na UI, uma vez só
             }
+            "typing" => vec![Out::Ev(MeshEvent::Typing { from_fp: fp })],
+            "file" => vec![Out::File { from: from.to_string(), fp, jwk, m: v["m"].clone() }],
+            "group" => {
+                let Ok(s) = serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) else { return vec![] };   // formato desconhecido: ignora
+                if let Err(why) = crate::group_sync::verify_wire(&s, &fp) { return vec![Out::Ev(MeshEvent::Error(format!("grupo rejeitado: {why}")))]; }
+                if self.seen_groups.len() > 1024 { self.seen_groups.clear(); }
+                if self.seen_groups.insert(s.signature.clone()) { vec![Out::Ev(MeshEvent::GroupSnapshot { from_fp: fp, snapshot: v["snapshot"].clone() })] } else { vec![] }
+            }
+            "hist.req" => {
+                let ch = identity::dm_channel(&self.fp, &fp);
+                if v["channelId"].as_str() != Some(&ch) { return vec![]; }   // só a DM entre nós dois; nunca o histórico de outro canal
+                let Some(rid) = v["requestId"].as_str().filter(|r| !r.is_empty() && r.len() <= 64) else { return vec![] };
+                let known: HashSet<String> = v["knownIds"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(crate::history::MAX_KNOWN).map(String::from).collect()).unwrap_or_default();
+                let mut out: Vec<Out> = hist_batches(self.hist.missing(&ch, &known)).into_iter()
+                    .map(|b| Out::Send { to: vec![from.into()], msg: json!({ "v": 1, "t": "hist.chunk", "channelId": ch, "requestId": rid, "messages": b }) }).collect();
+                out.push(Out::Send { to: vec![from.into()], msg: json!({ "v": 1, "t": "hist.done", "channelId": ch, "requestId": rid }) });
+                out
+            }
+            "hist.chunk" => {
+                if v["requestId"].as_str() != self.hist_reqs.get(from).map(String::as_str) { return vec![]; }   // só o que eu pedi, deste participante
+                let ch = identity::dm_channel(&self.fp, &fp);
+                if v["channelId"].as_str() != Some(&ch) { return vec![]; }
+                let Some(arr) = v["messages"].as_array() else { return vec![] };
+                let my_jwk = self.cfg.identity.public_jwk();
+                let mut out = vec![];
+                for raw in arr.iter().take(crate::history::MAX_CHUNK_MESSAGES) {
+                    let Ok(m) = serde_json::from_value::<ChatWire>(raw.clone()) else { continue };
+                    if self.hist.has(&m.id) { continue; }
+                    // o autor tem de ser um dos dois lados desta DM, e a assinatura tem de ser dele (ninguém forja o que "eu" disse)
+                    let mine = m.author_peer_id == self.fp;
+                    let key = if mine { &my_jwk } else if m.author_peer_id == fp { &jwk } else { continue };
+                    if identity::verify_message(key, &m, &ch).is_err() { continue; }
+                    if self.hist.add(&m) { out.push(Out::Ev(MeshEvent::History { channel: m.channel_id, from_fp: m.author_peer_id, author: m.author, content: m.content, id: m.id, ts: m.timestamp, mine })); }
+                }
+                out
+            }
+            "hist.done" => vec![],
             "event" => {
                 let wire = v["wire"].to_string();
                 match crate::chat_events::parse_wire(&wire) {
@@ -283,6 +360,7 @@ impl Layer {
         out.push(Out::Ev(MeshEvent::Peer { peer_id: from.into(), state: "autenticado".into() }));
         if v["ack"] != true { out.extend(self.greet(from)); }
         out.extend(self.flush(&fp));
+        out.extend(self.request_history(from, &fp));
         out
     }
 
@@ -326,6 +404,7 @@ impl Layer {
                 let m = identity::sign_message(&self.cfg.identity, ChatWire {
                     version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&self.fp, &to_fp), id,
                     author_peer_id: self.fp.clone(), author: self.cfg.name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
+                self.hist.add(&m);
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 Some(self.flush(&to_fp))
             }
@@ -359,6 +438,17 @@ impl Layer {
                 for i in idents { self.muted_idents.remove(&i); out.push(Out::MuteLocal { ident: i, muted: false }); }
                 Some(out)
             }
+            MeshCmd::Typing => { let to: Vec<String> = self.peers.keys().cloned().collect(); Some(if to.is_empty() { vec![] } else { vec![Out::Send { to, msg: json!({ "v": 1, "t": "typing" }) }] }) }
+            MeshCmd::GroupSend { snapshot } => {
+                // só quem é membro do grupo recebe (a chamada pode ter gente de fora): nome, membros e chaves não vazam
+                let members: HashSet<String> = snapshot["members"].as_array().map(|a| a.iter().filter_map(|m| m["fp"].as_str().map(String::from)).collect()).unwrap_or_default();
+                let to: Vec<String> = self.peers.iter().filter(|(_, p)| members.contains(&p.fp)).map(|(k, _)| k.clone()).collect();
+                if to.is_empty() { Some(vec![]) } else { Some(vec![Out::Send { to, msg: json!({ "v": 1, "t": "group", "snapshot": snapshot }) }]) }
+            }
+            #[cfg(test)]
+            MeshCmd::HistSeed { msgs } => { for m in msgs { self.hist.add(&m); } Some(vec![]) }
+            #[cfg(test)]
+            MeshCmd::HistAsk => { let ps: Vec<(String, String)> = self.peers.iter().map(|(k, p)| (k.clone(), p.fp.clone())).collect(); Some(ps.into_iter().flat_map(|(i, f)| self.request_history(&i, &f)).collect()) }
             MeshCmd::RemoteMute { fp, muted } => {
                 if self.owner() != self.fp { return Some(vec![Out::Ev(MeshEvent::Error("só o dono da sala pode silenciar outros".into()))]); }
                 let Some(ident) = self.ident_of_fp(&fp) else { return Some(vec![Out::Ev(MeshEvent::Error("silenciar: participante desconhecido".into()))]) };

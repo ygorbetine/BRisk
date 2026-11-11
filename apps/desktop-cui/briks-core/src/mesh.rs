@@ -1238,13 +1238,13 @@ struct Ctl {
 }
 
 /// Onde o histórico fica guardado (um .jsonl por DM). Nos testes só em memória, a menos que BRIKS_HIST_DIR peça uma pasta.
-fn hist_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn hist_dir() -> Option<std::path::PathBuf> {
     if let Ok(d) = std::env::var("BRIKS_HIST_DIR") { return Some(d.into()); }
     if cfg!(test) { return None; }
     std::env::var("LOCALAPPDATA").ok().map(|b| std::path::PathBuf::from(b).join("Briks-CUI").join("historico"))
 }
 
-fn recv_dir() -> std::path::PathBuf {
+pub(crate) fn recv_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("BRIKS_RECV_DIR") { return d.into(); }
     let base = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
     base.join("Briks-CUI").join("recebidos")

@@ -28,6 +28,7 @@ mod realtime;
 mod hybrid;
 mod sfu;
 mod sfudata;
+mod sfufiles;
 mod sfu_cfg;
 mod share;
 mod signaling;
@@ -99,5 +100,7 @@ mod tests_sfuipc;
 mod tests_sfuproc;
 #[cfg(test)]
 mod tests_sfukick;
+#[cfg(test)]
+mod tests_sfuapps;
 #[cfg(test)]
 mod tests_sfu;

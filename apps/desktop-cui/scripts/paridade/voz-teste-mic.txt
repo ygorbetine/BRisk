@@ -1,0 +1,16 @@
+# Configurações > Voz: teste do microfone fora da chamada (áudio falso do core: tom de 440 Hz, nenhum dispositivo real)
+waitms 800
+tap 441 755
+tap 300 125
+expect mic_test_on 0
+snap m0
+tap 528 328
+waitms 2500
+snap m1
+expect mic_test_on 1
+expect mic_test_ge1 1
+tap 528 328
+waitms 400
+snap m2
+expect mic_test_on 0
+expect mic_test_ge1 0

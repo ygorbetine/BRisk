@@ -203,6 +203,24 @@ static void key_row(cui_ctx *ui, app_state_t *s, int i) {
     }
 }
 
+/* sondas dos roteiros de teste (script.c: expect <nome> <valor>); -9999 = nome desconhecido */
+int settings_probe(const char *n, app_state_t *s) {
+    unsigned m; int v;
+    if (!strcmp(n, "rec_slot")) return rec_slot;
+    if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
+    if (!strcmp(n, "mic_test_on")) return s->mic_test_on;
+    if (!strcmp(n, "mic_test_level")) return (int)(s->mic_test_level * 100.0f + 0.5f);
+    if (!strncmp(n, "mic_test_ge", 11)) return s->mic_test_level * 100.0f >= (float)atoi(n + 11);   /* nível do teste >= N % */
+    if (!strcmp(n, "mic_test_err")) return s->mic_test_msg[0] != 0;
+    if (!strncmp(n, "hk_status", 9)) return s->hk_status[n[9] - '0' < 3 && n[9] >= '0' ? n[9] - '0' : 0];
+    if (!strncmp(n, "key_", 4) && (!strcmp(n + 4, "mute") || !strcmp(n + 4, "deafen") || !strcmp(n + 4, "stream") || !strcmp(n + 4, "ptt"))) return key_field(n[4] == 'm' ? 0 : n[4] == 'd' ? 1 : n[4] == 's' ? 2 : 3)[0] != 0;
+    if (!strncmp(n, "keyvk_", 6)) { const char *w = n + 6; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? v : 0; }
+    if (!strncmp(n, "keymods_", 8)) { const char *w = n + 8; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? (int)m : 0; }
+    if (!strcmp(n, "cfg_mic")) return g_set.mic;
+    if (!strcmp(n, "cfg_noise_off")) return g_set.noise_off;
+    return -9999;
+}
+
 void settings_tick(void) {
     static bool loaded; static settings_t last;
     if (!loaded) { loaded = true; load(); enum_devices(); last = g_set; return; }

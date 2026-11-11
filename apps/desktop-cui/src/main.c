@@ -34,6 +34,7 @@ static void dev_autologin(void) {
 }
 
 int script_probe(const char *n) {
+    { int sp = settings_probe(n, &state); if (sp != -9999) return sp; }
     if (!strcmp(n, "profile")) return state.profile_open;
     if (!strcmp(n, "settings")) return state.settings_open;
     if (!strcmp(n, "add_friend")) return state.add_friend_open;

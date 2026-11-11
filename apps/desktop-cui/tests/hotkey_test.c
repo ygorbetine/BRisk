@@ -7,7 +7,8 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FALHOU: " __VA_ARGS__); printf("\n"); } else { printf("ok: " __VA_ARGS__); printf("\n"); } } while (0)
 
-static void key(WORD vk, bool up) { INPUT in = { 0 }; in.type = INPUT_KEYBOARD; in.ki.wVk = vk; in.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0; SendInput(1, &in, sizeof in); }
+static bool inject_ok = true;
+static void key(WORD vk, bool up) { INPUT in = { 0 }; in.type = INPUT_KEYBOARD; in.ki.wVk = vk; in.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0; UINT r = SendInput(1, &in, sizeof in); if (!r) inject_ok = false; Sleep(15); }
 
 int main(void) {
     unsigned m; int vk; char t[48];
@@ -45,8 +46,9 @@ int main(void) {
     hkw_set(set, st);
     hkw_take(0);
     key(VK_CONTROL, false); key(VK_MENU, false); key(VK_SHIFT, false); key(VK_F23, false); key(VK_F23, true); key(VK_SHIFT, true); key(VK_MENU, true); key(VK_CONTROL, true);
-    unsigned n = 0; for (int i = 0; i < 40 && !n; i++) { Sleep(25); n = hkw_take(0); }
-    CHECK(n == 1, "apertar a combinação aciona o atalho uma vez (veio %u)", n);
+    unsigned n = 0; for (int i = 0; i < 60 && !n; i++) { Sleep(25); n = hkw_take(0); }
+    if (!inject_ok) printf("pulado: o Windows negou SendInput (sessão bloqueada ou sem desktop de entrada); o registro em si foi conferido acima");
+    else CHECK(n == 1, "apertar a combinação aciona o atalho uma vez (veio %u)", n);
     const char *none[HK_N] = { "", "", "" };
     hkw_set(none, st);
     CHECK(st[0] == HKS_NONE && hkw_probe(m, vk), "depois de desregistrar, o combo volta a ficar livre");

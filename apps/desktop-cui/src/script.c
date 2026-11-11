@@ -25,6 +25,7 @@ static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdlib.h>
 #include <windows.h>
 
+int g_script_fail;
 static char *lines[512]; static int nlines, pc;
 static int timed_left, timed_total;       /* operação com duração em andamento */
 static bool timed_move; static float mx0, my0, mx1, my1;
@@ -86,7 +87,17 @@ void script_tick(cui_ctx *ui) {
         if (!cmd) continue;
         if (!strcmp(cmd, "caption")) { char *r = strtok(NULL, ""); snprintf(caption, sizeof caption, "%s", r ? r : ""); }
         else if (!strcmp(cmd, "at")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); } }
-        else if (!strcmp(cmd, "click")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); click_phase = 1; } }
+        else if (!strcmp(cmd, "click")) {   /* click X Y | click <ponto> (ex.: plus:chat, close:chat, header:nav) */
+            char *a = strtok(NULL, " "), *b = a && a[0] >= '0' && a[0] <= '9' ? strtok(NULL, " ") : NULL;
+            float tx, ty; bool ok = a && (b ? (tx = (float)atof(a), ty = (float)atof(b), true) : dock_script_point(a, &tx, &ty));
+            if (ok) { cx = tx; cy = ty; cui_input_mouse_move(ui, cx, cy); click_phase = 1; }
+        }
+        else if (!strcmp(cmd, "expect")) {   /* expect <estado> <valor>: confere e conta falha (o processo sai com código 1) */
+            char *n = strtok(NULL, " "), *v = strtok(NULL, " ");
+            int got = n ? script_probe(n) : -1, want = v ? atoi(v) : 0;
+            if (got != want) { g_script_fail++; fprintf(stderr, "roteiro: FALHOU linha %d: %s = %d, esperado %d\n", pc, n ? n : "?", got, want); }
+            else fprintf(stderr, "roteiro: ok linha %d: %s = %d\n", pc, n, got);
+        }
         else if (!strcmp(cmd, "waitms")) { char *n = strtok(NULL, " "); wait_until = cui_time(ui) + (n ? atof(n) : 100) / 1000.0; }
         else if (!strcmp(cmd, "shot")) { char *n = strtok(NULL, " "); snprintf(shot_name, sizeof shot_name, "%s", n ? n : "shot"); }
         else if (!strcmp(cmd, "signal")) { char *n = strtok(NULL, " "); char f[640]; snprintf(f, sizeof f, "%s\\%s.flag", outdir, n ? n : "sinal"); FILE *o = fopen(f, "wb"); if (o) fclose(o); }

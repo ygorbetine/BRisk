@@ -218,7 +218,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
 
     /* arrastar pelo cabeçalho: aperta no cabeçalho (fora dos botões), passa do limiar e levanta o painel como a barra de título de uma janela */
     int hdr_hot = -1;
-    bool modal = menu_open || s->add_friend_open || s->create_group_open || s->profile_open || s->settings_open;
+    bool modal = menu_open || briks_modal_open();   /* regra central: qualquer diálogo/menu aberto */
     if (!drag.active && resizing < 0 && !modal) {
         int hk = -1;
         for (int k = 0; k < P_COUNT; k++) if (anim_on[k] && in_header(k, anim[k], mp.x, mp.y)) hk = k;
@@ -302,11 +302,11 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
         for (int k = 0; k < P_COUNT; k++) {
             if (!present[k]) continue;
-            bool hover = !drag.active && resizing < 0 && inside(anim[k], mp.x, mp.y);
+            bool hover = !drag.active && resizing < 0 && !modal && inside(anim[k], mp.x, mp.y);
             render_leaf(&c, k, anim[k], hover && !(drag.active && k == dk), hdr_hot == k);
         }
         /* divisórias: alça visível e redimensionável (só com o layout parado) */
-        if (!moving && !drag.active) {
+        if (!moving && !drag.active && !modal) {
             for (int i = 0; i < LAYOUT_MAX_NODES; i++) if (L.n[i].used && !L.n[i].leaf) {
                 const lnode *n = &L.n[i]; lrect r = c.r[i], a = c.r[n->a];
                 lrect d = n->vertical ? (lrect){ r.x, a.y + a.h, r.w, LAYOUT_GAP } : (lrect){ a.x + a.w, r.y, LAYOUT_GAP, r.h };
@@ -460,5 +460,11 @@ bool dock_script_point(const char *spec, float *x, float *y) {
 }
 void dock_script_pick(const char *kind) { int k = panel_from_name(kind); if (k >= 0) { drag = (drag_t){ true, k, true }; menu_open = false; } }
 void dock_script_menu(float x, float y) { menu_open = true; menu_age = 0; menu_ax = x; menu_ay = y; }
+int dock_probe(const char *n) {
+    if (!strcmp(n, "menu")) return menu_open;
+    if (!strcmp(n, "drag")) return drag.active;
+    if (!strcmp(n, "count")) return layout_count(&L);
+    return -1;
+}
 void dock_script_restore(void) { layout_default(&L, last_vp_w); menu_open = false; }
 void dock_restore_default(void) { layout_default(&L, last_vp_w); save_layout(); menu_open = false; }

@@ -298,6 +298,9 @@ void briks_text_scale_apply(cui_ctx *ui);
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
+int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
+int script_probe(const char *name);
+extern int g_script_fail;
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
 void dock_script_menu(float x, float y);
@@ -344,11 +347,22 @@ static inline bool briks_covered(cui_ctx *ui) {
     for (int i = 0; i < g_cov_n_prev; i++) if (m.x >= g_cov_prev[i][0] && m.y >= g_cov_prev[i][1] && m.x < g_cov_prev[i][0] + g_cov_prev[i][2] && m.y < g_cov_prev[i][1] + g_cov_prev[i][3]) return true;
     return false;
 }
-static inline bool briks_blocked(void) { return g_modal_prev && g_in_modal == 0; }
+#include <stdlib.h>
+/* Regra central: com modal aberto (diálogo ou menu), só a camada modal recebe input. BRIKS_TEST_NO_MODAL=1 desliga a regra (só o teste de roteiro usa, para provar que ele falha sem a correção). */
+static inline bool briks_modal_open(void) { static int off = -1; if (off < 0) off = getenv("BRIKS_TEST_NO_MODAL") != NULL; return !off && g_modal_prev; }
+static inline bool briks_blocked(void) { return briks_modal_open() && g_in_modal == 0; }
 static inline bool briks_dlg_begin(cui_ctx *ui, const char *t, bool *open, const cui_dialog_opts *o) {
     bool b = cui_dialog_begin(ui, t, open, o); if (b) { g_modal_now = true; g_in_modal++; } return b;
 }
 static inline void briks_dlg_end(cui_ctx *ui) { g_in_modal--; cui_dialog_end(ui); }
+static inline bool briks_menu_begin(cui_ctx *ui, const char *l, const cui_menu_opts *o) { bool b = cui_menu_begin(ui, l, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_menu_end(cui_ctx *ui) { g_in_modal--; cui_menu_end(ui); }
+static inline bool briks_pop_begin(cui_ctx *ui, const char *id, const cui_popover_opts *o) { bool b = cui_popover_begin(ui, id, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_pop_end(cui_ctx *ui) { g_in_modal--; cui_popover_end(ui); }
+#undef cui_menu
+#define cui_menu(ui, label, ...) CUI__SCOPE_IF(briks_menu_begin((ui), (label), CUI__OPTS(cui_menu_opts, __VA_ARGS__)), briks_menu_end(ui))
+#undef cui_popover
+#define cui_popover(ui, id, ...) CUI__SCOPE_IF(briks_pop_begin((ui), (id), CUI__OPTS(cui_popover_opts, __VA_ARGS__)), briks_pop_end(ui))
 #undef cui_dialog
 #define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
 /* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */

@@ -33,6 +33,18 @@ static void dev_autologin(void) {
     app_submit_auth(&state);
 }
 
+int script_probe(const char *n) {
+    if (!strcmp(n, "profile")) return state.profile_open;
+    if (!strcmp(n, "settings")) return state.settings_open;
+    if (!strcmp(n, "add_friend")) return state.add_friend_open;
+    if (!strcmp(n, "create_group")) return state.create_group_open;
+    if (!strcmp(n, "friends_tab")) return state.friends_tab;
+    if (!strcmp(n, "screen")) return (int)state.screen;
+    if (!strcmp(n, "modal")) return g_modal_prev;
+    if (!strcmp(n, "pins")) return -1;
+    return dock_probe(n);
+}
+
 static void frame(cui_ctx *ui) {
     g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0;
     memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
@@ -137,5 +149,5 @@ int main(void) {
     core_stop();
     bk_stop();
     update_install_on_exit();   /* atualização já baixada e verificada: instala em silêncio ao fechar */
-    return 0;
+    return g_script_fail ? 1 : 0;
 }

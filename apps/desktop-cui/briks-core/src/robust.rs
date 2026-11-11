@@ -345,3 +345,49 @@ async fn cycles_failed_starts() {
     // janela que não existe: a captura recusa na hora (nada a parar, nada pode vazar)
     measure_cycles("falha", n, |_| cfg(SourceKind::Window(1), "fantasma", AudioMode::None), false).await;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 5. IPC com a UI: linha gigante / sem quebra de linha / lixo não derruba nem enche a memória do core
+// ---------------------------------------------------------------------------------------------------------------------
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ipc_survives_oversized_partial_and_garbage_lines() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (l, port) = crate::ipc::bind().await.unwrap();
+    let cfg = crate::ipc::Config { data_dir: std::env::temp_dir().join(format!("briks-robust-ipc-{}", std::process::id())), realtime_url: None, realtime_key: None };
+    tokio::spawn(crate::ipc::serve(l, "segredo".into(), cfg));
+    // 1) 8 MB sem nenhuma quebra de linha antes do hello: o core corta a conexão cedo
+    let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let chunk = vec![b'a'; 64 * 1024];
+    let mut sent = 0usize;
+    for _ in 0..128 { if s.write_all(&chunk).await.is_err() { break; } sent += chunk.len(); }
+    eprintln!("linha sem fim: o core aceitou {} KB antes de fechar", sent / 1024);
+    assert!(sent < 4 * 1024 * 1024, "o core engoliu {sent} bytes sem quebra de linha");
+    // 2) o core segue aceitando: hello partido em dois pedaços, com CRLF, e lixo depois
+    let s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (rd, mut wr) = s.into_split();
+    let mut rd = BufReader::new(rd);
+    wr.write_all(b"{\"cmd\":\"hello\",").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    wr.write_all(b"\"token\":\"segredo\"}\r\n").await.unwrap();
+    let mut line = String::new();
+    timeout(Duration::from_secs(5), rd.read_line(&mut line)).await.unwrap().unwrap();
+    assert!(line.contains("hello.ok"), "{line}");
+    for bad in ["não é json\n", "{\"cmd\":5}\n", "[]\n", "null\n", "{\"cmd\":\"room.join\"}\n", "{\"cmd\":\"share.start\",\"height\":-1,\"fps\":\"x\",\"id\":[]}\n", "{\"cmd\":\"share.watch\",\"peer\":\"../../x\"}\n", "\n"] { wr.write_all(bad.as_bytes()).await.unwrap(); }
+    wr.write_all(b"{\"cmd\":\"ping\"}\n").await.unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    let mut pong = false;
+    while !pong && Instant::now() < end {
+        line.clear();
+        match timeout(end.saturating_duration_since(Instant::now()), rd.read_line(&mut line)).await { Ok(Ok(n)) if n > 0 => { pong = line.contains("pong"); } _ => break }
+    }
+    assert!(pong, "o core parou de responder depois de comandos malformados");
+    // 3) linha acima do teto no meio da sessão: a conexão cai, e uma nova ainda é aceita
+    wr.write_all(&vec![b'b'; 512 * 1024]).await.ok();
+    let s2 = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (rd2, mut wr2) = s2.into_split();
+    let mut rd2 = BufReader::new(rd2);
+    wr2.write_all(b"{\"cmd\":\"hello\",\"token\":\"segredo\"}\n").await.unwrap();
+    line.clear();
+    timeout(Duration::from_secs(5), rd2.read_line(&mut line)).await.expect("nova conexão não foi aceita").unwrap();
+    assert!(line.contains("hello.ok"), "{line}");
+}

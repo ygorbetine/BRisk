@@ -438,6 +438,21 @@ impl Accounts {
         let (p, u) = (self.provider.clone(), user_id.to_string());
         blk(move || p.friend_unblock(&tok, &u)).await
     }
+    pub async fn keys_list(&self) -> AResult<Vec<DeviceKey>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.keys_list(&tok)).await
+    }
+    pub async fn key_register(&self, peer_id: &str, public_key: Value, device_name: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, id, n) = (self.provider.clone(), peer_id.to_string(), device_name.to_string());
+        blk(move || p.key_register(&tok, &id, &public_key, &n)).await
+    }
+    pub async fn key_revoke(&self, peer_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, id) = (self.provider.clone(), peer_id.to_string());
+        blk(move || p.key_revoke(&tok, &id)).await
+    }
     pub async fn blocks(&self) -> AResult<Vec<Friend>> {
         let tok = self.access_token().await?;
         let p = self.provider.clone();

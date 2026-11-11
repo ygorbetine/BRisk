@@ -1,5 +1,6 @@
 /* Ponte UI <-> briks-core: comandos e eventos JSON por linha (ver docs/plans/cui-webrtc.md). */
 #include "briks_ui.h"
+#include "call_idle.h"
 #include "core.h"
 #include "json.h"
 #include "msgui.h"
@@ -7,6 +8,7 @@
 #include "sysint.h"
 #include "call.h"
 #include <math.h>
+#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +36,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
 
 void rtc_leave_room(app_state_t *s) {
     s->rtc_want_room = false;
-    s->in_room = false;
+    s->in_room = false; s->dmoff_n = 0;   /* a malha acaba junto com a sala: chats privados fechados voltam ao normal */
     s->rtc_peer_count = s->rtc_authed_count = 0;
     if (core_state() == CORE_READY) send_cmd("room.leave", NULL);
     copy(s->rtc_state, sizeof s->rtc_state, "");
@@ -103,51 +105,61 @@ void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
 }
-/* Volume por pessoa lembrado entre chamadas: "<identidade> <porcentagem>" por linha em peer-volumes.txt na pasta de dados.
-   A chave é a identidade (fp) do participante, que não muda de uma chamada para outra; só guarda quem saiu de 100%. */
-static struct { char fp[72]; float v; } g_pv[64]; static int g_pvn; static bool g_pv_loaded;
+/* CHM-14: volume por pessoa lembrado entre chamadas. Chave = impressão digital da identidade (estável); arquivo de linhas "fp=ganho" em
+ * %APPDATA%\Briks-CUI\peer-volumes.txt (BRIKS_PEERVOL_FILE nos testes). Só guarda o que difere de 100%. */
+#define PV_MAX 128
+static struct { char fp[96]; float gain; } g_pv[PV_MAX]; static int g_pv_n; static bool g_pv_loaded;
 static bool pv_path(char *out, size_t cap) {
-    const char *d = getenv("BRIKS_CUI_DATA");
-    if (d && d[0]) { snprintf(out, cap, "%s\\peer-volumes.txt", d); return true; }
+    const char *o = getenv("BRIKS_PEERVOL_FILE"); if (o && o[0]) { snprintf(out, cap, "%s", o); return true; }
     const char *ad = getenv("APPDATA"); if (!ad || !ad[0]) return false;
-    snprintf(out, cap, "%s\\Briks-CUI\\peer-volumes.txt", ad); return true;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\\peer-volumes.txt", dir); return true;
 }
 static void pv_load(void) {
-    if (g_pv_loaded) return; g_pv_loaded = true;
-    char p[600]; if (!pv_path(p, sizeof p)) return;
+    if (g_pv_loaded) return; g_pv_loaded = true; g_pv_n = 0;
+    char p[MAX_PATH], line[200]; if (!pv_path(p, sizeof p)) return;
     FILE *f = fopen(p, "rb"); if (!f) return;
-    char fp[72]; float v;
-    while (g_pvn < 64 && fscanf(f, "%71s %f", fp, &v) == 2) if (v >= 0 && v <= 200) { snprintf(g_pv[g_pvn].fp, sizeof g_pv[g_pvn].fp, "%s", fp); g_pv[g_pvn++].v = v; }
+    while (g_pv_n < PV_MAX && fgets(line, sizeof line, f)) {
+        char *eq = strchr(line, '='); if (!eq) continue; *eq = 0;
+        float g = (float)atof(eq + 1); if (g < 0 || g > 2) continue;
+        snprintf(g_pv[g_pv_n].fp, sizeof g_pv[0].fp, "%s", line); g_pv[g_pv_n].gain = g; g_pv_n++;
+    }
     fclose(f);
 }
-static void pv_save(const char *fp, float v) {
-    if (!fp[0] || strpbrk(fp, " \t\r\n")) return;
-    pv_load();
-    int k = -1; for (int i = 0; i < g_pvn; i++) if (!strcmp(g_pv[i].fp, fp)) { k = i; break; }
-    if (k >= 0 && fabsf(g_pv[k].v - v) < 0.5f) return;
-    if (k < 0) { if (g_pvn == 64) { memmove(&g_pv[0], &g_pv[1], 63 * sizeof g_pv[0]); g_pvn = 63; } k = g_pvn++; snprintf(g_pv[k].fp, sizeof g_pv[k].fp, "%s", fp); }
-    g_pv[k].v = v;
-    char p[600]; if (!pv_path(p, sizeof p)) return;
+static void pv_save(void) {
+    char p[MAX_PATH]; if (!pv_path(p, sizeof p)) return;
     FILE *f = fopen(p, "wb"); if (!f) return;
-    for (int i = 0; i < g_pvn; i++) if (fabsf(g_pv[i].v - 100.0f) >= 0.5f) fprintf(f, "%s %.0f\n", g_pv[i].fp, g_pv[i].v);
+    for (int i = 0; i < g_pv_n; i++) fprintf(f, "%s=%.2f\n", g_pv[i].fp, g_pv[i].gain);
     fclose(f);
 }
+float rtc_saved_volume(const char *fp) {   /* ganho lembrado (0..2) para essa identidade; 1 = normal */
+    if (!fp || !fp[0]) return 1.0f; pv_load();
+    for (int i = 0; i < g_pv_n; i++) if (!strcmp(g_pv[i].fp, fp)) return g_pv[i].gain;
+    return 1.0f;
+}
+static void pv_remember(const char *fp, float gain) {
+    if (!fp || !fp[0] || strchr(fp, '=') || strchr(fp, '\n')) return; pv_load();
+    int k = -1; for (int i = 0; i < g_pv_n; i++) if (!strcmp(g_pv[i].fp, fp)) k = i;
+    const bool normal = gain > 0.995f && gain < 1.005f;
+    if (k >= 0 && fabsf(g_pv[k].gain - gain) < 0.004f) return;
+    if (k < 0 && normal) return;
+    if (k < 0) { if (g_pv_n >= PV_MAX) return; k = g_pv_n++; snprintf(g_pv[k].fp, sizeof g_pv[0].fp, "%s", fp); }
+    if (normal) { g_pv[k] = g_pv[--g_pv_n]; } else g_pv[k].gain = gain;
+    pv_save();
+}
+
+/* quem entra na sala volta com o volume que a pessoa escolheu da última vez (identidade conhecida pelo peer.info) */
+static void peer_volume_restore(app_state_t *s, int slot) {
+    float g = rtc_saved_volume(s->rtc_peers[slot].fp);
+    if (fabsf(g - 1.0f) > 0.004f) { s->rtc_peers[slot].volume = g * 100.0f; s->rtc_peers[slot].vol_set = true; rtc_set_peer_volume(s, slot, g); }
+}
+
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
+    pv_remember(s->rtc_peers[slot].fp, gain);
     char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"volume\":%.2f", id, gain);
     if (core_state() == CORE_READY) send_cmd("peer.volume", extra);
-    pv_save(s->rtc_peers[slot].fp, gain * 100.0f);
-}
-/* A identidade do participante acabou de chegar: se o usuário já tinha mexido no volume dele em outra chamada, repõe. */
-static void pv_apply(app_state_t *s, int slot) {
-    pv_load();
-    for (int i = 0; i < g_pvn; i++) if (!strcmp(g_pv[i].fp, s->rtc_peers[slot].fp)) {
-        if (fabsf(g_pv[i].v - 100.0f) < 0.5f) return;
-        s->rtc_peers[slot].volume = g_pv[i].v; s->rtc_peers[slot].vol_set = true;
-        rtc_set_peer_volume(s, slot, g_pv[i].v / 100.0f);
-        return;
-    }
 }
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
@@ -182,7 +194,6 @@ static void over_promote(app_state_t *s) {
         memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]);
         copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, o->id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, o->state);
         copy(s->rtc_peers[slot].fp, sizeof s->rtc_peers[slot].fp, o->fp); copy(s->rtc_peers[slot].name, sizeof s->rtc_peers[slot].name, o->name);
-        if (s->rtc_peers[slot].fp[0]) pv_apply(s, slot);
         copy(s->rtc_peers[slot].status, sizeof s->rtc_peers[slot].status, o->status); copy(s->rtc_peers[slot].presence, sizeof s->rtc_peers[slot].presence, o->presence);
         s->rtc_peers[slot].mic_off = o->mic_off; s->rtc_peers[slot].deafened = o->deafened;
         memset(o, 0, sizeof *o); if (s->rtc_overflow > 0) s->rtc_overflow--;
@@ -236,7 +247,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             copy(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, json_str(j, "fp", ""));
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, json_str(j, "name", ""));
-            if (s->rtc_peers[i].fp[0]) pv_apply(s, i);
+            peer_volume_restore(s, i);   /* CHM-14 */
         }
     } else if (!strcmp(ev, "room.owner")) {
         const jval *m = json_get(j, "me");
@@ -268,6 +279,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         }
     } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack")) {
         changed = attach_event(s, ev, j);
+    } else if (!strcmp(ev, "chat.link")) {   /* chat privado fechado/reaberto pelo core (AMI-16) */
+        const jval *on = json_get(j, "on"); friends_dm_link(s, json_str(j, "fp", ""), on && on->type == J_BOOL && on->b); changed = true;
     } else if (!strcmp(ev, "chat.event")) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
@@ -315,7 +328,25 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     return changed;
 }
 
+/* CHM-16: 1 h sem falar desconecta; falar, transmitir a tela ou "Continuar" zeram a contagem */
+static void idle_tick(app_state_t *s) {
+    const ULONGLONG now = GetTickCount64();
+    if (!s->in_room) { s->idle_last = 0; s->idle_phase_now = IDLE_ACTIVE; return; }
+    if (!s->idle_last || (s->mic_on && !s->deaf && s->me_level > 0.05f) || s->sh.active) s->idle_last = now;
+    long long rem = 0; int ph = idle_phase((long long)(now - s->idle_last), &rem);
+    s->idle_phase_now = ph; s->idle_left_ms = rem;
+    if (ph == IDLE_EXPIRED) {
+        rtc_leave_room(s); s->idle_last = 0; s->idle_phase_now = IDLE_ACTIVE;
+        copy(s->idle_notice, sizeof s->idle_notice, "Você saiu da chamada por inatividade (1 hora sem falar).");
+        if (s->screen == SCREEN_CALL) s->screen = SCREEN_SOCIAL;
+        return;
+    }
+    static ULONGLONG last_wake;   /* sem quadros o relógio não andaria: acorda a tela a cada 1 s no aviso e a cada 20 s fora dele */
+    if (now - last_wake >= (ph == IDLE_WARNING ? 1000u : 20000u)) { last_wake = now; if (s->app) cui_request_redraw(cui_app_ui(s->app)); }
+}
+
 void rtc_pump(app_state_t *s) {
+    idle_tick(s);
     core_status_t st = core_state();
     static int demo_speak = -1;   /* BRIKS_DEMO_SPEAK=0.7: fixa o nível de fala local (captura de tela do halo, sem microfone) */
     if (demo_speak < 0) demo_speak = getenv("BRIKS_DEMO_SPEAK") ? 1 : 0;
@@ -336,6 +367,12 @@ void rtc_pump(app_state_t *s) {
             jval *jj = json_parse(line); if (jj) { over_note(jj, "peer.info"); json_free(jj); }
         }
         if (getenv("BRIKS_DEMO_LEAVE")) for (int i = 0; i < atoi(getenv("BRIKS_DEMO_LEAVE")) && i < BRIKS_MAX_PEERS; i++) { char id[48]; snprintf(id, sizeof id, "demo-%d", i); set_peer(s, id, "fechado"); }
+        if (getenv("BRIKS_DEMO_PEERVOL")) {   /* prova do CHM-14: muda o volume de um, "volta à chamada" lendo o arquivo de novo */
+            rtc_set_peer_volume(s, 0, (float)atof(getenv("BRIKS_DEMO_PEERVOL")));
+            s->rtc_peers[0].volume = 100.0f; s->rtc_peers[0].vol_set = false;
+            g_pv_loaded = false; g_pv_n = 0;
+            peer_volume_restore(s, 0);
+        }
         if (getenv("BRIKS_DEMO_NETFAIL")) { s->net_failed = true; copy(s->rtc_state, sizeof s->rtc_state, "erro"); copy(s->rtc_msg, sizeof s->rtc_msg, "Não foi possível entrar pelo servidor de chamadas: serviço de tokens inacessível"); }
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         copy(s->rtc_state, sizeof s->rtc_state, "conectado"); s->rtc_peer_count = s->rtc_authed_count = dn;   /* a demonstração mostra a sala como conectada */

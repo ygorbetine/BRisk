@@ -125,6 +125,18 @@ pub struct Presence {
     pub last_seen: Option<String>,
 }
 
+/// Uma instalação (computador) ligada à conta: linha de `profile_keys` (migração 0009 acrescenta nome e último uso).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeviceKey {
+    pub peer_id: String,
+    #[serde(default)]
+    pub device_name: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Friend {
     pub user_id: String,
@@ -188,4 +200,11 @@ pub trait AuthProvider: Send + Sync {
     fn friend_block(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
     fn friend_unblock(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
     fn blocks(&self, _access_token: &str) -> AResult<Vec<Friend>> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
+
+    /// Computadores ligados à conta (0009). Sem a RPC: `server_not_ready`.
+    fn keys_list(&self, _access_token: &str) -> AResult<Vec<DeviceKey>> { Err(AccountError::new("server_not_ready", "A lista de computadores ainda não está disponível no servidor.")) }
+    /// Liga (ou atualiza nome/último uso de) esta instalação à conta. Instalação já revogada: `key_revoked`.
+    fn key_register(&self, _access_token: &str, _peer_id: &str, _public_key: &Value, _device_name: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "A lista de computadores ainda não está disponível no servidor.")) }
+    /// Revoga uma instalação da própria conta: a função livekit-token passa a recusar esse peerId (RPC `revoke_key`, 0001).
+    fn key_revoke(&self, _access_token: &str, _peer_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "A lista de computadores ainda não está disponível no servidor.")) }
 }

@@ -973,7 +973,7 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
-        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::DmDisconnect { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
             let media = self.media();
             let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
             self.apply(outs).await;
@@ -1028,7 +1028,7 @@ impl Actor {
             MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
             MeshCmd::Kick { .. } | MeshCmd::Allow { .. } => self.emit(MeshEvent::Error("expulsar exige a API de administração do LiveKit: ainda não disponível".into())).await,
             MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto exige a camada de dados do SFU".into())).await,
-            MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } => {}
+            MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } | MeshCmd::DmDisconnect { .. } => {}
             #[cfg(test)]
             MeshCmd::KickUnchecked { .. } => {}
             // só testes: publica bytes crus na data channel (provar que forjados/malformados são descartados pelos outros)

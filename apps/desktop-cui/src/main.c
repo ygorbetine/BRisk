@@ -58,6 +58,7 @@ int script_probe(const char *n) {
     if (!strncmp(n, "open_is:", 8)) return strstr(attach_last_open(), n + 8) != NULL;   /* link aberto por clique contém o texto (teste) */
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
+    if (!strcmp(n, "peer_vol_0")) return (int)(state.rtc_peers[0].volume + 0.5f);
     if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
     if (!strcmp(n, "fw_open")) return fw_open();
     if (!strcmp(n, "fw_choice")) return settings_fw_choice();
@@ -108,6 +109,7 @@ static void frame(cui_ctx *ui) {
             }
             briks_tip_draw(ui);
             net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */
+            idle_banner(ui, &state);     /* CHM-16: aviso de inatividade na chamada */
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }

@@ -3,6 +3,7 @@
  * Medidas de apps/web/src/components/CallWorkspace.tsx + call-workspace.css / glass-layout.css; lógica pura em callhist.c. */
 #include "call.h"
 #include "netdiag.h"
+#include "call_idle.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -653,4 +654,29 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
         }
     }
     if (s->screen != SCREEN_CALL && g_call.fullscreen) call_set_fullscreen(s, false);   /* saiu da tela da chamada: a janela volta ao normal */
+}
+
+/* CHM-16: aviso nos 5 minutos finais antes de sair por inatividade (e o resultado depois que saiu) */
+void idle_banner(cui_ctx *ui, app_state_t *s) {
+    if (s->idle_phase_now != IDLE_WARNING) {
+        if (s->idle_notice[0] && s->screen != SCREEN_CALL) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 8, .pad_x = 8) {
+            cui_box(ui, .id = "idle-done", .dir = CUI_ROW, .pad_x = 14, .pad_y = 7, .gap = 10, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                cui_text(ui, s->idle_notice, .size = 13, .nowrap = true);
+                if (cui_button(ui, "Ok", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) s->idle_notice[0] = 0;
+            }
+        }
+        return;
+    }
+    const long long sec = (s->idle_left_ms + 999) / 1000;
+    char t[160]; snprintf(t, sizeof t, "Você está há muito tempo sem falar. A chamada será encerrada em %lld:%02lld.", sec / 60, sec % 60);
+    cui_rect pr = cui_get_rect(ui, cui_make_id(ui, "idle-pill"));
+    if (pr.w > 0) briks_cover(pr.x, pr.y, pr.w, pr.h);
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 82, .pad_x = 8) {
+        cui_box(ui, .id = "idle-pill", .dir = CUI_ROW, .pad_x = 14, .pad_y = 7, .gap = 10, .radius = 18, .bg = CUI_RGBA(0x4a3a10f4), .border = 1, .border_color = B_GLASS_BORDER,
+                .align = CUI_ALIGN_CENTER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
+            cui_icon(ui, CUI_ICON_CLOCK, 16, CUI_RGB(0xffe6a8));
+            cui_text(ui, t, .size = 13, .color = CUI_RGB(0xffe6a8), .nowrap = true);
+            if (cui_button(ui, "Continuar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) { s->idle_last = GetTickCount64(); s->idle_phase_now = IDLE_ACTIVE; }
+        }
+    }
 }

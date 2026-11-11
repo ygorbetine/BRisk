@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <windows.h>
 
 void ui_account_editor(cui_ctx *ui, app_state_t *s) {
     /* ao abrir, o campo começa com o nome atual */
@@ -50,7 +51,41 @@ void ui_account_editor(cui_ctx *ui, app_state_t *s) {
 
 /* ---------- segurança: sair dos outros computadores ---------- */
 
+/* Computadores ligados ao @nick (PRF-12): lista as instalações de profile_keys e revoga uma (o livekit-token passa a recusar o peerId).
+ * Só aparece com a migração 0009 no servidor (dev_remote); sem ela o cartão some e nada quebra. */
+static void ui_devices_card(cui_ctx *ui, app_state_t *s) {
+    const unsigned long long now = GetTickCount64();
+    if (!s->dev_asked_at || now - s->dev_asked_at > 60000) account_devices_get(s);   /* atualiza ao abrir e a cada minuto */
+    if (!s->dev_have || !s->dev_remote) return;
+    cui_box(ui, .width = CUI_FILL, .pad = 12, .gap = 8, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
+        cui_text(ui, "Computadores ligados ao seu @nick", .size = 12, .color = B_MUTED);
+        if (!s->dev_n) cui_text(ui, "Nenhum computador registrado ainda.", .size = 12, .color = B_MUTED);
+        for (int i = 0; i < s->dev_n; i++) {
+            const bool cur = !strcmp(s->devs[i].peer, s->dev_current), asking = !cur && !strcmp(s->devs[i].peer, s->dev_confirm);
+            cui_push_id_int(ui, 7300 + i);
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 8, .align = CUI_ALIGN_CENTER) {
+                cui_icon(ui, CUI_ICON_MONITOR, 16, cur ? B_ONLINE : B_MUTED);
+                cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                    char t[120]; snprintf(t, sizeof t, "%s%s", s->devs[i].name[0] ? s->devs[i].name : "Computador sem nome", cur ? " (este)" : "");
+                    cui_text(ui, t, .size = 13, .nowrap = true);
+                    char d[80]; snprintf(d, sizeof d, s->devs[i].used[0] ? "Último uso em %s" : "Sem uso registrado", s->devs[i].used);
+                    cui_text(ui, d, .size = 12, .color = B_MUTED, .nowrap = true);
+                }
+                if (!cur && !asking) { if (cui_button(ui, "Revogar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { snprintf(s->dev_confirm, sizeof s->dev_confirm, "%s", s->devs[i].peer); s->dev_msg[0] = 0; } }
+                if (!cur && asking) {
+                    if (cui_button(ui, "Confirmar", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { char id[48]; snprintf(id, sizeof id, "%s", s->devs[i].peer); s->dev_confirm[0] = 0; account_device_revoke(s, id); }
+                    if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_GHOST, .size = CUI_SIZE_SM)) s->dev_confirm[0] = 0;
+                }
+            }
+            cui_pop_id(ui);
+        }
+        cui_text(ui, "Revogar tira o computador da conta: ele perde o acesso às salas de chamada. Para derrubar também o login, use Sair dos outros computadores.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
+        if (s->dev_msg[0]) cui_text(ui, s->dev_msg, .size = 12, .color = CUI_RGB(0xd9cdea), .width = CUI_FILL);
+    }
+}
+
 void ui_others_section(cui_ctx *ui, app_state_t *s) {
+    ui_devices_card(ui, s);
     /* segurança: derruba a conta nos outros computadores (perdeu um aparelho, ou esqueceu logado) */
     cui_box(ui, .width = CUI_FILL, .pad = 12, .gap = 8, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
         cui_text(ui, "Outros computadores", .size = 12, .color = B_MUTED);

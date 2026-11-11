@@ -82,6 +82,8 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "invalid_user" => return e("not_found", "Pessoa inválida."),
         "rate_limited" => return e("rate_limited", "Muitas buscas em pouco tempo. Tente de novo mais tarde."),
         "too_many_blocks" => return e("rate_limited", "Você já bloqueou pessoas demais."),
+        "key_revoked" => return e("key_revoked", "Este computador foi desconectado da conta."),
+        "key_owned_by_other" | "invalid_peer" => return e("server", "O servidor recusou a identificação deste computador."),
         "blocked_by_you" => return e("blocked_by_you", "Você bloqueou essa pessoa. Desbloqueie para enviar um pedido."),
         _ => {}
     }
@@ -299,6 +301,17 @@ impl AuthProvider for SupabaseProvider {
     }
     fn friend_unblock(&self, access_token: &str, user_id: &str) -> AResult<()> {
         self.rpc(access_token, "friend_unblock", json!({ "p_user": user_id })).map(|_| ())
+    }
+    fn keys_list(&self, access_token: &str) -> AResult<Vec<DeviceKey>> {
+        let v = self.rpc(access_token, "account_keys_list", json!({}))?;
+        if v.is_null() { return Ok(vec![]); }
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn key_register(&self, access_token: &str, peer_id: &str, public_key: &Value, device_name: &str) -> AResult<()> {
+        self.rpc(access_token, "account_key_register", json!({ "p_peer_id": peer_id, "p_public_key": public_key, "p_device_name": device_name })).map(|_| ())
+    }
+    fn key_revoke(&self, access_token: &str, peer_id: &str) -> AResult<()> {
+        self.rpc(access_token, "revoke_key", json!({ "p_peer_id": peer_id })).map(|_| ())
     }
     fn blocks(&self, access_token: &str) -> AResult<Vec<Friend>> {
         let v = self.rpc(access_token, "friend_blocks_list", json!({}))?;

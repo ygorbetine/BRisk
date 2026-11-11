@@ -190,6 +190,7 @@ void app_demo(app_state_t *s, const char *mode) {
         snprintf(s->blocked[0].name, sizeof s->blocked[0].name, "Fulano Spam"); snprintf(s->blocked[0].id, sizeof s->blocked[0].id, "x1"); s->blocked_count = 1;
         for (int i = 0; i < 3; i++) snprintf(s->friends[i].nick, sizeof s->friends[i].nick, "%s", i == 0 ? "marina" : i == 1 ? "rafa_lima" : "bianog");
     } }
+    if (getenv("BRIKS_DEMO_P2P")) { snprintf(s->friends[0].fp, sizeof s->friends[0].fp, "fp-demo-0"); s->in_room = true; }   /* captura: chamada aberta e identidade conhecida (menu Desconectar P2P) */
     s->active_group = -1; s->active_friend = -1; s->chat2_friend = 1; snprintf(s->chat2_channel, sizeof s->chat2_channel, "demo");
     s->screen = SCREEN_SOCIAL;
     if (getenv("BRIKS_DEMO_EMPTY")) { s->friend_count = 0; s->group_count = 0; s->pending_count = 0; s->community_count = 0; }   /* conta nova: sem amigos nem grupos (capturas dos estados vazios) */

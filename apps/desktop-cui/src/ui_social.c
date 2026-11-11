@@ -122,7 +122,7 @@ static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char 
     cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
         cui_icon(ui, icon, 15, B_MUTED);
     }
-    if (briks_hover(ui, "b")) briks_tip(tip);
+    if (tip && briks_hover(ui, "b")) briks_tip(tip);   /* tip NULL = sem dica (botão Sair: LAY-12) */
     bool hit = briks_clicked_r(ui, "b", 9.0f);
     cui_pop_id(ui);
     return hit;
@@ -314,7 +314,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 if (!f_compact && briks_clicked(ui, "ident")) { s->profile_open = true; s->profile_tab = 1; }   /* clicar no status: abre Perfil e conta na aba Status */
                 if (foot_icon(ui, "ft-at", CUI_ICON_AT_SIGN, "Perfil e conta")) { s->profile_open = true; s->profile_tab = 3; }
                 if (foot_icon(ui, "ft-cfg", CUI_ICON_SETTINGS, "Configurações")) s->settings_open = true;
-                if (foot_icon(ui, "ft-out", CUI_ICON_LOG_OUT, "Sair")) app_logout(s);
+                if (foot_icon(ui, "ft-out", CUI_ICON_LOG_OUT, NULL)) app_logout(s);
             }
         }
     }

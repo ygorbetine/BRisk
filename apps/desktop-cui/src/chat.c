@@ -231,6 +231,7 @@ void app_demo(app_state_t *s, const char *mode) {
         (void)who;
         if (getenv("BRIKS_DEMO_ATTACH")) {   /* capturas de anexos, prévia de link, estados e digitando (sem rede) */
             add_msg(s, "m4", "Marina Costa", "Olha esse artigo: https://exemplo.com/artigo-p2p", "2026-11-09T23:44:00.000Z", false);
+            add_msg(s, "m4b", "Marina Costa", "Tem **negrito**, `codigo()`, [um link](https://exemplo.com) e menção @Ygor. # isto não é título", "2026-11-09T23:44:30.000Z", false);
             add_msg(s, "m5", "Ygor", "Boa! Vou ler agora.", "2026-11-09T23:45:00.000Z", true);
             add_msg(s, "m6", "Ygor", "Essa mensagem não chegou.", "2026-11-09T23:46:00.000Z", true);
             attach_mark("m5", ATT_SENDING); attach_mark("m6", ATT_FAILED);

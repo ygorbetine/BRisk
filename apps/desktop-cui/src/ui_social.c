@@ -251,13 +251,14 @@ static void hhmm_local(const char *iso, char *out, size_t cap) {
     else snprintf(out, cap, "--:--");
 }
 
+static bool g_grouped;   /* mensagem consecutiva do mesmo autor: sem avatar nem nome (como o .grouped do Electron) */
 static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive) {
     char hm[8]; hhmm_local(m->created, hm, sizeof hm);
     const char *text = interactive ? msgui_text(m) : m->content;
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
     cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
-        if (!m->mine) { cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo */
+        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo; agrupada: só o espaço */
         if (m->mine) {
             if (interactive) msgui_arrow(ui, m);   /* seta do lado de dentro, como no WhatsApp: à esquerda do nosso balão */
             /* nosso: roxo padrão; só a quina superior direita mais reta */
@@ -265,13 +266,13 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     .radius_tl = g_th.bubble_big, .radius_tr = g_th.bubble_small, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big,
                     .bg = g_th.bubble_own, .border = 1, .border_color = CUI_RGBA(0xffffff26)) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                    cui_text(ui, "Você", .size = 12, .color = B_TEXT);
+                    if (!g_grouped) cui_text(ui, "Você", .size = 12, .color = B_TEXT);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
                     if (interactive) msgui_tags(ui, m);
                     if (interactive) attach_state_tag(ui, s, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
-                cui_text(ui, text);
+                if (interactive) attach_rich(ui, m->id, text); else cui_text(ui, text);
                 if (interactive) attach_link_card(ui, s, text);
                 if (interactive) msgui_reactions(ui, m);
             }
@@ -282,12 +283,12 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                    cui_text(ui, m->author, .size = 12, .color = B_C3);
+                    if (!g_grouped) cui_text(ui, m->author, .size = 12, .color = B_C3);
                     cui_text(ui, hm, .size = 10, .color = g_th.ph);
                     if (interactive) msgui_tags(ui, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
-                cui_text(ui, text);
+                if (interactive) attach_rich(ui, m->id, text); else cui_text(ui, text);
                 if (interactive) attach_link_card(ui, s, text);
                 if (interactive) msgui_reactions(ui, m);
             }
@@ -333,11 +334,12 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); bubble(ui, s, &s->msgs[i], true); cui_pop_id(ui); }
+                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); g_grouped = attach_grouped(s, i); bubble(ui, s, &s->msgs[i], true); g_grouped = false; cui_pop_id(ui); }
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {
             attach_strip(ui, s);
+            attach_mentions(ui, s);
             msgui_composer(ui, s);
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {

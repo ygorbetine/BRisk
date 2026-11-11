@@ -1,5 +1,7 @@
 #include "attach.h"
 #include "core.h"
+#include "richtext.h"
+#include "msgui.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,7 +75,9 @@ static bool first_url(const char *t, char *out, size_t cap) {
 #define NST 64
 static struct { char id[48]; int st; } g_stt[NST]; static int g_stt_n;
 static char g_inflight[48];
-static char g_typing_name[96]; static DWORD g_typing_until, g_typing_sent;
+#define NTY 4
+static struct { char name[96]; DWORD until; } g_ty[NTY];
+static DWORD g_typing_sent;
 static char g_search[64]; static bool g_search_on;
 static bool g_demo_attach;
 
@@ -123,10 +127,13 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
     }
     if (!strcmp(ev, "chat.typing")) {
         const char *fp = json_str(j, "from_fp", "");
-        g_typing_name[0] = 0;
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].fp, fp)) snprintf(g_typing_name, sizeof g_typing_name, "%s", s->rtc_peers[i].name);
-        if (!g_typing_name[0]) snprintf(g_typing_name, sizeof g_typing_name, "Alguém");
-        g_typing_until = GetTickCount() + 5000; return true;
+        char nm[96] = "";
+        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].fp, fp)) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name);
+        if (!nm[0]) snprintf(nm, sizeof nm, "Alguém");
+        int slot = -1; for (int i = 0; i < NTY; i++) if (!strcmp(g_ty[i].name, nm)) slot = i;
+        for (int i = 0; slot < 0 && i < NTY; i++) if ((int)(g_ty[i].until - GetTickCount()) <= 0) slot = i;
+        if (slot < 0) slot = 0;
+        snprintf(g_ty[slot].name, sizeof g_ty[slot].name, "%s", nm); g_ty[slot].until = GetTickCount() + 5000; return true;
     }
     if (!strcmp(ev, "chat.ack")) return false;   /* confirmação de entrega do canal de DM do core: a UI ainda não envia mensagens por ele */
     return false;
@@ -248,9 +255,14 @@ void attach_typing_ping(app_state_t *s) {
     g_typing_sent = now; core_send("{\"cmd\":\"typing.send\"}");
 }
 const char *attach_typing_label(const app_state_t *s) {
-    (void)s; static char buf[140];
-    if (!g_typing_name[0] || (int)(g_typing_until - GetTickCount()) <= 0) return NULL;
-    snprintf(buf, sizeof buf, "%s está digitando…", g_typing_name); return buf;
+    (void)s; static char buf[220];
+    const char *n[NTY]; int k = 0;
+    for (int i = 0; i < NTY; i++) if (g_ty[i].name[0] && (int)(g_ty[i].until - GetTickCount()) > 0) n[k++] = g_ty[i].name;
+    if (k == 0) return NULL;
+    if (k == 1) snprintf(buf, sizeof buf, "%s está digitando…", n[0]);
+    else if (k == 2) snprintf(buf, sizeof buf, "%s e %s estão digitando…", n[0], n[1]);
+    else snprintf(buf, sizeof buf, "%s e mais %d pessoas estão digitando…", n[0], k - 1);
+    return buf;
 }
 
 /* ---------- busca ---------- */
@@ -296,5 +308,45 @@ void attach_demo(app_state_t *s) {
     xf_t *a = xf_find("demo-a", true); snprintf(a->name, sizeof a->name, "relatorio-final.pdf"); a->size = 8.4 * 1048576; a->done = 3.5 * 1048576; a->st = XF_RUN; a->mine = false;
     xf_t *b = xf_find("demo-b", true); snprintf(b->name, sizeof b->name, "planilha.xlsx"); b->size = 220 * 1024; b->done = b->size; b->st = XF_DONE; b->mine = false; snprintf(b->path, sizeof b->path, "C:\\Users\\demo\\planilha.xlsx");
     xf_t *c = xf_find("demo-c", true); snprintf(c->name, sizeof c->name, "foto.png"); c->size = 540 * 1024; c->st = XF_FAILED; snprintf(c->err, sizeof c->err, "conexão encerrada");
-    g_typing_until = GetTickCount() + 600000; snprintf(g_typing_name, sizeof g_typing_name, "Marina Costa");
+    snprintf(g_ty[0].name, sizeof g_ty[0].name, "Marina Costa"); g_ty[0].until = GetTickCount() + 600000;
+}
+
+/* ---------- texto rico, menções, agrupamento (paridade com SafeMessageContent/MessageComposer do Electron) ---------- */
+void attach_rich(cui_ctx *ui, const char *id, const char *text) {
+    /* o cui_markdown lê o texto só ao desenhar (fim do quadro): cada chamada precisa do seu buffer, que vale até o próximo ciclo do anel */
+    static char ring[256][1700]; static unsigned ri;
+    char *md = ring[ri++ % 256]; rich_prepare(text, md, sizeof ring[0]);
+    cui_markdown_result r = cui_markdown(ui, id, md, .fit_content = true, .compact = true);
+    if (r.link && rich_safe_url(r.link)) ShellExecuteA(NULL, "open", r.link, NULL, NULL, SW_SHOWNORMAL);   /* só http(s), como o openExternal do Electron */
+}
+
+static bool starts_ci(const char *s, const char *q) { while (*q) { if (tolower((unsigned char)*s) != tolower((unsigned char)*q)) return false; s++; q++; } return true; }
+
+void attach_mentions(cui_ctx *ui, app_state_t *s) {
+    char q[96]; int at;
+    if (!rich_mention_query(s->draft, q, sizeof q, &at)) return;
+    const char *cand[24]; int n = 0;
+    for (int i = 0; i < 8 && n < 24; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].name[0]) cand[n++] = s->rtc_peers[i].name;
+    for (int i = 0; i < s->friend_count && n < 24; i++) cand[n++] = s->friends[i].name;
+    const char *pick[6]; int k = 0;
+    for (int i = 0; i < n && k < 6; i++) {
+        if (!starts_ci(cand[i], q)) continue;
+        bool dup = false; for (int j = 0; j < k; j++) if (!strcmp(pick[j], cand[i])) dup = true;
+        if (!dup && strcmp(cand[i], s->user_name)) pick[k++] = cand[i];
+    }
+    if (!k) return;
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .gap = 6, .radius = 14, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_GLASS_BORDER, .wrap = true) {
+        for (int i = 0; i < k; i++) {
+            cui_push_id_int(ui, 8500 + i);
+            char lab[120]; snprintf(lab, sizeof lab, "@%s", pick[i]);
+            if (cui_button(ui, lab, .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rich_apply_mention(s->draft, sizeof s->draft, pick[i]);
+            cui_pop_id(ui);
+        }
+    }
+}
+
+bool attach_grouped(const app_state_t *s, int idx) {
+    if (idx <= 0 || idx >= s->msg_count) return false;
+    const msg_t *p = &s->msgs[idx - 1], *m = &s->msgs[idx];
+    return rich_group_with_prev(p->author, rich_iso_ms(p->created), m->author, rich_iso_ms(m->created), msgui_has_reply(m));
 }

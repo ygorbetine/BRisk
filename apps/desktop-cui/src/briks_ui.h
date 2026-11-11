@@ -27,7 +27,7 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
-typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; char nick[32]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
+typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; char nick[32]; char fp[72]; char jwk[260]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
 typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
@@ -35,7 +35,7 @@ typedef struct { char id[48]; char name[96]; int members; } community_t;
 #define GROUP_MAX_CH 16
 #define GROUP_MAX_MEMBERS 48
 typedef struct { char id[48]; char name[48]; char room[48]; bool voice; } channel_t;       /* canal de texto ou de voz (room = sala da chamada) */
-typedef struct { char id[48]; char name[96]; bool admin; } gmember_t;
+typedef struct { char id[48]; char name[96]; bool admin; char fp[72]; char jwk[260]; } gmember_t;   /* fp/jwk: identidade P2P (grupo assinado) */
 typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate;
                  char owner[48]; bool is_owner; channel_t ch[GROUP_MAX_CH]; int nch, active_ch; gmember_t m[GROUP_MAX_MEMBERS]; int nm; char *raw; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
@@ -104,6 +104,8 @@ typedef struct {
     bool chan_open, members_open, gren_open, gleave_open; char chan_name[48], grp_name_edit[96], gchan_id[48]; int chan_kind;   /* grupos (ui_groups.c) */
     bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
     struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
+    char my_jwk[260];                                                                         /* minha chave pública (session.ready), compacta */
+    bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768];   /* convite de grupo: colar e entrar / mostrar o código */
     bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
@@ -191,6 +193,8 @@ void friends_hub(cui_ctx *ui, app_state_t *s);
 void friends_dialogs(cui_ctx *ui, app_state_t *s);
 /* ui_groups.c: canais, cargos, membros e convites dos grupos */
 void groups_load(app_state_t *s, const char *body);
+void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   /* group.result / group.snapshot do core */
+void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */
 void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);

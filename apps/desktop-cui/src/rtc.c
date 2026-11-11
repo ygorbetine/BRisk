@@ -75,6 +75,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     if (!strcmp(ev, "session.ready")) {
         s->rtc_session_ready = true;
         copy(s->rtc_fp, sizeof s->rtc_fp, json_str(j, "fingerprint", ""));
+        const jval *idn = json_get(j, "identity");
+        if (idn && json_str(idn, "x", "")[0]) snprintf(s->my_jwk, sizeof s->my_jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(idn, "x", ""), json_str(idn, "y", ""));
     } else if (!strcmp(ev, "signaling.status")) {
         copy(s->rtc_state, sizeof s->rtc_state, json_str(j, "state", ""));
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));

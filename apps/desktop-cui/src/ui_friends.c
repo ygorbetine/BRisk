@@ -82,7 +82,7 @@ void friends_unblock(app_state_t *s, const char *id) {
 
 /* ---- apresentação ---- */
 static bool in_call(const app_state_t *s, const person_t *p) {   /* está na sua chamada agora */
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "connected") && !strcmp(s->rtc_peers[i].name, p->name)) return true;
+    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado")) && !strcmp(s->rtc_peers[i].name, p->name)) return true;
     return false;
 }
 

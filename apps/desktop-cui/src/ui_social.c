@@ -199,6 +199,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             section_title(ui, "GRUPOS");
             if (nav_item(ui, CUI_ICON_PLUS, "Criar grupo", false)) { s->create_group_open = true; s->new_group[0] = 0; }
+            if (nav_item(ui, CUI_ICON_LINK, "Entrar com convite", false)) { s->join_open = true; s->join_code[0] = 0; s->join_err[0] = 0; }
             for (int i = 0; i < s->group_count; i++) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
@@ -649,7 +650,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     cui_dialog(ui, "Criar grupo", &s->create_group_open) {
-        cui_text(ui, "O grupo fica gravado neste computador; os convites por P2P chegam com o briks-core.", .color = B_MUTED);
+        cui_text(ui, "O grupo fica gravado neste computador. Para chamar alguém, abra “Membros” e convide um amigo: você recebe um código para mandar a ele.", .color = B_MUTED);
         int r = cui_input(ui, "new-group", s->new_group, sizeof s->new_group, .placeholder = "Nome do grupo", .autofocus = true);
         cui_dialog_footer(ui) {
             if ((cui_button(ui, "Criar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED))) app_create_group(s);

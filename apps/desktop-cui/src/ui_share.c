@@ -315,6 +315,14 @@ static bool src_card(cui_ctx *ui, share_src_t *c, bool selected, int idx) {
 }
 
 /* Resolução, FPS e bitrate, independentes. Devolve true se algo mudou. */
+/* Aviso de limite conhecido (recurso em beta): fica visível no seletor e no painel de qualidade, não escondido. */
+static void beta_note(cui_ctx *ui, const char *text) {
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 10, .align = CUI_ALIGN_CENTER) {
+        briks_status_pill(ui, "Beta");
+        cui_box(ui, .width = CUI_FILL) { cui_text(ui, text, .size = 12, .color = CUI_RGB(0xf5d9a0)); }
+    }
+}
+
 static bool quality_controls(cui_ctx *ui, share_state_t *q) {
     bool ch = false;
     cui_column(ui, .gap = 10, .width = CUI_FILL) {
@@ -438,6 +446,7 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
         }
         if (q->quality_open) quality_controls(ui, q);
         cui_separator(ui);
+        beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos antes de voltar.");
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, q->audio_mode == 2 ? "Sem áudio" : q->audio_mode == 1 ? "Áudio: só os apps marcados" : "Áudio: da fonte", .size = 12, .color = B_MUTED);
             char b[140]; bool ok = n > 0 && q->sel[t] < n && !q->loading;
@@ -483,6 +492,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         if ((!modal && briks_clicked(ui, "q")) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
+            beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");
             static bool dirty;
             if (quality_controls(ui, q)) dirty = true;
             if (q->active) {

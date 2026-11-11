@@ -257,6 +257,7 @@ impl Actor {
             }
             RtEvent::PeerLeft(p) => {
                 self.present.remove(&p);
+                self.joined.remove(&p);
                 self.net.lock().unwrap().peers.remove(&p);
                 if let Some(a) = &self.audio { a.remove_peer(&p); }
                 if let Some(peer) = self.peers.remove(&p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p, state: "fechado".into() }).await; }
@@ -284,7 +285,7 @@ impl Actor {
         use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
         for parameter in ["", "pli"] { m.register_feedback(webrtc::rtp_transceiver::RTCPFeedback { typ: "nack".into(), parameter: parameter.into() }, RTPCodecType::Video); }
         let mut registry = Registry::new();
-        registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder()));
+        registry.add(Box::new(webrtc::interceptor::nack::generator::Generator::builder().with_interval(std::time::Duration::from_millis(20)).with_log2_size_minus_6(5)));   // intervalo padrão de 100 ms: cada buraco esperava até 100 ms só para ser pedido; janela 2048 (padrão 8192): com perda por congestionamento o gerador repetia pedidos de milhares de pacotes velhos (34 mil por segundo medidos)
         let registry = webrtc::api::interceptor_registry::configure_rtcp_reports(registry);
         let registry = webrtc::api::interceptor_registry::configure_twcc_receiver_only(registry, &mut m)?;
         // janela anti-replay do SRTP: o padrão (64 pacotes) rejeita retransmissões — a 12 Mbps, um pacote de 100 ms atrás já está
@@ -351,7 +352,7 @@ impl Actor {
             let mut sum = vec![]; let mut cur = String::new();
             for l in sdp.lines() { if l.starts_with("m=") { if !cur.is_empty() { sum.push(cur.clone()); } cur = l.split(' ').next().unwrap_or("").to_string(); } else if l.starts_with("a=mid:") { cur += &format!(" {}", &l[2..]); } else if ["a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"].contains(&l) { cur += &format!(" {}", &l[2..]); } else if l.starts_with("a=msid:") { cur += &format!(" {}", l.split(' ').last().unwrap_or("")); } }
             sum.push(cur);
-            eprintln!("[sdp {} -> {}] {kind}: {}", &self.cfg.local_peer[..4], &target[..4], sum.join(" | "));
+            eprintln!("[sdp {} -> {}] {kind}: {}", self.cfg.local_peer.get(..4).unwrap_or("?"), target.get(..4).unwrap_or("?"), sum.join(" | "));
         } }
         #[cfg(test)]
         let payload = { let mut p = payload; if crate::netsim::for_peer(&self.cfg.local_peer).is_some() { if let Some(s) = p["sdp"]["sdp"].as_str().map(crate::netsim::strip_sdp) { p["sdp"]["sdp"] = json!(s); } } p };
@@ -578,8 +579,9 @@ impl Actor {
                                 if nk.media_ssrc == ssrc {
                                     let mut seqs = vec![];
                                     for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
+                                    seqs.truncate(512);   // um RTCP legítimo não passa de ~1 MTU; o limite evita inundar o pacer
                                     e.nacks += seqs.len() as u64;
-                                    if let Some(t) = &nack_tx { let _ = t.send(seqs); }
+                                    if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
                                 }
                             }
                         }
@@ -765,6 +767,7 @@ impl Actor {
                 let expected = identity::dm_channel(&self.identity.fingerprint(), &fp);
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { self.emit(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into())).await; return; }
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
+                if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }   // dedupe só precisa cobrir as reenvios recentes; sem teto crescia para sempre
                 if self.seen_msgs.insert(m.id.clone()) {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
@@ -792,7 +795,7 @@ impl Actor {
                 let (true, Some(jwk), Some(from_fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
                 let (Some(target), Some(sig), Some(ts)) = (v["target_fp"].as_str(), v["signature"].as_str(), v["timestamp"].as_i64()) else { return };
                 if self.owner().as_deref() != Some(from_fp.as_str()) { self.emit(MeshEvent::Error("comando de sala ignorado: remetente não é o dono".into())).await; return; }
-                if (now_ms() - ts).abs() > 5 * 60 * 1000 { return; }   // antigo demais (replay)
+                if now_ms().saturating_sub(ts).saturating_abs() > 5 * 60 * 1000 { return; }   // antigo demais (replay)
                 let reason: String = v["reason"].as_str().unwrap_or("").chars().take(120).collect();
                 let canon = if kick { self.kick_canon(target, ts, &reason) } else { self.allow_canon(target, ts) };
                 if !identity::verify(&jwk, &canon, sig) { self.emit(MeshEvent::Error("assinatura de comando de sala inválida".into())).await; return; }

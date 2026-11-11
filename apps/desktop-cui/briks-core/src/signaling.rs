@@ -93,14 +93,15 @@ impl Validator {
         if !present(&e.from_peer_id) {
             return Err(Reject::NotPresent);
         }
-        if (now_ms - e.timestamp).abs() > TIMESTAMP_WINDOW_MS {
+        // saturating: o timestamp vem do peer; i64::MIN/MAX estouraria a subtração (pânico em debug, valor errado em release)
+        if now_ms.saturating_sub(e.timestamp).saturating_abs() > TIMESTAMP_WINDOW_MS {
             return Err(Reject::Clock);
         }
         if self.seen.contains_key(&e.message_id) {
             return Err(Reject::Duplicate);
         }
         let q = self.rate.entry((e.from_peer_id.clone(), e.kind.clone())).or_default();
-        while q.front().map(|t| now_ms - *t > 60_000).unwrap_or(false) {
+        while q.front().map(|t| now_ms.saturating_sub(*t) > 60_000).unwrap_or(false) {
             q.pop_front();
         }
         if q.len() >= RATE_LIMIT_PER_MIN {
@@ -200,6 +201,30 @@ mod tests {
         }
         let id = "33333333-0000-4000-8000-000000000000";
         assert_eq!(v.check(&env(id, A, Some(B), &h, 1000), |p| p == A, 1000), Err(Reject::Rate));
+    }
+
+    #[test]
+    fn extreme_numbers_and_shapes_never_panic() {
+        let h = secure_room_id("room", "s");
+        let mut v = Validator::new(&h, B);
+        for ts in [i64::MIN, i64::MAX, i64::MIN + 1, -1, 0] {
+            let r = v.check(&env(&format!("44444444-0000-4000-8000-{:012}", ts.unsigned_abs() % 1_000_000_000_000), A, Some(B), &h, ts), |p| p == A, 1000);
+            assert!(r.is_err() || ts.abs() < TIMESTAMP_WINDOW_MS * 2, "ts {ts}: {r:?}");
+        }
+        assert_eq!(v.check(&env(M1, A, Some(B), &h, i64::MIN), |p| p == A, i64::MAX), Err(Reject::Clock));
+        assert_eq!(v.check(&env(M2, A, Some(B), &h, i64::MAX), |p| p == A, i64::MIN), Err(Reject::Clock));
+        // formas erradas: nada de pânico, sempre um motivo de rejeição
+        for raw in [json!(null), json!("x"), json!(7), json!([]), json!([1, 2]), json!({}), json!({ "version": "1" }), json!({ "version": 1, "timestamp": 1.5 }),
+                    json!({ "version": 1, "roomId": 5, "fromPeerId": [], "messageId": {}, "timestamp": "x", "type": 3, "payload": 1 })] {
+            assert!(v.check(&raw, |_| true, 1000).is_err(), "{raw}");
+        }
+        // UUID com bytes multibyte e tamanho de 36 bytes: não pode indexar fora
+        let multi = "é".repeat(18);
+        assert_eq!(v.check(&env(&multi, A, Some(B), &h, 1000), |p| p == A, 1000), Err(Reject::Uuid));
+        // ordem dos campos aninhada profundamente
+        let mut deep = json!(1); for _ in 0..100 { deep = json!({ "a": deep }); }
+        let mut e = env("55555555-0000-4000-8000-000000000001", A, Some(B), &h, 1000); e["payload"]["sdp"]["extra"] = deep;
+        assert!(v.check(&e, |p| p == A, 1000).is_ok());
     }
 
     #[test]

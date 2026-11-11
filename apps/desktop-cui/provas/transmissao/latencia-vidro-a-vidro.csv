@@ -1,0 +1,10 @@
+cenario,altura,lat_p50_ms,lat_p95_ms,lat_p99_ms,lat_max_ms,qps,conv_mais_enc_ms,enc_ms,rtt_ms,quadros
+"loopback 720p30 (sem proxy)",720,44,51,52,54,30.0,7.7,3.0,1,450
+"loopback 1080p30 (sem proxy)",1080,167,182,188,190,26.0,8.7,6.6,1,390
+"proxy sem limite 720p30",720,63,79,89,100,27.3,16.6,4.5,20,410
+"rede boa: 15 ms por sentido, jitter 0-5 ms, 20 Mbps, 720p30",720,64,105,108,109,27.1,8.8,3.7,62,407
+"rede media: 40 ms por sentido, jitter 0-15 ms, 8 Mbps, 1% perda, 720p30",720,148,256,303,354,26.8,9.0,3.5,118,402
+"rede ruim: 80 ms por sentido, jitter 0-40 ms, 4 Mbps, 2% perda, 720p30",720,178,235,838,838,6.1,2.6,1.1,232,91
+"rede boa 1080p30: 15 ms por sentido, 20 Mbps",1080,138,428,595,719,8.8,69.1,9.8,60,132
+"bancada 720p: BGRA->I420 / codificar / decodificar+RGBA (ms)",720,1.6,3.0,5.1,,,,,,
+"bancada 1080p: BGRA->I420 / codificar / decodificar+RGBA (ms)",1080,1.8,5.6,6.6,,,,,,

@@ -942,7 +942,15 @@ async fn soak_no_leaks_no_latency_drift() {
             let mut m = PROCESS_MEMORY_COUNTERS::default();
             let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut m, std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32);
             let mut h = 0u32; let _ = GetProcessHandleCount(GetCurrentProcess(), &mut h);
-            let threads = std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0);
+            // threads do processo pelo instantâneo do sistema (o /proc/self/task que estava aqui não existe no Windows: dava sempre 0)
+            use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
+            let mut threads = 0usize;
+            if let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+                let mut e = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };
+                let me = std::process::id();
+                if Thread32First(snap, &mut e).is_ok() { loop { if e.th32OwnerProcessID == me { threads += 1; } if Thread32Next(snap, &mut e).is_err() { break; } } }
+                let _ = windows::Win32::Foundation::CloseHandle(snap);
+            }
             (m.WorkingSetSize as f64 / 1048576.0, h, threads)
         }
     }
@@ -964,6 +972,7 @@ async fn soak_no_leaks_no_latency_drift() {
     let mut rows: Vec<(f64, u32, u32, i32)> = vec![];
     let t0 = std::time::Instant::now();
     let mut last_n = src.read().map(|r| r.2).unwrap_or(0);
+    let mut thr: Vec<usize> = vec![];
     while t0.elapsed() < Duration::from_secs(minutes * 60) {
         let (mut frames, mut lats) = (0u32, vec![]);
         let w0 = std::time::Instant::now();
@@ -975,14 +984,19 @@ async fn soak_no_leaks_no_latency_drift() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         lats.sort();
-        let (mem, handles, _) = proc_stats();
+        let (mem, handles, threads) = proc_stats();
+        thr.push(threads);
+        eprintln!("[teste longo] {:.1} min: {mem:.0} MB, {handles} handles, {threads} threads", t0.elapsed().as_secs_f64() / 60.0);
         let p50 = lats.get(lats.len() / 2).copied().unwrap_or(-1);
         let af = bau.rx_stat(&format!("{pa}#screen")).frames;
         csv += &format!("{:.1},{mem:.1},{handles},{frames},{p50},{af}\n", t0.elapsed().as_secs_f64() / 60.0);
         let _ = std::fs::write(out.join("teste-longo.csv"), &csv);
         rows.push((mem, handles, frames, p50));
     }
-    let warm = rows.len().min(4);   // 2 minutos de aquecimento
+    let warm = rows.len().min(4).min(rows.len() / 2);   // 2 minutos de aquecimento (menos numa execução curta)
+    let (t_first, t_last) = (thr[warm], *thr.last().unwrap());
+    eprintln!("threads: {t_first} → {t_last}");
+    assert!(t_first > 0 && t_last <= t_first + 8, "threads cresceram: {t_first} → {t_last}");
     let (first, last) = (&rows[warm..warm + 4.min(rows.len() - warm)], &rows[rows.len().saturating_sub(4)..]);
     let avg = |v: &[(f64, u32, u32, i32)], f: &dyn Fn(&(f64, u32, u32, i32)) -> f64| v.iter().map(f).sum::<f64>() / v.len().max(1) as f64;
     let (m0, m1) = (avg(first, &|r| r.0), avg(last, &|r| r.0));

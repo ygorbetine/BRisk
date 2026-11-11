@@ -16,6 +16,9 @@ pub struct NetSim {
     /// perda aleatória em partes por milhão
     pub loss_ppm: AtomicU32,
     pub delay_ms: AtomicU64,
+    /// jitter: atraso extra aleatório de 0 a N ms por pacote (em ordem, a não ser que `reorder` esteja ligado)
+    pub jitter_ms: AtomicU64,
+    pub reorder: std::sync::atomic::AtomicBool,
     maps: tokio::sync::Mutex<HashMap<SocketAddr, u16>>,
     rng: AtomicU64,
     pub forwarded: AtomicU64,
@@ -25,7 +28,7 @@ pub struct NetSim {
 static ACTIVE: Mutex<Vec<Arc<NetSim>>> = Mutex::new(Vec::new());
 
 pub fn register(peers: &[&str]) -> Arc<NetSim> {
-    let n = Arc::new(NetSim { peers: peers.iter().map(|s| s.to_string()).collect(), limit_bps: AtomicU64::new(0), loss_ppm: AtomicU32::new(0), delay_ms: AtomicU64::new(0),
+    let n = Arc::new(NetSim { peers: peers.iter().map(|s| s.to_string()).collect(), limit_bps: AtomicU64::new(0), loss_ppm: AtomicU32::new(0), delay_ms: AtomicU64::new(0), jitter_ms: AtomicU64::new(0), reorder: Default::default(),
         maps: Default::default(), rng: AtomicU64::new(0x9E3779B97F4A7C15), forwarded: AtomicU64::new(0), dropped: AtomicU64::new(0) });
     ACTIVE.lock().unwrap().push(n.clone());
     n
@@ -37,7 +40,23 @@ pub fn strip_sdp(sdp: &str) -> String {
     sdp.split("\r\n").filter(|l| !l.starts_with("a=candidate") && !l.starts_with("a=end-of-candidates")).collect::<Vec<_>>().join("\r\n")
 }
 
-struct Shaper { next_free: Instant }
+/// Solta os pacotes na hora marcada; com `reorder` ligado os horários podem se cruzar, e quem tem horário menor sai primeiro.
+async fn release(mut rx: tokio::sync::mpsc::UnboundedReceiver<(Instant, Vec<u8>)>, sock: Arc<UdpSocket>, dest: SocketAddr) {
+    use std::cmp::Reverse;
+    let mut heap: std::collections::BinaryHeap<Reverse<(Instant, u64, Vec<u8>)>> = Default::default();
+    let mut n = 0u64;
+    loop {
+        let next = heap.peek().map(|Reverse((t, _, _))| *t);
+        tokio::select! {
+            m = rx.recv() => match m { Some((at, pkt)) => { n += 1; heap.push(Reverse((at, n, pkt))); } None => break },
+            _ = async { match next { Some(t) => tokio::time::sleep_until(t.into()).await, None => std::future::pending().await } } => {
+                while heap.peek().map(|Reverse((t, _, _))| *t <= Instant::now()).unwrap_or(false) { let Reverse((_, _, pkt)) = heap.pop().unwrap(); let _ = sock.send_to(&pkt, dest).await; }
+            }
+        }
+    }
+}
+
+struct Shaper { next_free: Instant, last_out: Instant }
 
 /// Tomada UDP com buffers grandes (os 64 kB padrão do Windows transbordam com rajadas de vídeo e criariam perda que não é da simulação).
 fn big_socket() -> Option<UdpSocket> {
@@ -74,7 +93,11 @@ impl NetSim {
             s.next_free = at + Duration::from_secs_f64((len as f64 + 28.0) * 8.0 / limit as f64);
         }
         self.forwarded.fetch_add(len as u64, Ordering::Relaxed);
-        Some(at + Duration::from_millis(self.delay_ms.load(Ordering::Relaxed)))
+        let jit = self.jitter_ms.load(Ordering::Relaxed);
+        let extra = if jit > 0 { Duration::from_micros(self.rand() as u64 % (jit * 1000 + 1)) } else { Duration::ZERO };
+        let mut out = at + Duration::from_millis(self.delay_ms.load(Ordering::Relaxed)) + extra;
+        if !self.reorder.load(Ordering::Relaxed) { let mut s = sh.lock().unwrap(); out = out.max(s.last_out); s.last_out = out; }   // sem reordenar: ninguém passa na frente
+        Some(out)
     }
 
     /// Reescreve um candidato ICE "candidate:… udp prio IP PORTA typ host …" para apontar para o proxy. None = descarte-o.
@@ -101,7 +124,7 @@ impl NetSim {
             // uma tomada de saída por origem: o alvo responde para ela e o proxy devolve pela porta da frente.
             // Cada sentido tem UMA fila com uma tarefa que solta os pacotes em ordem (um roteador não reordena).
             let mut backs: HashMap<SocketAddr, tokio::sync::mpsc::UnboundedSender<(Instant, Vec<u8>)>> = HashMap::new();
-            let (up, down) = (Arc::new(Mutex::new(Shaper { next_free: Instant::now() })), Arc::new(Mutex::new(Shaper { next_free: Instant::now() })));
+            let (up, down) = (Arc::new(Mutex::new(Shaper { next_free: Instant::now(), last_out: Instant::now() })), Arc::new(Mutex::new(Shaper { next_free: Instant::now(), last_out: Instant::now() })));
             let mut buf = vec![0u8; 2048];
             while let Ok((n, src)) = front.recv_from(&mut buf).await {
                 let q = match backs.get(&src) {
@@ -112,10 +135,10 @@ impl NetSim {
                         let (qtx, mut qrx) = tokio::sync::mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
                         backs.insert(src, qtx.clone());
                         let b3 = b.clone();
-                        tokio::spawn(async move { while let Some((at, pkt)) = qrx.recv().await { tokio::time::sleep_until(at.into()).await; let _ = b3.send_to(&pkt, target).await; } });
+                        tokio::spawn(release(qrx, b3, target));
                         let (dtx, mut drx) = tokio::sync::mpsc::unbounded_channel::<(Instant, Vec<u8>)>();
                         let front3 = front.clone();
-                        tokio::spawn(async move { while let Some((at, pkt)) = drx.recv().await { tokio::time::sleep_until(at.into()).await; let _ = front3.send_to(&pkt, src).await; } });
+                        tokio::spawn(release(drx, front3, src));
                         let (b2, me2, down2) = (b.clone(), me.clone(), down.clone());
                         tokio::spawn(async move {
                             let mut buf = vec![0u8; 2048];

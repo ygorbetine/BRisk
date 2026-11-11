@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
@@ -111,6 +111,29 @@ pub async fn serve(l: TcpListener, token: String, cfg: Config) -> Result<()> {
     }
 }
 
+/// Maior linha aceita da UI. Sem teto, um processo local sem token mandando bytes sem quebra de linha enchia a memória.
+const MAX_LINE: usize = 256 * 1024;
+
+/// Leitor de linhas com teto. Seguro para `select!`: o que já foi lido fica em `buf` e a próxima chamada continua.
+struct Lines<R> { rd: BufReader<R>, buf: Vec<u8> }
+impl<R: AsyncRead + Unpin> Lines<R> {
+    fn new(r: R) -> Self { Lines { rd: BufReader::new(r), buf: Vec::new() } }
+    async fn next(&mut self) -> Result<Option<String>> {
+        loop {
+            let left = (MAX_LINE + 1).saturating_sub(self.buf.len());
+            if left == 0 { anyhow::bail!("linha grande demais"); }
+            let n = (&mut self.rd).take(left as u64).read_until(b'\n', &mut self.buf).await?;
+            let done = self.buf.last() == Some(&b'\n');
+            if done || n == 0 {
+                if self.buf.is_empty() { return Ok(None); }
+                let mut l = std::mem::take(&mut self.buf);
+                if done { l.pop(); if l.last() == Some(&b'\r') { l.pop(); } }
+                return Ok(Some(String::from_utf8_lossy(&l).into_owned()));
+            }
+        }
+    }
+}
+
 async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
     let mut s = v.to_string();
     s.push('\n');
@@ -121,8 +144,8 @@ async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
 async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     s.set_nodelay(true).ok();
     let (rd, mut wr) = s.into_split();
-    let mut lines = BufReader::new(rd).lines();
-    let first = tokio::time::timeout(Duration::from_secs(5), lines.next_line()).await??.unwrap_or_default();
+    let mut lines = Lines::new(rd);
+    let first = tokio::time::timeout(Duration::from_secs(5), lines.next()).await??.unwrap_or_default();
     let hello: Value = serde_json::from_str(&first).unwrap_or(Value::Null);
     if hello["cmd"] != "hello" || hello["token"].as_str() != Some(token) {
         let _ = out(&mut wr, json!({ "ev": "error", "where": "hello", "message": "token inválido" })).await;
@@ -146,7 +169,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
 
     loop {
         tokio::select! {
-            l = lines.next_line() => {
+            l = lines.next() => {
                 let Some(l) = l? else { break };
                 let Ok(v) = serde_json::from_str::<Value>(&l) else { continue };
                 match v["cmd"].as_str().unwrap_or("") {

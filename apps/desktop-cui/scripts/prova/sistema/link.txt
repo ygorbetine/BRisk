@@ -9,3 +9,15 @@ expect shown 1
 sys link http://x.com/nao-e-briks
 waitms 200
 expect links 1
+# convites: o link so preenche o codigo e abre o dialogo; nunca entra sozinho (a lista de amigos do demo continua com 3)
+expect add_friend 0
+expect join_open 0
+sys link briks://friend/briks-amg1.QUJDREVG%3D%3D
+waitms 400
+expect add_friend 1
+expect amg_in_len 21
+expect amg_friends 3
+sys link briks://group/briks-grp1.WFlaWg
+waitms 400
+expect join_open 1
+expect join_len 17

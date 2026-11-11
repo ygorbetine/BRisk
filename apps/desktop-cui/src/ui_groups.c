@@ -671,7 +671,7 @@ void groups_header(cui_ctx *ui, app_state_t *s) {   /* botões do cabeçalho do 
 void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     groups_tick(s);
     cui_dialog(ui, "Entrar com convite", &s->join_open, .width = 460.0f) {
-        cui_text(ui, "Cole o código que um administrador do grupo mandou para você. Ele só vale para a sua conta.", .size = 12.5f, .color = B_MUTED);
+        cui_text(ui, "Cole o código que um administrador do grupo mandou para você (ou abra o link do convite). Confira o código e toque em Entrar no grupo: o Briks nunca entra sozinho. Ele só vale para a sua conta.", .size = 12.5f, .color = B_MUTED);
         int jr = cui_input(ui, "join-code", s->join_code, sizeof s->join_code, .placeholder = "briks-grp1.…", .autofocus = true);
         if (s->join_err[0]) cui_text(ui, s->join_err, .size = 12.5f, .color = B_DANGER);
         cui_dialog_footer(ui) {

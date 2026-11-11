@@ -59,6 +59,8 @@ int script_probe(const char *n) {
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
     if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
+    if (!strcmp(n, "join_open")) return state.join_open;
+    if (!strcmp(n, "join_len")) return (int)strlen(state.join_code);
     if (!strcmp(n, "amg_in_len")) return (int)strlen(state.amg_in);
     if (!strcmp(n, "amg_own")) return strstr(state.amg_msg, "próprio") != NULL;   /* aceitar o meu próprio código é recusado pelo core */
     if (!strcmp(n, "amg_friends")) return state.friend_count;

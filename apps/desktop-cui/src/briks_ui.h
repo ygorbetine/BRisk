@@ -229,7 +229,7 @@ void friends_code_card(cui_ctx *ui, app_state_t *s);   /* cartão "Por código" 
 void friends_p2p_event(app_state_t *s, const struct jval *j);   /* friend.result do core */
 bool groups_want_roster(const app_state_t *s);                                  /* há grupo com sala de voz: vale abrir a sessão do core cedo (presença por sala) */
 void groups_roster_tick(app_state_t *s); void groups_roster_reset(void);
-void groups_roster_event(app_state_t *s, const jval *j);                         /* evento group.roster do core */
+void groups_roster_event(app_state_t *s, const struct jval *j);                         /* evento group.roster do core */
 void groups_demo_roster(void);                                                  /* dados demo da presença por sala (BRIKS_DEMO_GROSTER) */
 int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
 bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */

@@ -96,6 +96,8 @@
       { "item": "GRP-09", "de": "gn2", "para": "gn3", "esperado": "muda" } ] },
     { "id": "grupos-comum", "demo": "group", "roteiro": "grupos-comum.txt", "env": { "BRIKS_DOCK": "added", "BRIKS_DEMO_GMEMBER": "1" }, "checagens": [
       { "item": "GRP-10", "de": "gp0", "para": "gp0", "esperado": "igual" } ] },
+    { "id": "grupos-voz", "demo": "group", "roteiro": "grupos-voz.txt", "env": { "BRIKS_DEMO_GROSTER": "1" }, "checagens": [
+      { "item": "GRP-17", "de": "gv0", "para": "gv1", "esperado": "muda" } ] },
     { "id": "grupos-busca", "demo": "group", "roteiro": "grupos-busca.txt", "checagens": [
       { "item": ["GRP-19", "MSG-15"], "de": "gb0", "para": "gb1", "esperado": "muda" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [

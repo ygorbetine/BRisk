@@ -470,6 +470,42 @@ static void leave_or_delete(app_state_t *s, int gi) {
 /* ---- interface ---- */
 static const char *role_of(const group_t *g, const gmember_t *m) { return !strcmp(m->id, g->owner) ? "Dono" : m->admin ? "Administrador" : "Membro"; }
 
+/* ---- quem está em cada sala de voz do grupo (GRP-17) ----
+ * Fontes: (1) a sala em que EU estou (eu + participantes autenticados, com "Ao vivo" de share_peer_live); (2) a tabela g_ros, alimentada pelo evento
+ * group.roster do core ({"room":"...","members":[{"name":"...","live":bool}]}) e pelos dados demo. LIMITE: o core de hoje ainda NÃO emite group.roster
+ * (a presença dele é por sala já aberta), então das salas em que não estou só se vê o que o demo ou um core futuro entregar. */
+typedef struct { char name[48]; bool live; } rmem_t;
+typedef struct { char room[96]; int n; rmem_t m[8]; } rroster_t;
+static rroster_t g_ros[16];
+static rroster_t *ros_slot(const char *room, bool create) {
+    for (int i = 0; i < 16; i++) if (!strcmp(g_ros[i].room, room)) return &g_ros[i];
+    if (create) for (int i = 0; i < 16; i++) if (!g_ros[i].room[0]) { snprintf(g_ros[i].room, sizeof g_ros[i].room, "%s", room); return &g_ros[i]; }
+    return NULL;
+}
+static void ros_add(const char *room, const char *name, bool live) {
+    rroster_t *r = ros_slot(room, true); if (!r || r->n >= 8) return;
+    snprintf(r->m[r->n].name, sizeof r->m[r->n].name, "%s", name); r->m[r->n].live = live; r->n++;
+}
+void groups_demo_roster(void) {   /* BRIKS_DEMO: o demo tem canais c0..c3 (c2 e c3 são de voz) */
+    ros_add("c2", "Marina Costa", true); ros_add("c2", "Rafael Lima", false); ros_add("c3", "Bia Nogueira", false);
+}
+static int roster_get(const app_state_t *s, const channel_t *c, rmem_t out[8], bool *mine) {
+    const char *key = c->room[0] ? c->room : c->id;
+    char rn[96]; snprintf(rn, sizeof rn, "g-%s", key);
+    int n = 0; *mine = false;
+    if (s->in_room && !strcmp(s->room_name, rn)) {
+        *mine = true;
+        snprintf(out[n].name, sizeof out[n].name, "%s", s->user_name); out[n].live = s->sh.active; n++;
+        for (int q = 0; q < 8 && n < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) {
+            snprintf(out[n].name, sizeof out[n].name, "%s", s->rtc_peers[q].name); out[n].live = s->sh.remote[q].on; n++;
+        }
+        return n;
+    }
+    const rroster_t *r = ros_slot(key, false);
+    for (int i = 0; r && i < r->n; i++) out[n++] = r->m[i];
+    return n;
+}
+
 /* estado só de interface (diálogos do canal e do membro); os dados continuam no group_t */
 static bool g_ren_open, g_del_open, g_memrm_open;
 static int g_ren_ci = -1, g_del_ci = -1, g_mem_sel = -1;
@@ -514,12 +550,24 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo 
             if (ren) { g_ren_ci = i; g_ren_open = true; snprintf(g_ren_name, sizeof g_ren_name, "%s", g->ch[i].name); }
             else if (del) { g_del_ci = i; g_del_open = true; }
             else if (briks_clicked(ui, "ch")) select_channel(s, gi, i);
-            if (g->ch[i].voice) {   /* quem está na sala de voz (só da sala em que eu estou: sem presença por sala, o resto é desconhecido) */
-                char rn[96]; snprintf(rn, sizeof rn, "g-%s", g->ch[i].room);
-                if (s->in_room && !strcmp(s->room_name, rn)) cui_box(ui, .width = CUI_FILL, .pad_left = 26, .gap = 1) {
-                    cui_text(ui, s->user_name, .size = 12.5f, .color = B_ONLINE, .nowrap = true);
-                    for (int q = 0; q < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) cui_text(ui, s->rtc_peers[q].name, .size = 12, .color = B_MUTED, .nowrap = true);
+            if (g->ch[i].voice) {   /* quem está na sala de voz, com "Ao vivo" e Assistir (ver roster_get para a origem dos dados) */
+                rmem_t who[8]; bool mine; const int nw = roster_get(s, &g->ch[i], who, &mine);
+                bool watch = false;
+                if (nw) cui_box(ui, .width = CUI_FILL, .pad_left = 14, .gap = 3) {
+                    for (int w = 0; w < nw; w++) {
+                        cui_push_id_int(ui, 100 + w);
+                        cui_box(ui, .width = CUI_FILL, .gap = 3) {
+                            cui_text(ui, who[w].name, .size = 13, .color = (mine && w == 0) ? B_ONLINE : B_MUTED, .nowrap = true);
+                            if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
+                                cui_text(ui, "AO VIVO", .size = 10, .color = B_C3, .nowrap = true);
+                                cui_box(ui, .id = "wt", .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(B_C1, 0x55)) { cui_text(ui, "Assistir", .size = 11, .nowrap = true); }
+                                if (briks_clicked(ui, "wt")) watch = true;
+                            }
+                        }
+                        cui_pop_id(ui);
+                    }
                 }
+                if (watch) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
             }
             cui_pop_id(ui);
         }
@@ -875,6 +923,13 @@ int groups_probe(const app_state_t *s, const char *n) {
     if (!strcmp(n, "grp_ch1len")) return g->nch > 1 ? (int)strlen(g->ch[1].name) : -1;   /* comprimento do nome do 2º canal (confere renomear) */
     if (!strcmp(n, "grp_namelen")) return (int)strlen(g->name);
     if (!strcmp(n, "grp_moderate")) return g->can_moderate;
+    if (!strcmp(n, "grp_voice_who") || !strcmp(n, "grp_voice_live")) {   /* presença por sala: total de pessoas / de transmissões nas salas de voz */
+        int t = 0; for (int i = 0; i < g->nch; i++) if (g->ch[i].voice) {
+            rmem_t w[8]; bool m; int k = roster_get(s, &g->ch[i], w, &m);
+            for (int q = 0; q < k; q++) t += !strcmp(n, "grp_voice_who") ? 1 : w[q].live;
+        } return t;
+    }
+    if (!strcmp(n, "grp_call_mode")) return s->screen == SCREEN_CALL ? 10 + s->call_mode : -1;   /* 11 = abriu a chamada no modo Transmissão */
     return -1;
 }
 

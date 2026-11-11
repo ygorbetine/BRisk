@@ -235,6 +235,7 @@ int settings_probe(const char *n, app_state_t *s) {
     if (!strncmp(n, "key_", 4) && (!strcmp(n + 4, "mute") || !strcmp(n + 4, "deafen") || !strcmp(n + 4, "stream") || !strcmp(n + 4, "ptt"))) return key_field(n[4] == 'm' ? 0 : n[4] == 'd' ? 1 : n[4] == 's' ? 2 : 3)[0] != 0;
     if (!strncmp(n, "keyvk_", 6)) { const char *w = n + 6; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? v : 0; }
     if (!strncmp(n, "keymods_", 8)) { const char *w = n + 8; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? (int)m : 0; }
+    if (!strcmp(n, "cfg_cm")) return g_set.call_mode;
     if (!strcmp(n, "cfg_mic")) return g_set.mic;
     if (!strcmp(n, "cfg_noise_off")) return g_set.noise_off;
     return -9999;
@@ -360,8 +361,23 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     static const char *CM[] = { "Automático", "Sempre P2P", "Sempre SFU" };
                     static const char *NP[] = { "Automático", "Internet direta", "VPN privada" };
                     SCARD(ui, "MODO DA CHAMADA") {
-                        seg(ui, "cfg-cm", CM, 3, &g_set.call_mode);
-                        sub(ui, g_set.call_mode == 0 ? "Usa o servidor de chamadas (SFU) quando ele está configurado. Se ele falhar, o Briks mostra o erro e oferece entrar em P2P; nunca troca sozinho." : g_set.call_mode == 1 ? "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio." : "Passa por um servidor. Melhor para salas grandes e redes difíceis.");
+                        static int pend_cm = -1;   /* troca pedida com a chamada aberta: espera a confirmação (reconecta) */
+                        { const int before = g_set.call_mode; seg(ui, "cfg-cm", CM, 3, &g_set.call_mode);
+                          if (g_set.call_mode != before && s->in_room) { pend_cm = g_set.call_mode; g_set.call_mode = before; } }
+                        if (!s->in_room) pend_cm = -1;
+                        if (pend_cm >= 0 && pend_cm != g_set.call_mode) {
+                            cui_text(ui, "Você está em uma chamada. Trocar o modo agora reconecta a chamada (um corte de alguns segundos).", .size = 12, .color = B_MUTED, .width = CUI_FILL);
+                            cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
+                                if (cui_button(ui, "Trocar e reconectar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) {
+                                    char room[sizeof s->room_name]; snprintf(room, sizeof room, "%s", s->room_name);
+                                    g_set.call_mode = pend_cm; pend_cm = -1;
+                                    rtc_leave_room(s); s->rtc_session_sent = s->rtc_session_ready; rtc_join_room(s, room);
+                                }
+                                if (cui_button(ui, "Só na próxima chamada", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { g_set.call_mode = pend_cm; pend_cm = -1; }
+                                if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM)) pend_cm = -1;
+                            }
+                        }
+                        sub(ui, g_set.call_mode == 0 ? "Padrão: usa o servidor de chamadas (SFU) quando ele está configurado; sem ele, P2P. Se o servidor falhar, mostra o erro e oferece entrar em P2P; nunca troca sozinho." : g_set.call_mode == 1 ? "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio, mesmo com o servidor de chamadas configurado." : "Passa sempre pelo servidor, nunca cai em P2P sozinho. Melhor para salas grandes e redes difíceis.");
                         sub(ui, "Todos da sala precisam usar o mesmo modo. Vale a partir da próxima chamada.");
                         if (s->net_cfg_known) sub(ui, s->net_cfg_err[0] ? s->net_cfg_err : s->net_cfg_sfu ? "Servidor de chamadas: configurado." : g_set.call_mode == 2 ? "Servidor de chamadas: não configurado; \"Sempre SFU\" usa P2P até configurar." : "Servidor de chamadas: não configurado; as chamadas usam P2P.");
                     }

@@ -292,7 +292,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                             continue;
                                         }
                                         Ok(h) => { hybrid = Some(h); sfu_au = au; }
-                                        Err(e) if !crate::sfu_cfg::fallback_p2p(&net_env, &cfg.data_dir) => {
+                                        Err(e) if net_mode == crate::sfu_cfg::NetMode::Sfu || !crate::sfu_cfg::fallback_p2p(&net_env, &cfg.data_dir) => {
                                             // sem reserva: erro visível em vez de uma sala P2P à parte
                                             mesh_ev = None;
                                             rt_status = None;
@@ -305,6 +305,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     }
                                 }
                             }
+                        }
+                        if sfu_ns && net_mode == crate::sfu_cfg::NetMode::Sfu && !sfu_ready {
+                            // "Sempre SFU" sem servidor configurado: erro visível, nunca uma sala P2P à parte
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, false, false, false);
+                            out(&mut wr, json!({ "ev": "net.mode", "mode": "none", "reason": reason, "error": sfu_err, "configured": false, "fallback": false })).await?;
+                            out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "Modo \"Sempre SFU\": o servidor de chamadas não está configurado." })).await?;
+                            continue;
                         }
                         let (Some(url), Some(key)) = (cfg.realtime_url.clone(), cfg.realtime_key.clone()) else {
                             out(&mut wr, json!({ "ev": "signaling.status", "state": "erro", "message": "Supabase Realtime não configurado (VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY)" })).await?;

@@ -286,6 +286,8 @@ static cui_color netq_color(int q) { return q == NETQ_GOOD ? B_ONLINE : q == NET
 static void info_row(cui_ctx *ui, const char *k, const char *v) {
     cui_row(ui, .gap = 10, .width = CUI_FILL) { cui_text(ui, k, .size = 13, .color = B_MUTED, .width = CUI_FILL, .nowrap = true); cui_text(ui, v, .size = 13, .nowrap = true); }
 }
+/* modo em uso na chamada (vem do net.mode do core): "SFU", "P2P" ou "" quando ainda não se sabe */
+static const char *net_mode_short(const app_state_t *s) { return !s->in_room || !s->net_note[0] ? "" : s->net_sfu ? "SFU" : s->net_failed ? "" : "P2P"; }
 static void net_chip(cui_ctx *ui, app_state_t *s, bool compact) {
     netdiag_t nd = netdiag_get();
     int failed = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "falhou")) failed++;
@@ -295,7 +297,7 @@ static void net_chip(cui_ctx *ui, app_state_t *s, bool compact) {
     cui_box(ui, .id = "netchip", .dir = CUI_ROW, .gap = 8, .pad_x = compact ? 0 : 12, .width = compact ? CUI_PX(38) : CUI_FIT, .height = CUI_PX(38), .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER,
             .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         { cui_color dc = netq_color(q); cui_canvas(ui, "netdot", CUI_PX(8), CUI_PX(8), paint_dot, &dc, sizeof dc); }   /* canvas: é um componente, então serve de âncora ao popover (caixa simples não serve) */
-        if (!compact) cui_text(ui, call_net_label(q), .size = 13, .color = B_TEXT, .nowrap = true);
+        if (!compact) { char lb[64]; const char *m = net_mode_short(s); snprintf(lb, sizeof lb, m[0] ? "%s · %s" : "%s", call_net_label(q), m); cui_text(ui, lb, .size = 13, .color = B_TEXT, .nowrap = true); }
     }
     if (briks_hover(ui, "netchip")) briks_tip(compact ? call_net_label(q) : "Ver o diagnóstico da conexão");
     if (briks_clicked(ui, "netchip")) cui_popover_open(ui, "netpop");
@@ -311,6 +313,9 @@ static void net_chip(cui_ctx *ui, app_state_t *s, bool compact) {
         info_row(ui, "Sinalização", s->in_room ? (s->rtc_state[0] ? s->rtc_state : "conectando") : "fora da sala");
         snprintf(b, sizeof b, "%d (autenticadas: %d)", s->rtc_peer_count, s->rtc_authed_count); info_row(ui, "Pessoas na sala", b);
         if (failed) { snprintf(b, sizeof b, "%d sem conexão direta", failed); info_row(ui, "Falhas", b); }
+        { static const char *const CMN[] = { "Automático", "Sempre P2P", "Sempre SFU" }; const int cm = settings_call_mode();
+          info_row(ui, "Modo escolhido", CMN[cm < 0 || cm > 2 ? 0 : cm]);
+          info_row(ui, "Modo em uso", s->net_failed ? "nenhum (erro)" : net_mode_short(s)[0] ? (s->net_sfu ? "SFU (servidor)" : "P2P (direto)") : "—"); }
         info_row(ui, "Transporte", s->ice_note[0] ? (strstr(s->ice_note, "TURN") && !strstr(s->ice_note, "Somente") ? "STUN + TURN" : "Somente STUN") : "STUN público");
         if (s->rtc_msg[0]) cui_text(ui, s->rtc_msg, .size = 12, .color = B_MUTED);
         cui_separator(ui);

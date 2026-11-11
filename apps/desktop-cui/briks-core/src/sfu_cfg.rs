@@ -130,9 +130,9 @@ pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool, fallback: bool) 
         (NetMode::P2p, _, _) => ("p2p", "escolhido: P2P".into()),
         (NetMode::Sfu, true, false) => ("sfu", "escolhido: SFU".into()),
         (NetMode::Auto, true, false) => ("sfu", "automático: servidor de chamadas (SFU)".into()),
-        (NetMode::Sfu, false, _) => ("p2p", "SFU escolhido, mas não configurado: usando P2P".into()),
+        (NetMode::Sfu, false, _) => ("none", "SFU escolhido, mas o servidor de chamadas não está configurado: a chamada não abre em P2P sozinha (troque para Automático ou P2P)".into()),
         (NetMode::Auto, false, _) => ("p2p", "automático: SFU não configurado".into()),
-        (_, true, true) if fallback => ("p2p", "servidor de chamadas indisponível: usando P2P (reserva ligada; só fala com quem também caiu no P2P)".into()),
+        (NetMode::Auto, true, true) if fallback => ("p2p", "servidor de chamadas indisponível: usando P2P (reserva ligada; só fala com quem também caiu no P2P)".into()),
         (_, true, true) => ("none", "servidor de chamadas indisponível: a chamada não foi aberta em P2P para não dividir a sala".into()),
     }
 }
@@ -226,10 +226,10 @@ mod t {
         assert_eq!(decide(NetMode::Sfu, true, true, false).0, "none");
         // reserva só quando ligada de propósito
         assert_eq!(decide(NetMode::Auto, true, true, true).0, "p2p");
-        assert_eq!(decide(NetMode::Sfu, true, true, true).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, true, true, true).0, "none", "Sempre SFU nunca cai em P2P, nem com a reserva ligada");
         // sem configuração (ou inválida): P2P, como antes; a escolha P2P nunca tenta o SFU
         assert_eq!(decide(NetMode::Auto, false, false, false).0, "p2p");
-        assert_eq!(decide(NetMode::Sfu, false, false, false).0, "p2p");
+        assert_eq!(decide(NetMode::Sfu, false, false, false).0, "none", "Sempre SFU sem servidor configurado: erro, não P2P");
         for (ready, failed) in [(true, false), (true, true), (false, false)] { assert_eq!(decide(NetMode::P2p, ready, failed, false).0, "p2p"); }
     }
 

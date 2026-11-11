@@ -30,8 +30,10 @@ Unicode true
 !define UNINST_NAME "Uninstall Briks.exe"
 !ifdef TEST_MODE
   !define SHORTCUT_NAME "Briks (teste de instalador)"
+  !define FW_NAME "Briks (teste de instalador)"
 !else
   !define SHORTCUT_NAME "Briks"
+  !define FW_NAME "Briks"
 !endif
 
 Name "Briks"
@@ -134,6 +136,22 @@ Section "Install"
   IntFmt $R0 "0x%08X" $R0
   WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" $R0
 
+  ; Firewall: regra de ENTRADA so para os programas instalados (sem abrir porta geral). Apaga antes de criar (reinstalar/atualizar nao duplica).
+  ; Exige administrador; a instalacao e por usuario, entao sem admin a regra e pulada com aviso no log e a instalacao segue (o Windows pergunta na 1a chamada).
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FW_NAME}"'
+  Pop $R0
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FW_NAME} core"'
+  Pop $R0
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${FW_NAME}" dir=in action=allow program="$INSTDIR\${EXE_NAME}" enable=yes profile=private,public'
+  Pop $R0
+  ${If} $R0 == "0"
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${FW_NAME} core" dir=in action=allow program="$INSTDIRriks-core.exe" enable=yes profile=private,public'
+    Pop $R0
+  ${EndIf}
+  ${If} $R0 != "0"
+    DetailPrint "Aviso: regra do Firewall nao criada (precisa de administrador). O Windows pode perguntar na primeira chamada."
+  ${EndIf}
+
   CreateShortCut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
   CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
 SectionEnd
@@ -152,6 +170,10 @@ FunctionEnd
 Section "Uninstall"
   ; so apaga a pasta inteira se foi este instalador que a criou; os dados do usuario (%APPDATA%\Briks-CUI) nunca sao tocados
   ${If} ${FileExists} "$INSTDIR\briks.installed"
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FW_NAME}"'
+    Pop $R0
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FW_NAME} core"'
+    Pop $R0
     Delete "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
     Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
     DeleteRegKey HKCU "${UNINST_KEY}"

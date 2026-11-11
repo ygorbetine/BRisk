@@ -51,12 +51,12 @@ fn token_service(users: Arc<Mutex<HashMap<String, String>>>, kicks: Kicks, kick_
 }
 
 /// Uma "UI": conexão IPC com um core, com todos os eventos guardados em ordem.
-struct Ui { wr: tokio::net::tcp::OwnedWriteHalf, log: Arc<Mutex<Vec<Value>>>, fp: String }
+pub(crate) struct Ui { wr: tokio::net::tcp::OwnedWriteHalf, log: Arc<Mutex<Vec<Value>>>, fp: String }
 
 impl Ui {
-    async fn send(&mut self, v: Value) { let mut s = v.to_string(); s.push('\n'); self.wr.write_all(s.as_bytes()).await.unwrap(); }
-    fn count(&self, f: impl Fn(&Value) -> bool) -> usize { self.log.lock().unwrap().iter().filter(|v| f(v)).count() }
-    async fn wait(&self, secs: u64, what: &str, f: impl Fn(&Value) -> bool) -> Value {
+    pub(crate) async fn send(&mut self, v: Value) { let mut s = v.to_string(); s.push('\n'); self.wr.write_all(s.as_bytes()).await.unwrap(); }
+    pub(crate) fn count(&self, f: impl Fn(&Value) -> bool) -> usize { self.log.lock().unwrap().iter().filter(|v| f(v)).count() }
+    pub(crate) async fn wait(&self, secs: u64, what: &str, f: impl Fn(&Value) -> bool) -> Value {
         let end = Instant::now() + Duration::from_secs(secs);
         loop {
             if let Some(v) = self.log.lock().unwrap().iter().find(|v| f(v)).cloned() { return v; }
@@ -67,7 +67,7 @@ impl Ui {
 }
 
 /// Sobe um core (IPC) com pasta de dados própria, conta `email` já logada e o SFU configurado em `livekit.json`. Devolve a UI e a sessão.
-async fn app(tag: &str, accounts_url: &str, email: Option<&str>, name: &str, tport: u16) -> (Ui, String, std::path::PathBuf) {
+pub(crate) async fn app(tag: &str, accounts_url: &str, email: Option<&str>, name: &str, tport: u16) -> (Ui, String, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("briks-sfuipc-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("livekit.json"), json!({ "url": "ws://127.0.0.1:7880", "token_url": format!("http://127.0.0.1:{tport}/functions/v1/livekit-token") }).to_string()).unwrap();

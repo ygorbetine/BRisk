@@ -187,6 +187,11 @@ typedef struct {
     int dev_n; bool dev_remote, dev_have; char dev_current[48], dev_msg[160], dev_confirm[48]; unsigned long long dev_asked_at;
     /* AMI-16: "Desconectar P2P" (fecha só o chat privado com um amigo; a chamada e a amizade ficam) */
     char dmoff[8][160]; int dmoff_n; bool dmdisc_open; char dmdisc_fp[160], dmdisc_name[96];
+    /* CHM-16: inatividade na chamada (call_idle.h) */
+    unsigned long long idle_last; int idle_phase_now; long long idle_left_ms; char idle_notice[120];
+    /* AMI-15: amigos com o sino desligado (sem aviso de "ficou online" / "entrou na chamada"); lista guardada em friend-bells.txt */
+    char fbell[24][48]; int fbell_n; bool fbell_loaded;
+    bool friends_loaded;   /* BAS-30: a primeira lista de amigos já chegou do serviço (antes dela a tela mostra o esqueleto) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -255,6 +260,8 @@ void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e
 void account_backup_cancel(app_state_t *s);                 /* descarta a frase gerada */
 void account_backup_restore(app_state_t *s);                /* usa s->backup_input */
 void account_backup_delete(app_state_t *s);
+bool friends_bell_off(app_state_t *s, const char *id);               /* o sino desse amigo está desligado (AMI-15) */
+void friends_bell_set(app_state_t *s, const char *id, bool off);    /* liga/desliga o sino e grava */
 bool friends_dm_off(const app_state_t *s, const char *fp);          /* o chat privado com essa pessoa foi desconectado */
 void friends_dm_link(app_state_t *s, const char *fp, bool on);      /* evento chat.link do core: desconectou (false) ou reconectou (true) */
 void account_devices_get(app_state_t *s);                          /* pede ao core a lista de computadores da conta */
@@ -305,6 +312,7 @@ bool friends_online(const app_state_t *s, const person_t *p);   /* online de ver
 void account_presence_tick(app_state_t *s);                      /* batimento de ~60 s (account.c) */                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
+float rtc_saved_volume(const char *fp);                          /* volume lembrado para essa identidade (0..2; 1 = normal), CHM-14 */
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só para quem escuta, 0..2 (1 = normal) */
 void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
@@ -454,6 +462,7 @@ bool login_hint_lookup(const char *nick, char *email, size_t cap);
 enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };
 int net_status(void);                                                    /* sonda em segundo plano; BRIKS_NET força o estado nos testes */
 void net_retry_now(void);                                                /* "Tentar agora": sonda na hora */
+void idle_banner(cui_ctx *ui, app_state_t *s);                          /* aviso "sem falar há muito tempo" com Continuar (ui_call.c) */
 void net_banner(cui_ctx *ui, app_state_t *s);                            /* pílula no topo: sem conexão, reconectando, restabelecida */
 void net_friendly_error(const char *raw, char *out, size_t cap);         /* erro técnico de rede -> frase compreensível */
 /* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */

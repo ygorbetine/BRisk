@@ -82,6 +82,39 @@ void friends_unblock(app_state_t *s, const char *id) {
     else account_friends(s);
 }
 
+/* ---- AMI-15: sino por amigo (use-friend-notifications do Electron): amigos silenciados não geram aviso. Arquivo de ids, um por linha ---- */
+static bool bells_path(char *out, size_t cap) {
+    const char *over = getenv("BRIKS_BELLS_FILE");
+    if (over && over[0]) { snprintf(out, cap, "%s", over); return true; }
+    char appdata[MAX_PATH];
+    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) return false;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", appdata); CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\\friend-bells.txt", dir); return true;
+}
+static void bells_load(app_state_t *s) {
+    if (s->fbell_loaded) return; s->fbell_loaded = true; s->fbell_n = 0;
+    char p[MAX_PATH], line[100]; if (!bells_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "rb"); if (!f) return;
+    while (s->fbell_n < 24 && fgets(line, sizeof line, f)) { line[strcspn(line, "\r\n")] = 0; if (line[0]) snprintf(s->fbell[s->fbell_n++], sizeof s->fbell[0], "%s", line); }
+    fclose(f);
+}
+bool friends_bell_off(app_state_t *s, const char *id) {
+    bells_load(s); if (!id || !id[0]) return false;
+    for (int i = 0; i < s->fbell_n; i++) if (!strcmp(s->fbell[i], id)) return true;
+    return false;
+}
+void friends_bell_set(app_state_t *s, const char *id, bool off) {
+    bells_load(s); if (!id || !id[0]) return;
+    int k = -1; for (int i = 0; i < s->fbell_n; i++) if (!strcmp(s->fbell[i], id)) k = i;
+    if (off && k < 0 && s->fbell_n < 24) snprintf(s->fbell[s->fbell_n++], sizeof s->fbell[0], "%s", id);
+    else if (!off && k >= 0) { memmove(s->fbell[k], s->fbell[k + 1], sizeof s->fbell[0] * (size_t)(s->fbell_n - k - 1)); s->fbell_n--; }
+    else return;
+    char p[MAX_PATH]; if (!bells_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "wb"); if (!f) return;
+    for (int i = 0; i < s->fbell_n; i++) fprintf(f, "%s\n", s->fbell[i]);
+    fclose(f);
+}
+
 /* ---- AMI-16: chat privado desconectado (o core fecha só a DM; a chamada continua) ---- */
 bool friends_dm_off(const app_state_t *s, const char *fp) {
     if (!fp || !fp[0]) return false;
@@ -123,7 +156,7 @@ void friends_notify_tick(app_state_t *s) {
     bool nid[MAX_FRIENDS], ncall[MAX_FRIENDS];
     for (int i = 0; i < n; i++) {
         nid[i] = friends_online(s, &s->friends[i]); ncall[i] = in_call(s, &s->friends[i]);
-        if (prev_n < 0 || s->notify_off) continue;
+        if (prev_n < 0 || s->notify_off || friends_bell_off(s, s->friends[i].id)) continue;   /* AMI-15: sino desligado = sem aviso */
         int k = -1; for (int q = 0; q < prev_n; q++) if (!strcmp(prev_id[q], s->friends[i].id)) k = q;
         if (k < 0) continue;
         if (ncall[i] && !prev_call[k]) { snprintf(fn_text, sizeof fn_text, "%s entrou na sua chamada", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); notify_friend(s, fn_text, true); }
@@ -186,6 +219,8 @@ static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
     ROW_BEGIN(ui, p) {
         row_ident(ui, p, NULL, friends_online(s, p));
         if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
+        { const bool off = friends_bell_off(s, p->id);   /* AMI-15: sino por amigo */
+          if (cui_icon_button(ui, off ? CUI_ICON_VOLUME_X : CUI_ICON_BELL, .tooltip = off ? "Avisos desligados: ligar" : "Avisar quando ficar online")) friends_bell_set(s, p->id, !off); }
         cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
             cui_menu_label(ui, p->name);
             if (cui_menu_item(ui, "Enviar mensagem", .icon = CUI_ICON_MESSAGE_SQUARE)) app_open_friend(s, i);
@@ -205,8 +240,27 @@ static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
     cui_pop_id(ui);
 }
 
+/* BAS-30: enquanto o serviço (core) sobe e a primeira lista de amigos não chegou, linhas em esqueleto no lugar do "Nenhum amigo ainda" */
+static bool friends_loading(const app_state_t *s) {
+    static int demo = -1; if (demo < 0) demo = getenv("BRIKS_DEMO_LOADING") ? 1 : 0;
+    static ULONGLONG t0; if (s->acct_user_id[0] && !t0) t0 = GetTickCount64();   /* sem resposta em 20 s: some o esqueleto (o estado vazio/erro assume) */
+    return demo || (s->acct_user_id[0] && !s->friends_loaded && core_state() != CORE_FAILED && GetTickCount64() - t0 < 20000);
+}
+static void friends_skeleton(cui_ctx *ui) {
+    cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .pad_y = 2) { cui_spinner(ui, 14); cui_text(ui, "Carregando seus amigos…", .size = 12, .color = B_MUTED); }
+    for (int i = 0; i < 4; i++) {
+        cui_push_id_int(ui, 9800 + i);
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .gap = 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
+            cui_skeleton(ui, CUI_PX(36), 36);
+            cui_column(ui, .gap = 6, .width = CUI_FILL) { cui_skeleton(ui, CUI_PX(140 - i * 12), 12); cui_skeleton(ui, CUI_PX(90), 10); }
+        }
+        cui_pop_id(ui);
+    }
+}
+
 static void list_tab(cui_ctx *ui, app_state_t *s, bool only_online) {
     int shown = 0;
+    if (!s->friend_count && friends_loading(s)) { friends_skeleton(ui); return; }
     for (int i = 0; i < s->friend_count; i++) {
         if (only_online && !friends_online(s, &s->friends[i])) continue;
         if (!matches(s, &s->friends[i])) continue;

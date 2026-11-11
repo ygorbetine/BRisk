@@ -78,7 +78,10 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
         }
         return;
     }
-    cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_y = 8) { cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true); }
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 14, .pad_y = 8, .gap = 8, .align = CUI_ALIGN_CENTER) {
+        if (!strncmp(st, "Conectando", 10) || !strncmp(st, "Reconectando", 12)) cui_spinner(ui, 14);   /* BAS-30: entrando na sala / subindo o serviço de chamadas */
+        cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+    }
     cui_scroll(ui, .id = "voice-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 10) {
         cui_column(ui, .gap = 8, .width = CUI_FILL) {
             person_card(ui, s, -1, true);
@@ -123,7 +126,8 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
                 cui_box(ui, .id = "open", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 2, .clip = true) {
                     cui_text(ui, title, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);   /* nome da sala: o que pode ser cortado é ele, não o estado */
                     cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
-                        cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = ok ? B_ONLINE : bad ? CUI_RGB(0xe95555) : CUI_RGB(0xf5b942)) {}
+                        if (!ok && !bad) cui_spinner(ui, 11);   /* BAS-30: conectando/reconectando */
+                        else cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = ok ? B_ONLINE : CUI_RGB(0xe95555)) {}
                         cui_text(ui, state_txt, .size = 11.5f, .color = state_col, .nowrap = true);
                     }
                 }

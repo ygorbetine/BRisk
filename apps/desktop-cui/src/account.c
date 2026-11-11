@@ -396,6 +396,7 @@ void account_presence_tick(app_state_t *s) {
 }
 
 static void on_friends(app_state_t *s, const jval *j) {
+    s->friends_loaded = true;
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
     s->friend_count = s->pending_count = s->outgoing_count = 0;

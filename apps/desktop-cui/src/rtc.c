@@ -119,6 +119,11 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
         changed = true;
+    } else if (!strcmp(ev, "net.mode")) {
+        const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
+        snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : "P2P", json_str(j, "reason", ""),
+                 json_str(j, "server", "")[0] ? " · servidor " : "", json_str(j, "server", ""), er[0] ? " · " : "", er);
+        changed = true;
     } else if (!strncmp(ev, "share.", 6)) {
         changed = share_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
@@ -172,7 +177,7 @@ void rtc_pump(app_state_t *s) {
         if (s->rtc_want_room && s->rtc_session_ready) {
             char extra[256], rm[160];
             json_escape(s->room_name, rm, sizeof rm);
-            snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\"", rm);
+            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\"", rm, cm == 1 ? "p2p" : cm == 2 ? "sfu" : "auto"); }
             send_cmd("room.join", extra);
             s->rtc_want_room = false;
         }

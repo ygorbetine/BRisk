@@ -146,6 +146,7 @@ typedef struct {
     bool reload_groups;
     share_state_t sh;
     char ice_note[120];   /* "Somente STUN" / "STUN + TURN" (evento ice.info do core) */
+    char net_note[220];   /* modo de rede da chamada: "SFU · servidor" ou "P2P · motivo" (evento net.mode do core) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -206,6 +207,7 @@ void rtc_leave_room(app_state_t *s);
 void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */

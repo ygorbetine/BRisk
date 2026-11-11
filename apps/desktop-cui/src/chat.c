@@ -166,6 +166,8 @@ void app_demo(app_state_t *s, const char *mode) {
     { group_t *g = &s->groups[0]; snprintf(g->owner, sizeof g->owner, "me"); snprintf(s->user_id, sizeof s->user_id, "me"); g->is_owner = g->can_moderate = true;   /* demo: canais, cargos e membros */
       const char *cn[] = { "geral", "memes", "Sala de voz", "Valorant" }; for (int i = 0; i < 4; i++) { snprintf(g->ch[i].id, sizeof g->ch[i].id, "c%d", i); snprintf(g->ch[i].name, sizeof g->ch[i].name, "%s", cn[i]); g->ch[i].voice = i >= 2; } g->nch = 4;
       const char *mn[] = { "Ygor", "Marina Costa", "Rafael Lima", "Bia Nogueira" }; for (int i = 0; i < 4; i++) { snprintf(g->m[i].id, sizeof g->m[i].id, "m%d", i == 0 ? 99 : i); snprintf(g->m[i].name, sizeof g->m[i].name, "%s", mn[i]); } g->m[1].admin = true; g->nm = 4; snprintf(g->m[0].id, sizeof g->m[0].id, "me");
+      if (getenv("BRIKS_DEMO_GDUP")) { g->m[g->nm] = g->m[1]; g->nm++; }                       /* captura: membro duplicado (botão Limpar duplicados) */
+      if (getenv("BRIKS_DEMO_GMEMBER")) { snprintf(g->owner, sizeof g->owner, "m1"); g->is_owner = g->can_moderate = false; g->m[0].admin = false; }   /* captura: sou membro comum (sem gestão) */
       const char *gd = getenv("BRIKS_DEMO_GDLG"); if (gd) { int v = atoi(gd); s->members_open = v == 1; s->chan_open = v == 2; s->gren_open = v == 3; s->gleave_open = v == 4; } }
     { const char *ft = getenv("BRIKS_DEMO_FTAB"); if (ft) {   /* captura do hub de Amigos: aba + pedidos/bloqueados de exemplo (nada é gravado) */
         s->friends_tab = atoi(ft); s->blocked_loaded = true;

@@ -42,6 +42,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
+    if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
     return dock_probe(n);
 }
 

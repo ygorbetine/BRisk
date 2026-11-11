@@ -169,6 +169,7 @@ static void bubbles_draw(cui_ctx *ui) {
     g_bub_n = 0;
 }
 
+static cui_rect g_last_row;   /* retângulo (quadro anterior) da última linha desenhada por person_row_ex: o menu de contexto do grupo usa */
 static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_texture img) {
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
@@ -188,6 +189,7 @@ static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_textu
         }
     }
     bool hit = briks_clicked(ui, "b");
+    g_last_row = cui_get_rect(ui, cui_make_id(ui, "b"));
     cui_pop_id(ui);
     return hit;
 }
@@ -243,6 +245,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
                 if (person_row_ex(ui, &g, s->active_group == i, groups_image(s, s->groups[i].id))) app_open_group(s, i);
+                groups_row_menu(ui, s, i, g_last_row);
                 if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);
             }
@@ -457,6 +460,8 @@ static void panel_servers(cui_ctx *ui, app_state_t *s) {
                 space_button(ui, ini, s->communities[i].name, sub, s->active_space == i + 1, false, &click, i + 1);
             }
             space_button(ui, "+", "Criar grupo", "", false, true, &click, 999);
+            space_button(ui, "»","Entrar em grupo", "", false, true, &click, 998);
+            if (click == 998) { s->join_open = true; s->join_code[0] = 0; s->join_err[0] = 0; click = -1; }
             if (click == 999) { s->create_group_open = true; click = -1; }
             if (click >= 0) s->active_space = click;
         }
@@ -480,11 +485,13 @@ static void panel_friends(cui_ctx *ui, app_state_t *s) {   /* painel Amigos: a t
 static void panel_members(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, GLASS_PANEL) {
         panel_shell(ui, "Membros", CUI_ICON_USERS);
-        g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
-        cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            person_t me; snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
-            person_row(ui, &me, false);
-            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row(ui, &s->friends[i], false); cui_pop_id(ui); }
+        if (!groups_members_panel(ui, s)) {   /* grupo aberto: membros do grupo, com cargos e gestão; sem grupo: você e seus amigos */
+            g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
+            cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
+                person_t me; snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
+                person_row(ui, &me, false);
+                for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row(ui, &s->friends[i], false); cui_pop_id(ui); }
+            }
         }
     }
 }
@@ -764,6 +771,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     bubbles_draw(ui);
+    groups_overlay(ui, s);
     msgui_overlay(ui, s);
     attach_overlay(ui, s);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */

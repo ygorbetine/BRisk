@@ -209,6 +209,10 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);
 void groups_create_json(const app_state_t *s, char *out, size_t cap);
+void groups_overlay(cui_ctx *ui, app_state_t *s);                              /* menu de contexto do grupo (camada de cima, junto do menu da mensagem) */
+int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
+bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
+void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
 void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */

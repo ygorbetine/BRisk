@@ -220,6 +220,17 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "session.start primeiro" })).await?;
                             continue;
                         };
+                        {
+                            let (ns, room) = (v["namespace"].as_str().unwrap_or("room"), v["room"].as_str().unwrap_or(""));
+                            if !["room", "chat", "friend", "group"].contains(&ns) || room.is_empty() || room.len() > 200 {
+                                out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "sala inválida" })).await?;
+                                continue;
+                            }
+                            if kicked_rooms.contains(&format!("{ns}:{room}")) {
+                                out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "você foi removido desta sala nesta sessão" })).await?;
+                                continue;
+                            }
+                        }
                         // Modo de rede (Automático / SFU / P2P). Com o SFU configurado, Automático e SFU entram pelo servidor de chamadas;
                         // se o token ou a entrada falharem, a chamada NÃO abre em P2P (sala dividida), a não ser com a reserva ligada.
                         let sfu_ns = v["namespace"].as_str().map(|n| n == "room" || n == "group").unwrap_or(true);

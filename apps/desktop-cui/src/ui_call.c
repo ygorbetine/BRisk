@@ -5,8 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; bool can_kick; const char *status; } tile_t;
-enum { TILE_NONE = 0, TILE_MUTE = 1, TILE_KICK = 2 };
+typedef struct { const char *name; bool me, speaking, muted; float level; int slot; bool by_me; bool can_kick; const char *status; bool can_room_mute; } tile_t;
+enum { TILE_NONE = 0, TILE_MUTE = 1, TILE_KICK = 2, TILE_ROOM_MUTE = 3 };
 static float g_lvl[10];   /* nível de fala por tile, lido pelo canvas do avatar na hora de pintar */
 
 
@@ -97,6 +97,8 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
+                    /* só o dono, só no servidor de chamadas: fecha (ou pede para reabrir) o microfone da pessoa para todos */
+                    if (t->can_room_mute && cui_menu_item(ui, t->muted ? "Reabrir o microfone dele" : "Silenciar para todos", .icon = CUI_ICON_VOLUME_X)) act = TILE_ROOM_MUTE;
                     if (t->can_kick) {
                         cui_menu_separator(ui);
                         if (cui_menu_item(ui, "Expulsar da chamada…", .icon = CUI_ICON_PHONE, .danger = true)) act = TILE_KICK;
@@ -218,11 +220,13 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
                         const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, share_peer_live(s, i) ? "Transmitindo a tela" : s->rtc_peers[i].status };
+                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, share_peer_live(s, i) ? "Transmitindo a tela" : s->rtc_peers[i].status,
+                                           s->rtc_owner_me && s->net_sfu && s->rtc_peers[i].fp[0] != 0 };
                         cui_push_id_int(ui, 700 + i);
                         int act = tile(ui, &t, true);
                         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
                         else if (act == TILE_KICK) { s->kick_slot = i; s->kick_open = true; }
+                        else if (act == TILE_ROOM_MUTE) rtc_room_mute(s, i, !(s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened));
                         cui_pop_id(ui);
                     }
                 }

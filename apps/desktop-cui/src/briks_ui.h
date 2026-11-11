@@ -147,6 +147,7 @@ typedef struct {
     share_state_t sh;
     char ice_note[120];   /* "Somente STUN" / "STUN + TURN" (evento ice.info do core) */
     char net_note[220];   /* modo de rede da chamada: "SFU · servidor" ou "P2P · motivo" (evento net.mode do core) */
+    bool net_sfu;         /* a chamada atual está no servidor de chamadas (SFU): o dono pode silenciar alguém para todos */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -217,6 +218,7 @@ void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
+void rtc_room_mute(app_state_t *s, int slot, bool muted);   /* só o dono, só no SFU: fecha/reabre o microfone da pessoa para todos */
 void rtc_pump(app_state_t *s);
 void rtc_chat_event(const char *fields);   /* assina e envia um chat.event (campos JSON sem chaves) a quem está na sala */                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */

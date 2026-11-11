@@ -31,7 +31,7 @@ void rtc_leave_room(app_state_t *s) {
     s->rtc_peer_count = s->rtc_authed_count = 0;
     if (core_state() == CORE_READY) send_cmd("room.leave", NULL);
     copy(s->rtc_state, sizeof s->rtc_state, "");
-    s->rtc_owner_me = false; s->kick_open = false;
+    s->rtc_owner_me = false; s->kick_open = false; s->net_sfu = false;
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
     share_reset(s);
 }
@@ -41,6 +41,14 @@ void rtc_kick_peer(app_state_t *s, int slot) {
     char extra[200], fp[96]; json_escape(s->rtc_peers[slot].fp, fp, sizeof fp);
     snprintf(extra, sizeof extra, "\"fp\":\"%s\"", fp);
     if (core_state() == CORE_READY) send_cmd("peer.kick", extra);
+}
+
+/* o dono pede ao core para fechar/reabrir o microfone de alguém para todos (pedido assinado; o core recusa quem não é dono) */
+void rtc_room_mute(app_state_t *s, int slot, bool muted) {
+    if (!s->rtc_owner_me || !s->net_sfu || slot < 0 || slot >= 8 || !s->rtc_peers[slot].fp[0]) return;
+    char extra[200], fp[96]; json_escape(s->rtc_peers[slot].fp, fp, sizeof fp);
+    snprintf(extra, sizeof extra, "\"fp\":\"%s\",\"muted\":%s", fp, muted ? "true" : "false");
+    if (core_state() == CORE_READY) send_cmd("room.mute", extra);
 }
 
 void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
@@ -103,6 +111,13 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         copy(s->rtc_state, sizeof s->rtc_state, "");
         s->kicked_open = true;
         s->screen = SCREEN_SOCIAL;
+    } else if (!strcmp(ev, "room.muted")) {
+        /* o dono fechou (ou reabriu) o meu microfone: o core já aplicou; o botão acompanha e eu posso reabrir depois */
+        const jval *m = json_get(j, "muted");
+        bool muted = m && m->type == J_BOOL && m->b;
+        s->mic_on = !muted;
+        if (muted) s->me_level = 0;
+        copy(s->rtc_msg, sizeof s->rtc_msg, muted ? "O dono da chamada silenciou o seu microfone." : "O dono da chamada reabriu o seu microfone.");
     } else if (!strcmp(ev, "peer.state")) {
         const char *p = json_str(j, "peer_id", "");
         const jval *m = json_get(j, "microphone"), *d = json_get(j, "deafened");
@@ -121,7 +136,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         changed = true;
     } else if (!strcmp(ev, "net.mode")) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
-        snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : "P2P", json_str(j, "reason", ""),
+        s->net_sfu = !strcmp(md, "sfu");
+        snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : !strcmp(md, "none") ? "Sem chamada" : "P2P", json_str(j, "reason", ""),
                  json_str(j, "server", "")[0] ? " · servidor " : "", json_str(j, "server", ""), er[0] ? " · " : "", er);
         changed = true;
     } else if (!strncmp(ev, "share.", 6)) {

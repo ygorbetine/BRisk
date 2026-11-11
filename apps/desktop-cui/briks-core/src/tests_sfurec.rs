@@ -17,16 +17,30 @@ use crate::tests_sfu::dev_token_ttl;
 pub struct Server { child: Child }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
+/// Porta do `livekit-server` de teste. `BRIKS_LK_TEST_PORT` troca a 7880 (e as portas RTC seguintes) para não colidir com outro
+/// servidor na máquina; só `tests_sfurede` usa esta porta na URL, os outros testes continuam na 7880.
+pub fn lk_port() -> u16 { std::env::var("BRIKS_LK_TEST_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
+
 pub fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
     // a porta do servidor anterior pode demorar um instante para ser liberada
     for _ in 0..3 {
-        let mut child = Command::new(&bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+        let port = lk_port();
+        let mut cmd = Command::new(&bin);
+        cmd.args(["--dev", "--bind", "127.0.0.1"]);
+        if port != 7880 { cmd.args(["--config-body", &format!("port: {port}
+rtc:
+  tcp_port: {}
+  udp_port: {}
+keys:
+  devkey: secret
+", port + 1, port + 2)]); }
+        let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(10) {
             if let Ok(Some(_)) = child.try_wait() { break; }   // morreu (porta ocupada): tenta de novo
-            if std::net::TcpStream::connect(("127.0.0.1", 7880)).is_ok() { return Some(Server { child }); }
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() { return Some(Server { child }); }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = child.kill(); let _ = child.wait();

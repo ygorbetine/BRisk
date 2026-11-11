@@ -215,8 +215,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 if cfg.adaptive {
                     est.set_ceil(ctl.top_ceil());
-                    let rx_floor = net.lock().unwrap().rx_floor();
-                    est.update(Instant::now(), sent_bps, worst, nack_ratio, rx_floor);
+                    est.update(Instant::now(), sent_bps, worst, nack_ratio);
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
                     if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
                     if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
@@ -502,19 +501,10 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
-    let (mut fb_bytes, mut fb_t) = ([0u64; 2], Instant::now());
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
         // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
         let pkt = match tokio::time::timeout(Duration::from_millis(50), track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
-        // Retorno ao emissor, 2x por segundo, assistindo ou não (a rede congestiona do mesmo jeito): quantos bits chegaram no último
-        // segundo. É a capacidade real do caminho quando ele está cheio; o emissor usa como piso para os cortes de bitrate.
-        if let Some(p) = &pkt { fb_bytes[1] += (p.payload.len() + 12) as u64; }
-        if fb_t.elapsed() >= Duration::from_millis(500) {
-            let secs = fb_t.elapsed().as_secs_f64() + 0.5;
-            let _ = ev.try_send(json!({ "ev": "share.fb", "peer_id": peer, "kbps": ((fb_bytes[0] + fb_bytes[1]) as f64 * 8.0 / secs / 1000.0).round() }));
-            fb_bytes = [fb_bytes[1], 0]; fb_t = Instant::now();
-        }
         let w = st.watching.load(Ordering::Relaxed);
         if !w { was = false; continue; }
         let ep = st.epoch.load(Ordering::Relaxed);

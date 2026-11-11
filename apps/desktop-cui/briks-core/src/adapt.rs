@@ -33,8 +33,6 @@ pub struct PeerNet {
     pub plis: u64,       // pedidos de quadro-chave (acumulado)
     /// menor RTT já visto deste espectador (a base dele): serve para dizer se ESTE caminho está congestionado
     pub rtt_min: f32,
-    /// taxa que REALMENTE chegou a este espectador no último segundo (bps), informada por ele pelo DataChannel 2x por segundo
-    pub rx: Option<(f64, Instant)>,
 }
 
 #[derive(Default)]
@@ -60,11 +58,6 @@ impl NetShared {
         let all: Vec<&&PeerNet> = fresh.iter().collect();
         (Some(worst(&all)), 0)
     }
-    /// Menor taxa recebida entre os espectadores com retorno fresco (< 1,5 s). É a capacidade real do caminho quando há
-    /// congestionamento: serve de PISO para os cortes (cortar abaixo do que comprovadamente passa é desperdício).
-    pub fn rx_floor(&self) -> Option<f64> {
-        self.peers.values().filter_map(|p| p.rx).filter(|r| r.1.elapsed() < Duration::from_millis(1500)).map(|r| r.0).fold(None, |m: Option<f64>, v| Some(m.map_or(v, |x| x.min(v))))
-    }
     pub fn totals(&self) -> (u64, u64) { (self.peers.values().map(|p| p.nacks).sum(), self.peers.values().map(|p| p.plis).sum()) }
 }
 
@@ -88,8 +81,7 @@ impl Estimator {
 
     /// `sent` = bps realmente enviados no último segundo; `net` = pior espectador (None = sem relatórios);
     /// `nack_ratio` = pacotes pedidos de novo / pacotes enviados no último segundo.
-    /// `rx` = taxa recebida informada pelos espectadores (ver `NetShared::rx_floor`), quando há.
-    pub fn update(&mut self, now: Instant, sent: f64, net: Option<(f32, f32, f32)>, nack_ratio: f32, rx: Option<f64>) -> f64 {
+    pub fn update(&mut self, now: Instant, sent: f64, net: Option<(f32, f32, f32)>, nack_ratio: f32) -> f64 {
         let Some((loss, rtt, _)) = net else { self.reason = ""; return self.est; };
         if rtt > 0.0 { self.rtt_hist.push(rtt); if self.rtt_hist.len() > 30 { self.rtt_hist.remove(0); } }
         let base = if self.rtt_hist.is_empty() { 0.0 } else { self.rtt_base() };
@@ -109,10 +101,7 @@ impl Estimator {
                 let floor = self.est * if delayed { 0.4 } else { 0.6 };
                 let from = if sent > FLOOR_BPS { self.est.min(sent.max(floor)) } else { self.est };
                 let factor = if delayed { 0.7 } else { (1.0 - 0.5 * loss_eff as f64).clamp(0.6, 0.9) };
-                let before = self.est;
                 self.est = (from * factor).max(FLOOR_BPS);
-                // piso: nunca cortar abaixo de 85% do que os espectadores estão comprovadamente recebendo (e nunca subir por causa dele)
-                if let Some(rx) = rx { if rx > FLOOR_BPS { self.est = self.est.max(rx * 0.85).min(before); } }
                 self.last_drop = Some(now);
                 if sent > FLOOR_BPS { self.cap = Some((sent * (1.0 - loss_eff as f64).max(0.3) * 0.85, now)); }
             }
@@ -281,30 +270,30 @@ mod tests {
     fn estimator_falls_fast_on_loss_or_delay_and_climbs_back_slowly() {
         let mut e = Estimator::new(8_000_000.0);
         let t0 = Instant::now();
-        for i in 0..5 { e.update(t0 + Duration::from_secs(i), 8_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, None); }
+        for i in 0..5 { e.update(t0 + Duration::from_secs(i), 8_000_000.0, Some((0.0, 20.0, 1.0)), 0.0); }
         assert_eq!(e.est, 8_000_000.0);
         // fila enchendo: RTT sobe muito acima da base → cai sem esperar perda
-        let a = e.update(t0 + Duration::from_secs(6), 6_000_000.0, Some((0.0, 260.0, 5.0)), 0.0, None);
+        let a = e.update(t0 + Duration::from_secs(6), 6_000_000.0, Some((0.0, 260.0, 5.0)), 0.0);
         assert!(a < 6_000_000.0 && e.reason == "atraso", "{a}");
         // perda pesada: cai mais
-        let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0, None);
+        let b = e.update(t0 + Duration::from_secs(9), 3_000_000.0, Some((0.25, 60.0, 5.0)), 0.0);
         assert!(b < 3_000_000.0 && e.reason == "perda", "{b}");
         let b = b.min(e.est);
         // rede limpa: fica parado 3 s e depois sobe ~8% por segundo
-        let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0, None);
+        let c = e.update(t0 + Duration::from_secs(10), b, Some((0.0, 20.0, 1.0)), 0.0);
         assert_eq!(c, b);
         let mut v = c;
-        for i in 13..60 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0, None); }
+        for i in 13..60 { v = e.update(t0 + Duration::from_secs(i), v, Some((0.0, 20.0, 1.0)), 0.0); }
         assert!(v > b * 2.0 && v <= 8_000_000.0, "{v}");
         // perda leve aleatória (5%) não derruba
-        let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0, None);
+        let w = e.update(t0 + Duration::from_secs(61), v, Some((0.05, 20.0, 1.0)), 0.0);
         let _ = c;
         assert_eq!(w, v);
     }
 
     #[test]
     fn one_congested_viewer_does_not_drag_the_majority() {
-        let peer = |loss: f32, rtt: f32| PeerNet { loss, rtt_ms: rtt, jitter_ms: 1.0, updated: Instant::now(), nacks: 0, plis: 0, rtt_min: 20.0, rx: None };
+        let peer = |loss: f32, rtt: f32| PeerNet { loss, rtt_ms: rtt, jitter_ms: 1.0, updated: Instant::now(), nacks: 0, plis: 0, rtt_min: 20.0 };
         let mut n = NetShared::default();
         n.peers.insert("bom1".into(), peer(0.0, 25.0));
         n.peers.insert("ruim".into(), peer(0.30, 400.0));
@@ -316,22 +305,6 @@ mod tests {
         n.peers.insert("ruim2".into(), peer(0.2, 300.0));
         n.peers.insert("ruim3".into(), peer(0.5, 500.0));
         assert_eq!(n.majority(), (Some((0.5, 500.0, 1.0)), 0));
-    }
-
-    #[test]
-    fn cuts_never_go_below_what_the_viewer_is_actually_receiving() {
-        // rede cai para ~6 Mbps: o espectador recebe 5,4 Mbps; o atraso persiste por vários segundos (relatórios atrasados)
-        let mut with = Estimator::new(12_000_000.0);
-        let mut without = Estimator::new(12_000_000.0);
-        let t0 = Instant::now();
-        for e in [&mut with, &mut without] { for i in 0..5 { e.update(t0 + Duration::from_secs(i), 9_000_000.0, Some((0.0, 20.0, 1.0)), 0.0, None); } }
-        let (mut a, mut b) = (0.0, 0.0);
-        for i in 6..12 {
-            a = with.update(t0 + Duration::from_secs(i), 5_600_000.0, Some((0.0, 260.0, 5.0)), 0.0, Some(5_400_000.0));
-            b = without.update(t0 + Duration::from_secs(i), 5_600_000.0, Some((0.0, 260.0, 5.0)), 0.0, None);
-        }
-        assert!(a >= 5_400_000.0 * 0.85 - 1.0 && a < 5_400_000.0, "com o piso fica logo abaixo da capacidade: {a}");
-        assert!(b < 2_000_000.0, "sem o piso os cortes repetidos despencam: {b}");
     }
 
     #[test]

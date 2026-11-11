@@ -141,35 +141,13 @@ void app_load_messages2(app_state_t *s, const char *body) {
 
 void app_create_group(app_state_t *s) {
     if (s->busy || !s->new_group[0]) return;
-    char gid[40], sec[40], chid[40], n[200], dn[200], b[1600];
-    new_id(gid, sizeof gid); new_id(sec, sizeof sec); new_id(chid, sizeof chid);
-    json_escape(s->new_group, n, sizeof n); json_escape(s->user_name, dn, sizeof dn);
-    long long now = (long long)time(NULL) * 1000;
-    snprintf(b, sizeof b,
-        "{\"groupId\":\"%s\",\"name\":\"%s\",\"avatar\":null,\"channels\":[{\"id\":\"%s\",\"name\":\"geral\",\"type\":\"text\"}],"
-        "\"members\":[{\"peerId\":\"%s\",\"displayName\":\"%s\"}],\"joinedAt\":%lld,\"ownerPeerId\":\"%s\",\"membershipVersion\":1,\"manifestVersion\":1,"
-        "\"administratorPeerIds\":[\"%s\"],\"removedPeerIds\":[],\"removedMembers\":[],\"rendezvousSecret\":\"%s\"}",
-        gid, n, chid, s->user_id, dn, now, s->user_id, s->user_id, sec);
+    char b[2200];
+    groups_create_json(s, b, sizeof b);   /* ui_groups.c: canal "geral" + sala de voz */
     s->new_group[0] = 0; s->create_group_open = false;
     app_begin(s, OP_GROUP_SAVE, "POST", "/p2p/groups", b);
 }
 
-void app_load_groups(app_state_t *s, const char *body) {
-    jval *j = json_parse(body);
-    s->group_count = 0;
-    for (int i = 0; i < json_len(j) && s->group_count < MAX_GROUPS; i++) {
-        const jval *g = json_at(j, i);
-        group_t *d = &s->groups[s->group_count++];
-        snprintf(d->id, sizeof d->id, "%s", json_str(g, "groupId", ""));
-        snprintf(d->name, sizeof d->name, "%s", json_str(g, "name", "?"));
-        const char *ch = json_str(json_at(json_get(g, "channels"), 0), "id", "");
-        snprintf(d->channel, sizeof d->channel, "%s", ch[0] ? ch : d->id);
-        d->can_moderate = !strcmp(json_str(g, "ownerPeerId", ""), s->user_id);
-        const jval *adm = json_get(g, "administratorPeerIds");
-        for (int k = 0; adm && k < json_len(adm); k++) { const jval *a = json_at(adm, k); if (a && a->type == J_STR && !strcmp(a->str, s->user_id)) d->can_moderate = true; }
-    }
-    json_free(j);
-}
+void app_load_groups(app_state_t *s, const char *body) { groups_load(s, body); }
 
 /* BRIKS_DEMO=login|social|call|history|group: dados fixos, sem backend, para comparar o visual entre as versões. */
 void app_demo(app_state_t *s, const char *mode) {
@@ -185,6 +163,19 @@ void app_demo(app_state_t *s, const char *mode) {
         s->community_count = 4;
     }
     snprintf(s->groups[0].name, sizeof s->groups[0].name, "Noite de jogos"); s->group_count = 1;
+    { group_t *g = &s->groups[0]; snprintf(g->owner, sizeof g->owner, "me"); snprintf(s->user_id, sizeof s->user_id, "me"); g->is_owner = g->can_moderate = true;   /* demo: canais, cargos e membros */
+      const char *cn[] = { "geral", "memes", "Sala de voz", "Valorant" }; for (int i = 0; i < 4; i++) { snprintf(g->ch[i].id, sizeof g->ch[i].id, "c%d", i); snprintf(g->ch[i].name, sizeof g->ch[i].name, "%s", cn[i]); g->ch[i].voice = i >= 2; } g->nch = 4;
+      const char *mn[] = { "Ygor", "Marina Costa", "Rafael Lima", "Bia Nogueira" }; for (int i = 0; i < 4; i++) { snprintf(g->m[i].id, sizeof g->m[i].id, "m%d", i == 0 ? 99 : i); snprintf(g->m[i].name, sizeof g->m[i].name, "%s", mn[i]); } g->m[1].admin = true; g->nm = 4; snprintf(g->m[0].id, sizeof g->m[0].id, "me");
+      const char *gd = getenv("BRIKS_DEMO_GDLG"); if (gd) { int v = atoi(gd); s->members_open = v == 1; s->chan_open = v == 2; s->gren_open = v == 3; s->gleave_open = v == 4; } }
+    { const char *ft = getenv("BRIKS_DEMO_FTAB"); if (ft) {   /* captura do hub de Amigos: aba + pedidos/bloqueados de exemplo (nada é gravado) */
+        s->friends_tab = atoi(ft); s->blocked_loaded = true;
+        const char *pn[] = { "Lucas Prado", "Helena Dias" }, *pk[] = { "lucasp", "helenad" };
+        for (int i = 0; i < 2; i++) { snprintf(s->pending[i].name, sizeof s->pending[i].name, "%s", pn[i]); snprintf(s->pending[i].nick, sizeof s->pending[i].nick, "%s", pk[i]); }
+        s->pending_count = 2;
+        snprintf(s->outgoing[0].name, sizeof s->outgoing[0].name, "Caio Ramos"); snprintf(s->outgoing[0].nick, sizeof s->outgoing[0].nick, "caior"); s->outgoing_count = 1;
+        snprintf(s->blocked[0].name, sizeof s->blocked[0].name, "Fulano Spam"); snprintf(s->blocked[0].id, sizeof s->blocked[0].id, "x1"); s->blocked_count = 1;
+        for (int i = 0; i < 3; i++) snprintf(s->friends[i].nick, sizeof s->friends[i].nick, "%s", i == 0 ? "marina" : i == 1 ? "rafa_lima" : "bianog");
+    } }
     s->active_group = -1; s->active_friend = -1; s->chat2_friend = 1; snprintf(s->chat2_channel, sizeof s->chat2_channel, "demo");
     s->screen = SCREEN_SOCIAL;
     if (getenv("BRIKS_DEMO_STATUS")) {   /* status em balão e rich presence de exemplo (captura) */
@@ -212,7 +203,7 @@ void app_demo(app_state_t *s, const char *mode) {
     if (!strcmp(mode, "history")) { s->screen = SCREEN_HISTORY; return; }
     if (!strcmp(mode, "social") || !strcmp(mode, "group") || !strcmp(mode, "bubbles") || !strcmp(mode, "msgs")) {
         const char *who = !strcmp(mode, "group") ? "Noite de jogos" : "Marina Costa";
-        if (!strcmp(mode, "group")) s->active_group = 0; else s->active_friend = 0;
+        if (!strcmp(mode, "group")) s->active_group = 0; else if (!getenv("BRIKS_DEMO_FTAB")) s->active_friend = 0;
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
         add_msg(s, "m2", "Ygor", "Entro sim, só terminar o jantar.", "2026-11-09T23:42:00.000Z", true);
         add_msg(s, "m3", "Marina Costa", "Perfeito, te espero lá.", "2026-11-09T23:43:00.000Z", false);

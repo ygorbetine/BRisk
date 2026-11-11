@@ -381,6 +381,49 @@ async fn signed_chat_events_travel_between_peers_and_bad_ones_are_dropped() {
     let _ = b.cmd.send(MeshCmd::Close).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn group_snapshots_travel_between_authenticated_peers_and_forgeries_are_dropped() {
+    use crate::group_sync::{Channel, Member, Snapshot};
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-grupo", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-grupo", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+    let mem = |i: &Identity, n: &str, admin: bool| Member { fp: i.fingerprint(), name: n.into(), admin, jwk: if admin { Some(i.public_jwk()) } else { None } };
+    let mk = |by: &Identity, name: &str| {
+        let mut s = Snapshot { v: 1, group_id: "g1".into(), name: name.into(), owner_fp: ia.fingerprint(), version: 1, ts: 1,
+            members: vec![mem(&ia, "Ana", true), mem(&ib, "Beto", true)],
+            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], signer_fp: String::new(), signature: String::new() };
+        crate::group_sync::sign(by, &mut s).unwrap();
+        s
+    };
+    // snapshot válido de A chega em B
+    let good = mk(&ia, "Amigos");
+    a.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&good).unwrap() }).await.unwrap();
+    let got = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::GroupSnapshot { .. })).await.expect("B não recebeu o grupo");
+    let MeshEvent::GroupSnapshot { from_fp, snapshot } = got else { unreachable!() };
+    assert_eq!(from_fp, ia.fingerprint());
+    assert_eq!(snapshot["name"], "Amigos");
+    // tipo desconhecido e formato quebrado: ignorados em silêncio
+    b.cmd.send(MeshCmd::RawDc { text: json!({ "version": 9, "type": "group.novidade" }).to_string() }).await.unwrap();
+    b.cmd.send(MeshCmd::RawDc { text: json!({ "type": "group.snapshot", "snapshot": { "v": 7 } }).to_string() }).await.unwrap();
+    // B repassa um snapshot assinado por A (não por B): o signatário não é quem enviou -> rejeitado
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&good).unwrap() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("grupo rejeitado"))).await.is_some(), "repasse forjado não foi rejeitado");
+    // adulterado em trânsito: assinatura inválida
+    let mut bad = mk(&ib, "Do Beto");
+    bad.name = "Adulterado".into();
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&bad).unwrap() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("assinatura"))).await.is_some(), "adulteração não foi rejeitada");
+    // e depois disso um snapshot legítimo de B (administrador) passa
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(mk(&ib, "Do Beto")).unwrap() }).await.unwrap();
+    let ok = wait_for(&mut a, 15, |e| matches!(e, MeshEvent::GroupSnapshot { .. })).await.expect("A não recebeu o snapshot do administrador");
+    let MeshEvent::GroupSnapshot { from_fp, .. } = ok else { unreachable!() };
+    assert_eq!(from_fp, ib.fingerprint());
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Transmissão de tela: A transmite (fonte sintética), B assiste; conteúdo, latência, parar e retomar (renegociação)
 // ---------------------------------------------------------------------------------------------------------------------

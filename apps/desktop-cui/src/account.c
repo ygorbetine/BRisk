@@ -92,7 +92,7 @@ void account_cancel(app_state_t *s) {
 void account_retry(app_state_t *s) { s->acct_asked = false; s->acct_state = ACCT_UNKNOWN; s->acct_error[0] = 0; }
 
 void account_logout(app_state_t *s) {
-    if (core_state() == CORE_READY) core_send("{\"cmd\":\"account.logout\"}");
+    if (core_state() == CORE_READY) { core_send("{\"cmd\":\"presence.clear\"}"); core_send("{\"cmd\":\"account.logout\"}"); s->pres_n = 0; }
     s->acct_state = ACCT_OUT; s->acct_view = AV_MAIN; s->acct_bridge = BRIDGE_NONE;
     s->acct_user_id[0] = s->acct_nick[0] = s->acct_error[0] = s->acct_info[0] = 0;
     s->user_nick[0] = 0; set_photo(s, NULL);
@@ -103,13 +103,30 @@ void account_logout(app_state_t *s) {
     s->backup_phrase_open = s->backup_restore_open = s->backup_delete_open = false;
 }
 
-void account_friends(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"friends.list\"}"); }
+void account_friends(app_state_t *s) {
+    (void)s; if (core_state() != CORE_READY) return;
+    core_send("{\"cmd\":\"friends.list\"}");
+    core_send("{\"cmd\":\"friends.blocks\"}");   /* lista de bloqueados do servidor (0006); sem a RPC o core responde remote=false e vale a lista local */
+}
+
+/* bloquear/desbloquear no servidor (a lista local é atualizada por quem chama; sem a 0006 o core só confirma remote=false) */
+void account_block_remote(app_state_t *s, const char *user_id, bool block) {
+    (void)s; if (core_state() != CORE_READY || !user_id[0]) return;
+    char id[96], line[200]; json_escape(user_id, id, sizeof id);
+    snprintf(line, sizeof line, "{\"cmd\":\"friends.%s\",\"user_id\":\"%s\"}", block ? "block" : "unblock", id);
+    core_send(line);
+}
 
 void account_add_friend(app_state_t *s) {
     if (!s->add_email[0]) return;
     if (core_state() != CORE_READY) { copy(s->notice, sizeof s->notice, "Sem conexão com o Briks. Tente de novo."); return; }
     copy(s->notice, sizeof s->notice, "Enviando…");
     send_kv("friends.request", "nick", s->add_email, NULL, NULL, NULL, NULL);
+}
+
+void account_remove_friend(app_state_t *s, const char *user_id) {
+    if (core_state() != CORE_READY) { copy(s->notice, sizeof s->notice, "Sem conexão com o Briks. Tente de novo."); return; }
+    send_kv("friends.remove", "user_id", user_id, NULL, NULL, NULL, NULL);
 }
 
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept) {
@@ -265,20 +282,63 @@ static void on_state(app_state_t *s, const jval *j) {
     }
 }
 
+/* friends.blocks {remote, blocks:[...]}: com a 0006 o servidor manda; bloqueios que só existiam aqui sobem para ele */
+static void on_blocks(app_state_t *s, const jval *j) {
+    if (!jbool(j, "remote")) return;   /* servidor sem a 0006: fica a lista local */
+    const jval *b = json_get(j, "blocks");
+    char ids[64][48]; int n = 0;
+    for (int i = 0; i < json_len(b) && n < 64; i++) copy(ids[n++], sizeof ids[0], json_str(json_at(b, i), "user_id", ""));
+    for (int i = 0; i < s->blocked_count; i++) {   /* local que o servidor não conhece: sobe */
+        bool known = false; for (int k = 0; k < n; k++) if (!strcmp(ids[k], s->blocked[i].id)) known = true;
+        if (!known) account_block_remote(s, s->blocked[i].id, true);
+    }
+    for (int i = 0; i < json_len(b) && i < 64; i++) {   /* servidor que a lista local não tem (outro computador): entra */
+        const jval *e = json_at(b, i); const char *id = json_str(e, "user_id", "");
+        if (id[0] && !friends_blocked(s, id)) { const char *nm = json_str(e, "display_name", json_str(e, "nick", "?")); friends_block(s, id, nm); }
+    }
+}
+
+static void on_presence(app_state_t *s, const jval *j) {
+    const jval *f = json_get(j, "friends");
+    s->pres_remote = jbool(j, "remote"); s->pres_n = 0;
+    for (int i = 0; i < json_len(f) && s->pres_n < MAX_FRIENDS; i++) {
+        const jval *p = json_at(f, i);
+        copy(s->pres[s->pres_n].id, sizeof s->pres[0].id, json_str(p, "user_id", ""));
+        s->pres[s->pres_n].online = jbool(p, "online"); s->pres_n++;
+    }
+    cui_request_redraw(cui_app_ui(s->app));
+}
+
+/* batimento: ao entrar na conta, a cada 60 s, e na hora quando "Aparecer offline" muda. Sem a 0007 o core responde remote=false e nada mais é tentado com frequência */
+void account_presence_tick(app_state_t *s) {
+    static ULONGLONG last; static bool inv_sent; static char who[48];
+    if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo) { last = 0; who[0] = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    const bool changed = strcmp(who, s->acct_user_id) != 0 || inv_sent != s->invisible;
+    if (!changed && last && now - last < 60000) return;
+    if (!changed && !s->pres_remote && last && now - last < 300000) return;   /* servidor sem a 0007: só tenta de novo a cada 5 min */
+    last = now; inv_sent = s->invisible; copy(who, sizeof who, s->acct_user_id);
+    char line[96]; snprintf(line, sizeof line, "{\"cmd\":\"presence.beat\",\"invisible\":%s}", s->invisible ? "true" : "false");
+    core_send(line);
+}
+
 static void on_friends(app_state_t *s, const jval *j) {
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
-    s->friend_count = s->pending_count = 0;
+    s->friend_count = s->pending_count = s->outgoing_count = 0;
     for (int i = 0; i < json_len(f); i++) {
         const jval *p = json_at(f, i); const char *state = json_str(p, "state", "");
         person_t *d = NULL;
+        if (friends_blocked(s, json_str(p, "user_id", ""))) continue;   /* bloqueados saem de todas as listas (ficam só na aba Bloqueados) */
         if (!strcmp(state, "friend") && s->friend_count < MAX_FRIENDS) d = &s->friends[s->friend_count++];
         else if (!strcmp(state, "incoming") && s->pending_count < MAX_FRIENDS) d = &s->pending[s->pending_count++];
-        if (!d) continue;   /* pedidos enviados ("outgoing") não entram nas listas */
+        else if (!strcmp(state, "outgoing") && s->outgoing_count < MAX_FRIENDS) d = &s->outgoing[s->outgoing_count++];
+        if (!d) continue;
         memset(d, 0, sizeof *d);
         copy(d->id, sizeof d->id, json_str(p, "user_id", ""));
         copy(d->name, sizeof d->name, json_str(p, "display_name", "?"));
         copy(d->request_id, sizeof d->request_id, json_str(p, "request_id", ""));
+        copy(d->nick, sizeof d->nick, json_str(p, "nick", ""));
         copy(d->status, sizeof d->status, json_str(p, "status", ""));
     }
     int idx = -1;
@@ -350,6 +410,8 @@ bool account_handle_event(app_state_t *s, const char *line) {
         s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
         copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
+    else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
+    else if (!strcmp(ev, "presence.list")) on_presence(s, j);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;
@@ -399,6 +461,7 @@ void account_tick(app_state_t *s) {
     }
     if (cs != CORE_READY) { cui_request_redraw(cui_app_ui(s->app)); return; }
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
+    account_presence_tick(s);
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */

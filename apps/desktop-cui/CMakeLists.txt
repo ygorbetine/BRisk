@@ -12,7 +12,7 @@ FetchContent_Declare(cui
   PATCH_COMMAND  ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply.cmake")
 FetchContent_MakeAvailable(cui)
 
-add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c)
+add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c src/ui_friends.c src/ui_groups.c)
 if(WIN32)
   target_sources(briks_cui PRIVATE src/briks.rc)
 endif()
@@ -51,6 +51,11 @@ if(BRIKS_UPDATE_DEFAULT_ON)
 endif()
 add_executable(briks_smoke tests/smoke.c src/hotkeys.c src/netdiag.c src/update.c src/backend.c src/json.c src/layout.c src/drag_stack.c src/core.c)
 target_link_libraries(briks_smoke PRIVATE winhttp bcrypt crypt32 shell32 ws2_32 iphlpapi)
+add_executable(briks_groups_test tests/groups_test.c src/json.c)
+target_link_libraries(briks_groups_test PRIVATE cui bcrypt shell32 user32 gdi32 opengl32)
+add_executable(briks_profile_test tests/profile_test.c src/json.c)
+target_compile_options(briks_profile_test PRIVATE /utf-8)
+target_link_libraries(briks_profile_test PRIVATE cui bcrypt shell32 user32 gdi32 opengl32)
 # briks_smoke fica na mesma pasta do briks_cui e ja enxerga backend/ ao lado (sem copia)
 
 add_executable(briks_richtext_test tests/richtext_test.c src/richtext.c)   # texto das mensagens: sem janela

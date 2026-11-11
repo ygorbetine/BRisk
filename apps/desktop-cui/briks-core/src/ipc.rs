@@ -270,6 +270,36 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             let _ = c.send(MeshCmd::Event { channel: ch.into(), target: target.into(), action: action.into(), content: opt("content"), reference: opt("reference"), emoji: opt("emoji") }).await;
                         }
                     }
+                    "group.sign" | "group.verify" => {
+                        // grupo P2P (group_sync.rs): o core só assina e confere; quem guarda o grupo (e o estado já confiado) é a UI
+                        let sign = v["cmd"] == "group.sign";
+                        let me = match &identity { Some(i) => Some(i.clone()), None => load_or_create_identity(&cfg.data_dir).ok().map(Arc::new) };
+                        let Some(me) = me else { out(&mut wr, json!({ "ev": "group.result", "op": if sign { "sign" } else { "verify" }, "ok": false, "message": "identidade indisponível" })).await?; continue };
+                        identity = Some(me.clone());
+                        let ev = if sign {
+                            match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
+                                Ok(mut s) => {
+                                    s.ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                                    match crate::group_sync::sign(&me, &mut s) {
+                                        Ok(_) => json!({ "ev": "group.result", "op": "sign", "ok": true, "group_id": s.group_id, "snapshot": s, "code": crate::group_sync::to_code(&s) }),
+                                        Err(e) => json!({ "ev": "group.result", "op": "sign", "ok": false, "group_id": s.group_id, "message": e.to_string() }),
+                                    }
+                                }
+                                Err(_) => json!({ "ev": "group.result", "op": "sign", "ok": false, "message": "grupo inválido" }),
+                            }
+                        } else {
+                            let parsed = match v["code"].as_str() { Some(c) => crate::group_sync::from_code(c), None => serde_json::from_value(v["snapshot"].clone()).map_err(|_| anyhow::anyhow!("grupo inválido")) };
+                            let trusted = serde_json::from_value::<crate::group_sync::Snapshot>(v["trusted"].clone()).ok();
+                            match parsed.and_then(|s| crate::group_sync::accept(trusted.as_ref(), &s, &me.fingerprint()).map(|d| (s, d))) {
+                                Ok((s, d)) => json!({ "ev": "group.result", "op": "verify", "ok": true, "group_id": s.group_id, "decision": format!("{d:?}").to_lowercase(), "snapshot": s, "tag": v["tag"] }),
+                                Err(e) => json!({ "ev": "group.result", "op": "verify", "ok": false, "message": e.to_string(), "tag": v["tag"] }),
+                            }
+                        };
+                        out(&mut wr, ev).await?;
+                    }
+                    "group.send" => {
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::GroupSend { snapshot: v["snapshot"].clone() }).await; }
+                    }
                     "mic.set" | "deafen.set" => {
                         // a UI manda {"on":bool}: mic.set on=microfone ligado; deafen.set on=ensurdecido
                         if v["cmd"] == "mic.set" { mic_muted = v["on"].as_bool().map(|o| !o).or(v["muted"].as_bool()).unwrap_or(false); }
@@ -369,6 +399,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     Some(MeshEvent::Ack { id, from_fp }) => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
                     Some(MeshEvent::Typing { from_fp }) => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
                     Some(MeshEvent::ChatEvent { from_fp, wire, local }) => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
+                    Some(MeshEvent::GroupSnapshot { from_fp, snapshot }) => out(&mut wr, json!({ "ev": "group.snapshot", "from_fp": from_fp, "snapshot": snapshot })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
                     Some(MeshEvent::PeerInfo { peer_id, fp, name }) => out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await?,
                     Some(MeshEvent::Owner { fp, me }) => out(&mut wr, json!({ "ev": "room.owner", "fp": fp, "me": me })).await?,

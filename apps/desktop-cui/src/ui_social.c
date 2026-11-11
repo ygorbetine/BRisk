@@ -170,8 +170,8 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
         cui_separator(ui);
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "nav-scroll"));
         cui_scroll(ui, .id = "nav-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            if (nav_item(ui, CUI_ICON_USERS, "Amigos", s->active_friend < 0)) s->active_friend = -1;
-            if (nav_item(ui, CUI_ICON_USER_PLUS, "Adicionar amigo", false)) { s->add_friend_open = true; s->notice[0] = 0; }
+            if (nav_item(ui, CUI_ICON_USERS, "Amigos", s->active_friend < 0 && s->active_group < 0)) app_open_friend(s, -1);
+            if (nav_item(ui, CUI_ICON_USER_PLUS, "Adicionar amigo", false)) { app_open_friend(s, -1); s->friends_tab = 4; s->notice[0] = 0; }
             if (nav_item(ui, CUI_ICON_HISTORY, "Histórico de chamadas", false)) s->screen = SCREEN_HISTORY;
             section_title(ui, "SALAS DE VOZ");
             /* Sala de teste: a chamada real chega com o briks-core (marco 3). */
@@ -209,6 +209,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
                 if (person_row(ui, &g, s->active_group == i)) app_open_group(s, i);
+                if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);
             }
             char t[48]; snprintf(t, sizeof t, "AMIGOS — %d", s->friend_count);
@@ -307,22 +308,16 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
 static void content(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
             .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
-        if (s->active_friend < 0 && s->active_group < 0) {
-            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER,
-                    .justify = CUI_JUSTIFY_CENTER, .gap = 8) {
-                cui_icon(ui, CUI_ICON_PHONE, 40, B_C3);
-                cui_text(ui, "Escolha uma conversa", .font = CUI_FONT_DISPLAY, .size = 28);
-                cui_text(ui, "Selecione um amigo ou grupo na barra lateral.", .color = B_MUTED);
-            }
-            return;
-        }
+        if (s->active_friend < 0 && s->active_group < 0) { friends_hub(ui, s); return; }   /* tela Amigos: abas, busca, pedidos, bloqueados */
         const bool group = s->active_group >= 0;
         const char *title = group ? s->groups[s->active_group].name : s->friends[s->active_friend].name;
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 10,
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
-            cui_text(ui, group ? "Grupo P2P · canal geral" : "Mensagem direta P2P", .size = 12, .color = B_MUTED);
+            { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
+              cui_text(ui, sub, .size = 12, .color = B_MUTED); }
+            if (group) groups_header(ui, s);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
             { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3); }
             msgui_pinned_button(ui, s);
@@ -580,6 +575,10 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break;
                 case 2:
+                    PCARD(ui, "PRESENÇA") {
+                        cui_switch(ui, "Aparecer offline para os amigos", &s->invisible);
+                        cui_text(ui, s->invisible ? "Seus amigos não veem que você está online. Você continua usando tudo normalmente." : "Seus amigos veem um ponto verde quando você está com o Briks aberto.", .size = 12, .color = B_MUTED);
+                    }
                     PCARD(ui, "PROGRAMA EM USO") {
                         cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
                         if (s->rp_enabled) {
@@ -668,6 +667,8 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     profile_dialog(ui, s);
+    friends_dialogs(ui, s);
+    groups_dialogs(ui, s);
     cui_dialog(ui, "Trocar @nick", &s->nick_open) {
         cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
         int nr = cui_input(ui, "nick-edit", s->nick_edit, sizeof s->nick_edit, .placeholder = "seu_nick", .autofocus = true);

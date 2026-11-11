@@ -1,0 +1,9 @@
+# Janela: mexer no tamanho e fechar grava o estado
+waitms 600
+resize 900 620
+waitms 600
+sys save
+expect saved 1
+sys close
+wait 40
+signal fim

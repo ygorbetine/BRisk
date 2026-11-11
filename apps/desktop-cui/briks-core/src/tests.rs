@@ -160,6 +160,18 @@ async fn audio_tone_travels_between_two_cores_and_mute_deafen_work() {
     let _ = tone_in(&au_b);
     assert!(until(5, || tone_in(&au_b).0 > 0.05).await, "peer não voltou ao desmutar");
 
+    // volume por pessoa: 0,25 baixa o nível proporcionalmente; 1,0 volta ao normal
+    let mut base = 0.0f32;
+    for _ in 0..30 { base = base.max(tone_in(&au_b).0); tokio::time::sleep(Duration::from_millis(50)).await; }
+    assert!(base > 0.05, "sem tom base: {base}");
+    b.cmd.send(MeshCmd::PeerVolume { key: PA.into(), gain: 0.25 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut low = 0.0f32;
+    for _ in 0..30 { low = low.max(tone_in(&au_b).0); tokio::time::sleep(Duration::from_millis(50)).await; }
+    assert!(low > 0.005 && low < base * 0.6, "volume por pessoa não baixou: base {base} baixo {low}");
+    b.cmd.send(MeshCmd::PeerVolume { key: PA.into(), gain: 1.0 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
     // microfone mudo de A: B deixa de receber frames novos e é avisado (peer.state)
     au_a.set_mic_muted(true);
     a.cmd.send(MeshCmd::BroadcastState).await.unwrap();
@@ -365,6 +377,87 @@ async fn signed_chat_events_travel_between_peers_and_bad_ones_are_dropped() {
     let ok = wait_for(&mut a, 15, |e| matches!(e, MeshEvent::ChatEvent { local: false, .. })).await.expect("A não recebeu o evento válido");
     let MeshEvent::ChatEvent { wire, .. } = ok else { unreachable!() };
     assert_eq!(wire["emoji"], "❤️");
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn group_snapshots_travel_between_authenticated_peers_and_forgeries_are_dropped() {
+    use crate::group_sync::{Channel, Member, Snapshot};
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-grupo", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-grupo", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+    let mem = |i: &Identity, n: &str, admin: bool| Member { fp: i.fingerprint(), name: n.into(), admin, jwk: if admin { Some(i.public_jwk()) } else { None } };
+    let mk = |by: &Identity, name: &str| {
+        let mut s = Snapshot { v: 1, group_id: "g1".into(), name: name.into(), owner_fp: ia.fingerprint(), version: 1, ts: 1,
+            members: vec![mem(&ia, "Ana", true), mem(&ib, "Beto", true)],
+            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], signer_fp: String::new(), signature: String::new() };
+        crate::group_sync::sign(by, &mut s).unwrap();
+        s
+    };
+    // snapshot válido de A chega em B
+    let good = mk(&ia, "Amigos");
+    a.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&good).unwrap() }).await.unwrap();
+    let got = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::GroupSnapshot { .. })).await.expect("B não recebeu o grupo");
+    let MeshEvent::GroupSnapshot { from_fp, snapshot } = got else { unreachable!() };
+    assert_eq!(from_fp, ia.fingerprint());
+    assert_eq!(snapshot["name"], "Amigos");
+    // tipo desconhecido e formato quebrado: ignorados em silêncio
+    b.cmd.send(MeshCmd::RawDc { text: json!({ "version": 9, "type": "group.novidade" }).to_string() }).await.unwrap();
+    b.cmd.send(MeshCmd::RawDc { text: json!({ "type": "group.snapshot", "snapshot": { "v": 7 } }).to_string() }).await.unwrap();
+    // B repassa um snapshot assinado por A (não por B): o signatário não é quem enviou -> rejeitado
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&good).unwrap() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("grupo rejeitado"))).await.is_some(), "repasse forjado não foi rejeitado");
+    // adulterado em trânsito: assinatura inválida
+    let mut bad = mk(&ib, "Do Beto");
+    bad.name = "Adulterado".into();
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(&bad).unwrap() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("assinatura"))).await.is_some(), "adulteração não foi rejeitada");
+    // e depois disso um snapshot legítimo de B (administrador) passa
+    b.cmd.send(MeshCmd::GroupSend { snapshot: serde_json::to_value(mk(&ib, "Do Beto")).unwrap() }).await.unwrap();
+    let ok = wait_for(&mut a, 15, |e| matches!(e, MeshEvent::GroupSnapshot { .. })).await.expect("A não recebeu o snapshot do administrador");
+    let MeshEvent::GroupSnapshot { from_fp, .. } = ok else { unreachable!() };
+    assert_eq!(from_fp, ib.fingerprint());
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn history_syncs_missing_messages_verified_and_only_for_the_shared_dm() {
+    use crate::identity::{self, ChatWire};
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-historico", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-historico", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+
+    let ch = identity::dm_channel(&ia.fingerprint(), &ib.fingerprint());
+    let mk = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new() });
+    let m1 = mk(&ia, &ch, 1, "oi, sou a Ana");
+    let m2 = mk(&ia, &ch, 2, "segunda da Ana");
+    let m3 = mk(&ib, &ch, 3, "resposta do Beto, escrita antes");
+    // forjada: assinada pela Ana, mas dizendo que o autor é o Beto -> o Beto tem que descartar
+    let mut forged = mk(&ia, &ch, 4, "o Beto nunca disse isto"); forged.author_peer_id = ib.fingerprint();
+    // de outra DM: a Ana tem, mas não é do canal que os dois compartilham -> nunca deve chegar
+    let other = mk(&ia, &identity::dm_channel(&ia.fingerprint(), "outra-pessoa-fp"), 5, "conversa com outra pessoa");
+    a.cmd.send(MeshCmd::HistSeed { msgs: vec![m1.clone(), m2.clone(), m3.clone(), forged, other] }).await.unwrap();
+    // o Beto já tem a m2: não deve voltar
+    b.cmd.send(MeshCmd::HistSeed { msgs: vec![m2.clone()] }).await.unwrap();
+    b.cmd.send(MeshCmd::HistAsk).await.unwrap();
+
+    let mut got: Vec<(String, bool)> = Vec::new();
+    while let Some(MeshEvent::History { id, mine, content, .. }) = wait_for(&mut b, 8, |e| matches!(e, MeshEvent::History { .. })).await {
+        assert!(!content.contains("nunca disse") && !content.contains("outra pessoa"), "chegou mensagem que não devia: {content}");
+        got.push((id, mine));
+        if got.len() >= 2 { break; }
+    }
+    got.sort();
+    assert_eq!(got, vec![("hist-00000001".to_string(), false), ("hist-00000003".to_string(), true)], "faltaram/sobraram mensagens: {got:?}");
+    // pedir de novo: já tem tudo -> nada novo
+    b.cmd.send(MeshCmd::HistAsk).await.unwrap();
+    assert!(wait_for(&mut b, 4, |e| matches!(e, MeshEvent::History { .. })).await.is_none(), "reenviou o que já tinha");
     let _ = a.cmd.send(MeshCmd::Close).await;
     let _ = b.cmd.send(MeshCmd::Close).await;
 }
@@ -1154,3 +1247,98 @@ async fn many_viewers_all_receive_full_frame_rate() {
 
     for (i, p) in per.iter().enumerate() { assert!(*p > emitted * 0.85, "V{i} recebeu só {p:.1} qps de {emitted:.1}"); }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
+    let recv = std::env::temp_dir().join(format!("briks-recv-{}", uuid::Uuid::new_v4()));
+    std::env::set_var("BRIKS_RECV_DIR", &recv);
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "sala-anexos", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-anexos", ib.clone());
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
+
+    // arquivo de ~600 KB (vários pedaços e eventos de progresso) e uma imagem PNG pequena
+    let src = std::env::temp_dir().join(format!("briks-src-{}", uuid::Uuid::new_v4())); std::fs::create_dir_all(&src).unwrap();
+    let data: Vec<u8> = (0..600_000u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(src.join("dados.bin"), &data).unwrap();
+    let mut png = Vec::new();
+    image::DynamicImage::new_rgba8(300, 150).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    std::fs::write(src.join("foto.png"), &png).unwrap();
+
+    a.cmd.send(MeshCmd::SendFile { path: src.join("dados.bin").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer")).await.expect("B não viu a oferta");
+    let MeshEvent::File(o) = off else { unreachable!() };
+    assert_eq!(o["name"], "dados.bin"); assert_eq!(o["size"], 600_000); assert_eq!(o["mine"], false);
+    // nada é gravado antes do "Baixar"
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!recv.exists() || std::fs::read_dir(&recv).unwrap().next().is_none(), "gravou antes de aceitar");
+    b.cmd.send(MeshCmd::AcceptFile { id: o["id"].as_str().unwrap().into() }).await.unwrap();
+    assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some());
+    let done = wait_for(&mut b, 30, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done")).await.expect("B não concluiu");
+    let MeshEvent::File(d) = done else { unreachable!() };
+    let got = std::fs::read(d["path"].as_str().unwrap()).unwrap();
+    assert_eq!(got, data, "conteúdo recebido difere");
+    assert!(std::path::Path::new(d["path"].as_str().unwrap()).starts_with(&recv), "fora da quarentena");
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done" && j["mine"] == true)).await.is_some(), "o remetente não concluiu");
+
+    // imagem: miniatura chega junto
+    a.cmd.send(MeshCmd::SendFile { path: src.join("foto.png").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off2 = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "foto.png")).await.expect("sem oferta da imagem");
+    let MeshEvent::File(o2) = off2 else { unreachable!() };
+    b.cmd.send(MeshCmd::AcceptFile { id: o2["id"].as_str().unwrap().into() }).await.unwrap();
+    let d2 = wait_for(&mut b, 30, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done" && j["name"] == "foto.png")).await.expect("B não recebeu a imagem");
+    let MeshEvent::File(d2) = d2 else { unreachable!() };
+    assert_eq!(d2["thumb"]["w"], 96); assert_eq!(d2["thumb"]["h"], 48);
+
+    // oferta forjada (assinada por B dizendo ser A) é rejeitada; arquivo inexistente e vazio falham sem travar
+    let idn_b = ib.clone();
+    let forged = crate::filetransfer::Offer::sign(&idn_b, crate::filetransfer::Offer { id: "ft-forjada-01".into(), name: "x.exe".into(), size: 10, mime: "application/octet-stream".into(), sha256: "0".repeat(64),
+        from_peer: ia.fingerprint(), timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64, signature: String::new() });
+    b.cmd.send(MeshCmd::RawDc { text: forged.to_wire().to_string() }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("anexo rejeitado"))).await.is_some(), "oferta forjada aceita");
+    // recusar uma oferta: o remetente recebe o cancelamento
+    std::fs::write(src.join("recusar.bin"), vec![3u8; 1000]).unwrap();
+    a.cmd.send(MeshCmd::SendFile { path: src.join("recusar.bin").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off3 = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "recusar.bin")).await.expect("sem oferta recusar");
+    let MeshEvent::File(o3) = off3 else { unreachable!() };
+    b.cmd.send(MeshCmd::CancelFile { id: o3["id"].as_str().unwrap().into() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "cancelled")).await.is_some(), "recusa não chegou ao remetente");
+    a.cmd.send(MeshCmd::SendFile { path: src.join("nao-existe.bin").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "failed")).await.is_some());
+
+    // cancelar no meio: arquivo grande, B cancela ao ver o progresso
+    let big = src.join("grande.bin"); std::fs::write(&big, vec![7u8; 20 * 1024 * 1024]).unwrap();
+    a.cmd.send(MeshCmd::SendFile { path: big.to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "grande.bin")).await.expect("sem oferta grande");
+    let MeshEvent::File(o) = off else { unreachable!() };
+    let id = o["id"].as_str().unwrap().to_string();
+    b.cmd.send(MeshCmd::AcceptFile { id: id.clone() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "accepted")).await.is_some(), "o remetente não soube do aceite");
+    // pausar: o progresso para; retomar: volta
+    assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some());
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: true }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    while let Ok(Some(_)) = timeout(Duration::from_millis(50), b.events.recv()).await {}   // descarrega o que já estava a caminho
+    let stalled = wait_for(&mut b, 2, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await;
+    assert!(stalled.is_none(), "continuou recebendo pausado");
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: false }).await.unwrap();
+    assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some(), "não retomou");
+    b.cmd.send(MeshCmd::CancelFile { id: id.clone() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "cancelled")).await.is_some(), "o remetente não soube do cancelamento");
+
+    // entrega e digitando
+    a.cmd.send(MeshCmd::Chat { to_fp: ib.fingerprint(), text: "oi".into() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::Ack { .. })).await.is_some(), "sem confirmação de entrega");
+    // id escolhido pela UI: a confirmação de entrega volta com o mesmo id (estado "entregue" da mensagem)
+    a.cmd.send(MeshCmd::ChatWithId { to_fp: ib.fingerprint(), text: "oi com id".into(), id: "msg-ui-123".into() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::Ack { id, .. } if id == "msg-ui-123")).await.is_some(), "o ack não voltou com o id da UI");
+    b.cmd.send(MeshCmd::Typing).await.unwrap();
+    assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Typing { from_fp } if *from_fp == ib.fingerprint())).await.is_some(), "sem digitando");
+    let _ = a.cmd.send(MeshCmd::Close).await;
+    let _ = b.cmd.send(MeshCmd::Close).await;
+    let _ = std::fs::remove_dir_all(&recv); let _ = std::fs::remove_dir_all(&src);
+}
+
+#[path = "tests_sala.rs"]
+mod sala;   // chat da sala e pedido de transmissao

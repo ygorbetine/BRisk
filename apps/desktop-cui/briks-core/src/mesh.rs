@@ -44,8 +44,24 @@ pub enum MeshEvent {
     /// Estado de um peer: "negociando" | "conectado" | "autenticado" | "falhou" | "fechado".
     Peer { peer_id: String, state: String },
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// Mensagem antiga recebida na sincronização de histórico (assinatura do autor já verificada); `mine` = eu escrevi (em outro aparelho/sessão).
+    History { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64, mine: bool },
     /// Evento de chat assinado (reação, edição, exclusão, resposta, fixação) já verificado; `local` = criado por mim.
     ChatEvent { from_fp: String, wire: Value, local: bool },
+    /// Anexo: `kind` = offer | progress | done | cancelled | failed (campos no JSON). Nada é aberto; o arquivo recebido fica em quarentena.
+    File(Value),
+    /// Confirmação de entrega de uma mensagem de DM que enviei.
+    Ack { id: String, from_fp: String },
+    /// O peer está digitando.
+    Typing { from_fp: String },
+    /// Mensagem do chat da sala (aba Chat da chamada): vale só durante a chamada, de um peer autenticado.
+    RoomChat { peer_id: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// Um peer autenticado pediu para eu transmitir a tela.
+    StreamRequest { peer_id: String, name: String },
+    /// Resposta ao meu pedido de transmissão (só chega se eu pedi há pouco).
+    StreamReply { peer_id: String, name: String, accepted: bool },
+    /// Snapshot de grupo assinado recebido de um peer autenticado (estrutura e assinatura conferidas; a autorização é de `group.verify`).
+    GroupSnapshot { from_fp: String, snapshot: Value },
     /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
     Speaking { peer_id: String, level: f32 },
     /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
@@ -81,13 +97,40 @@ pub enum MeshCmd {
     SetProfile { status: String, presence: String },
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
     MutePeer { key: String, muted: bool },
+    PeerVolume { key: String, gain: f32 },
+    AudioCfg(crate::audio::AudioCfg),
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
     Chat { to_fp: String, text: String },
+    /// como `Chat`, mas com o id da mensagem escolhido pela UI (o `chat.ack` volta com o mesmo id: estado "entregue")
+    ChatWithId { to_fp: String, text: String, id: String },
     /// Assina e envia um evento de chat (`chat.event` v3) a todos os peers autenticados da sala.
+    /// Envia um arquivo (caminho local) a todos os peers autenticados, ou só a `to_fp`.
+    SendFile { path: String, to_fp: Option<String> },
+    /// Cancela uma transferência (minha ou recebida) pelo id.
+    CancelFile { id: String },
+    /// Aceita uma oferta recebida (começa o download).
+    AcceptFile { id: String },
+    /// Pausa ou retoma uma transferência (minha ou recebida).
+    PauseFile { id: String, paused: bool },
+    /// Avisa os peers autenticados que estou digitando.
+    Typing,
+    /// Chat da sala: texto para todos os peers autenticados (não fica gravado).
+    RoomChat { id: String, text: String },
+    /// Pede a um peer (peer_id ou impressão digital) que transmita a tela.
+    StreamRequest { key: String },
+    /// Responde a quem pediu a minha transmissão.
+    StreamReply { key: String, accepted: bool },
     Event { channel: String, target: String, action: String, content: Option<String>, reference: Option<String>, emoji: Option<String> },
+    /// Envia um snapshot de grupo (já assinado) a todos os peers autenticados da sala.
+    GroupSend { snapshot: Value },
     /// Só para testes: envia JSON cru a todos os peers autenticados (para provar rejeições).
     #[cfg(test)]
     RawDc { text: String },
+    /// Só para testes: põe uma mensagem (já assinada) no histórico daqui, sem enviá-la, e pede o histórico a todos os peers autenticados.
+    #[cfg(test)]
+    HistSeed { msgs: Vec<ChatWire> },
+    #[cfg(test)]
+    HistAsk,
     /// Só para testes: força um offer agora (colisão).
     ForceOffer { peer_id: String },
     /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
@@ -183,9 +226,16 @@ struct Actor {
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
     /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
     watch_intent: HashMap<String, std::path::PathBuf>,
+    hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
+    hist_reqs: HashMap<String, String>,        // peer -> requestId do pedido de histórico em andamento
     seen_msgs: HashSet<String>,
+    incoming: HashMap<String, (String, crate::filetransfer::Incoming, u64)>,   // id -> (peer, estado, último progresso emitido)
+    outgoing: HashMap<String, Arc<Ctl>>,                                   // id -> controle (aceitar, pausar, cancelar)
+    pending: HashMap<String, (String, crate::filetransfer::Offer)>,       // ofertas recebidas aguardando "Baixar": id -> (peer, oferta)
+    recv_dir: std::path::PathBuf,
     ev_last_ts: u64,                // relógio monotônico dos meus eventos de chat
     seen_events: HashSet<String>,
+    seen_groups: HashSet<String>,
     audio: Option<Arc<Audio>>,
     audio_rx: Option<mpsc::Receiver<AudioEvent>>,
     joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
@@ -213,7 +263,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -448,17 +498,21 @@ impl Actor {
         for c in q { let _ = p.pc.add_ice_candidate(c).await; }
     }
 
+    async fn chat_send(&mut self, to_fp: String, text: String, id: String) {
+        let my_fp = self.identity.fingerprint();
+        let m = identity::sign_message(&self.identity, ChatWire {
+            version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id,
+            author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
+        self.hist.add(&m);
+        self.outbox.entry(to_fp.clone()).or_default().push(m);
+        self.flush_outbox(&to_fp).await;
+    }
+
     async fn on_cmd(&mut self, c: MeshCmd) {
         match c {
             MeshCmd::ForceOffer { peer_id } => self.start_offer(&peer_id, false).await,
-            MeshCmd::Chat { to_fp, text } => {
-                let my_fp = self.identity.fingerprint();
-                let m = identity::sign_message(&self.identity, ChatWire {
-                    version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id: uuid::Uuid::new_v4().to_string(),
-                    author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
-                self.outbox.entry(to_fp.clone()).or_default().push(m);
-                self.flush_outbox(&to_fp).await;
-            }
+            MeshCmd::Chat { to_fp, text } => self.chat_send(to_fp, text, uuid::Uuid::new_v4().to_string()).await,
+            MeshCmd::ChatWithId { to_fp, text, id } => self.chat_send(to_fp, text, id).await,
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {
                 let my_fp = self.identity.fingerprint();
                 match crate::chat_events::create(&self.identity, &channel, &target, &my_fp, &action, content.as_deref(), reference.as_deref(), emoji.as_deref(), now_ms() as u64, &mut self.ev_last_ts) {
@@ -472,10 +526,83 @@ impl Actor {
                     Err(er) => self.emit(MeshEvent::Error(format!("evento inválido: {er}"))).await,
                 }
             }
+            MeshCmd::GroupSend { snapshot } => {
+                let wire = json!({ "version": 1, "type": "group.snapshot", "snapshot": snapshot });
+                // só quem é membro do grupo recebe (a sala de voz pode ter gente de fora): nome, membros e chaves não vazam
+                let members: HashSet<String> = snapshot["members"].as_array().map(|a| a.iter().filter_map(|m| m["fp"].as_str().map(String::from)).collect()).unwrap_or_default();
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven && p.fp.as_ref().map_or(false, |f| members.contains(f))).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.dc_send(&id, wire.clone()).await; }
+            }
+            #[cfg(test)]
+            MeshCmd::HistSeed { msgs } => { for m in msgs { self.hist.add(&m); } }
+            #[cfg(test)]
+            MeshCmd::HistAsk => {
+                let ps: Vec<(String, String)> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).filter_map(|(k, p)| p.fp.clone().map(|f| (k.clone(), f))).collect();
+                for (id, fp) in ps { self.request_history(&id, &fp).await; }
+            }
             #[cfg(test)]
             MeshCmd::RawDc { text } => {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { if let Some(dc) = self.peers.get(&id).and_then(|p| p.dc.clone()) { let _ = dc.send_text(text.clone()).await; } }
+            }
+            MeshCmd::Typing => {
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "chat.typing", "fromPeerId": self.cfg.local_peer })).await; }
+            }
+            MeshCmd::RoomChat { id, text } => {
+                let (Some(id), Some(text)) = (crate::roomchat::clean_id(&id), crate::roomchat::clean(&text)) else { return };
+                let wire = json!({ "version": 1, "type": "room.chat", "id": id, "content": text, "timestamp": now_ms() });
+                for pid in self.authed_ids() { self.dc_send(&pid, wire.clone()).await; }
+            }
+            MeshCmd::StreamRequest { key } | MeshCmd::StreamReply { key, .. } if !self.peers.iter().any(|(k, p)| (k == &key || p.fp.as_deref() == Some(key.as_str())) && p.sent_proof && p.proven) => {
+                self.emit(MeshEvent::Error("pedido de transmissão: essa pessoa não está na sala".into())).await;
+            }
+            MeshCmd::StreamRequest { key } => {
+                let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                crate::roomchat::mark_asked(&self.cfg.local_peer, &id, now_ms() as u64);
+                self.dc_send(&id, json!({ "version": 1, "type": "stream.request" })).await;
+            }
+            MeshCmd::StreamReply { key, accepted } => {
+                let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                self.dc_send(&id, json!({ "version": 1, "type": "stream.reply", "accepted": accepted })).await;
+            }
+            MeshCmd::SendFile { path, to_fp } => self.send_file(path, to_fp).await,
+            MeshCmd::AcceptFile { id } => {
+                let Some((peer, off)) = self.pending.remove(&id) else { return };
+                let fp = self.peers.get(&peer).and_then(|p| p.fp.clone()).unwrap_or_default();
+                match crate::filetransfer::Incoming::start(&self.recv_dir, off.clone()) {
+                    Ok(inc) => {
+                        self.incoming.insert(id.clone(), (peer.clone(), inc, 0));
+                        self.dc_send(&peer, json!({ "version": 1, "type": "file.accept", "id": id })).await;
+                        self.emit(MeshEvent::File(json!({ "kind": "accepted", "id": id, "peer_fp": fp, "name": off.name, "size": off.size, "mine": false }))).await;
+                    }
+                    Err(e) => {
+                        self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                        self.emit(MeshEvent::File(json!({ "kind": "failed", "id": id, "peer_fp": fp, "error": e.to_string() }))).await;
+                    }
+                }
+            }
+            MeshCmd::PauseFile { id, paused } => {
+                if let Some(ctl) = self.outgoing.get(&id) { ctl.paused_all.store(paused, std::sync::atomic::Ordering::SeqCst); self.emit(MeshEvent::File(json!({ "kind": if paused { "paused" } else { "resumed" }, "id": id, "mine": true }))).await; }
+                if let Some((peer, _, _)) = self.incoming.get(&id) {
+                    let peer = peer.clone();
+                    self.dc_send(&peer, json!({ "version": 1, "type": if paused { "file.pause" } else { "file.resume" }, "id": id })).await;
+                    self.emit(MeshEvent::File(json!({ "kind": if paused { "paused" } else { "resumed" }, "id": id, "mine": false }))).await;
+                }
+            }
+            MeshCmd::CancelFile { id } => {
+                if let Some(f) = self.outgoing.get(&id) { f.cancel.store(true, std::sync::atomic::Ordering::SeqCst); }
+                if let Some((peer, off)) = self.pending.remove(&id) {   // recusar uma oferta ainda não aceita
+                    self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                    let fp = self.peers.get(&peer).and_then(|p| p.fp.clone()).unwrap_or_default();
+                    self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "name": off.name, "peer_fp": fp }))).await;
+                }
+                if let Some((peer, inc, _)) = self.incoming.remove(&id) {
+                    let name = inc.offer.name.clone(); inc.abort();
+                    self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                    let fp = self.peers.get(&peer).and_then(|p| p.fp.clone()).unwrap_or_default();
+                    self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "name": name, "peer_fp": fp }))).await;
+                }
             }
             MeshCmd::Kick { fp, reason } => {
                 if self.owner().as_deref() != Some(self.identity.fingerprint().as_str()) { self.emit(MeshEvent::Error("só o dono da sala pode expulsar".into())).await; return; }
@@ -511,6 +638,13 @@ impl Actor {
                 if let Some(a) = &self.audio {
                     let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
                     a.mute_peer(&id, muted);
+                }
+            }
+            MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
+            MeshCmd::PeerVolume { key, gain } => {
+                if let Some(a) = &self.audio {
+                    let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
+                    a.set_peer_gain(&id, gain);
                 }
             }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
@@ -709,12 +843,197 @@ impl Actor {
     async fn drop_peer(&mut self, id: &str) {
         self.net.lock().unwrap().peers.remove(id);
         if let Some(a) = &self.audio { a.remove_peer(id); }
+        self.pending.retain(|_, (pe, _)| pe != id);
+        let gone: Vec<String> = self.incoming.iter().filter(|(_, (pe, _, _))| pe == id).map(|(k, _)| k.clone()).collect();
+        for k in gone { if let Some((_, inc, _)) = self.incoming.remove(&k) { inc.abort(); self.emit(MeshEvent::File(json!({ "kind": "failed", "id": k, "error": "conexão encerrada" }))).await; } }
         if let Some(p) = self.peers.remove(id) { let _ = p.pc.close().await; self.emit(MeshEvent::Peer { peer_id: id.into(), state: "fechado".into() }).await; }
+    }
+
+    async fn send_file(&mut self, path: String, to_fp: Option<String>) {
+        use crate::filetransfer as ft;
+        let p2 = std::path::PathBuf::from(&path);
+        let desc = tokio::task::spawn_blocking(move || ft::describe(&p2)).await;
+        let (name, size, sha, mime) = match desc {
+            Ok(Ok(d)) => d,
+            Ok(Err(e)) => { self.emit(MeshEvent::File(json!({ "kind": "failed", "id": "", "name": path, "error": e.to_string() }))).await; return; }
+            Err(_) => return,
+        };
+        let targets: Vec<(Arc<RTCDataChannel>, String)> = self.peers.values()
+            .filter(|p| p.proven && p.sent_proof && p.dc.is_some() && (to_fp.is_none() || p.fp == to_fp))
+            .map(|p| (p.dc.clone().unwrap(), p.fp.clone().unwrap_or_default())).collect();
+        if targets.is_empty() { self.emit(MeshEvent::File(json!({ "kind": "failed", "id": "", "name": name, "error": "ninguém conectado para receber" }))).await; return; }
+        let id = uuid::Uuid::new_v4().to_string();
+        let offer = ft::Offer::sign(&self.identity, ft::Offer { id: id.clone(), name: name.clone(), size, mime: mime.clone(), sha256: sha, from_peer: self.identity.fingerprint(), timestamp: now_ms(), signature: String::new() });
+        let ctl = Arc::new(Ctl::default());
+        self.outgoing.insert(id.clone(), ctl.clone());
+        self.emit(MeshEvent::File(json!({ "kind": "offer", "id": id, "name": name, "size": size, "mime": mime, "mine": true, "path": path }))).await;
+        let wire = offer.to_wire();
+        for (dc, fp) in targets {
+            let (wire, ctl, ev, path, id) = (wire.clone(), ctl.clone(), self.ev.clone(), path.clone(), id.clone());
+            tokio::spawn(async move {
+                use base64::Engine;
+                use std::sync::atomic::Ordering::SeqCst;
+                let fail = |why: &str| MeshEvent::File(json!({ "kind": "failed", "id": id, "peer_fp": fp, "error": why }));
+                if dc.send_text(wire.to_string()).await.is_err() { let _ = ev.send(fail("falha ao enviar a oferta")).await; return; }
+                // espera o "Baixar" do outro lado (até 15 min); cancelar antes disso encerra
+                let waited = std::time::Instant::now();
+                loop {
+                    if ctl.cancel.load(SeqCst) { let _ = dc.send_text(json!({ "version": 1, "type": "file.cancel", "id": id }).to_string()).await; let _ = ev.send(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; return; }
+                    if ctl.accepted.lock().unwrap().contains(&fp) { break; }
+                    if waited.elapsed() > std::time::Duration::from_secs(15 * 60) { let _ = ev.send(fail("ninguém aceitou a tempo")).await; return; }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                let Ok(mut f) = tokio::fs::File::open(&path).await else { let _ = ev.send(fail("não consegui abrir o arquivo")).await; return };
+                let mut buf = vec![0u8; ft::CHUNK_BYTES];
+                let (mut seq, mut sent, mut last) = (0u64, 0u64, 0u64);
+                loop {
+                    while (ctl.paused_all.load(SeqCst) || ctl.paused.lock().unwrap().contains(&fp)) && !ctl.cancel.load(SeqCst) { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+                    if ctl.cancel.load(SeqCst) {
+                        let _ = dc.send_text(json!({ "version": 1, "type": "file.cancel", "id": id }).to_string()).await;
+                        let _ = ev.send(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await;
+                        return;
+                    }
+                    let mut n = 0;
+                    while n < buf.len() {
+                        match tokio::io::AsyncReadExt::read(&mut f, &mut buf[n..]).await { Ok(0) => break, Ok(k) => n += k, Err(_) => { let _ = ev.send(fail("erro de leitura")).await; return; } }
+                    }
+                    if n == 0 { break; }
+                    while dc.buffered_amount().await > 1024 * 1024 { if ctl.cancel.load(SeqCst) { break; } tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
+                    let msg = json!({ "version": 1, "type": "file.chunk", "id": id, "seq": seq, "data": base64::engine::general_purpose::STANDARD.encode(&buf[..n]) });
+                    if dc.send_text(msg.to_string()).await.is_err() { let _ = ev.send(fail("conexão perdida")).await; return; }
+                    seq += 1; sent += n as u64;
+                    if sent - last >= 256 * 1024 || sent == size { last = sent; let _ = ev.send(MeshEvent::File(json!({ "kind": "progress", "id": id, "peer_fp": fp, "done": sent, "size": size, "mine": true }))).await; }
+                }
+                let _ = dc.send_text(json!({ "version": 1, "type": "file.done", "id": id }).to_string()).await;
+                let _ = ev.send(MeshEvent::File(json!({ "kind": "done", "id": id, "peer_fp": fp, "size": size, "mine": true }))).await;
+            });
+        }
+    }
+
+    async fn on_file_msg(&mut self, peer: &str, v: &Value) {
+        use crate::filetransfer as ft;
+        use base64::Engine;
+        let Some(p) = self.peers.get(peer) else { return };
+        let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };   // sem identidade provada, ignora
+        let id = v["id"].as_str().unwrap_or("").to_string();
+        let failed = |why: String| MeshEvent::File(json!({ "kind": "failed", "id": id, "peer_fp": fp, "error": why }));
+        match v["type"].as_str().unwrap_or("") {
+            "file.offer" => {
+                let offer = match ft::Offer::from_wire(v).and_then(|o| o.verify(&jwk, &fp, now_ms()).map(|_| o)) {
+                    Ok(o) => o,
+                    Err(e) => { self.emit(MeshEvent::Error(format!("anexo rejeitado: {e}"))).await; return; }
+                };
+                if self.incoming.contains_key(&offer.id) || self.incoming.values().filter(|(pe, _, _)| pe == peer).count() >= ft::MAX_INCOMING_PER_PEER {
+                    self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": offer.id })).await;
+                    return;
+                }
+                if self.pending.contains_key(&offer.id) || self.pending.values().filter(|(pe, _)| pe == peer).count() >= 8 {
+                    self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": offer.id })).await; return;
+                }
+                // nada é gravado até o usuário clicar em "Baixar" (AcceptFile)
+                let name = ft::sanitize_name(&offer.name);
+                self.emit(MeshEvent::File(json!({ "kind": "offer", "id": offer.id, "peer_fp": fp, "name": name, "size": offer.size, "mime": offer.mime, "mine": false }))).await;
+                self.pending.insert(offer.id.clone(), (peer.to_string(), offer));
+            }
+            "file.chunk" => {
+                let Some(data) = v["data"].as_str().and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok()) else { return };
+                let Some(seq) = v["seq"].as_u64() else { return };
+                let Some((pe, inc, last)) = self.incoming.get_mut(&id) else { return };
+                if pe != peer { return; }
+                match inc.chunk(seq, &data) {
+                    Ok(()) => {
+                        if inc.got - *last >= 256 * 1024 || inc.got == inc.offer.size {
+                            *last = inc.got;
+                            let (got, size) = (inc.got, inc.offer.size);
+                            self.emit(MeshEvent::File(json!({ "kind": "progress", "id": id, "peer_fp": fp, "done": got, "size": size, "mine": false }))).await;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some((_, inc, _)) = self.incoming.remove(&id) { inc.abort(); }
+                        self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                        self.emit(failed(e.to_string())).await;
+                    }
+                }
+            }
+            "file.done" => {
+                let Some((pe, inc, last)) = self.incoming.remove(&id) else { return };
+                if pe != peer { self.incoming.insert(id, (pe, inc, last)); return; }
+                let (name, mime, size) = (inc.offer.name.clone(), inc.offer.mime.clone(), inc.offer.size);
+                match inc.finish() {
+                    Ok(path) => {
+                        let thumb = if ft::is_thumbnailable(&mime) { std::fs::read(&path).ok().and_then(|b| crate::linkpreview::thumbnail(&b).ok()) } else { None };
+                        let th = thumb.map(|(w, h, b)| json!({ "w": w, "h": h, "rgba": b })).unwrap_or(Value::Null);
+                        self.emit(MeshEvent::File(json!({ "kind": "done", "id": id, "peer_fp": fp, "name": ft::sanitize_name(&name), "size": size, "mime": mime, "mine": false, "path": path.to_string_lossy(), "thumb": th }))).await;
+                    }
+                    Err(e) => self.emit(failed(e.to_string())).await,
+                }
+            }
+            "file.accept" | "file.pause" | "file.resume" => {
+                let Some(ctl) = self.outgoing.get(&id).cloned() else { return };
+                let t = v["type"].as_str().unwrap_or("");
+                if t == "file.accept" { ctl.accepted.lock().unwrap().insert(fp.clone()); }
+                else if t == "file.pause" { ctl.paused.lock().unwrap().insert(fp.clone()); }
+                else { ctl.paused.lock().unwrap().remove(&fp); }
+                self.emit(MeshEvent::File(json!({ "kind": match t { "file.accept" => "accepted", "file.pause" => "paused", _ => "resumed" }, "id": id, "peer_fp": fp, "mine": true }))).await;
+            }
+            "file.cancel" => {
+                if self.pending.get(&id).is_some_and(|(pe, _)| pe == peer) { self.pending.remove(&id); self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; }
+                if let Some(f) = self.outgoing.get(&id) { f.cancel.store(true, std::sync::atomic::Ordering::SeqCst); }
+                if let Some((pe, inc, last)) = self.incoming.remove(&id) {
+                    if pe == peer { inc.abort(); self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; }
+                    else { self.incoming.insert(id, (pe, inc, last)); }
+                }
+            }
+            _ => {}
+        }
     }
 
     async fn send_state(&self, peer: &str) {
         let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).or(self.media).unwrap_or((true, false));
         self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id })).await;
+    }
+
+    /// Pede ao peer recém-autenticado as mensagens desta DM que eu ainda não tenho (informa os ids que já tenho).
+    async fn request_history(&mut self, peer: &str, fp: &str) {
+        let ch = identity::dm_channel(&self.identity.fingerprint(), fp);
+        let rid = uuid::Uuid::new_v4().to_string();
+        self.hist_reqs.insert(peer.to_string(), rid.clone());
+        self.dc_send(peer, json!({ "version": 2, "type": "chat.history.request", "channelId": ch, "requestId": rid, "knownIds": self.hist.known_ids(&ch) })).await;
+    }
+
+    async fn on_history_request(&mut self, peer: &str, v: &Value) {
+        let Some(p) = self.peers.get(peer) else { return };
+        let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+        let ch = identity::dm_channel(&self.identity.fingerprint(), &fp);
+        if v["channelId"].as_str() != Some(&ch) { return; }   // só a DM entre nós dois; nunca o histórico de outro canal
+        let Some(rid) = v["requestId"].as_str().filter(|r| !r.is_empty() && r.len() <= 64) else { return };
+        let known: HashSet<String> = v["knownIds"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(crate::history::MAX_KNOWN).map(String::from).collect()).unwrap_or_default();
+        for chunk in crate::history::chunks(self.hist.missing(&ch, &known)) {
+            self.dc_send(peer, json!({ "version": 2, "type": "chat.history.chunk", "channelId": ch, "requestId": rid, "messages": chunk })).await;
+        }
+        self.dc_send(peer, json!({ "version": 2, "type": "chat.history.complete", "channelId": ch, "requestId": rid })).await;
+    }
+
+    async fn on_history_chunk(&mut self, peer: &str, v: &Value) {
+        let Some(p) = self.peers.get(peer) else { return };
+        let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
+        if v["requestId"].as_str() != self.hist_reqs.get(peer).map(String::as_str) { return; }   // só o que eu pedi, deste peer
+        let me = self.identity.fingerprint();
+        let ch = identity::dm_channel(&me, &fp);
+        if v["channelId"].as_str() != Some(&ch) { return; }
+        let Some(arr) = v["messages"].as_array() else { return };
+        let my_jwk = self.identity.public_jwk();
+        for raw in arr.iter().take(crate::history::MAX_CHUNK_MESSAGES) {
+            let Ok(m) = serde_json::from_value::<ChatWire>(raw.clone()) else { continue };
+            if self.hist.has(&m.id) { continue; }
+            // o autor tem de ser um dos dois lados desta DM, e a assinatura tem de ser dele (o peer não pode forjar o que "eu" disse)
+            let mine = m.author_peer_id == me;
+            let key = if mine { &my_jwk } else if m.author_peer_id == fp { &jwk } else { continue };
+            if identity::verify_message(key, &m, &ch).is_err() { continue; }
+            if self.hist.add(&m) {
+                self.emit(MeshEvent::History { channel: m.channel_id, from_fp: m.author_peer_id, author: m.author, content: m.content, id: m.id, ts: m.timestamp, mine }).await;
+            }
+        }
     }
 
     async fn flush_outbox(&mut self, fp: &str) {
@@ -803,11 +1122,55 @@ impl Actor {
                 let expected = identity::dm_channel(&self.identity.fingerprint(), &fp);
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { self.emit(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into())).await; return; }
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
+                self.hist.add(&m);
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }   // dedupe só precisa cobrir as reenvios recentes; sem teto crescia para sempre
                 if self.seen_msgs.insert(m.id.clone()) {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
             }
+            "chat.history.request" => self.on_history_request(peer, &v).await,
+            "chat.history.chunk" => self.on_history_chunk(peer, &v).await,
+            "chat.history.complete" => {
+                if v["requestId"].as_str() == self.hist_reqs.get(peer).map(String::as_str) { self.hist_reqs.remove(peer); }
+            }
+            "chat.message.ack" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                if let Some(id) = v["messageId"].as_str() {
+                    if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); }   // entregue: sai da outbox
+                    self.emit(MeshEvent::Ack { id: id.chars().take(64).collect(), from_fp: fp }).await;
+                }
+            }
+            "chat.typing" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                self.emit(MeshEvent::Typing { from_fp: fp }).await;
+            }
+            "room.chat" => {
+                // chat da sala: só de peer autenticado, com limite de frequência; o autor é a identidade provada do canal (nada do que vem no JSON)
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                let author = p.name.clone();
+                let (Some(id), Some(content)) = (v["id"].as_str().and_then(crate::roomchat::clean_id), v["content"].as_str().and_then(crate::roomchat::clean)) else { return };
+                let now = now_ms() as u64;
+                if !crate::roomchat::allow_chat(&self.cfg.local_peer, peer, now) { return; }
+                if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }
+                if self.seen_msgs.insert(format!("room:{id}")) {
+                    self.emit(MeshEvent::RoomChat { peer_id: peer.into(), from_fp: fp, author, content, id, ts: now }).await;
+                }
+            }
+            "stream.request" | "stream.reply" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                if !(p.proven && p.sent_proof) { return; }
+                let name = p.name.clone();
+                let now = now_ms() as u64;
+                if v["type"] == "stream.request" {
+                    if crate::roomchat::allow_request(&self.cfg.local_peer, peer, now) { self.emit(MeshEvent::StreamRequest { peer_id: peer.into(), name }).await; }
+                } else if crate::roomchat::take_asked(&self.cfg.local_peer, peer, now) {
+                    self.emit(MeshEvent::StreamReply { peer_id: peer.into(), name, accepted: v["accepted"].as_bool().unwrap_or(false) }).await;
+                }
+            }
+            "file.offer" | "file.chunk" | "file.done" | "file.cancel" | "file.accept" | "file.pause" | "file.resume" => self.on_file_msg(peer, &v).await,
             "chat.event" => {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
@@ -823,6 +1186,16 @@ impl Actor {
                             self.emit(MeshEvent::ChatEvent { from_fp: fp, wire: crate::chat_events::to_wire(&e), local: false }).await;
                         }
                     }
+                }
+            }
+            "group.snapshot" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                let Ok(s) = serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) else { return };   // formato desconhecido: ignora
+                if let Err(why) = crate::group_sync::verify_wire(&s, &fp) { self.emit(MeshEvent::Error(format!("grupo rejeitado: {why}"))).await; return; }
+                if self.seen_groups.len() > 1024 { self.seen_groups.clear(); }
+                if self.seen_groups.insert(s.signature.clone()) {
+                    self.emit(MeshEvent::GroupSnapshot { from_fp: fp, snapshot: v["snapshot"].clone() }).await;
                 }
             }
             "room.kick" | "room.allow" => {
@@ -888,10 +1261,6 @@ impl Actor {
                     }
                 }
             }
-            "chat.message.ack" => {
-                let id = v["messageId"].as_str().unwrap_or("");
-                if let Some(fp) = self.peers.get(peer).and_then(|p| p.fp.clone()) { if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); } }
-            }
             _ => {}
         }
     }
@@ -904,7 +1273,7 @@ impl Actor {
             let me = self.identity.fingerprint();
             if let Some(o) = self.owner() { let mine = o == me; self.emit(MeshEvent::Owner { fp: o, me: mine }).await; }
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
-            if let Some(fp) = fp { self.flush_outbox(&fp).await; }
+            if let Some(fp) = fp { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; }
             self.send_state(peer).await;
             if self.share.is_some() { self.attach_share(peer).await; }
         }
@@ -912,4 +1281,26 @@ impl Actor {
 }
 
 fn peer_remote(v: &Value) -> &str { v["fromPeerId"].as_str().unwrap_or("") }
+/// Controle de um envio: quem aceitou, quem pausou e o cancelamento (compartilhado com as tarefas de envio de cada peer).
+#[derive(Default)]
+struct Ctl {
+    cancel: std::sync::atomic::AtomicBool,
+    accepted: std::sync::Mutex<HashSet<String>>,   // fps que aceitaram
+    paused: std::sync::Mutex<HashSet<String>>,     // fps que pausaram
+    paused_all: std::sync::atomic::AtomicBool,     // eu pausei
+}
+
+/// Onde o histórico fica guardado (um .jsonl por DM). Nos testes só em memória, a menos que BRIKS_HIST_DIR peça uma pasta.
+pub(crate) fn hist_dir() -> Option<std::path::PathBuf> {
+    if let Ok(d) = std::env::var("BRIKS_HIST_DIR") { return Some(d.into()); }
+    if cfg!(test) { return None; }
+    std::env::var("LOCALAPPDATA").ok().map(|b| std::path::PathBuf::from(b).join("Briks-CUI").join("historico"))
+}
+
+pub(crate) fn recv_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("BRIKS_RECV_DIR") { return d.into(); }
+    let base = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    base.join("Briks-CUI").join("recebidos")
+}
+
 fn caps() -> Value { json!({ "protocol": 2, "client": "native-0.1", "capabilities": [] }) }

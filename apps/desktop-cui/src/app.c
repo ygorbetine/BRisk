@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "backend.h"
 #include "json.h"
+#include "attach.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -22,7 +23,7 @@ void app_begin(app_state_t *s, op_t op, const char *method, const char *path, co
 
 void app_submit_auth(app_state_t *s) {
     if (s->busy) return;
-    if (bk_status() != BK_READY) { copy(s->error, sizeof s->error, "O backend local ainda está iniciando."); return; }
+    if (bk_status() != BK_READY) { copy(s->error, sizeof s->error, "O Briks ainda está iniciando. Tente de novo em instantes."); return; }
     s->error[0] = 0;
     char e[256], p[160], n[192], b[768];
     json_escape(s->email, e, sizeof e);
@@ -153,7 +154,7 @@ void app_pump(app_state_t *s) {
             json_free(j);
             if (s->token[0]) { begin(s, OP_ME, "GET", "/me", NULL); break; }
         }
-        if (!code) { copy(s->error, sizeof s->error, "O backend local não respondeu."); account_bridge_done(s, false); break; }
+        if (!code) { copy(s->error, sizeof s->error, "O serviço local do Briks não respondeu."); account_bridge_done(s, false); break; }
         char e[200], p[160], n[200], b[640];
         json_escape(s->bridge_email, e, sizeof e); json_escape(s->bridge_pw, p, sizeof p); json_escape(s->user_name[0] ? s->user_name : "Você", n, sizeof n);
         snprintf(b, sizeof b, "{\"displayName\":\"%s\",\"email\":\"%s\",\"password\":\"%s\"}", n, e, p);
@@ -161,11 +162,11 @@ void app_pump(app_state_t *s) {
         break;
     }
     case OP_AUTH: {
-        if (!ok) { set_error(s, body, code ? "E-mail ou senha incorretos." : "O backend local não respondeu."); if (s->acct_user_id[0]) account_bridge_done(s, false); break; }
+        if (!ok) { set_error(s, body, code ? "E-mail ou senha incorretos." : "O serviço local do Briks não respondeu."); if (s->acct_user_id[0]) account_bridge_done(s, false); break; }
         jval *j = json_parse(body);
         copy(s->token, sizeof s->token, json_str(j, "accessToken", ""));
         json_free(j);
-        if (!s->token[0]) { copy(s->error, sizeof s->error, "Resposta inesperada do backend."); break; }
+        if (!s->token[0]) { copy(s->error, sizeof s->error, "Resposta inesperada do serviço local do Briks."); break; }
         begin(s, OP_ME, "GET", "/me", NULL);
         break;
     }
@@ -205,7 +206,8 @@ void app_pump(app_state_t *s) {
         if (ok) app_load_messages2(s, body);
         break;
     case OP_MSG_SEND:
-        if (!ok) { snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem."); if (s->msg_count) s->msg_count--; }
+        attach_inflight_done(s, ok);   /* falhou: a mensagem fica com "não enviada · reenviar" em vez de sumir */
+        if (!ok) snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem.");
         break;
     case OP_EVENT_SAVE:   /* evento assinado gravado na API local (se falhar, fica só no estado local) */
         break;

@@ -2,8 +2,10 @@
 #include "briks_ui.h"
 #include "update.h"
 #include "msgui.h"
+#include "attach.h"
 #include "backend.h"
 #include "core.h"
+#include "sysint.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -33,7 +35,46 @@ static void dev_autologin(void) {
     app_submit_auth(&state);
 }
 
+int script_probe(const char *n) {
+    { int sp = sys_probe(n); if (sp != -9999) return sp; }
+    { int sp = settings_probe(n, &state); if (sp != -9999) return sp; }
+    if (!strcmp(n, "profile")) return state.profile_open;
+    if (!strcmp(n, "settings")) return state.settings_open;
+    if (!strcmp(n, "add_friend")) return state.add_friend_open;
+    if (!strcmp(n, "create_group")) return state.create_group_open;
+    if (!strcmp(n, "friends_tab")) return state.friends_tab;
+    if (!strcmp(n, "screen")) return (int)state.screen;
+    if (!strcmp(n, "modal")) return g_modal_prev;
+    { extern int call_probe(const char *name); int v = call_probe(n); if (v != -2) return v; }   /* chamada e histórico (call.h) */
+    if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
+    if (!strncmp(n, "attach_", 7)) return attach_probe(n + 7);   /* pending, pending_img, search_on, search_len, palette, pal_len */
+    if (!strcmp(n, "draft_len")) return (int)strlen(state.draft);
+    if (!strncmp(n, "draft_is:", 9) || !strncmp(n, "clip_is:", 8)) {   /* '+' = espaço (o roteiro separa por espaço): draft_is:ola+mundo */
+        char want[200]; const char *src = n[0] == 'd' ? n + 9 : n + 8; size_t i = 0;
+        for (; src[i] && i < sizeof want - 1; i++) want[i] = src[i] == '+' ? ' ' : src[i];
+        want[i] = 0;
+        return !strcmp(n[0] == 'd' ? state.draft : briks_clip_probe(), want);
+    }
+    if (!strncmp(n, "open_is:", 8)) return strstr(attach_last_open(), n + 8) != NULL;   /* link aberto por clique contém o texto (teste) */
+    if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
+    if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
+    if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
+    if (!strcmp(n, "amg_in_len")) return (int)strlen(state.amg_in);
+    if (!strcmp(n, "amg_own")) return strstr(state.amg_msg, "próprio") != NULL;   /* aceitar o meu próprio código é recusado pelo core */
+    if (!strcmp(n, "amg_friends")) return state.friend_count;
+    if (!strcmp(n, "search_on")) return attach_search_is_on();
+    return dock_probe(n);
+}
+
 static void frame(cui_ctx *ui) {
+    g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0; g_hot_modal_draw = briks_hot_modal_draw;
+    memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
+    { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
+    if (!g_modal_prev) {   /* BAS-39: Ctrl+mais, Ctrl+menos e Ctrl+0 ajustam o tamanho do texto */
+        if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_EQUAL) || cui_shortcut(ui, CUI_MOD_CTRL | CUI_MOD_SHIFT, CUI_KEY_EQUAL)) settings_text_step(ui, 1);
+        else if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_MINUS)) settings_text_step(ui, -1);
+        else if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_0)) settings_text_step(ui, 0);
+    }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
@@ -44,7 +85,9 @@ static void frame(cui_ctx *ui) {
     rtc_pump(&state);
     msgui_pump(&state);
     profile_tick(&state);
+    sys_tick(&state);
     settings_tick();
+    hotkeys_tick(ui, &state);
     themes_tick(ui);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
@@ -56,6 +99,8 @@ static void frame(cui_ctx *ui) {
             case SCREEN_CALL: ui_call(ui, &state); break;
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            briks_tip_draw(ui);
+            net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
@@ -79,24 +124,45 @@ static void quiet_automation(void) {
 #endif
 
 #ifdef _WIN32
-int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b; (void)c; (void)d;
+int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b; (void)d;
 #else
 int main(void) {
 #endif
     const bool automation = getenv("CUI_SCREENSHOT") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_HIDDEN");   /* janela oculta por padrão em testes */
 #ifdef _WIN32
     if (automation) quiet_automation();
+    if (!sys_startup(c, automation)) return 0;   /* instância única: já havia um Briks aberto (foi trazido à frente) */
 #endif
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 560 && h >= 480) { win_w = a; win_h = h; } }
 #ifdef _WIN32
+    if (!getenv("BRIKS_WINDOW") || getenv("BRIKS_FAKE_WORKAREA")) {   /* nunca abre maior que a área útil da tela (tela pequena / escala de 125%+): senão o app passa das bordas */
+        RECT wa; int fw, fh; const char *fk = getenv("BRIKS_FAKE_WORKAREA");   /* teste: simula monitor pequeno (LxA) */
+        bool have = fk && sscanf(fk, "%dx%d", &fw, &fh) == 2 ? (wa.left = 0, wa.top = 0, wa.right = fw, wa.bottom = fh, true) : SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
+        if (have) {
+            int mw = (int)(wa.right - wa.left) - 24, mh = (int)(wa.bottom - wa.top) - 24;
+            if (win_w > mw) win_w = mw < 560 ? 560 : mw;
+            if (win_h > mh) win_h = mh < 480 ? 480 : mh;
+        }
+    }
     g_prev_fg = getenv("BRIKS_TEST_WINDOW") ? (void *)GetForegroundWindow() : NULL;
 #endif
     cui_app *app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
-        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
-    if (!app) return 1;
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = true /* sys_attach restaura posição/tamanho e só então mostra (exceto em automação) */ });
+    if (!app) {   /* a criação da janela/contexto gráfico pode falhar de forma passageira (várias instâncias ocultas subindo juntas): tenta de novo antes de desistir */
+        fputs("briks_cui: cui_app_create falhou; tentando de novo\n", stderr);
+#ifdef _WIN32
+        Sleep(400);
+#endif
+        app = cui_app_create(&(cui_app_desc){
+        .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = true /* sys_attach restaura posição/tamanho e só então mostra (exceto em automação) */ });
+    }
+    if (!app) { fputs("briks_cui: nao foi possivel criar a janela (saida 1)\n", stderr); return 1; }
     state.app = app;
+    sys_attach(&state, automation);   /* instância única/bandeja/posição da janela (winstate.c) */
+    briks_clip_install(cui_app_ui(app));   /* BRIKS_FAKE_CLIPBOARD: área de transferência em memória nos testes */
     migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
     update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */
 #ifdef _WIN32
@@ -116,14 +182,16 @@ int main(void) {
     briks_glass_init(app);
     bool scripted = script_load();
     while (cui_app_frame(app)) {
-        if (scripted) script_tick(cui_app_ui(app));
+        if (sys_in_tray()) Sleep(100);   /* na bandeja não há o que animar: ~8 quadros por segundo bastam para os eventos do core */
+        if (scripted) { script_tick(cui_app_ui(app)); if (g_script_rw) { cui_app_set_size(app, g_script_rw, g_script_rh); g_script_rw = g_script_rh = 0; } }
         frame(cui_app_ui(app));
         if (scripted && script_capture(app)) break;
     }
     briks_glass_shutdown();
+    sys_before_destroy(&state);   /* grava a janela e tira o ícone da bandeja */
     cui_app_destroy(app);
     core_stop();
     bk_stop();
     update_install_on_exit();   /* atualização já baixada e verificada: instala em silêncio ao fechar */
-    return 0;
+    return g_script_fail ? 1 : 0;
 }

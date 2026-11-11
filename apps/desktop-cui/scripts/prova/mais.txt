@@ -1,0 +1,9 @@
+wait 5
+to plus:chat 6
+wait 4
+shot mais-1-hover
+down
+wait 2
+up
+wait 12
+shot mais-2-popup

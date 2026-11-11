@@ -1,0 +1,16 @@
+wait 12
+shot a-hub
+at 1275 795
+wait 4
+shot b-sem-hover
+to header:chat 4
+wait 6
+shot c-hover
+to header:chat 2
+down
+to zone:nav:right 12
+wait 12
+shot d-arrasto
+up
+wait 14
+shot e-depois

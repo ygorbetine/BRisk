@@ -11,9 +11,14 @@ mod adapt;
 mod capture;
 mod video;
 mod gpuconv;
+mod friend_invite;
+mod group_sync;
 mod ice;
+mod history;
 mod identity;
+mod filetransfer;
 mod import;
+mod linkpreview;
 mod ipc;
 mod mesh;
 mod mfenc;
@@ -24,7 +29,9 @@ mod realtime;
 mod hybrid;
 mod sfu;
 mod sfudata;
+mod sfufiles;
 mod sfu_cfg;
+mod roomchat;
 mod share;
 mod signaling;
 
@@ -95,5 +102,7 @@ mod tests_sfuipc;
 mod tests_sfuproc;
 #[cfg(test)]
 mod tests_sfukick;
+#[cfg(test)]
+mod tests_sfuapps;
 #[cfg(test)]
 mod tests_sfu;

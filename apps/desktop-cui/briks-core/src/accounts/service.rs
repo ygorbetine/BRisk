@@ -10,6 +10,9 @@
 //!   backup.result   {op: save|restore|delete, ok, message}   (comandos: backup.restore {phrase}, backup.delete, backup.status)
 //!   identity.changed {fingerprint}                 a identidade deste aparelho foi trocada pela recuperada
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
+//!   friends.photos  {photos:[{user_id,path}]}      fotos dos amigos no cache local (PNG/JPEG), depois de friends.list
+//!   presence.beat {invisible} / presence.friends / presence.clear -> presence.list {remote, friends:[{user_id,online,last_seen}]}   (0007)
+//!   friends.blocks  {remote, blocks:[{user_id,nick,display_name}]}   (friends.block/unblock/blocks {user_id}); remote=false: servidor sem a 0006, vale a lista local da UI
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
 //!   import.result   {state, friends, groups, messages, message}
 use std::path::PathBuf;
@@ -30,6 +33,8 @@ pub struct Runtime {
     pub reason: String,
     pub mock: bool,
     pub data_dir: PathBuf,
+    /// TURN da conta (Edge Function turn-credentials), renovado em segundo plano
+    pub turn: Arc<super::turn::TurnCache>,
     _fake: Option<fake::Fake>,
 }
 
@@ -37,14 +42,16 @@ impl Runtime {
     #[cfg(test)]
     pub fn for_tests(acc: Option<Arc<Accounts>>, data_dir: PathBuf) -> Arc<Runtime> {
         let reason = if acc.is_none() { "Servidor de contas não configurado.".to_string() } else { String::new() };
-        Arc::new(Runtime { acc, reason, mock: false, data_dir, _fake: None })
+        Arc::new(Runtime { acc, reason, mock: false, data_dir, turn: Default::default(), _fake: None })
     }
     pub async fn build(data_dir: PathBuf, realtime: Option<(String, String)>) -> Arc<Runtime> {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         match config::resolve(&env, &data_dir, realtime) {
             AccountsConfig::Supabase { url, anon_key } => {
-                let acc = Accounts::new(Arc::new(SupabaseProvider::new(&url, &anon_key)), &data_dir, super::system_browser());
-                Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: false, data_dir, _fake: None })
+                let acc = Arc::new(Accounts::new(Arc::new(SupabaseProvider::new(&url, &anon_key)), &data_dir, super::system_browser()));
+                let turn: Arc<super::turn::TurnCache> = Default::default();
+                super::turn::spawn(acc.clone(), turn.clone(), url.clone(), anon_key.clone());
+                Arc::new(Runtime { acc: Some(acc), reason: String::new(), mock: false, data_dir, turn, _fake: None })
             }
             AccountsConfig::Mock => match fake::start(0).await {
                 Ok(f) => {
@@ -57,11 +64,11 @@ impl Runtime {
                     // sessão do modo falso fica numa pasta própria: nunca se mistura com a sessão real
                     let dir = data_dir.join("mock-accounts");
                     let acc = Accounts::new(Arc::new(SupabaseProvider::new(&f.url(), "chave-publica-falsa")), &dir, fake::auto_browser());
-                    Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: true, data_dir, _fake: Some(f) })
+                    Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: true, data_dir, turn: Default::default(), _fake: Some(f) })
                 }
-                Err(e) => Arc::new(Runtime { acc: None, reason: format!("Servidor de contas falso não iniciou: {e}"), mock: true, data_dir, _fake: None }),
+                Err(e) => Arc::new(Runtime { acc: None, reason: format!("Servidor de contas falso não iniciou: {e}"), mock: true, data_dir, turn: Default::default(), _fake: None }),
             },
-            AccountsConfig::Missing(reason) => Arc::new(Runtime { acc: None, reason, mock: false, data_dir, _fake: None }),
+            AccountsConfig::Missing(reason) => Arc::new(Runtime { acc: None, reason, mock: false, data_dir, turn: Default::default(), _fake: None }),
         }
     }
 }
@@ -94,6 +101,8 @@ fn failed(rt: &Runtime, e: &AccountError) -> Value {
 /// Depois de entrar: avisa a UI e publica a chave pública da identidade P2P no perfil da conta.
 async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recovery: bool) {
     let Some(u) = acc.user() else { return };
+    // troca de conta (entrou com outra por cima): nada da anterior fica à mostra nem em cache
+    if let Some(prev) = acc.take_previous_id(&u.id) { avatar::clear(&rt.data_dir, &prev); }
     // foto: usa o cache se houver; baixa em segundo plano e avisa quando chegar. nick_hint: provisório, derivado do nome.
     let photo = avatar::cached(&rt.data_dir, &u.id);
     let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name) }))).await;
@@ -134,6 +143,24 @@ async fn refresh_photo(rt: &Runtime, user_id: &str, url: String, tx: &mpsc::Send
     let _ = tx.send(json!({ "ev": "account.avatar", "path": path })).await;
 }
 
+/// Fotos dos amigos (PRF-03): baixa cada foto para o cache (arquivo com menos de 1 dia é reaproveitado) e avisa a UI com `friends.photos`.
+/// Falha de uma foto não atrapalha as outras; quem não tem foto continua só com as iniciais.
+async fn friend_photos(rt: &Runtime, friends: &[super::provider::Friend], tx: &mpsc::Sender<Value>) {
+    let dir = rt.data_dir.clone();
+    let todo: Vec<(String, String)> = friends.iter().filter(|f| f.state == "friend")
+        .filter_map(|f| f.avatar_url.clone().filter(|u| !u.is_empty()).map(|u| (f.user_id.clone(), u))).collect();
+    if todo.is_empty() { return; }
+    let list = tokio::task::spawn_blocking(move || {
+        todo.into_iter().filter_map(|(id, url)| {
+            let fresh = avatar::cached(&dir, &id).filter(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()
+                .and_then(|t| t.elapsed().ok()).map(|e| e.as_secs() < 86_400).unwrap_or(false));
+            let path = fresh.or_else(|| avatar::cache(&dir, &id, &url).ok()).or_else(|| avatar::cached(&dir, &id))?;
+            Some(json!({ "user_id": id, "path": path }))
+        }).collect::<Vec<Value>>()
+    }).await.unwrap_or_default();
+    if !list.is_empty() { let _ = tx.send(json!({ "ev": "friends.photos", "photos": list })).await; }
+}
+
 /// Situação da cópia: existe? é da identidade deste aparelho? Nunca inclui o pacote cifrado nem a frase.
 async fn backup_state(rt: &Runtime, acc: &Accounts) -> Value {
     let local = crate::ipc::load_or_create_identity(&rt.data_dir).map(|i| i.fingerprint()).unwrap_or_default();
@@ -149,6 +176,12 @@ fn backup_result(op: &str, r: Result<&str, AccountError>) -> Value {
         Ok(m) => json!({ "ev": "backup.result", "op": op, "ok": true, "message": m }),
         Err(e) => json!({ "ev": "backup.result", "op": op, "ok": false, "error_code": e.code, "message": e.message }),
     }
+}
+
+/// Falha de um comando já logado. Sessão derrubada (token expirado e sem renovação possível) vira "signed_out" para a UI
+/// voltar à entrada; qualquer outra falha é só um aviso e a sessão continua.
+fn notice(rt: &Runtime, e: &AccountError) -> Value {
+    if e.is_auth() { failed(rt, e) } else { json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }) }
 }
 
 fn profile_ev(p: &super::Profile, message: &str) -> Value {
@@ -306,6 +339,16 @@ impl Service {
                     let _ = tx.send(base(&rt, "signed_out")).await;
                 });
             }
+            "account.logout_others" => {
+                tokio::spawn(async move {
+                    let ev = match acc.sign_out_others().await {
+                        Ok(()) => json!({ "ev": "account.others", "ok": true, "message": "Pronto: a conta foi desconectada dos outros computadores. Este continua conectado." }),
+                        Err(e) if e.is_auth() => failed(&rt, &e),
+                        Err(e) => json!({ "ev": "account.others", "ok": false, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
             "account.password" => {
                 let pw = s("password");
                 tokio::spawn(async move {
@@ -313,7 +356,9 @@ impl Service {
                         Ok(()) => json!({ "ev": "account.password", "ok": true, "message": "Senha alterada." }),
                         Err(e) => json!({ "ev": "account.password", "ok": false, "error_code": e.code, "message": e.message }),
                     };
+                    let dropped = matches!(&ev["error_code"], Value::String(c) if c == "session_expired");
                     let _ = tx.send(ev).await;
+                    if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; }
                 });
             }
             "account.nick" => {
@@ -321,7 +366,7 @@ impl Service {
                 tokio::spawn(async move {
                     let ev = match acc.set_nick(&nick).await {
                         Ok(p) => json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name, "changed": true }),
-                        Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
+                        Err(e) => notice(&rt, &e),
                     };
                     let _ = tx.send(ev).await;
                 });
@@ -331,7 +376,7 @@ impl Service {
                 tokio::spawn(async move {
                     let ev = match acc.set_display_name(&name).await {
                         Ok(p) => profile_ev(&p, "Nome alterado."),
-                        Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
+                        Err(e) => notice(&rt, &e),
                     };
                     let _ = tx.send(ev).await;
                 });
@@ -360,7 +405,7 @@ impl Service {
                             let _ = tx.send(profile_ev(&p, "Voltamos para a foto da sua conta.")).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
+                            let _ = tx.send(notice(&rt, &e)).await;
                         }
                     }
                 });
@@ -390,7 +435,9 @@ impl Service {
                         (None, _) => Err(AccountError::new("backup", "A frase expirou. Gere uma nova.")),
                         (_, Err(_)) => Err(AccountError::new("backup", "Identidade deste aparelho indisponível.")),
                     };
+                    let dropped = matches!(&r, Err(e) if e.is_auth());
                     let _ = tx.send(backup_result("save", r.map(|_| "Cópia de segurança guardada. Só a sua frase consegue abri-la."))).await;
+                    if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; return; }
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
             }
@@ -415,7 +462,11 @@ impl Service {
                             }
                             let _ = tx.send(backup_result("restore", Ok("Identidade recuperada neste computador."))).await;
                         }
-                        Err(e) => { let _ = tx.send(backup_result("restore", Err(e))).await; }
+                        Err(e) => {
+                            let dropped = e.is_auth();
+                            let _ = tx.send(backup_result("restore", Err(e))).await;
+                            if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; return; }
+                        }
                     }
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
@@ -425,6 +476,59 @@ impl Service {
                     let r = acc.backup_delete().await;
                     let _ = tx.send(backup_result("delete", r.map(|_| "Cópia de segurança apagada do servidor."))).await;
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "friends.lookup" => {
+                // busca exata por @nick (0008) para convidar para grupo; evento friends.lookup {ok, hit | error_code, message, nick}
+                let nick = s("nick");
+                tokio::spawn(async move {
+                    let ev = match acc.nick_lookup(&nick).await {
+                        Ok(h) => json!({ "ev": "friends.lookup", "ok": true, "nick": nick, "hit": h }),
+                        Err(e) => json!({ "ev": "friends.lookup", "ok": false, "nick": nick, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
+            "presence.beat" | "presence.friends" | "presence.clear" => {
+                // batimento de presença (0007): o app manda a cada ~60 s; sem a RPC (`server_not_ready`) remote=false e a UI usa só "na chamada"
+                let (cmd, invisible) = (cmd.to_string(), v["invisible"].as_bool().unwrap_or(false));
+                tokio::spawn(async move {
+                    let r = match cmd.as_str() {
+                        "presence.beat" => acc.presence_beat(invisible).await,
+                        "presence.clear" => { let _ = acc.presence_clear().await; return; }
+                        _ => Ok(()),
+                    };
+                    let list = match r {
+                        Ok(_) => acc.presence_friends().await,
+                        Err(e) => Err(e),
+                    };
+                    let ev = match list {
+                        Ok(l) => json!({ "ev": "presence.list", "remote": true, "friends": l }),
+                        Err(e) if e.code == "server_not_ready" => json!({ "ev": "presence.list", "remote": false, "friends": [] }),
+                        Err(_) => return,   // falha de rede: mantém o que já se sabia; o próximo batimento tenta de novo
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
+            "friends.block" | "friends.unblock" | "friends.blocks" => {
+                // bloqueio no servidor (0006). Sem a RPC (`server_not_ready`) a UI segue com a lista local: remote=false
+                let (cmd, user) = (cmd.to_string(), s("user_id"));
+                tokio::spawn(async move {
+                    let r = match cmd.as_str() {
+                        "friends.block" => acc.friend_block(&user).await.map(|_| ()),
+                        "friends.unblock" => acc.friend_unblock(&user).await.map(|_| ()),
+                        _ => Ok(()),
+                    };
+                    let remote = match &r { Ok(_) => true, Err(e) if e.code == "server_not_ready" => false, Err(e) => {
+                        let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                        return;
+                    } };
+                    let list = if remote { acc.blocks().await.ok() } else { None };
+                    let remote = remote && list.is_some();
+                    let _ = tx.send(json!({ "ev": "friends.blocks", "remote": remote, "blocks": list.unwrap_or_default() })).await;
+                    if remote && cmd != "friends.blocks" {
+                        if let Ok(f) = acc.friends().await { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; friend_photos(&rt, &f, &tx).await; }
+                    }
                 });
             }
             "friends.list" | "friends.request" | "friends.respond" | "friends.remove" => {
@@ -440,13 +544,17 @@ impl Service {
                         Ok(m) if !m.is_empty() => { let _ = tx.send(json!({ "ev": "friends.result", "ok": true, "message": m })).await; }
                         Err(e) => {
                             let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                            if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }
                             return;
                         }
                         _ => {}
                     }
                     match acc.friends().await {
-                        Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; }
-                        Err(e) => { let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await; }
+                        Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; friend_photos(&rt, &f, &tx).await; }
+                        Err(e) => {
+                            let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                            if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }
+                        }
                     }
                 });
             }

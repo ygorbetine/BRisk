@@ -1,0 +1,4 @@
+# Conexao restabelecida: a pilula verde aparece e some sozinha depois de ~4 s (BRIKS_NET=restored)
+snap r0
+waitms 4600
+snap r1

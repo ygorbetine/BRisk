@@ -1,0 +1,16 @@
+# Dock: menu + Painel e fechar painel (demo social)
+at 1000 400
+waitms 300
+snap d0
+at 1000 400
+tap 1223 31
+at 1000 400
+waitms 300
+shot d1
+key esc
+waitms 400
+at 1000 400
+tap 1251 31
+at 1000 400
+waitms 500
+shot d2

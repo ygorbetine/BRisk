@@ -30,12 +30,17 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
-typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
+typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; char nick[32]; char fp[72]; char jwk[260]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
 typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
 #define MAX_MSGS 200
-typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
+#define GROUP_MAX_CH 16
+#define GROUP_MAX_MEMBERS 48
+typedef struct { char id[48]; char name[48]; char room[48]; bool voice; } channel_t;       /* canal de texto ou de voz (room = sala da chamada) */
+typedef struct { char id[48]; char name[96]; bool admin; char fp[72]; char jwk[260]; } gmember_t;   /* fp/jwk: identidade P2P (grupo assinado) */
+typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate;
+                 char owner[48]; bool is_owner; channel_t ch[GROUP_MAX_CH]; int nch, active_ch; gmember_t m[GROUP_MAX_MEMBERS]; int nm; char *raw; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
@@ -96,6 +101,17 @@ typedef struct {
     bool rp_enabled; int rp_audience;           /* rich presence ligado; 0 = todos os amigos, 1 = só quem está na mesma chamada */
     person_t friends[MAX_FRIENDS]; int friend_count;
     person_t pending[MAX_FRIENDS]; int pending_count;
+    person_t outgoing[MAX_FRIENDS]; int outgoing_count;              /* pedidos que eu enviei e ainda não foram respondidos */
+    struct { char id[48]; char name[96]; } blocked[64]; int blocked_count;   /* bloqueados: lista local (ui_friends.c); 0006 prepara o servidor */
+    int friends_tab; char friends_q[64];                            /* aba do hub de Amigos (0 todos, 1 online, 2 pendentes, 3 bloqueados, 4 adicionar) e a busca */
+    bool chan_open, members_open, gren_open, gleave_open; char chan_name[48], grp_name_edit[96], gchan_id[48]; int chan_kind;   /* grupos (ui_groups.c) */
+    bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
+    struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
+    char my_jwk[260];                                                                         /* minha chave pública (session.ready), compacta */
+    bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768];   /* convite de grupo: colar e entrar / mostrar o código */
+    char gnick[32], gnick_msg[140]; person_t gnick_hit; bool gnick_found;                       /* convite por @nick (friends.lookup): busca e resultado */
+    bool notify_off; char ginv_q[48];                                                         /* avisos de amigo online (desligável) · busca na lista de convite do grupo */
+    bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
     int active_group;              /* -1 = nenhum */
@@ -105,6 +121,7 @@ typedef struct {
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
     bool create_group_open, profile_open, logout_confirm_open;
+    long long status_expires;                  /* epoch (s) em que o status some sozinho; 0 = não expira (profile.c) */
     char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     char new_group[96];
@@ -122,7 +139,8 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
-    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; char fp[72], name[64], status[64], presence[64]; } rtc_peers[BRIKS_MAX_PEERS];
+    int rtc_overflow;              /* participantes além de BRIKS_MAX_PEERS: estão na chamada (o áudio toca), mas sem quadro: a grade mostra "+N" */
+    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; float volume; bool vol_set; char fp[72], name[64], status[64], presence[64]; } rtc_peers[BRIKS_MAX_PEERS];
     float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
@@ -153,6 +171,17 @@ typedef struct {
     bool net_failed;      /* a entrada pelo servidor de chamadas falhou e nenhuma chamada abriu: a tela oferece "Entrar em modo P2P" */
     bool force_p2p;       /* o usuário escolheu entrar em P2P nesta chamada (vale até sair dela) */
     bool net_sfu;         /* a chamada atual está no servidor de chamadas (SFU): o dono pode silenciar alguém para todos */
+    /* tela Rede: TURN próprio (ice.json). A senha só existe aqui enquanto se digita; o core a cifra e nunca a devolve */
+    bool ice_turn, ice_has_cred, ice_asked, ice_busy, ice_testing, ice_edit_init;
+    char ice_urls[300], ice_user[100], ice_pass[130], ice_msg[240], ice_test_msg[240];
+    int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
+    char others_msg[200]; bool others_busy, others_confirm;
+    char ice_source[8];                                        /* default | file | env */
+    char birth[16];                                            /* cadastro: data de nascimento digitada (só valida, nunca é guardada) */
+    /* Voz e atalhos: teste do microfone fora da chamada e resultado do registro dos atalhos globais */
+    bool mic_test_on; float mic_test_level; char mic_test_msg[160];
+    int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
+    char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -177,7 +206,32 @@ void account_submit_code(app_state_t *s);                   /* código de 6 díg
 void account_cancel(app_state_t *s);
 void account_logout(app_state_t *s);
 void account_retry(app_state_t *s);                         /* pede o estado de novo (erro de rede ao abrir) */
+/* ui_friends.c: hub de Amigos e bloqueio local */
+bool friends_blocked(app_state_t *s, const char *id);
+void friends_block(app_state_t *s, const char *id, const char *name);
+void friends_unblock(app_state_t *s, const char *id);
+void friends_hub(cui_ctx *ui, app_state_t *s);
+void friends_dialogs(cui_ctx *ui, app_state_t *s);
+/* ui_groups.c: canais, cargos, membros e convites dos grupos */
+void groups_load(app_state_t *s, const char *body);
+cui_texture groups_image(app_state_t *s, const char *gid);                     /* imagem do grupo (0 = só iniciais); pede ao core na 1ª vez */
+void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   /* group.result / group.snapshot do core */
+void groups_resend(app_state_t *s);                                            /* reenvia snapshots aos membros presentes (peer novo na sala) */
+void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */
+void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
+void groups_header(cui_ctx *ui, app_state_t *s);
+void groups_dialogs(cui_ctx *ui, app_state_t *s);
+void groups_create_json(const app_state_t *s, char *out, size_t cap);
+void groups_overlay(cui_ctx *ui, app_state_t *s);                              /* menu de contexto do grupo (camada de cima, junto do menu da mensagem) */
+void friends_code_card(cui_ctx *ui, app_state_t *s);   /* cartão "Por código" (gerar/copiar/aceitar), usado no diálogo e no hub */
+void friends_p2p_event(app_state_t *s, const struct jval *j);   /* friend.result do core */
+void groups_demo_roster(void);                                                  /* dados demo da presença por sala (BRIKS_DEMO_GROSTER) */
+int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
+bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
+void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
+void account_block_remote(app_state_t *s, const char *user_id, bool block);
+void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
 void account_add_friend(app_state_t *s);
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept);
 void account_set_nick(app_state_t *s);
@@ -185,12 +239,18 @@ void account_set_name(app_state_t *s);                      /* troca o nome de e
 void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
 void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
 void ui_account_editor(cui_ctx *ui, app_state_t *s);
+void account_logout_others(app_state_t *s);                 /* "Sair dos outros computadores" */
+void account_ice_get(app_state_t *s);
+void account_ice_save(app_state_t *s);                      /* grava ice_urls/ice_user/ice_pass no core */
+void account_ice_clear(app_state_t *s);
+void account_ice_test(app_state_t *s);
 void account_backup_status(app_state_t *s);
 void account_backup_create(app_state_t *s);                 /* gera a frase (o core mostra uma vez) */
 void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e envia a cópia */
 void account_backup_cancel(app_state_t *s);                 /* descarta a frase gerada */
 void account_backup_restore(app_state_t *s);                /* usa s->backup_input */
 void account_backup_delete(app_state_t *s);
+void ui_others_section(cui_ctx *ui, app_state_t *s);        /* "Sair dos outros computadores" (aba Conta) */
 void ui_backup_section(cui_ctx *ui, app_state_t *s);        /* bloco para Configurações */
 void ui_backup_dialogs(cui_ctx *ui, app_state_t *s);        /* diálogos: frase nova, recuperar, apagar */        /* bloco "foto, nome e @" para o diálogo de Perfil */
 void account_import(app_state_t *s, bool apply);
@@ -214,13 +274,30 @@ void themes_tab(cui_ctx *ui);                              /* themes.c: aba Tema
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
 int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
+void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
+void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */
+void rtc_mic_test(app_state_t *s, bool on);               /* rtc.c: teste do microfone fora da chamada (eventos mic.test) */
+extern bool g_hk_recording;                                /* hotkeys_rt.c: capturando tecla na tela de Atalhos */
+void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay);
+void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
+int settings_probe(const char *n, app_state_t *s);          /* settings.c: sondas dos roteiros de teste */
+void settings_data_pump(app_state_t *s);                  /* settings_data.c: recolhe os pedidos de apagar histórico */
+void overlay_tick(cui_ctx *ui, app_state_t *s);             /* overlay_host.c: abre/fecha e alimenta o briks_overlay.exe */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
 void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
-void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
+long long profile_expiry_for(int clear, long long now);   /* epoch de expiração do status; 0 = nunca */
+bool profile_ignored(const app_state_t *s, const char *exe, const char *text);
+void profile_tick(app_state_t *s);
+void friends_notify_tick(app_state_t *s);                       /* detecta amigo que ficou online / entrou na chamada */
+void friends_notify_banner(cui_ctx *ui, app_state_t *s);        /* faixa de aviso (some sozinha em ~7 s) */
+bool friends_online(const app_state_t *s, const person_t *p);   /* online de verdade (batimento) ou na sua chamada agora */
+void account_presence_tick(app_state_t *s);                      /* batimento de ~60 s (account.c) */                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
+void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só para quem escuta, 0..2 (1 = normal) */
+void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_join_p2p(app_state_t *s);                          /* reentra na mesma sala pedindo P2P de propósito (depois de o SFU falhar) */
@@ -258,9 +335,17 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern float g_tools_w;   /* largura reservada à direita do cabeçalho para os botões + e × do painel (0 = sem botões) */
+extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
+void briks_text_scale_apply(cui_ctx *ui);
+void settings_text_step(cui_ctx *ui, int delta);   /* settings.c: Ctrl+mais/menos/0 mudam o tamanho do texto (delta 0 = padrão) */
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
+bool dock_has_panel(int kind);   /* o painel está no layout atual? */
+int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
+int script_probe(const char *name);
+extern int g_script_fail, g_script_rw, g_script_rh;
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
 void dock_script_menu(float x, float y);
@@ -291,8 +376,101 @@ static inline void briks_status_pill(cui_ctx *ui, const char *text) {
         cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
     }
 }
-static inline bool briks_clicked(cui_ctx *ui, const char *id) {
+/* passar o mouse de verdade sobre a caixa `id` (cui_last_hovered não serve para caixas simples; em modo roteiro deixava tooltips presos no topo) */
+/* tooltip próprio: registra o texto neste quadro; briks_tip_draw (fim do quadro, dentro da pilha raiz) o desenha ao lado do mouse, dentro da janela.
+   Não entra no layout (o cui_tooltip ancorava no "último componente" e ficava preso no topo / empurrava irmãos). */
+extern char g_tip[160];
+static inline void briks_tip(const char *t) { snprintf(g_tip, sizeof g_tip, "%s", t); }
+void briks_tip_draw(cui_ctx *ui);
+/* Modais: enquanto houver diálogo/menu aberto, hover e clique por rect nas camadas de BAIXO são ignorados (só vale o que é desenhado dentro do modal). */
+__declspec(selectany) bool g_modal_now, g_modal_prev; __declspec(selectany) int g_in_modal;
+/* Controles sobrepostos (ex.: botões + e × do painel) registram o retângulo para o próximo quadro: o que está por baixo não recebe hover/clique ali. */
+__declspec(selectany) float g_cov_now[8][4], g_cov_prev[8][4]; __declspec(selectany) int g_cov_n_now, g_cov_n_prev;
+static inline void briks_cover(float x, float y, float w, float h) { if (g_cov_n_now < 8) { g_cov_now[g_cov_n_now][0] = x; g_cov_now[g_cov_n_now][1] = y; g_cov_now[g_cov_n_now][2] = w; g_cov_now[g_cov_n_now][3] = h; g_cov_n_now++; } }
+static inline bool briks_covered(cui_ctx *ui) {
+    cui_vec2 m = cui_mouse_pos(ui);
+    for (int i = 0; i < g_cov_n_prev; i++) if (m.x >= g_cov_prev[i][0] && m.y >= g_cov_prev[i][1] && m.x < g_cov_prev[i][0] + g_cov_prev[i][2] && m.y < g_cov_prev[i][1] + g_cov_prev[i][3]) return true;
+    return false;
+}
+#include <stdlib.h>
+/* Regra central: com modal aberto (diálogo ou menu), só a camada modal recebe input. BRIKS_TEST_NO_MODAL=1 desliga a regra (só o teste de roteiro usa, para provar que ele falha sem a correção). */
+static inline bool briks_modal_open(void) { static int off = -1; if (off < 0) off = getenv("BRIKS_TEST_NO_MODAL") != NULL; return !off && g_modal_prev; }
+static inline bool briks_blocked(void) { return briks_modal_open() && g_in_modal == 0; }
+static inline bool briks_dlg_begin(cui_ctx *ui, const char *t, bool *open, const cui_dialog_opts *o) {
+    bool b = cui_dialog_begin(ui, t, open, o); if (b) { g_modal_now = true; g_in_modal++; } return b;
+}
+__declspec(selectany) void (*g_hot_modal_draw)(cui_ctx *);   /* definido pelo app (main.c); os testes ficam sem */
+void briks_hot_modal_draw(cui_ctx *ui);
+static inline void briks_dlg_end(cui_ctx *ui) { if (g_hot_modal_draw) g_hot_modal_draw(ui); g_in_modal--; cui_dialog_end(ui); }
+static inline bool briks_menu_begin(cui_ctx *ui, const char *l, const cui_menu_opts *o) { bool b = cui_menu_begin(ui, l, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_menu_end(cui_ctx *ui) { g_in_modal--; cui_menu_end(ui); }
+static inline bool briks_pop_begin(cui_ctx *ui, const char *id, const cui_popover_opts *o) { bool b = cui_popover_begin(ui, id, o); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_pop_end(cui_ctx *ui) { g_in_modal--; cui_popover_end(ui); }
+#undef cui_menu
+#define cui_menu(ui, label, ...) CUI__SCOPE_IF(briks_menu_begin((ui), (label), CUI__OPTS(cui_menu_opts, __VA_ARGS__)), briks_menu_end(ui))
+#undef cui_popover
+#define cui_popover(ui, id, ...) CUI__SCOPE_IF(briks_pop_begin((ui), (id), CUI__OPTS(cui_popover_opts, __VA_ARGS__)), briks_pop_end(ui))
+/* Menu de clique direito dos campos de texto (BAS-02): todo cui_input do app passa por briks_input_ex (msgui.c), que oferece
+   Desfazer, Recortar, Copiar, Colar e Selecionar tudo. O menu também é modal: nada por baixo recebe clique enquanto está aberto. */
+static inline bool briks_ctx_begin(cui_ctx *ui, const char *id) { bool b = cui_context_menu_begin(ui, id); if (b) { g_modal_now = true; g_in_modal++; } return b; }
+static inline void briks_ctx_end(cui_ctx *ui) { g_in_modal--; cui_context_menu_end(ui); }
+#undef cui_context_menu
+#define cui_context_menu(ui, id) CUI__SCOPE_IF(briks_ctx_begin((ui), (id)), briks_ctx_end(ui))
+int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *o);
+#undef cui_input
+#define cui_input(ui, id, buf, cap, ...) briks_input_ex((ui), (id), (buf), (cap), CUI__OPTS(cui_input_opts, __VA_ARGS__))
+/* Área de transferência do app (msgui.c): com BRIKS_FAKE_CLIPBOARD=1 é uma cópia em memória, nunca a do usuário (testes). */
+void briks_clip_install(cui_ctx *ui);                      /* main.c, depois de criar a janela */
+void briks_clip_set(const char *utf8);
+const char *briks_clip_probe(void);                        /* texto da área falsa ("" se desligada; script.c: expect/clip) */
+bool briks_clip_fake(void);
+#undef cui_dialog
+#define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
+/* Texto sempre legível (LAY-11): nenhuma etiqueta abaixo de BRIKS_MIN_TEXT px (antes havia 10 a 11 px espalhados). O piso fica aqui, no cui_text, para valer
+   em todos os arquivos; o tamanho do texto ajustável (Configurações > Temas) multiplica por cima (font_scale). size = 0 segue o tema. */
+#define BRIKS_MIN_TEXT 12.0f
+static inline float briks_text_floor(float size) { return (size > 0 && size < BRIKS_MIN_TEXT) ? BRIKS_MIN_TEXT : size; }
+static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
+#undef cui_text
+#define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
+/* account.c: fotos dos amigos no cache local (PRF-03); 0 = sem foto (só iniciais) */
+cui_texture friend_photo(const char *user_id);
+cui_texture friend_photo_by_name(const app_state_t *s, const char *name);
+/* accountx.c: data de nascimento do cadastro e dica de login por @nick */
+bool birth_parse(const char *t, int *d, int *m, int *y);
+int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */
+void login_hint_save(const char *nick, const char *email);
+bool login_hint_lookup(const char *nick, char *email, size_t cap);
+/* net_state.c: estado da internet e faixa persistente (BAS-32) */
+enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };
+int net_status(void);                                                    /* sonda em segundo plano; BRIKS_NET força o estado nos testes */
+void net_retry_now(void);                                                /* "Tentar agora": sonda na hora */
+void net_banner(cui_ctx *ui, app_state_t *s);                            /* pílula no topo: sem conexão, reconectando, restabelecida */
+void net_friendly_error(const char *raw, char *out, size_t cap);         /* erro técnico de rede -> frase compreensível */
+/* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */
+static inline bool briks_clicked_top(cui_ctx *ui, const char *id) {
+    if (briks_blocked()) return false;
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
+static inline bool briks_hover_top(cui_ctx *ui, const char *id) {
+    if (briks_blocked()) return false;
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
+static inline bool briks_hover(cui_ctx *ui, const char *id) {
+    if (briks_blocked() || briks_covered(ui)) return false;
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
+/* Realce de hover/clique para TODO controle feito de caixa simples: quem chama briks_clicked registra o retângulo sob o mouse (o menor vence);
+   briks_tip_draw pinta um véu claro por cima no fim do quadro (mais forte com o botão apertado) e põe o cursor de mão. Não mexe no layout. */
+__declspec(selectany) float g_hot[4]; __declspec(selectany) bool g_hot_on;
+static inline bool briks_clicked(cui_ctx *ui, const char *id) {
+    if (briks_blocked() || briks_covered(ui)) return false;
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    bool in = r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+    if (in && (!g_hot_on || r.w * r.h < g_hot[2] * g_hot[3])) { g_hot[0] = r.x; g_hot[1] = r.y; g_hot[2] = r.w; g_hot[3] = r.h; g_hot_on = true; }
+    return in && cui_mouse_clicked(ui, CUI_MOUSE_LEFT);
 }
 #endif

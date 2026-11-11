@@ -1,0 +1,16 @@
+# prévia da pilha: o cartão mostra o título real do painel arrastado
+wait 8
+to header:chat 4
+down
+to zone:nav:bottom 10
+wait 14
+shot pilha-conversa
+up
+wait 10
+to header:nav 4
+down
+to zone:chat:bottom 10
+wait 14
+shot pilha-menu
+up
+wait 6

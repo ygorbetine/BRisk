@@ -1,0 +1,10 @@
+at 1500 1500
+wait 8
+at 700 300
+wait 8
+at 350 300
+wait 8
+at 40 400
+wait 8
+at 1200 40
+wait 8

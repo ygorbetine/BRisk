@@ -1,0 +1,10 @@
+# Auth: mostrar/ocultar senha e voltar para Google/Discord
+snap c0
+tap 570 601
+tap 630 417
+type abc12345
+snap c1
+tap 804 417
+snap c2
+tap 640 569
+snap c3

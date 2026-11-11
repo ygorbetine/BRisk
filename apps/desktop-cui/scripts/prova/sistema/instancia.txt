@@ -1,0 +1,7 @@
+# Instância única: uma segunda abertura (processo à parte) sai na hora e manda esta janela aparecer
+waitms 500
+expect mutex 1
+expect shown 0
+signal pronto
+waitms 6000
+expect shown 1

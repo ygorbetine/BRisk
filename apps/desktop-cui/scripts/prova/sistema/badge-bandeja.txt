@@ -1,0 +1,14 @@
+# Contador na bandeja: ícone do app com a bolinha do número (bandeja real durante o teste) e o ícone da barra de tarefas montado
+waitms 800
+expect tray 1
+expect tray_icon_badged 0
+sys focus 0
+sys msg c1 Rafael um
+waitms 600
+expect unread 1
+expect tray_icon_badged 1
+expect badge_ok 1
+sys msg c1 Rafael dois
+waitms 600
+expect tray_icon_badged 2
+expect badge_ok 2

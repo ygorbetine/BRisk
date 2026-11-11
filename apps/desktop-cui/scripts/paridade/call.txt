@@ -1,0 +1,18 @@
+# Chamada (demo call): microfone, ensurdecer, câmera (em breve), modos, abas e minimizar. Coordenadas do cabeçalho novo (rede, minimizar, Call/Transmissão, Grade/Foco, Chamada/Chat, tela cheia).
+snap c0
+tap 131 752
+snap c1
+tap 287 752
+snap c2
+tap 475 752
+snap c3
+tap 680 38
+snap c4
+tap 547 38
+snap c5
+tap 1161 38
+snap c6
+tap 1047 38
+snap c7
+tap 471 38
+snap c8

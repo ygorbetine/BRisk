@@ -1,0 +1,5 @@
+# Menu da bandeja > Reiniciar: monta o comando com --aguardar=PID e sai (o teste só grava o comando)
+waitms 600
+sys cmd restart
+wait 60
+signal fim

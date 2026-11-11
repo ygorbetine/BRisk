@@ -1,0 +1,211 @@
+diff --git a/include/cui/cui.h b/include/cui/cui.h
+index 72a3031..481d58e 100644
+--- a/include/cui/cui.h
++++ b/include/cui/cui.h
+@@ -285,6 +285,7 @@ typedef struct cui_platform_iface {
+     bool (*draw_emoji)(void *user, const char *utf8, int len, int px, unsigned char *rgba);
+ } cui_platform_iface;
+ CUI_API void cui_set_platform(cui_ctx *ui, const cui_platform_iface *platform);
++CUI_API void cui_get_platform(cui_ctx *ui, cui_platform_iface *out);   /* Briks: o app encapsula a area de transferencia (testes) */
+ CUI_API cui_cursor cui_get_cursor(cui_ctx *ui);
+ CUI_API void cui_set_cursor(cui_ctx *ui, cui_cursor cursor);   /* Briks: o app escolhe o cursor deste quadro */
+ 
+@@ -630,6 +631,20 @@ typedef struct cui_input_opts {
+ CUI_API int cui_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *opts);
+ /* Multi-line text area with word wrap. */
+ CUI_API int cui_textarea_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *opts);
++/* Briks: comandos de edicao vindos de fora (menu de contexto). `id` e o cui_make_id do campo, no escopo de id do cui_input.
++ * O comando entra na fila e roda no proximo quadro, com o foco devolvido ao campo (o clique no menu tirou o foco). */
++typedef enum { CUI_EDIT_NONE = 0, CUI_EDIT_UNDO, CUI_EDIT_REDO, CUI_EDIT_CUT, CUI_EDIT_COPY, CUI_EDIT_PASTE, CUI_EDIT_SELECT_ALL } cui_edit_cmd;
++CUI_API void cui_edit_command(cui_ctx *ui, cui_id id, cui_edit_cmd cmd);
++/* Estado do campo no quadro anterior: bytes selecionados [*s0,*s1), pode desfazer/refazer. Falso se o campo nao existe. */
++CUI_API bool cui_edit_focused(cui_ctx *ui, cui_id id);   /* o campo tem o foco do teclado neste quadro */
++CUI_API bool cui_edit_selection(cui_ctx *ui, cui_id id, int *s0, int *s1, bool *can_undo, bool *can_redo);
++/* Briks: texto somente leitura que se seleciona com o mouse (arrastar, duplo clique, Ctrl+A) e se copia com Ctrl+C.
++ * Nao entra na ordem do Tab. Largura = a da linha mais larga (ate max_width); altura = as linhas. A selecao so aparece com foco. */
++typedef struct cui_selectable_opts { int _; float max_width; float size; cui_color color; } cui_selectable_opts;
++CUI_API void cui_selectable_text_ex(cui_ctx *ui, const char *id, const char *text, const cui_selectable_opts *opts);
++#ifndef __cplusplus
++#define cui_selectable_text(ui, id, text, ...) cui_selectable_text_ex((ui), (id), (text), CUI__OPTS(cui_selectable_opts, __VA_ARGS__))
++#endif
+ /* Search field with a search icon and a clear button. */
+ CUI_API int cui_search_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *opts);
+ 
+diff --git a/src/cui_core.c b/src/cui_core.c
+index 80fb3f4..6e5ac58 100644
+--- a/src/cui_core.c
++++ b/src/cui_core.c
+@@ -280,6 +280,8 @@ void cui_set_platform(cui_ctx *ui, const cui_platform_iface *p) {
+     if (p) ui->platform = *p; else memset(&ui->platform, 0, sizeof ui->platform);
+ }
+ 
++void cui_get_platform(cui_ctx *ui, cui_platform_iface *out) { if (out) *out = ui->platform; }
++
+ void cui_set_viewport(cui_ctx *ui, float w, float h, float scale) {
+     if (scale <= 0) scale = 1;
+     if (w != ui->vw || h != ui->vh || scale != ui->scale) ui->settle_frames = CUI_MAX(ui->settle_frames, 2);
+diff --git a/src/cui_internal.h b/src/cui_internal.h
+index 6b9ff26..c113aaa 100644
+--- a/src/cui_internal.h
++++ b/src/cui_internal.h
+@@ -574,6 +574,7 @@ struct cui_ctx {
+     bool tree_clicked;
+     /* text editing */
+     struct cui_edit_state *edit;   /* edit state of the focused text field */
++    cui_id edit_cmd_id; int edit_cmd;   /* Briks: comando de edicao pendente (cui_edit_command) */
+     cui_id tab_owner;              /* the focused control types Tab instead of moving focus (code editor); set every frame */
+     double caret_time;
+     /* scope stacks */
+diff --git a/src/cui_overlay.c b/src/cui_overlay.c
+index 7620d3f..488700e 100644
+--- a/src/cui_overlay.c
++++ b/src/cui_overlay.c
+@@ -215,7 +215,7 @@ bool cui_context_menu_begin(cui_ctx *ui, const char *id) {
+         if (p) { p->at_mouse = true; p->mouse.x = ui->mx; p->mouse.y = ui->my; }
+     }
+     if (!cui__popup_get(ui, pid, false)) return false;
+-    return cui__popup_begin(ui, pid, anchor, CUI_PLACE_BOTTOM_START, 0, 6, 0, true);
++    return cui__popup_begin(ui, pid, anchor, CUI_PLACE_BOTTOM_START, 232, 6, 0, true);   /* Briks: largura propria (sem ela herdava a do campo clicado) */
+ }
+ 
+ void cui_context_menu_end(cui_ctx *ui) { cui__popup_end(ui); }
+diff --git a/src/cui_textedit.c b/src/cui_textedit.c
+index cfca9d8..f73cff0 100644
+--- a/src/cui_textedit.c
++++ b/src/cui_textedit.c
+@@ -499,6 +499,35 @@ static void cui__edit_follow_caret(cui__edit_frame *c, const cui__edit_result *r
+     }
+ }
+ 
++/* Briks: comando do menu de contexto (cui_edit_command); roda no campo focado, como se fosse o atalho de teclado */
++static void cui__edit_command_run(cui__edit_frame *c, cui__edit_result *res) {
++    cui_ctx *ui = c->ui;
++    cui_edit_state *e = c->e;
++    if (!ui->edit_cmd || ui->edit_cmd_id != ui->focus) return;
++    int cmd = ui->edit_cmd;
++    ui->edit_cmd = 0;
++    int s0 = CUI_MIN(e->cursor, e->anchor), s1 = CUI_MAX(e->cursor, e->anchor);
++    if (cmd == CUI_EDIT_SELECT_ALL) { e->anchor = 0; e->cursor = c->len; c->moved = true; }
++    else if ((cmd == CUI_EDIT_COPY || cmd == CUI_EDIT_CUT) && s1 > s0 && !c->password) {
++        if (ui->platform.set_clipboard) ui->platform.set_clipboard(ui->platform.user, cui__frame_strdup(ui, c->buf + s0, s1 - s0));
++        if (cmd == CUI_EDIT_CUT && !c->read_only) {
++            cui__undo_push(ui, e, c->buf);
++            cui__delete_range(c->buf, &c->len, s0, s1);
++            e->cursor = e->anchor = s0;
++            c->edited = true;
++        }
++    } else if (cmd == CUI_EDIT_PASTE && !c->read_only && ui->platform.get_clipboard) {
++        const char *clip = ui->platform.get_clipboard(ui->platform.user);
++        if (clip && *clip) {
++            cui__undo_push(ui, e, c->buf);
++            cui__edit_replace_selection(c, clip, (int)strlen(clip), c->multiline);
++            e->last_edit = 0;
++        }
++    } else if ((cmd == CUI_EDIT_UNDO || cmd == CUI_EDIT_REDO) && !c->read_only) {
++        if (cui__edit_undo_step(ui, e, c->buf, c->cap, cmd == CUI_EDIT_REDO)) { c->len = (int)strlen(c->buf); res->changed = true; }
++    }
++}
++
+ static cui__edit_result cui__edit_logic(cui_ctx *ui, cui_id id, cui_edit_state *e, char *buf, size_t cap,
+                                         bool multiline, bool password, bool read_only, cui_rect area,
+                                         cui_font font, float size, float line_h, cui_interact r) {
+@@ -542,6 +571,7 @@ static cui__edit_result cui__edit_logic(cui_ctx *ui, cui_id id, cui_edit_state *
+ 
+     cui__edit_move_keys(&c);
+     cui__edit_clipboard(&c);
++    cui__edit_command_run(&c, &res);
+     if (!read_only) cui__edit_typing(&c, &res);
+     if ((!multiline || c.prim) && cui_key_pressed(ui, CUI_KEY_ENTER)) res.submitted = true;
+     if (cui_key_pressed(ui, CUI_KEY_ESCAPE)) {
+@@ -596,6 +626,7 @@ int cui__text_field(cui_ctx *ui, cui_id id, char *buf, size_t cap, const cui_inp
+     cui_interact rf = cui__interact(ui, id, CUI_IF_FOCUSABLE | CUI_IF_TEXT | CUI_IF_DRAG);
+     cui_pop_disabled(ui);
+     if (rf.hovered) cui__set_cursor(ui, CUI_CURSOR_TEXT);
++    if (ui->edit_cmd && ui->edit_cmd_id == id && !disabled) ui->focus = id;   /* Briks: o clique no menu de contexto tirou o foco; o comando o devolve */
+     bool was_focused = ui->focus == id;
+     float size = cui__fs(ui, o->size == CUI_SIZE_SM ? ui->theme.text_sm : ui->theme.text_body);
+     cui_font font = CUI_FONT_BODY;
+@@ -888,3 +919,83 @@ void cui__edit_delete(char *buf, int *len, int a, int b) { cui__delete_range(buf
+ bool cui__edit_is_word(unsigned char c) { return cui__is_word(c); }
+ int cui__edit_word_left(const char *s, int pos) { return cui__word_left(s, pos); }
+ int cui__edit_word_right(const char *s, int len, int pos) { return cui__word_right(s, len, pos); }
++
++/* ---- Briks: comandos de fora e texto selecionavel ---- */
++
++void cui_edit_command(cui_ctx *ui, cui_id id, cui_edit_cmd cmd) { ui->edit_cmd_id = id; ui->edit_cmd = (int)cmd; cui_request_redraw(ui); }
++
++bool cui_edit_focused(cui_ctx *ui, cui_id id) { return id && ui->focus == id; }
++
++bool cui_edit_selection(cui_ctx *ui, cui_id id, int *s0, int *s1, bool *can_undo, bool *can_redo) {
++    cui_edit_state *e = cui_state(ui, id, sizeof *e);
++    if (!e || !e->init) return false;
++    if (s0) *s0 = CUI_MIN(e->cursor, e->anchor);
++    if (s1) *s1 = CUI_MAX(e->cursor, e->anchor);
++    /* sem entrada "atual" gravada, o estado atual ainda pode ser desfeito se houver historico */
++    if (can_undo) *can_undo = e->undo_count > 0 && (e->undo_pos > 0 || e->undo_pos == e->undo_count);
++    if (can_redo) *can_redo = e->undo_pos + 1 < e->undo_count;
++    return true;
++}
++
++typedef struct { const char *buf; int len, s0, s1; cui_font font; float size, line_h; cui_color sel; bool focused; } cui__sel_paint;
++
++static void cui__paint_selectable(cui_ctx *ui, cui_node *n, void *data) {
++    cui__sel_paint *p = data;
++    if (!p->focused || p->s1 <= p->s0) return;
++    cui_rect r = n->rect;
++    cui_text_layout_line *lines;
++    int nl = cui__edit_lines(ui, p->font, p->size, p->buf, p->len, r.w, &lines);
++    bool unshaped = ui->text_unshaped;
++    ui->text_unshaped = true;
++    for (int k = 0; k < nl; k++) {
++        cui_text_layout_line *L = &lines[k];
++        int a0 = CUI_MAX(p->s0, L->start), a1 = CUI_MIN(p->s1, L->end);
++        bool extends = p->s1 > L->end && k < nl - 1;
++        if (!(a1 > a0 || (extends && a0 <= L->end && p->s0 <= L->end))) continue;
++        const char *line = p->buf + L->start;
++        float xa = cui__text_width(ui, p->font, p->size, line, a0 - L->start, false);
++        float xb = cui__text_width(ui, p->font, p->size, line, CUI_MAX(a1, a0) - L->start, false) + (extends ? 4 : 0);
++        cui_rect sr = { r.x + xa, r.y + p->line_h * (float)k, xb - xa, p->line_h };
++        cui_draw_rect(ui, sr, CUI_CORNERS(2), p->sel);
++    }
++    ui->text_unshaped = unshaped;
++}
++
++void cui_selectable_text_ex(cui_ctx *ui, const char *id_str, const char *text, const cui_selectable_opts *o) {
++    cui_selectable_opts d;
++    memset(&d, 0, sizeof d);
++    if (!o) o = &d;
++    if (!text) text = "";
++    cui_id id = cui_make_id(ui, id_str);
++    cui_id area_id = id ^ 0xED17u;
++    int len = (int)strlen(text);
++    char *buf = cui__frame_strdup(ui, text, len);
++    cui_edit_state *e = cui_state(ui, id, sizeof *e);
++    if (!e->init) { e->init = true; e->preferred_x = -1; cui__state_set_dtor(ui, id, cui__edit_dtor); }
++    float size = cui__fs(ui, o->size > 0 ? o->size : ui->theme.text_body);
++    float line_h = size * 1.45f;
++    cui_interact rf = cui__interact(ui, id, CUI_IF_DRAG | CUI_IF_TEXT | CUI_IF_KEEP_FOCUS);
++    if (rf.hovered) cui__set_cursor(ui, CUI_CURSOR_TEXT);
++    if (rf.hovered && ui->mpressed[CUI_MOUSE_LEFT]) { ui->focus = id; ui->focus_visible = false; }   /* fora da ordem do Tab, mas recebe foco ao clicar */
++    cui_rect area = cui__prev_rect(ui, area_id);
++    if (len > 0) cui__edit_logic(ui, id, e, buf, (size_t)len + 1, true, false, true, area, CUI_FONT_BODY, size, line_h, rf);
++    else if (ui->focus == id) e->cursor = e->anchor = 0;
++    int box = cui__node_new(ui, id);
++    cui_node *bn = &ui->nodes[box];
++    bn->dir = CUI_COLUMN;
++    cui__mark_interactive(ui, box, 0);
++    cui__open(ui, box);
++    cui_color col = cui__color_set(o->color) ? cui_color_of(ui, o->color) : CUI_C(ui, FOREGROUND);
++    int t = cui__text_node(ui, text, len, CUI_FONT_BODY, size, col, true);
++    ui->nodes[t].id = area_id;
++    if (o->max_width > 0) ui->nodes[t].max_w = o->max_width;
++    cui__close(ui);
++    cui__sel_paint *p = cui__frame_alloc(ui, sizeof *p);
++    p->buf = buf; p->len = len; p->s0 = CUI_MIN(e->cursor, e->anchor); p->s1 = CUI_MAX(e->cursor, e->anchor);
++    p->font = CUI_FONT_BODY; p->size = size; p->line_h = line_h; p->focused = ui->focus == id;
++    p->sel = ui->accent == CUI_ACCENT_NEUTRAL ? cui_alpha(cui_oklch(0.6f, 0.13f, 250, 1), 0.35f) : cui_alpha(CUI_C(ui, ACCENT), 0.38f);
++    ui->nodes[box].paint_data = p;
++    ui->nodes[box].paint = cui__paint_selectable;
++    ui->nodes[box].flags |= CUI_NF_PAINT_AFTER;
++    ui->last_id = id;
++}

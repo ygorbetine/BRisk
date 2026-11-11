@@ -63,7 +63,15 @@ pub struct SfuJoin {
 }
 
 /// Função que devolve um token de sala novo (no app: a função `livekit-token` do Supabase com a sessão da conta).
-pub type TokenFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+pub type TokenFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, TokenFail>> + Send>> + Send + Sync>;
+
+/// Falha ao pedir o token. `retry_after` = segundos que o serviço mandou esperar (429): ninguém deve pedir de novo antes disso.
+#[derive(Debug, Clone)]
+pub struct TokenFail { pub msg: String, pub retry_after: Option<u64> }
+impl From<String> for TokenFail { fn from(msg: String) -> Self { TokenFail { msg, retry_after: None } } }
+
+/// Intervalo mínimo entre dois pedidos de token durante uma mesma queda (o serviço limita a 30 por usuário a cada 10 min).
+const TOKEN_MIN_GAP: Duration = Duration::from_secs(10);
 
 /// Reconexão: 1ª tentativa quase imediata, depois espera crescente até 5 s (com ±20% de acaso para os clientes não baterem juntos
 /// num servidor que acabou de voltar); desiste após 2 min fora do ar.
@@ -124,7 +132,7 @@ enum Internal {
     Pc { epoch: u32, target: i32, state: RTCPeerConnectionState },
 }
 
-struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String }
+struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String, token_at: Option<std::time::Instant> }
 
 struct Pending { track: Arc<dyn TrackLocal + Send + Sync>, video: bool }
 
@@ -267,8 +275,11 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let (audio, audio_rx) = match j.audio { Some((a, r)) => (Some(a), Some(r)), None => (None, None) };
     let sub = make_sub(&ice, 0, &itx, audio.clone(), shared.clone(), etx.clone(), sev_tx.clone(), stats.clone()).await?;
     let identity = me.identity.clone();
+    let (ftx, frx) = mpsc::channel::<crate::sfufiles::FileOut>(8);
+    let files = j.data.as_ref().map(|c| crate::sfufiles::Files::new(c.identity.clone(), etx.clone(), ftx.clone()));
     let data = j.data.map(|c| crate::sfudata::Layer::new(c, me.identity.clone()));
     let mut actor = Actor {
+        files, _ftx: ftx,
         data, dc_pub: None, dc_queue: vec![], leave: false,
         url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
@@ -278,7 +289,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
     actor.handle_join(join, false).await;
-    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx).await; });
+    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx, frx).await; });
     Ok(SfuHandle { cmd: ctx, events: erx, stats, identity, server })
 }
 
@@ -286,6 +297,16 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
 /// chame de `spawn_blocking`. O segredo do LiveKit fica só no servidor; aqui só passa o token curto (1 h) da sala.
 /// A identidade do token é o usuário (a função não aceita identidade livre).
 pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<String, String> {
+    fetch_token_ex(token_url, access_token, room).map(|t| t.0).map_err(|e| e.msg)
+}
+
+/// Como `fetch_token`, devolvendo também a URL do servidor que o serviço informa (`url`, quando vem) e, numa recusa por excesso
+/// de pedidos (429), quantos segundos esperar (`Retry-After`).
+pub fn fetch_token_ex(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
+    fetch_token_inner(token_url, access_token, room)
+}
+
+fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
     crate::sfu_cfg::check_token_url(token_url)?;
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
         .post(token_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
@@ -293,13 +314,19 @@ pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<St
     match resp {
         Ok(r) => {
             let v: Value = r.into_json().map_err(|e| format!("resposta do serviço de tokens inválida: {e}"))?;
-            v["token"].as_str().filter(|t| !t.is_empty() && t.len() < 4096).map(String::from).ok_or_else(|| "serviço de tokens não devolveu token".to_string())
+            let token = v["token"].as_str().filter(|t| !t.is_empty() && t.len() < 4096).map(String::from).ok_or_else(|| "serviço de tokens não devolveu token".to_string())?;
+            Ok((token, v["url"].as_str().map(|u| u.trim().to_string()).filter(|u| !u.is_empty())))
+        }
+        Err(ureq::Error::Status(429, r)) => {
+            // limite de pedidos do serviço: diz quanto esperar em vez de um "recusou" genérico
+            let secs = r.header("retry-after").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(30).clamp(1, 600);
+            Err(TokenFail { msg: format!("muitas tentativas no serviço de tokens: aguarde {secs} s"), retry_after: Some(secs) })
         }
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_json::<Value>().ok().and_then(|v| v["message"].as_str().map(String::from)).unwrap_or_default();
-            Err(format!("serviço de tokens recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()))
+            Err(format!("serviço de tokens recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()).into())
         }
-        Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>())),
+        Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>()).into()),
     }
 }
 
@@ -360,6 +387,9 @@ struct Actor {
     dc_pub: Option<Arc<webrtc::data_channel::RTCDataChannel>>,
     dc_queue: Vec<Vec<u8>>,
     leave: bool,
+    /// anexos pela camada de dados (só com ela ligada); `_ftx` mantém a fila aberta mesmo sem transferências
+    files: Option<crate::sfufiles::Files>,
+    _ftx: mpsc::Sender<crate::sfufiles::FileOut>,
     // reconexão
     url: String,
     token: String,
@@ -428,7 +458,7 @@ impl Actor {
     /// A sessão caiu (WebSocket fechado, servidor mudo ou mídia falhou): entra no estado "fora do ar"; o laço tenta voltar.
     fn lost(&mut self, reason: &str) {
         if self.down.is_some() || self.leave { return; }
-        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string() });
+        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string(), token_at: None });
     }
 
     /// Fim definitivo que NÃO é expulsão (a sala não fica bloqueada nesta sessão): a UI mostra o erro e o usuário pode entrar de novo.
@@ -456,6 +486,9 @@ impl Actor {
         self.mic_sid = None;
         self.stats.sub_connected.store(false, Ordering::Relaxed);
         self.stats.pub_connected.store(false, Ordering::Relaxed);
+        // transferências em curso não sobrevivem à queda (pacotes perdidos quebrariam a sequência): falham de forma visível
+        let peers = self.data.as_ref().map(|l| l.authed_idents()).unwrap_or_default();
+        if let Some(f) = self.files.as_mut() { for (ident, fp) in peers { f.peer_gone(&ident, &fp, "a conexão com o servidor de chamadas caiu").await; } }
         let reason = self.down.as_ref().map(|d| d.reason.clone()).unwrap_or_default();
         self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "reconnecting", "reason": reason }))).await;
         self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "reconectando", "message": reason }))).await;
@@ -467,11 +500,22 @@ impl Actor {
         let (attempt, since, fresh) = { let d = self.down.as_mut()?; d.attempt += 1; (d.attempt, d.since, d.token_fresh) };
         if since.elapsed() > GIVE_UP { self.terminal("conexão com o servidor de chamadas perdida (sem resposta por 2 minutos)").await; return None; }
         let fail = |a: &mut Actor, e: String| { if let Some(d) = a.down.as_mut() { d.next = tokio::time::Instant::now() + retry_delay(attempt); } e };
-        if !fresh {
+        // Token novo: uma vez por queda; de novo só se o servidor recusar, e nunca mais de um pedido a cada 10 s (com o token
+        // recusado e o pedido ainda cedo demais, a tentativa segue com o token que há: não gasta a cota do serviço em laço).
+        let too_soon = self.down.as_ref().and_then(|d| d.token_at).map(|t| t.elapsed() < TOKEN_MIN_GAP).unwrap_or(false);
+        if !fresh && !too_soon {
             if let Some(f) = self.renew.clone() {
-                match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err("serviço de tokens não respondeu".into())) {
+                if let Some(d) = self.down.as_mut() { d.token_at = Some(std::time::Instant::now()); }
+                match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err(TokenFail::from("serviço de tokens não respondeu".to_string()))) {
                     Ok(t) => { self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
-                    Err(e) => { let e = fail(self, e); self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": format!("token: {e}") }))).await; return None; }
+                    Err(e) => {
+                        let msg = fail(self, e.msg);
+                        // 429: o serviço disse quanto esperar; a próxima tentativa (e o próximo pedido de token) só depois disso
+                        if let (Some(secs), Some(d)) = (e.retry_after, self.down.as_mut()) { d.next = tokio::time::Instant::now() + Duration::from_secs(secs.clamp(1, 110)); }
+                        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": format!("token: {msg}"), "retry_after": e.retry_after }))).await;
+                        if e.retry_after.is_some() { self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "reconectando", "message": msg }))).await; }
+                        return None;
+                    }
                 }
             }
         }
@@ -507,6 +551,8 @@ impl Actor {
         self.stale.remove(identity);
         { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); }
         if let Some(a) = &self.audio { a.remove_peer(identity); }
+        let gone_fp = self.data.as_ref().and_then(|l| l.peer_key(identity)).map(|k| k.0);
+        if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
         if let Some(l) = self.data.as_mut() { l.left(identity); }
         self.emit(MeshEvent::Peer { peer_id: identity.to_string(), state: "fechado".into() }).await;
     }
@@ -754,7 +800,7 @@ impl Actor {
         self.send(rq::Message::Subscription(req)).await;
     }
 
-    async fn run(&mut self, rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>) {
+    async fn run(&mut self, rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>, mut frx: mpsc::Receiver<crate::sfufiles::FileOut>) {
         let mut rx = Some(rx);   // None = fora do ar, esperando a próxima tentativa
         let mut ping = tokio::time::interval(Duration::from_millis(self.ping_ms));
         let mut dtick = tokio::time::interval(Duration::from_secs(1));
@@ -774,6 +820,11 @@ impl Actor {
                 c = cmds.recv() => match c { Some(MeshCmd::Close) | None => break, Some(c) => self.on_cmd(c).await },
                 i = irx.recv() => if let Some(i) = i { self.on_internal(i).await },
                 v = srx.recv() => if let Some(v) = v { self.on_share_event(v).await },
+                // pacotes de anexo: só saem com a sessão de pé e com folga no canal de dados (é isso que freia quem envia)
+                f = frx.recv(), if self.down.is_none() => if let Some((to, m)) = f {
+                    self.publish_data(vec![to], json!({ "v": 1, "t": "file", "m": m })).await;
+                    if let Some(dc) = self.dc_pub.clone() { let t0 = std::time::Instant::now(); while dc.buffered_amount().await > 256 * 1024 && t0.elapsed() < Duration::from_secs(2) { tokio::time::sleep(Duration::from_millis(5)).await; } }
+                },
                 ae = async { match arx.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => match ae {
                     Some(AudioEvent::Speaking { peer, level }) => self.emit(MeshEvent::Speaking { peer_id: peer, level }).await,
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
@@ -831,7 +882,27 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
-        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+            let media = self.media();
+            let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
+            self.apply(outs).await;
+            return;
+        }
+        if self.files.is_some() && matches!(c, MeshCmd::SendFile { .. } | MeshCmd::AcceptFile { .. } | MeshCmd::PauseFile { .. } | MeshCmd::CancelFile { .. }) {
+            let peers = self.data.as_ref().map(|l| l.authed_idents()).unwrap_or_default();
+            if let Some(f) = self.files.as_mut() {
+                match c {
+                    MeshCmd::SendFile { path, to_fp } => f.send_file(path, peers.into_iter().filter(|(_, fp)| to_fp.as_ref().map_or(true, |t| t == fp)).collect()).await,
+                    MeshCmd::AcceptFile { id } => f.accept(id).await,
+                    MeshCmd::PauseFile { id, paused } => f.pause(id, paused).await,
+                    MeshCmd::CancelFile { id } => f.cancel(id).await,
+                    _ => {}
+                }
+            }
+            return;
+        }
+        #[cfg(test)]
+        if self.data.is_some() && matches!(c, MeshCmd::HistSeed { .. } | MeshCmd::HistAsk) {
             let media = self.media();
             let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
             self.apply(outs).await;
@@ -851,7 +922,18 @@ impl Actor {
             MeshCmd::ShareStop => self.share_stop().await,
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
-            MeshCmd::Chat { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
+            MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
+            MeshCmd::PeerVolume { key, gain } => {
+                // a UI manda a impressão digital (ou o id do participante): no SFU o áudio é indexado pela identidade
+                let id = self.data.as_ref().and_then(|l| l.ident_for(&key)).unwrap_or(key);
+                if let Some(a) = &self.audio { a.set_peer_gain(&id, gain); }
+            }
+            // Ainda só na malha P2P: anexos, "digitando", grupos e histórico não viajam pela camada de dados do SFU.
+            MeshCmd::SendFile { .. } => self.emit(MeshEvent::Error("anexos ainda não estão disponíveis em chamadas pelo servidor".into())).await,
+            MeshCmd::CancelFile { .. } | MeshCmd::AcceptFile { .. } | MeshCmd::PauseFile { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } => {}
+            #[cfg(test)]
+            MeshCmd::HistSeed { .. } | MeshCmd::HistAsk => {}
+            MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
             MeshCmd::Kick { .. } | MeshCmd::Allow { .. } => self.emit(MeshEvent::Error("expulsar exige a API de administração do LiveKit: ainda não disponível".into())).await,
             MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto exige a camada de dados do SFU".into())).await,
             MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } => {}
@@ -927,6 +1009,7 @@ impl Actor {
                 }
                 Out::MuteLocal { ident, muted } => { if let Some(a) = &self.audio { a.mute_peer(&ident, muted); } }
                 Out::Leave => self.leave = true,
+                Out::File { from, fp, jwk, m } => { if let Some(f) = self.files.as_mut() { f.on_msg(&from, &fp, &jwk, &m).await; } }
             }
         }
     }

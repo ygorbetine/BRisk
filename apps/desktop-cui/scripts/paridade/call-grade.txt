@@ -1,0 +1,31 @@
+# Chamada com 5 participantes de exemplo: Grade -> Foco -> fixar -> Grade; tela cheia (botão, Esc, F11) e barra que some após 3 s
+waitms 400
+snap g0
+expect call_layout 0
+tap 918 38
+expect call_layout 1
+expect call_focus -1
+snap g1
+tap 1140 266
+expect call_focus 0
+snap g2
+tap 817 38
+expect call_layout 0
+snap g3
+tap 1240 38
+expect call_full 1
+expect call_bar 1
+at 640 300
+waitms 3600
+expect call_bar 0
+shot f1
+key esc
+waitms 400
+expect call_full 0
+key f11
+waitms 400
+expect call_full 1
+key f11
+waitms 400
+expect call_full 0
+snap f2

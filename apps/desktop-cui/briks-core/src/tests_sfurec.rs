@@ -38,6 +38,7 @@ pub fn start_server() -> Option<Server> {
 pub struct C {
     pub ident: String,
     pub fp: String,
+    pub id: Arc<Identity>,
     pub cmd: tokio::sync::mpsc::Sender<MeshCmd>,
     pub audio: Arc<Audio>,
     pub stats: Arc<SfuStats>,
@@ -65,7 +66,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
     let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
     let h = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
-        data: Some(DataCfg { identity: id, name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
+        data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);
     tokio::spawn(async move {
@@ -78,6 +79,14 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
                 MeshEvent::Kicked { reason } => format!("kicked:{reason}"),
                 MeshEvent::ChatEvent { local: false, from_fp, .. } => format!("event:{from_fp}"),
                 MeshEvent::Banned { fp } => format!("banned:{fp}"),
+                MeshEvent::Typing { from_fp } => format!("typing:{from_fp}"),
+                MeshEvent::RoomChat { peer_id, from_fp, author, content, id, .. } => format!("roomchat:{peer_id}:{from_fp}:{author}:{id}:{content}"),
+                MeshEvent::StreamRequest { peer_id, name } => format!("streamreq:{peer_id}:{name}"),
+                MeshEvent::StreamReply { peer_id, name, accepted } => format!("streamreply:{peer_id}:{name}:{accepted}"),
+                MeshEvent::GroupSnapshot { from_fp, snapshot } => format!("group:{from_fp}:{}", snapshot["name"].as_str().unwrap_or("")),
+                MeshEvent::History { from_fp, content, id, mine, .. } => format!("hist:{id}:{from_fp}:{mine}:{content}"),
+                MeshEvent::Ack { id, from_fp } => format!("ack:{from_fp}:{id}"),
+                MeshEvent::File(v) => format!("file:{v}"),
                 MeshEvent::Owner { me, .. } => format!("owner:{me}"),
                 MeshEvent::Share(v) => v.to_string(),
                 MeshEvent::Error(m) => format!("err:{m}"),
@@ -86,7 +95,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
             l2.lock().unwrap().push(s);
         }
     });
-    C { ident: ident.into(), fp, cmd: h.cmd, audio: au, stats: h.stats, renewals, log }
+    C { ident: ident.into(), fp, id, cmd: h.cmd, audio: au, stats: h.stats, renewals, log }
 }
 
 const A: &str = "aaaaaaaa-1111-4111-8111-000000000001";

@@ -1,0 +1,4 @@
+# Mensagens (demo msgs): anexar desabilitado nao muda nada
+snap a0
+tap 545 753
+snap a1

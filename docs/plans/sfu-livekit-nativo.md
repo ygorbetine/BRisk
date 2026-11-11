@@ -233,3 +233,62 @@ Divergências/atenções: (1) o cliente ignora o campo `url` da resposta e usa a
 é de um servidor e a conexão vai para outro (erro de entrada, sem aviso específico); (2) limite de 30 tokens por usuário a cada
 10 min: uma queda longa com o servidor recusando pode gastar isso, porque cada recusa pede token novo; resposta 429 hoje aparece
 só como "serviço de tokens recusou (429)"; (3) a função não confere se o usuário pertence à sala (limitação já descrita nela).
+
+---
+
+# Rodada 3 de 2026-11-11
+
+- **URL do servidor vinda do serviço de tokens:** se a resposta traz `url` e ela difere do `livekit.json`, vale a do serviço (é ele que
+  tem a chave); se a informada for inaceitável (esquema), erro "URL do servidor divergente". Só na entrada: a renovação de token na
+  reconexão não troca de servidor.
+- **429 do serviço de tokens:** mensagem "muitas tentativas no serviço de tokens: aguarde N s" (N do `Retry-After`; 30 s se não vier).
+  Na reconexão a próxima tentativa só acontece depois desse prazo, e há no máximo um pedido de token a cada 10 s por queda.
+  Testado no pedido (`fetch_token_ex`); o caminho da reconexão com 429 NÃO foi exercitado ao vivo. Na entrada (`room.join`) o 429 aparece
+  como erro com a mensagem acima; a UI não faz contagem regressiva.
+- **"+N":** acima de 32 remotos a grade ganha um último quadro "+N pessoas na chamada". Quem ficou de fora não é promovido quando abre
+  vaga (só quem entrar depois ocupa o lugar).
+- **Merge de `cui-integracao`** (`07f3c23`, parado havia ~4 h): conflitos em `ipc.rs`, `mesh.rs`, `tests.rs`, `briks_ui.h`, `rtc.c`,
+  `ui_call.c`, resolvidos mantendo as duas partes. O core do SFU passou a aceitar `ChatWithId` (id da UI), `AudioCfg` e `PeerVolume`.
+  **NÃO viajam pelo SFU:** anexos (erro visível), "digitando", instantâneo de grupo e histórico de DMs: esses recursos novos só
+  funcionam na malha P2P. Volume por pessoa no SFU usa a identidade do SFU como chave; NÃO testado.
+- Suíte completa depois do merge (`--test-threads=1`, codecs de software, LiveKit real): 179 passaram, 0 falharam, 24 ignorados.
+
+---
+
+# Rodada 4 de 2026-11-11: o que a malha P2P faz, agora também no SFU
+
+Tudo pela camada de dados do LiveKit (pacotes confiáveis, só entre participantes que fizeram o hello assinado). Teste único com
+3 clientes contra o `livekit-server --dev` real: `tests_sfuapps::sfu_typing_group_history_volume_and_files_over_the_data_layer`.
+
+| Recurso | Como viaja no SFU | Conferido no teste |
+|---|---|---|
+| Anexos (`sfufiles.rs`) | mesmo protocolo da malha (oferta assinada, aceitar, pedaços em ordem, SHA-256 no fim, pausar/cancelar) | 3 MB idênticos em 0,4 s em loopback, progresso nos dois lados, nada gravado antes de aceitar, envio dirigido sem vazar, acima do limite recusado, quem recebe sai no meio → falha avisada a quem envia |
+| "Digitando" | `typing` para os autenticados | chega com a impressão digital de quem digita |
+| Confirmação de entrega | `ack` vira `chat.ack` | uma vez só, mesmo com reenvios |
+| DM com id da UI | `ChatWithId` | id preservado |
+| Manifesto de grupo | `group`, só para membros; `verify_wire` | membro recebe; não-membro não; repassado por terceiro é recusado |
+| Histórico de DMs | `hist.req` / `hist.chunk` / `hist.done`, mesmo armazenamento da malha | 62 mensagens em lotes; forjada, de outra conversa e já conhecida não chegam |
+| Chat da chamada (pacote C) | `room.chat`, autor = identidade provada, mesmo limite de frequência | chega aos outros dois, sem eco |
+| Pedido de transmissão (pacote C) | `stream.request` / `stream.reply` | pedido e resposta chegam; resposta não pedida é ignorada |
+| Volume por pessoa | `PeerVolume` aceita impressão digital ou identidade | mixagem cai a zero e volta |
+| Mudo remoto | já existia (`room.mute`) | `tests_sfuipc` e `tests_sfudata` |
+
+Diferenças em relação à malha, impostas pelo transporte:
+- **Anexos: teto de 100 MB** (na malha são 20 GiB, porque vai direto de um par ao outro) e pedaços de 8 KB. Acima do teto: erro visível.
+- Transferência em curso **não sobrevive a uma queda/reconexão** do servidor de chamadas: falha de forma visível, é preciso reenviar.
+- Manifesto de grupo maior que um pacote (~15 KB) não viaja (erro "mensagem grande demais"); na malha não há esse teto.
+- Cancelar por um dos destinatários cancela o envio para todos (igual à malha).
+- NÃO medido: velocidade de anexo em rede real ou no LiveKit Cloud; anexo grande (perto de 100 MB); pausa/retomada e cancelamento no SFU
+  (o código é o da malha, mas o teste só cobre aceitar, concluir, limite e saída de quem recebe); anexos pela UI C.
+
+UI:
+- "+N": quem está fora da grade fica numa fila com nome e estado; quando alguém sai, sobe quem espera há mais tempo (captura oculta com
+  37 pessoas e 3 saídas). Últimos laços que percorriam só 8 participantes (amigos, grupos, voz, histórico, pilha) usam `BRIKS_MAX_PEERS`.
+- Segundo merge de `cui-integracao` (pacote C, `c45a439`): a tela de chamada do pacote C (grade/foco) substituiu a minha grade; por
+  cima dela ficaram o limite de 32, "Silenciar para todos", a faixa de falha com "Entrar em modo P2P" e a faixa "+N fora da grade".
+  O quadro "+N" dentro da grade deu lugar à faixa. NÃO conferido: modo Foco e tela cheia com mais de 8 pessoas; cliques reais.
+
+- **Suíte completa depois do segundo merge: NÃO concluída.** 174 testes passaram e o processo de teste caiu em
+  `tests_sfu::sfu_screen_share_published_and_watched` com o disco C: (pasta temporária) em 0 MB livres; repetir o teste sozinho caiu
+  de novo, ainda com o disco cheio. O teste grava quadros em arquivo mapeado na pasta temporária, então disco cheio é a causa provável,
+  NÃO comprovada. Os testes deixam pastas `briks-*` em %TEMP% (as `briks-robust-churn-*` têm 190 MB cada). Repetir com espaço livre.

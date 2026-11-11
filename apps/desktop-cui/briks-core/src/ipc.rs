@@ -67,17 +67,24 @@ pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::ac
     let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
     let lk_room = format!("{ns}:{}", &secure_room_id(ns, room)[..32]);
     let (url, room2) = (sc.token_url.clone(), lk_room.clone());
-    let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room2)).await.map_err(|e| e.to_string())??;
+    let (token, told_url) = tokio::task::spawn_blocking(move || crate::sfu::fetch_token_ex(&url, &access, &room2)).await.map_err(|e| e.to_string())?.map_err(|e| e.msg)?;
+    // O serviço de tokens diz para qual servidor o token vale. Se for outro que não o configurado aqui, vale o do serviço (é ele que
+    // tem a chave); se a URL que ele mandou não for aceitável (esquema), erro claro em vez de uma recusa sem explicação.
+    let norm = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    let server_url = match told_url {
+        Some(u) if norm(&u) != norm(&sc.url) => { crate::sfu_cfg::check_server_url(&u).map_err(|e| format!("URL do servidor divergente (o serviço de tokens informou outra, inválida): {e}"))?; u }
+        _ => sc.url.clone(),
+    };
     // reconexão: token novo pela mesma função, com a sessão da conta renovada se preciso (o token da sala vale ~1 h)
     let token_url = sc.token_url.clone();
     let renew: crate::sfu::TokenFn = Arc::new(move || {
         let (acc, url, room) = (acc.clone(), token_url.clone(), lk_room.clone());
         Box::pin(async move {
-            let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
-            tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room)).await.map_err(|e| e.to_string())?
+            let access = acc.access_token().await.map_err(|e| crate::sfu::TokenFail::from(format!("sessão: {e}")))?;
+            tokio::task::spawn_blocking(move || crate::sfu::fetch_token_ex(&url, &access, &room).map(|t| t.0)).await.map_err(|e| crate::sfu::TokenFail::from(e.to_string()))?
         })
     });
-    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio, data, renew: Some(renew) }).await.map_err(|e| e.to_string())
+    crate::sfu::connect(crate::sfu::SfuJoin { url: server_url, token, audio, data, renew: Some(renew) }).await.map_err(|e| e.to_string())
 }
 
 pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {
@@ -186,14 +193,19 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     out(&mut wr, json!({ "ev": "hello.ok", "version": 1 })).await?;
 
     let (acct_tx, mut acct_rx) = mpsc::channel::<Value>(64);
+    let turn_rt = accounts.clone();   // cache do TURN da conta
+    let ev_tx = acct_tx.clone();   // eventos de tarefas em segundo plano (teste de rede)
     let mut account = crate::accounts::service::Service::new(accounts.clone(), acct_tx);   // contas online: account.*, friends.*, import.*
     let mut identity: Option<Arc<Identity>> = None;
     let mut name = String::from("Usuário");
     let mut local_peer = uuid::Uuid::new_v4().to_string();
     let mut mesh_cmd: Option<mpsc::Sender<MeshCmd>> = None;
     let mut mesh_ev: Option<mpsc::Receiver<MeshEvent>> = None;
+    let (link_tx, mut link_rx) = mpsc::channel::<Value>(16);   // respostas de pré-visualização de links (busca em threads)
     let mut rt_status: Option<mpsc::Receiver<String>> = None;
     let mut audio: Option<Arc<Audio>> = None;
+    let mut audio_cfg = crate::audio::AudioCfg::default();   // última Configurações > Voz; vale também para a sala que ainda vai nascer
+    let mut mic_test: Option<crate::audio::MicTest> = None;
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
@@ -254,7 +266,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
                                     let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
                                     let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
-                                    if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                                    if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); a.apply_cfg(&audio_cfg); }
                                     // Padrão: chat/status/presença/expulsão pelas data channels do próprio LiveKit (sem teto de peers). BRIKS_SFU_MESH=1: híbrido com a malha P2P (até 5).
                                     let with_mesh = std::env::var("BRIKS_SFU_MESH").map(|v| v == "1").unwrap_or(false);
                                     let dcfg = if with_mesh { None } else { Some(crate::sfudata::DataCfg { identity: id.clone(), name: name.clone(), room_hash: secure_room_id(&ns, &room), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }) };
@@ -330,9 +342,9 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         });
                         let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
                         let (au, au_rx) = if hybrid.is_some() { (sfu_au.clone(), None) } else if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
-                        if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                        if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); a.apply_cfg(&audio_cfg); }
                         audio = au.clone();
-                        let (ice_list, ice_warn) = crate::ice::load(&|k| std::env::var(k).ok(), &cfg.data_dir);
+                        let (ice_list, ice_warn) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
                         out(&mut wr, json!({ "ev": "ice.info", "servers": ice_list.len(), "turn": crate::ice::has_turn(&ice_list), "warn": ice_warn.unwrap_or_default() })).await?;
                         let au_h = au.clone();
                         let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: ice_list.clone(), audio: au.zip(au_rx), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at }, id, rt, fw_rx);
@@ -353,8 +365,36 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     "chat.send" => {
                         let (Some(to), Some(text)) = (v["to_fp"].as_str(), v["text"].as_str()) else { continue };
                         if let Some(c) = &mesh_cmd {
-                            let _ = c.send(MeshCmd::Chat { to_fp: to.into(), text: text.chars().take(crate::identity::MAX_CHAT_CHARS).collect() }).await;
+                            let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
+                            let id = v["id"].as_str().filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
+                            let _ = c.send(match id { Some(id) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, None => MeshCmd::Chat { to_fp: to.into(), text } }).await;
                         }
+                    }
+                    "file.send" => {
+                        let Some(path) = v["path"].as_str() else { continue };
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SendFile { path: path.into(), to_fp: v["to_fp"].as_str().map(|x| x.to_string()) }).await; }
+                    }
+                    "file.cancel" => {
+                        if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::CancelFile { id: id.into() }).await; }
+                    }
+                    "file.accept" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } }
+                    "file.pause" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: v["paused"].as_bool().unwrap_or(true) }).await; } }
+                    "typing.send" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::Typing).await; } }
+                    // chat da sala (aba Chat da chamada) e pedido de transmissão: só para quem está autenticado na sala
+                    "room.chat.send" => {
+                        if let (Some(id), Some(text), Some(c)) = (v["id"].as_str(), v["text"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::RoomChat { id: id.into(), text: text.into() }).await; }
+                    }
+                    "stream.request" => { if let (Some(k), Some(c)) = (v["peer"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::StreamRequest { key: k.into() }).await; } }
+                    "stream.reply" => { if let (Some(k), Some(c)) = (v["peer"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::StreamReply { key: k.into(), accepted: v["accepted"].as_bool().unwrap_or(false) }).await; } }
+                    "link.preview" => {
+                        // busca segura em thread própria (bloqueante); a resposta volta como evento `link.preview`
+                        let (Some(url), Some(rid)) = (v["url"].as_str(), v["id"].as_str()) else { continue };
+                        let (url, rid, tx) = (url.to_string(), rid.to_string(), link_tx.clone());
+                        tokio::task::spawn_blocking(move || {
+                            let r = crate::linkpreview::fetch(&url, crate::linkpreview::STRICT);
+                            let ev = match r { Ok(mut j) => { j["ev"] = "link.preview".into(); j["id"] = rid.into(); j["ok"] = true.into(); j }, Err(e) => json!({ "ev": "link.preview", "id": rid, "url": url, "ok": false, "error": e.to_string() }) };
+                            let _ = tx.blocking_send(ev);
+                        });
                     }
                     "chat.event.send" => {
                         let (Some(ch), Some(target), Some(action)) = (v["channel"].as_str(), v["target"].as_str(), v["action"].as_str()) else { continue };
@@ -362,6 +402,92 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let Some(c) = &mesh_cmd {
                             let _ = c.send(MeshCmd::Event { channel: ch.into(), target: target.into(), action: action.into(), content: opt("content"), reference: opt("reference"), emoji: opt("emoji") }).await;
                         }
+                    }
+                    "group.sign" | "group.verify" => {
+                        // grupo P2P (group_sync.rs): o core só assina e confere; quem guarda o grupo (e o estado já confiado) é a UI
+                        let sign = v["cmd"] == "group.sign";
+                        let me = match &identity { Some(i) => Some(i.clone()), None => load_or_create_identity(&cfg.data_dir).ok().map(Arc::new) };
+                        let Some(me) = me else { out(&mut wr, json!({ "ev": "group.result", "op": if sign { "sign" } else { "verify" }, "ok": false, "message": "identidade indisponível" })).await?; continue };
+                        identity = Some(me.clone());
+                        let ev = if sign {
+                            match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
+                                Ok(mut s) => {
+                                    s.ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                                    match crate::group_sync::sign(&me, &mut s) {
+                                        Ok(_) => json!({ "ev": "group.result", "op": "sign", "ok": true, "group_id": s.group_id, "snapshot": s, "code": crate::group_sync::to_code(&s) }),
+                                        Err(e) => json!({ "ev": "group.result", "op": "sign", "ok": false, "group_id": s.group_id, "message": e.to_string() }),
+                                    }
+                                }
+                                Err(_) => json!({ "ev": "group.result", "op": "sign", "ok": false, "message": "grupo inválido" }),
+                            }
+                        } else {
+                            let parsed = match v["code"].as_str() { Some(c) => crate::group_sync::from_code(c), None => serde_json::from_value(v["snapshot"].clone()).map_err(|_| anyhow::anyhow!("grupo inválido")) };
+                            let trusted = serde_json::from_value::<crate::group_sync::Snapshot>(v["trusted"].clone()).ok();
+                            match parsed.and_then(|s| crate::group_sync::accept(trusted.as_ref(), &s, &me.fingerprint()).map(|d| (s, d))) {
+                                Ok((s, d)) => json!({ "ev": "group.result", "op": "verify", "ok": true, "group_id": s.group_id, "decision": format!("{d:?}").to_lowercase(), "snapshot": s, "tag": v["tag"] }),
+                                Err(e) => json!({ "ev": "group.result", "op": "verify", "ok": false, "message": e.to_string(), "tag": v["tag"] }),
+                            }
+                        };
+                        out(&mut wr, ev).await?;
+                    }
+                    "group.image" | "group.image_reset" | "group.image_get" => {
+                        // imagem do grupo: só neste computador (cache em avatar-cache/grp-<id>); mesmo recorte quadrado/256px da foto de perfil
+                        let gid: String = v["group_id"].as_str().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect();
+                        let key = format!("grp-{gid}");
+                        let ev = if gid.is_empty() { json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": "grupo inválido" }) } else {
+                            match v["cmd"].as_str().unwrap_or("") {
+                                "group.image_reset" => { crate::accounts::avatar::clear(&cfg.data_dir, &key); json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": Value::Null }) }
+                                "group.image_get" => json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": crate::accounts::avatar::cached(&cfg.data_dir, &key) }),
+                                _ => {
+                                    let path = PathBuf::from(v["path"].as_str().unwrap_or(""));
+                                    let dir = cfg.data_dir.clone();
+                                    let r = tokio::task::spawn_blocking(move || crate::accounts::avatar::prepare(&path).and_then(|j| crate::accounts::avatar::store(&dir, &key, &j))).await;
+                                    match r {
+                                        Ok(Ok(p)) => json!({ "ev": "group.image", "group_id": gid, "ok": true, "path": p }),
+                                        Ok(Err(e)) => json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": e.message }),
+                                        Err(_) => json!({ "ev": "group.image", "group_id": gid, "ok": false, "message": "Não foi possível preparar a imagem." }),
+                                    }
+                                }
+                            }
+                        };
+                        out(&mut wr, ev).await?;
+                    }
+                    "friend.invite" | "friend.accept" | "friend.list" => {
+                        // amigo P2P por código assinado (friend_invite.rs): criar o convite, aceitar um código, listar quem já foi aceito
+                        let op = v["cmd"].as_str().unwrap_or("").trim_start_matches("friend.").to_string();
+                        let me = match &identity { Some(i) => Some(i.clone()), None => load_or_create_identity(&cfg.data_dir).ok().map(Arc::new) };
+                        let Some(me) = me else { out(&mut wr, json!({ "ev": "friend.result", "op": op, "ok": false, "message": "identidade indisponível" })).await?; continue };
+                        identity = Some(me.clone());
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                        let ev = match op.as_str() {
+                            "invite" => {
+                                let nonce = format!("{:016x}{:016x}", now, rand_core::RngCore::next_u64(&mut rand_core::OsRng));
+                                match crate::friend_invite::create(&me, v["name"].as_str().unwrap_or(""), now, &nonce) {
+                                    Ok(i) => json!({ "ev": "friend.result", "op": "invite", "ok": true, "code": crate::friend_invite::to_code(&i), "exp": i.exp }),
+                                    Err(e) => json!({ "ev": "friend.result", "op": "invite", "ok": false, "message": e.to_string() }),
+                                }
+                            }
+                            "accept" => {
+                                let r = crate::friend_invite::from_code(v["code"].as_str().unwrap_or("")).and_then(|i| crate::friend_invite::check(&i, &me.fingerprint(), now))
+                                    .and_then(|f| crate::friend_invite::save(&cfg.data_dir, &f).map(|existed| (f, existed)));
+                                match r {
+                                    Ok((f, existed)) => json!({ "ev": "friend.result", "op": "accept", "ok": true, "fp": f.fp, "name": f.name, "existed": existed }),
+                                    Err(e) => json!({ "ev": "friend.result", "op": "accept", "ok": false, "message": e.to_string() }),
+                                }
+                            }
+                            _ => json!({ "ev": "friend.result", "op": "list", "ok": true, "friends": crate::friend_invite::load(&cfg.data_dir) }),
+                        };
+                        out(&mut wr, ev).await?;
+                    }
+                    "group.code" => {
+                        let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
+                            Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),
+                            _ => json!({ "ev": "group.result", "op": "code", "ok": false, "message": "grupo inválido" }),
+                        };
+                        out(&mut wr, ev).await?;
+                    }
+                    "group.send" => {
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::GroupSend { snapshot: v["snapshot"].clone() }).await; }
                     }
                     "mic.set" | "deafen.set" => {
                         // a UI manda {"on":bool}: mic.set on=microfone ligado; deafen.set on=ensurdecido
@@ -405,6 +531,21 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
                     }
+                    "audio.cfg" => {
+                        // Configurações > Voz: ganhos (1.0 = normal), porta de ruído (gate_db ausente = desligada), supressão (0 padrão, 1 desligada) e dispositivos (nome; vazio = padrão)
+                        audio_cfg = crate::audio::AudioCfg { in_gain: v["in_gain"].as_f64().unwrap_or(1.0) as f32, out_gain: v["out_gain"].as_f64().unwrap_or(1.0) as f32, gate_db: v["gate_db"].as_f64().map(|d| d as f32),
+                            noise: v["noise"].as_u64().unwrap_or(0).min(1) as u8, mic: v["mic"].as_str().unwrap_or("").chars().take(120).collect(), out: v["out"].as_str().unwrap_or("").chars().take(120).collect() };
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::AudioCfg(audio_cfg.clone())).await; }
+                    }
+                    "mic.test" => {
+                        // Teste do microfone fora da chamada: on=true começa (eventos `mic.test` com o nível), on=false para.
+                        if let Some(t) = mic_test.take() { t.stop(); }
+                        if v["on"].as_bool().unwrap_or(false) { mic_test = Some(crate::audio::MicTest::start(audio_cfg.clone(), Audio::fake_from_env(), link_tx.clone())); }
+                    }
+                    "peer.volume" => {
+                        let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::PeerVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }
+                    }
                     "share.list" => {
                         let dir = cfg.data_dir.join("thumbs");
                         let v = tokio::task::spawn_blocking(move || crate::capture::list_sources(&dir)).await.unwrap_or(Value::Null);
@@ -445,16 +586,41 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let (mode, conf) = (crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir), crate::sfu_cfg::resolve(&net_env, &cfg.data_dir));
                         out(&mut wr, json!({ "ev": "net.config", "mode": mode.name(), "configured": matches!(conf, Ok(Some(_))), "error": conf.err().unwrap_or_default() })).await?;
                     }
+                    // tela Rede: servidor TURN/STUN próprio em ice.json. A senha entra aqui e nunca volta para a UI.
+                    "ice.get" => out(&mut wr, crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers())).await?,
+                    "ice.set" | "ice.clear" => {
+                        let s = |k: &str| v[k].as_str().unwrap_or("");
+                        let set = v["cmd"] == "ice.set";
+                        let r = if set { crate::ice::save(&cfg.data_dir, s("urls"), s("username"), s("credential")) } else { crate::ice::clear(&cfg.data_dir) };
+                        let mut ev = crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
+                        ev["ok"] = r.is_ok().into();
+                        ev["message"] = match r { Ok(()) if set => "Salvo. Vale a partir da próxima chamada.".into(), Ok(()) => "Removido. O Briks volta a usar só o STUN público.".into(), Err(e) => e.into() };
+                        out(&mut wr, ev).await?;
+                    }
+                    "ice.test" => {
+                        let (list, _) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
+                        let tx = ev_tx.clone();
+                        tokio::spawn(async move { let _ = tx.send(crate::ice::probe(list, Duration::from_secs(8)).await).await; });
+                    }
                     "ping" => out(&mut wr, json!({ "ev": "pong" })).await?,
                     other => { account.command(other, &v); }
                 }
             }
             Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
             Some(ev) = kick_rx.recv() => out(&mut wr, ev).await?,   // resultado do pedido ao servidor (diagnóstico; a UI não precisa reagir)
+            Some(j) = link_rx.recv() => out(&mut wr, j).await?,
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
+                    Some(MeshEvent::File(j)) => { let mut j = j; j["ev"] = "file".into(); out(&mut wr, j).await? }
+                    Some(MeshEvent::Ack { id, from_fp }) => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
+                    Some(MeshEvent::Typing { from_fp }) => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
+                    Some(MeshEvent::RoomChat { peer_id, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "room.chat", "peer_id": peer_id, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
+                    Some(MeshEvent::StreamRequest { peer_id, name }) => out(&mut wr, json!({ "ev": "stream.request", "peer_id": peer_id, "name": name })).await?,
+                    Some(MeshEvent::StreamReply { peer_id, name, accepted }) => out(&mut wr, json!({ "ev": "stream.reply", "peer_id": peer_id, "name": name, "accepted": accepted })).await?,
                     Some(MeshEvent::ChatEvent { from_fp, wire, local }) => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
+                    Some(MeshEvent::GroupSnapshot { from_fp, snapshot }) => out(&mut wr, json!({ "ev": "group.snapshot", "from_fp": from_fp, "snapshot": snapshot })).await?,
+                    Some(MeshEvent::History { channel, from_fp, author, content, id, ts, mine }) => out(&mut wr, json!({ "ev": "chat.history", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts, "mine": mine })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
                     Some(MeshEvent::PeerInfo { peer_id, fp, name }) => { fp_ident.insert(fp.clone(), peer_id.clone()); out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await? }
                     Some(MeshEvent::Owner { fp, me }) => { owner_me = me; out(&mut wr, json!({ "ev": "room.owner", "fp": fp, "me": me })).await? }

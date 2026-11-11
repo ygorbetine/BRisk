@@ -1,0 +1,7 @@
+# Menu da bandeja > Sair: encerra de verdade mesmo com "fechar para a bandeja" ligado
+waitms 800
+expect tray 1
+expect close_tray 1
+sys cmd quit
+wait 60
+signal fim

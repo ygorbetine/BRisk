@@ -29,11 +29,23 @@ pub struct FakeState {
     codes: HashMap<String, (String, String)>,      // code -> (challenge, user_id)
     access: HashMap<String, String>,               // access token -> user_id
     refresh: HashMap<String, String>,              // refresh token -> user_id (uso único)
+    pairs: HashMap<String, String>,                // access token -> refresh token da mesma sessão (aparelho)
     otps: HashMap<String, String>,                 // "tipo:email" -> código
     pub profiles: HashMap<String, Value>,
     pub objects: HashMap<String, Vec<u8>>,
     pub backups: HashMap<String, Value>,           // cópia cifrada da identidade por conta         // Storage: "<id>/avatar.jpg" -> bytes
     requests: Vec<(String, String, String, bool)>, // id, de, para, aceito
+    blocks: Vec<(String, String)>,                 // quem bloqueou, quem foi bloqueado (0006)
+    /// simula um servidor sem a migração 0006 (as RPCs de bloqueio não existem)
+    pub no_blocks_rpc: bool,
+    /// presença (0007): user_id -> (último batimento em segundos, invisível)
+    presence: HashMap<String, (u64, bool)>,
+    pub no_presence_rpc: bool,
+    /// buscas por @nick feitas por conta (0008: máximo 30 por hora) e servidor sem a 0008
+    lookups: HashMap<String, u32>,
+    pub no_lookup_rpc: bool,
+    /// segundos "passados" para os testes envelhecerem os batimentos sem esperar
+    pub clock_skew: u64,
     /// validade do access token em segundos (testes de renovação usam valores baixos)
     pub expires_in: u64,
     pub autoconfirm: bool,
@@ -42,8 +54,16 @@ pub struct FakeState {
     /// último link "enviado por e-mail" (confirmação/recuperação) e contagem de renovações
     pub last_link: Option<String>,
     pub refresh_count: u32,
+    /// Edge Function turn-credentials simulada: 0 = não publicada (404); senão, validade em segundos
+    pub turn_ttl: u64,
+    pub turn_hits: u32,
     /// amigos de exemplo ao criar o primeiro perfil (modo de desenvolvimento)
     pub demo: bool,
+}
+
+impl FakeState {
+    /// Revoga todas as sessões (access e refresh), como se o servidor tivesse derrubado o login.
+    pub fn drop_all_sessions(&mut self) { self.access.clear(); self.refresh.clear(); }
 }
 
 pub struct Fake {
@@ -177,6 +197,7 @@ fn issue(st: &mut FakeState, user_id: &str) -> Value {
     let (a, r) = (format!("at-{}", uid()), format!("rt-{}", uid()));
     st.access.insert(a.clone(), user_id.to_string());
     st.refresh.insert(r.clone(), user_id.to_string());
+    st.pairs.insert(a.clone(), r.clone());
     let u = st.users.iter().find(|u| u.id == user_id).cloned().expect("usuário");
     json!({ "access_token": a, "refresh_token": r, "token_type": "bearer", "expires_in": st.expires_in, "user": user_json(&u) })
 }
@@ -241,6 +262,8 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
             }
             "refresh_token" => match st.refresh.remove(&s("refresh_token")) {
                 Some(user) => {
+                    let old = s("refresh_token");
+                    if let Some(a) = st.pairs.iter().find(|(_, r)| **r == old).map(|(a, _)| a.clone()) { st.pairs.remove(&a); st.access.remove(&a); }
                     st.refresh_count += 1;
                     ok(issue(st, &user))
                 }
@@ -297,12 +320,32 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
             u.confirmed = true;
             ok(user_json(u))
         }
+        ("POST", "/auth/v1/logout") if qs("scope") == "others" => {
+            let Some(user) = st.access.get(bearer).cloned() else { return err("401 Unauthorized", "bad_jwt", "invalid JWT") };
+            let keep = st.pairs.get(bearer).cloned();
+            let others: Vec<String> = st.access.iter().filter(|(a, u)| **u == user && a.as_str() != bearer).map(|(a, _)| a.clone()).collect();
+            for a in others { st.access.remove(&a); if let Some(r) = st.pairs.remove(&a) { st.refresh.remove(&r); } }
+            st.refresh.retain(|r, u| *u != user || Some(r) == keep.as_ref());
+            ("204 No Content", String::new(), Value::Null)
+        }
         ("POST", "/auth/v1/logout") => {
             if let Some(user) = st.access.remove(bearer) {
                 st.refresh.retain(|_, u| *u != user);
                 st.access.retain(|_, u| *u != user);
             }
             ("204 No Content", String::new(), Value::Null)
+        }
+        ("GET", "/functions/v1/turn-credentials") => {
+            if st.turn_ttl == 0 {
+                return ("404 Not Found", String::new(), json!({ "code": "NOT_FOUND", "message": "Requested function was not found" }));
+            }
+            let Some(user) = st.access.get(bearer).cloned() else { return ("401 Unauthorized", String::new(), json!({ "message": "Entre na sua conta Briks para usar o relay TURN." })) };
+            st.turn_hits += 1;
+            let exp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.turn_ttl;
+            let username = format!("{exp}:{user}");
+            let urls = ["turn:turn.exemplo.test:3478?transport=udp", "turns:turn.exemplo.test:5349?transport=tcp"];
+            ok(json!({ "username": username, "credential": "cred-falsa-do-turn", "ttl": st.turn_ttl, "expiresAt": exp, "urls": urls,
+                "iceServers": [{ "urls": ["stun:turn.exemplo.test:3478"] }, { "urls": urls, "username": username, "credential": "cred-falsa-do-turn" }] }))
         }
         ("POST", p) if p.starts_with("/rest/v1/rpc/") => {
             let Some(me) = st.access.get(bearer).cloned() else { return ("401 Unauthorized", String::new(), json!({ "code": "PGRST301", "message": "JWT expired" })) };
@@ -408,6 +451,8 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             if other == me {
                 return pg("self_request");
             }
+            if st.blocks.iter().any(|x| x.0 == other && x.1 == me) { return pg("not_found"); }
+            if st.blocks.iter().any(|x| x.0 == me && x.1 == other) { return pg("blocked_by_you"); }
             if let Some(r) = st.requests.iter().find(|r| (r.1 == me && r.2 == other) || (r.1 == other && r.2 == me)) {
                 return pg(if r.3 { "already_friends" } else { "already_requested" });
             }
@@ -419,6 +464,62 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some(i) = st.requests.iter().position(|r| r.0 == id && r.2 == me && !r.3) else { return pg("not_found") };
             if b["p_accept"].as_bool().unwrap_or(false) { st.requests[i].3 = true } else { st.requests.remove(i); }
             ok(Value::Null)
+        }
+        "nick_lookup" if st.no_lookup_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "nick_lookup" => {
+            let n = b["p_nick"].as_str().unwrap_or("").trim().trim_start_matches('@').to_lowercase();
+            let used = st.lookups.entry(me.to_string()).or_insert(0);
+            if *used >= 30 { return pg("rate_limited"); }
+            *used += 1;
+            let found = st.profiles.iter().find(|(_, p)| p["nick"] == n.as_str()).map(|(id, p)| (id.clone(), p.clone()));
+            let Some((other, p)) = found else { return pg("not_found") };
+            if other == me || p["fingerprint"].is_null() || st.blocks.iter().any(|x| (x.0 == me && x.1 == other) || (x.0 == other && x.1 == me)) { return pg("not_found"); }
+            ok(json!({ "user_id": other, "nick": p["nick"], "display_name": p["display_name"], "fingerprint": p["fingerprint"] }))
+        }
+        "presence_beat" | "presence_friends" | "presence_clear" if st.no_presence_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "presence_beat" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            st.presence.insert(me.to_string(), (now, b["p_invisible"].as_bool().unwrap_or(false)));
+            ok(Value::Null)
+        }
+        "presence_clear" => { st.presence.remove(me); ok(Value::Null) }
+        "presence_friends" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let v: Vec<Value> = st.requests.iter().filter(|r| r.3 && (r.1 == me || r.2 == me)).filter_map(|r| {
+                let other = if r.1 == me { &r.2 } else { &r.1 };
+                if st.blocks.iter().any(|x| (x.0 == me && &x.1 == other) || (&x.0 == other && x.1 == me)) { return None; }
+                let (seen, invisible) = *st.presence.get(other)?;
+                if invisible { return None; }
+                Some(json!({ "user_id": other, "last_seen": seen.to_string(), "online": now.saturating_sub(seen) < 120 }))
+            }).collect();
+            ok(json!(v))
+        }
+        "friend_block" | "friend_unblock" | "friend_blocks_list" if st.no_blocks_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "friend_block" => {
+            let other = b["p_user"].as_str().unwrap_or("").to_string();
+            if other.is_empty() || other == me { return pg("invalid_user"); }
+            if !st.profiles.contains_key(&other) { return pg("not_found"); }
+            if !st.blocks.iter().any(|x| x.0 == me && x.1 == other) { st.blocks.push((me.to_string(), other.clone())); }
+            st.requests.retain(|r| !((r.1 == me && r.2 == other) || (r.1 == other && r.2 == me)));
+            ok(Value::Null)
+        }
+        "friend_unblock" => {
+            let other = b["p_user"].as_str().unwrap_or("");
+            st.blocks.retain(|x| !(x.0 == me && x.1 == other));
+            ok(Value::Null)
+        }
+        "friend_blocks_list" => {
+            let v: Vec<Value> = st.blocks.iter().filter(|x| x.0 == me).map(|x| {
+                let p = st.profiles.get(&x.1).cloned().unwrap_or(json!({}));
+                json!({ "user_id": x.1, "nick": p["nick"], "display_name": p["display_name"], "blocked_at": "2026-01-01T00:00:00Z" })
+            }).collect();
+            ok(json!(v))
         }
         "friend_remove" => {
             let other = b["p_user"].as_str().unwrap_or("");

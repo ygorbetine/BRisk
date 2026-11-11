@@ -19,26 +19,11 @@ use crate::sfu::{self, SfuHandle, SfuJoin};
 /// Porta HTTP do livekit-server de teste: `BRIKS_LIVEKIT_TEST_PORT` (padrão 7880). O TCP de mídia fica desligado e o UDP usa porta+2.
 pub fn lk_port() -> u16 { std::env::var("BRIKS_LIVEKIT_TEST_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
 
-/// Argumentos do livekit-server de teste: tudo preso a 127.0.0.1 (HTTP, ICE UDP só em 127.0.0.0/8, TCP de mídia desligado, sem IP externo,
-/// sem TURN). O arquivo de configuração vai para a pasta temporária do processo (TMP/TEMP próprios dos agentes).
+/// Argumentos do livekit-server de teste: HTTP/UDP/TCP presos a 127.0.0.1 e `--node-ip 127.0.0.1` (sem isso o servidor anuncia o IP da VPN/LAN).
+/// ATENCAO: o livekit-server nao anuncia candidato loopback com `ips.includes 127.0.0.0/8`; por isso estes testes exigem
+/// `BRIKS_NET_LOOPBACK_ONLY=0` no cliente (o servidor continua so em 127.0.0.1).
 pub fn lk_args() -> Vec<String> {
-    let p = lk_port();
-    let cfg = std::env::temp_dir().join(format!("briks-lk-{p}-{}.yaml", std::process::id()));
-    let yaml = format!("port: {p}
-bind_addresses:
-  - 127.0.0.1
-keys:
-  devkey: secret
-rtc:
-  tcp_port: 0
-  udp_port: {}
-  use_external_ip: false
-  ips:
-    includes:
-      - 127.0.0.0/8
-", p as u32 + 2);
-    let _ = std::fs::write(&cfg, yaml);
-    vec!["--dev".into(), "--bind".into(), "127.0.0.1".into(), "--config".into(), cfg.to_string_lossy().into_owned()]
+    vec!["--dev".into(), "--bind".into(), "127.0.0.1".into(), "--node-ip".into(), "127.0.0.1".into()]
 }
 
 struct Server { child: Child, port: u16 }

@@ -1,5 +1,5 @@
 # Aplica os patches do CUI uma única vez cada (roda no diretório de fontes do CUI).
-foreach(name cui-render-override cui-set-cursor)
+foreach(name cui-render-override cui-set-cursor cui-edit-command)
   set(P "${CMAKE_CURRENT_LIST_DIR}/${name}.patch")
   execute_process(COMMAND git apply --ignore-whitespace -R --check "${P}" RESULT_VARIABLE already OUTPUT_QUIET ERROR_QUIET)
   if(already EQUAL 0)

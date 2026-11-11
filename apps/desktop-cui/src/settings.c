@@ -26,6 +26,7 @@ typedef struct {
     bool ptt_on; float ptt_delay;
     bool nt_online, nt_stream;
     bool telemetry;
+    int text_size;
 } settings_t;
 settings_t g_set;
 
@@ -37,12 +38,13 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
-    { "telemetry", 'b', &g_set.telemetry },
+    { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
 };
 #define NF ((int)(sizeof F / sizeof *F))
 
 static void defaults(void) {
     memset(&g_set, 0, sizeof g_set);
+    g_set.text_size = 1;
     g_set.in_vol = 100; g_set.out_vol = 100; g_set.gate_db = -50; g_set.echo = true; g_set.excl_audio = true;
     g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = true;
     g_set.nt_online = g_set.nt_stream = true; g_set.ptt_delay = 200;
@@ -55,8 +57,12 @@ static bool cfg_path(char *out, size_t cap) {
     char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
     snprintf(out, cap, "%s\\settings.cfg", dir); return true;
 }
-static void load(void) {
+static void load(void);
+static void load_inner(void);
+static void load(void) { load_inner(); g_text_size = g_set.text_size < 0 ? 0 : g_set.text_size > 3 ? 3 : g_set.text_size; }
+static void load_inner(void) {
     defaults();
+    { const char *ts = getenv("BRIKS_TEXT_SIZE"); if (ts) g_set.text_size = atoi(ts); }   /* capturas */
     char p[MAX_PATH]; if (getenv("BRIKS_DEMO") || !cfg_path(p, sizeof p)) return;
     FILE *f = fopen(p, "rb"); if (!f) return;
     char ln[200];
@@ -293,6 +299,13 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break; }
                 case 2: /* Temas */
+                    SCARD(ui, "APARÊNCIA · TAMANHO DO TEXTO") {
+                        static const char *TS[] = { "Normal", "Grande", "Maior", "Máximo" };
+                        int before = g_set.text_size;
+                        seg(ui, "cfg-ts", TS, 4, &g_set.text_size);
+                        if (g_set.text_size != before) { g_text_size = g_set.text_size; briks_text_scale_apply(ui); }
+                        sub(ui, "Vale na hora em todo o app e fica salvo. O padrão é Grande.");
+                    }
                     themes_tab(ui);
                     break;
                 case 3: { /* Armazenamento */

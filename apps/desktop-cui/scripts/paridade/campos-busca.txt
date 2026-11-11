@@ -1,0 +1,22 @@
+# BAS-08 e MSG-15: Ctrl+K (paleta) e Ctrl+F (busca na conversa)
+snap b0
+at 640 400
+key ctrl+k
+waitms 500
+expect attach_palette 1
+expect modal 1
+type rafael
+waitms 400
+shot b1
+key esc
+wait 3
+key esc
+waitms 400
+expect attach_palette 0
+key ctrl+f
+waitms 400
+expect attach_search_on 1
+type perfeito
+waitms 500
+expect attach_search_len 8
+snap b2

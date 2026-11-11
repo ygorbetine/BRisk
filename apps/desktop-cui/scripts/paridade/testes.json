@@ -79,6 +79,21 @@
     { "id": "lay-min", "demo": "msgs", "roteiro": "lay-min.txt", "env": { "BRIKS_WINDOW": "560x480" }, "checagens": [
       { "item": "LAY-13", "de": "l0", "para": "l0", "esperado": "igual" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
-      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] }
+      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
+    { "id": "campos-menu", "demo": "msgs", "roteiro": "campos-menu.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-02", "de": "c1", "para": "c2", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c2", "para": "c3", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c3", "para": "c4", "esperado": "muda" } ] },
+    { "id": "campos-selecao", "demo": "msgs", "roteiro": "campos-selecao.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-04", "de": "s0", "para": "s1", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s2", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s3", "esperado": "muda" } ] },
+    { "id": "campos-anexos", "demo": "msgs", "roteiro": "campos-anexos.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-24", "de": "a0", "para": "a1", "esperado": "muda" },
+      { "item": "BAS-23", "de": "a1", "para": "a2", "esperado": "muda" },
+      { "item": ["BAS-23", "MSG-09"], "de": "a2", "para": "a3", "esperado": "muda" } ] },
+    { "id": "campos-busca", "demo": "msgs", "roteiro": "campos-busca.txt", "checagens": [
+      { "item": "BAS-08", "de": "b0", "para": "b1", "esperado": "muda" },
+      { "item": ["BAS-08", "MSG-15"], "de": "b0", "para": "b2", "esperado": "muda" } ] }
   ]
 }

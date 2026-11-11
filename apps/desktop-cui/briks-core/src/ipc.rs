@@ -595,9 +595,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let scfg = crate::share::ShareCfg { kind, height: v["height"].as_u64().unwrap_or(1080).clamp(240, 2160) as usize, fps: v["fps"].as_u64().unwrap_or(30).clamp(5, 60) as u32,
                             kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect(), audio: audio_mode(&v, &kind2),
                             content: if v["content"] == "motion" { crate::adapt::Content::Motion } else { crate::adapt::Content::Detail }, adaptive: v["adaptive"].as_bool().unwrap_or(true) };
-                        let preview = cfg.data_dir.join("video").join("preview.bin");
+                        // "slot": 1 = 2ª tela simultânea (segundo monitor), com prévia própria; sem "slot" (ou 0) é a transmissão de sempre
+                        let second = v["slot"].as_u64() == Some(1);
+                        let preview = cfg.data_dir.join("video").join(if second { "preview-2.bin" } else { "preview.bin" });
                         let dump = std::env::var("BRIKS_SHARE_DUMP").ok().map(PathBuf::from);
-                        let _ = c.send(MeshCmd::ShareStart { cfg: scfg, preview: Some(preview.clone()), dump }).await;
+                        let _ = c.send(if second { MeshCmd::Share2Start { cfg: scfg, preview: Some(preview.clone()), dump } } else { MeshCmd::ShareStart { cfg: scfg, preview: Some(preview.clone()), dump } }).await;
                     }
                     "share.audio.list" => {
                         let apps = tokio::task::spawn_blocking(crate::procaudio::list_apps).await.unwrap_or_default();
@@ -611,11 +613,14 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let key = v["peer"].as_str().unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }
                     }
-                    "share.stop" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareStop).await; } }
+                    "share.stop" => { if let Some(c) = &mesh_cmd { let _ = c.send(if v["slot"].as_u64() == Some(1) { MeshCmd::Share2Stop } else { MeshCmd::ShareStop }).await; } }
                     "share.watch" => {
                         let key = v["peer"].as_str().unwrap_or("").to_string();
                         let safe: String = key.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareWatch { key, on: v["on"].as_bool().unwrap_or(true), path: cfg.data_dir.join("video").join(format!("remote-{safe}.bin")) }).await; }
+                        let on = v["on"].as_bool().unwrap_or(true);
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) {
+                            let _ = c.send(if v["slot"].as_u64() == Some(1) { MeshCmd::Share2Watch { key, on, path: cfg.data_dir.join("video").join(format!("remote-{safe}-2.bin")) } } else { MeshCmd::ShareWatch { key, on, path: cfg.data_dir.join("video").join(format!("remote-{safe}.bin")) } }).await;
+                        }
                     }
                     // GRP-17: quem está em cada sala de voz do grupo, sem entrar nela (canal de presença do grupo, ver grouproster.rs)
                     "group.roster.watch" => {

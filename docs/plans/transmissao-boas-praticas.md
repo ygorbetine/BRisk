@@ -601,3 +601,101 @@ rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agor
   conteúdo protegido real foi testado.
 - **Discord tocando — NÃO FEITO.** **FEC de vídeo — NÃO FEITO** (retransmissão por NACK cobre a perda; FEC exigiria um canal
   extra e ainda não foi avaliado).
+
+## 19. Perda aleatória × congestionamento (pedido do SFU) — 2026-11-11
+
+**Problema medido pelo agente do SFU e reproduzido na malha** (`mesh_adaptive_under_random_loss`, codecs de software, adaptação
+ligada, perda aleatória sem limite de banda): o estimador tratava perda como congestionamento e descia sem parar.
+
+**Mudança (`adapt.rs`):** perda só corta na hora com evidência de congestionamento (RTT acima da base em 25 ms/25%, ou perda acima
+de 25%). Sem evidência, faz UM corte de sondagem de 20% e avalia pela MÉDIA da perda nos 2 s seguintes: se não caiu, a perda é
+aleatória — devolve o bitrate e passa a tolerar essa perda (`loss_tol`, volta devagar a 10%); se caiu, era policiamento sem fila
+e o corte fica. O atraso que não responde a dois cortes vira tolerância de atraso (`delay_tol`) em vez de trocar a base. Piso de
+bitrate 150 → 250 kbps. 13 testes unitários do estimador (5 novos: perda aleatória 5/10/15%, perda oscilando no limite,
+policiamento sem fila, congestionamento por cima de perda aleatória, atraso alheio).
+
+| Fase (malha, 720p, alvo 3000 kbps) | Antes: estimativa / qps / maior intervalo | Depois: estimativa / qps / maior intervalo |
+|---|---|---|
+| perda 5%: 10–20 s | 3000 kbps / 13,0 / 281 ms | 2680 kbps / 12,7 / 329 ms |
+| perda 10%: 0–10 s | 951 kbps (360p) / 10,4 / 616 ms | 3000 kbps (720p) / 10,7 / 382 ms |
+| perda 10%: 10–20 s | 329 kbps (360p) / 9,7 / 555 ms | 3000 kbps (720p) / 13,6 / 399 ms |
+| perda 10%: 20–30 s | 207 kbps (360p) / 5,8 / **4449 ms** | 3000 kbps (720p) / 13,4 / **307 ms** |
+| livre de novo | 2657 kbps (540p) / 9,4 | 3000 kbps (720p) / 13,2 |
+
+(O codificador de software não passa de ~13–14 qps em 720p nesta máquina: o teto de qps é do teste, não da rede.)
+CSV: `provas/transmissao/malha-perda-aleatoria-adaptativo.csv`.
+
+**Sem regressão no congestionamento real** (`adaptation_follows_the_network`, NVENC): 6 Mbps → 4,4 / 4,0 Mbps; 2 Mbps+2% → 0,96 /
+0,72; 0,8 Mbps+5% → 0,29 / 0,40; volta a 6 Mbps → 3,9 / 4,3 (Nitidez / Fluidez). Queda de 4 s: 1º quadro em 1,15–1,24 s.
+**"Preso em ~150 kbps"** (`BRIKS_G2G_CASE=5`: 4 Mbps, 2% de perda, 80 ms por sentido, jitter 0–40 ms): agora estimativa de 1,6 Mbps
+a 720p (antes ~150 kbps a 360p); ainda limitado por "atraso" (8,2 qps, p95 271 ms).
+Matriz de bitrate fixo (`network_impairment_matrix`): perda 1/2/5% = 30,0/29,9/29,9 qps; 10% = 24,2 qps (3 congelamentos > 250 ms,
+maior intervalo 782 ms); quedas de 3 e 5 s voltam em ~1,5 s.
+
+**NÃO FEITO / em aberto:**
+- **Matriz sobre o SFU não foi repetida:** o `livekit-server.exe` não está nesta máquina (procurei em A:\ e no perfil) e baixar
+  exige autorização. O estimador é o mesmo código nos dois transportes; falta rodar `tests_sfurede.rs` com `BRIKS_LIVEKIT_SERVER_BIN`.
+- **Congelamento longo em queda brusca de banda continua:** 11,3 s (Nitidez) e 14,2 s (Fluidez) nesta rodada; o teste
+  `adaptation_follows_the_network` FALHOU por isso (limite de 14 s). Limitar o ritmo do pacer à capacidade estimada foi testado e
+  piorou (24 s, revertido). FEC de vídeo não foi feito.
+- Latência de 1080p (+44 ms medidos; causa não isolada) e 4+ espectadores: sem mudança desde a seção 16/17.
+- **Disco:** cada execução da suíte deixa ~760 MB em `%TEMP%` (pastas `briks-*`, hoje ~41 GB somando todas as sessões) e o C:
+  chegou a 0 MB, derrubando a suíte com violação de acesso. Rodei com `TMP`/`TEMP` apontados para `target/tmp-test` (apagado
+  depois). A limpeza do `%TEMP%` compartilhado precisa do ok do usuário; os testes deveriam apagar o que criam.
+
+## 20. Pacer atendendo NACKs dentro do quadro e corte direto com fila cheia — 2026-11-11
+
+- **Bloqueio de retransmissão por quadro grande — ERA UM DEFEITO, CORRIGIDO E MEDIDO.** O pacer só atendia pedidos de retransmissão
+  ENTRE unidades de acesso. Um quadro grande (quadro-chave com a rede apertada leva 1 s ou mais para sair) segurava os NACKs; o
+  receptor desistia em 400 ms, pedia outro quadro-chave e o ciclo se repetia. Agora os NACKs são atendidos entre os pacotes do
+  quadro (`serve_nacks!` em `share.rs`). `loss_is_repaired_by_retransmission`, bitrate fixo: **10% de perda: 30,0 qps, 0 quadros
+  perdidos** (antes 14,1–24,2 qps com 1–3 perdidos); 5%: 30,4 qps; 2%: 29,6 qps. Perda aleatória com adaptação: 3000 kbps e 720p
+  nas três janelas de 10% (um intervalo de 2,2 s numa delas). Queda de 4 s: 1º quadro em 1,1–1,4 s.
+- **Corte direto ao que passou com a fila cheia** (atraso alto E perda > 30% pelos NACKs, com o emissor de fato enviando) e
+  recriação do codificador a cada 2 s em vez de 4 s. Resultado MISTO em `adaptation_follows_the_network` (2 rodadas antes, 2
+  depois, Nitidez e Fluidez; máquina com outras cargas):
+
+| Medida (média de 4) | Só com o conserto do pacer | + corte direto |
+|---|---|---|
+| pior congelamento | 10,2 s (9,4–11,0) | 7,6 s (5,8–9,3) |
+| enviado no degrau de 6 Mbps | 3,9 Mbps | 3,1 Mbps |
+| enviado no degrau de 2 Mbps + 2% | 1,5 Mbps | 1,2 Mbps |
+| enviado na volta a 6 Mbps | 4,9 Mbps | 2,7 Mbps |
+
+  Ou seja: congela menos, mas usa menos banda e demora mais a voltar. Mantido por priorizar não congelar; a variação entre
+  rodadas é da ordem do efeito, então a conclusão é fraca.
+- **NÃO resolvido:** 6–9 s sem imagem numa queda brusca de banda ainda é muito. O que falta é a recuperação do quadro-chave em si
+  (ex.: quadro-chave menor/intra-refresh sob restrição, ou retorno direto da taxa recebida pelo espectador); FEC não foi feito.
+- **Matriz sobre o SFU continua NÃO repetida:** falta o `livekit-server.exe` nesta máquina.
+
+## 21. SFU, aviso "Assistir", zoom e dois monitores — 2026-11-11
+
+**Matriz sobre o SFU (LiveKit local, porta 7890, `BRIKS_LIVEKIT_TEST_PORT`; vale em todos os testes de SFU):** 3 de 3 passaram
+(`sfu_network_*`). Envio a bitrate fixo, 720p: perda 5% 28,1 qps; perda 10% **24,6 qps** (antes 4,4, depois 10–17); queda de 4 s
+volta em 1,1 s. Recepção: 29,6 / 29,6 / 28,5 / 25,4 qps com 1/2/5/10%. Adaptação com 10% de perda: estimativa fica em 3000 kbps
+(antes caía de 1316 para 223). Rodado com a CPU ocupada por builds de outras sessões. CSVs: `provas/transmissao/sfu-*.csv`.
+
+**Pedir/aceitar transmissão (`stream.request`/`stream.reply`):** igual. Passa na malha (`tests_sala`) e no SFU (trecho 1b de
+`tests_sfuapps`; o teste falha depois, na linha 68, porque `count("chat:")` também conta `roomchat:` — erro do teste).
+
+**TRX-10, aviso "X começou a transmitir · Assistir":** aparece só na passagem de desligada para ligada e só fora do modo
+Transmissão; fica 8 s; some se a pessoa parar ou sair. O clique troca para a aba Transmissão; a chamada continua sem exibir
+transmissões sozinha. **CHM-12, zoom de quem assiste:** roda do mouse (pinça chega como Ctrl+roda) amplia em torno do ponteiro,
+arrastar move, selo "173% · voltar a 100%" no canto (clique volta; duplo clique e tecla 0 são do componente), limite de 8x, nunca
+abaixo do encaixe, estado por transmissão. Lógica em `callhist.c` (11 testes em `call_test`), tela em `ui_share.c`.
+Prova: `scripts/prova-transmissao-ui.ps1` (janela oculta, sem backend, quadro sintético; 10 verificações `expect`), capturas em
+`provas/transmissao-ui/`. A pinça não foi testada à parte.
+
+**Dois monitores ao mesmo tempo — IMPLEMENTADO (core malha + SFU + IPC + UI):**
+- `share.list` já devolvia todas as telas. Agora há dois *slots* por pessoa (0 = 1ª tela, 1 = 2ª tela; a 2ª não tem áudio).
+  Malha: faixa `screen-video-2`, pacer/codificador/estimador/IDR por slot; SFU: segunda ScreenShare com prefixo `[2] `;
+  IPC `share.start/stop/watch` aceitam `"slot":1`, eventos trazem `"slot"`, chave de recepção `par#2`.
+- UI: botão "+ 2ª tela" / "Parar 2ª tela" na barra, dois blocos por pessoa no palco, zoom independente por bloco.
+- Testes: `one_person_shares_two_screens_at_once` (malha) e `sfu_one_person_shares_two_screens_at_once` (SFU) passando;
+  prova de UI `duas` (`share_tiles 2`, zoom independente) com captura oculta.
+- NÃO feito/testado: orçamento único de banda dividido entre os dois codificadores (cada slot tem seu estimador e vê o mesmo
+  gargalo); duas sessões NVENC simultâneas; 2 telas com 4+ espectadores; 2 telas sob perda/queda; layout grade/foco para muitas
+  pessoas com duas telas cada.
+
+**Em aberto:** congelamento em queda brusca (últimas rodadas válidas: 2,3 / 2,5 / 5,8 / 7,1 s; meta < 3 s), 4+ espectadores e
+latência de 1080p — não medidos nesta rodada: ~23 `cargo`/`rustc` de outras sessões, criar o NVENC levou 12 s.

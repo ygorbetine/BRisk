@@ -95,5 +95,18 @@ int main(void) {
     EQ(call_net_label(NETQ_GOOD), "Rede boa", "rótulo");
 
     printf(fails ? "\n%d FALHA(S)\n" : "\ntudo ok\n", fails);
+    /* transmissão: aviso "começou a transmitir" e zoom de quem assiste */
+    OK(share_notice_wanted(false, true, false), "aviso quando alguém começa a transmitir e estou no modo Call");
+    OK(!share_notice_wanted(false, true, true), "sem aviso para quem já está no modo Transmissão");
+    OK(!share_notice_wanted(true, true, false), "sem aviso repetido a cada atualização da mesma transmissão");
+    OK(!share_notice_wanted(true, false, false), "sem aviso quando a transmissão termina");
+    OK(share_zoom_pct(0, 0.5f) == 100 && share_zoom_pct(0.5f, 0.5f) == 100, "encaixada = 100%");
+    OK(share_zoom_pct(1.0f, 0.5f) == 200 && share_zoom_pct(0.75f, 0.5f) == 150, "percentual relativo ao encaixe");
+    OK(share_zoom_pct(0.2f, 0.5f) == 100 && share_zoom_pct(1.0f, 0) == 100, "nunca abaixo de 100%");
+    { float z = 1.0f, x = 300, y = 200;
+      OK(share_zoom_clamp(&z, &x, &y, 0.5f, 8) && z == 1.0f && x == 300, "ampliada: mantém zoom e posição");
+      z = 9.0f; OK(share_zoom_clamp(&z, &x, &y, 0.5f, 8) && z == 4.0f, "limite de 8x o encaixe");
+      z = 0.4f; OK(!share_zoom_clamp(&z, &x, &y, 0.5f, 8) && z == 0 && x == 0 && y == 0, "abaixo do encaixe volta a 100% e esquece a posição");
+      z = 0; x = 5; OK(!share_zoom_clamp(&z, &x, &y, 0.5f, 8) && x == 5, "encaixada: nada muda"); }
     return fails ? 1 : 0;
 }

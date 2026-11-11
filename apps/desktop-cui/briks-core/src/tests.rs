@@ -1021,6 +1021,64 @@ async fn two_simultaneous_shares_in_one_room() {
     assert!(na2 > na + 15, "a transmissão de B parou junto: {na} → {na2}");
 }
 
+/// Dois monitores ao mesmo tempo: A transmite DUAS telas (duas fontes sintéticas, nada do monitor real) e B assiste às duas, cada
+/// uma no seu arquivo de quadros. Parar a 2ª não derruba a 1ª.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn one_person_shares_two_screens_at_once() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let mut a = node(port, PA, "Ana", "duastelas1", Arc::new(Identity::generate()));
+    let mut b = node(port, PB, "Beto", "duastelas1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-duastelas-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "Tela 1", 720), preview: Some(dir.join("previa-1.bin")), dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::Share2Start { cfg: cfg(SourceKind::TestMotion, "Tela 2", 540), preview: Some(dir.join("previa-2.bin")), dump: None }).await.unwrap();
+    // quem transmite recebe um "share.local on" por tela, cada um com o seu slot
+    let (mut l0, mut l1) = (false, false);
+    while !(l0 && l1) {
+        let v = wait_share(&mut a, |v| v["ev"] == "share.local" && v["state"] == "on", 20).await.expect("A não confirmou as duas telas");
+        if v["slot"] == 1 { l1 = true; } else { l0 = true; }
+    }
+    // quem assiste fica sabendo das duas, com rótulo e slot
+    let (mut r0, mut r1) = (None, None);
+    while r0.is_none() || r1.is_none() {
+        let v = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube das duas telas de A");
+        if v["slot"] == 1 { r1 = Some(v) } else { r0 = Some(v) }
+    }
+    assert_eq!((r0.as_ref().unwrap()["label"].as_str(), r1.as_ref().unwrap()["label"].as_str()), (Some("Tela 1"), Some("Tela 2")));
+    b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b-tela-1.bin") }).await.unwrap();
+    b.cmd.send(MeshCmd::Share2Watch { key: PA.into(), on: true, path: dir.join("b-tela-2.bin") }).await.unwrap();
+    let (mut f0, mut f1) = (None, None);
+    let end = std::time::Instant::now() + Duration::from_secs(30);
+    while f0.is_none() || f1.is_none() {
+        match timeout(end.saturating_duration_since(std::time::Instant::now()), b.events.recv()).await {
+            Ok(Some(MeshEvent::Share(v))) => { if v["ev"] == "share.remote" && v["state"] == "frame" { if v["slot"] == 1 { f1 = Some(v) } else { f0 = Some(v) } } }
+            Ok(Some(MeshEvent::Error(e))) => eprintln!("[B] erro: {e}"),
+            Ok(Some(_)) => {}
+            _ => panic!("B sem quadro das duas telas: tela 1 {:?}, tela 2 {:?}", f0, f1),
+        }
+    }
+    let (f0, f1) = (f0.unwrap(), f1.unwrap());
+    assert_eq!((f0["h"].as_u64(), f1["h"].as_u64()), (Some(720), Some(540)), "cada tela chega com a própria resolução");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let count = |n: &str| FrameSource::open(&dir.join(n)).unwrap().read().map(|r| r.2).unwrap_or(0);
+    let (n1, n2) = (count("b-tela-1.bin"), count("b-tela-2.bin"));
+    eprintln!("duas telas de uma pessoa: B recebeu {n1} quadros da tela 1 (720p) e {n2} da tela 2 (540p) em ~3 s");
+    assert!(n1 > 15 && n2 > 15, "poucos quadros: {n1} e {n2}");
+    // A para só a 2ª tela: B é avisado do slot 1 e a 1ª continua
+    a.cmd.send(MeshCmd::Share2Stop).await.unwrap();
+    let off = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await.expect("B não soube que a 2ª tela parou");
+    assert_eq!(off["slot"], 1);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let n1b = count("b-tela-1.bin");
+    assert!(n1b > n1 + 15, "a 1ª tela parou junto com a 2ª: {n1} → {n1b}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Teste longo (30 min por padrão; BRIKS_SOAK_MIN muda): A transmite vídeo + áudio sintéticos, B assiste. A cada 30 s registra
 /// memória, handles e threads do processo e a latência p50. Passa se, depois do aquecimento, nada cresce e a latência não deriva.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

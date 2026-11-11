@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use crate::video::auto_bitrate;
 
-pub const FLOOR_BPS: f64 = 150_000.0;
+/// Piso de bitrate: abaixo disto 360p a 10 qps vira borrão e o quadro-chave não fecha; é melhor segurar aqui e deixar a
+/// retransmissão trabalhar do que continuar descendo.
+pub const FLOOR_BPS: f64 = 250_000.0;
 
 /// O que preservar quando falta banda ou CPU.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,15 +81,23 @@ pub struct Estimator {
     last_cut: Option<Instant>,
     /// cortes seguidos só por atraso, sem perda (limite 2: depois disso o atraso vira a base)
     delay_cuts: u32,
-    /// RTT no primeiro corte da série por atraso
+    /// RTT no corte anterior da série por atraso
     first_cut_rtt: f32,
     /// capacidade observada no último congestionamento (bps), quando, e por quantos segundos ela vale como teto firme
     cap: Option<(f64, Instant, f64)>,
     pub reason: &'static str,  // "", "perda", "atraso"
+    /// Perda tolerada sem cortar (começa em 10%). Sobe quando um corte de sondagem mostra que a perda NÃO responde ao nosso
+    /// bitrate (perda aleatória: Wi-Fi, rádio, enlace ruim) e volta devagar a 10% quando a perda some.
+    pub loss_tol: f32,
+    /// corte de sondagem em avaliação: (estimativa antes, perda antes, soma e nº de amostras da perda depois do corte)
+    probe: Option<(f64, f32, f32, u32)>,
+    /// atraso (ms acima da base) tolerado sem cortar: sobe quando dois cortes seguidos não fizeram o RTT ceder (atraso que não é
+    /// fila nossa: rota, Wi-Fi, outro tráfego) e volta devagar a zero
+    delay_tol: f32,
 }
 
 impl Estimator {
-    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_cut: None, delay_cuts: 0, first_cut_rtt: 0.0, cap: None, reason: "" } }
+    pub fn new(ceil: f64) -> Self { Estimator { est: ceil, ceil, rtt_hist: vec![], hold_until: Instant::now(), last_cut: None, delay_cuts: 0, first_cut_rtt: 0.0, cap: None, reason: "", loss_tol: 0.10, probe: None, delay_tol: 0.0 } }
     pub fn set_ceil(&mut self, ceil: f64) { self.ceil = ceil; if self.est > ceil { self.est = ceil; } }
     pub fn rtt_base(&self) -> f32 { self.rtt_hist.iter().copied().fold(f32::MAX, f32::min) }
 
@@ -99,18 +109,53 @@ impl Estimator {
         let Some((loss, rtt, _)) = net else { self.reason = ""; return self.est; };
         if rtt > 0.0 { self.rtt_hist.push(rtt); if self.rtt_hist.len() > 30 { self.rtt_hist.remove(0); } }
         let base = if self.rtt_hist.is_empty() { 0.0 } else { self.rtt_base() };
-        let delayed = rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.5).max(80.0);
+        let delayed = rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.5).max(80.0) + self.delay_tol;
         let since_cut = self.last_cut.map(|t| now.saturating_duration_since(t).as_secs_f64()).unwrap_or(f64::MAX);
         // a perda dos relatórios é atrasada: logo depois de um corte ela ainda é a do envio antigo, então só vale a dos NACKs
         let loss_eff = if since_cut < 2.5 { nack_ratio.min(1.0) } else { loss.max(nack_ratio.min(1.0)) };
         let using = sent > FLOOR_BPS;
-        if loss_eff > 0.10 {
+        // Avaliação do corte de sondagem, pela MÉDIA da perda nos 2 s depois dele (a perda aleatória oscila em torno do limite: um
+        // instante abaixo dele não prova que o corte adiantou). Não caiu → aleatória: devolve o bitrate e passa a tolerá-la.
+        if let Some((before, l0, sum, n)) = self.probe {
+            let (sum, n) = (sum + loss_eff, n + 1);
+            if since_cut >= 2.0 {
+                self.probe = None;
+                let after = sum / n as f32;
+                if after > l0 * 0.6 {
+                    self.est = before.min(self.ceil);
+                    self.loss_tol = (after.max(l0) * 1.5 + 0.04).min(0.45);
+                    self.hold_until = now;
+                    self.reason = "";
+                    return self.est;
+                }
+                // respondeu: era congestionamento sem fila (policiamento); o corte de 20% fica e o laço normal segue
+            } else { self.probe = Some((before, l0, sum, n)); }
+        }
+        // Perda × congestionamento. Perda com a fila enchendo (RTT subindo) ou perda muito alta é congestionamento: corta. Perda
+        // SEM aumento de atraso pode ser aleatória, e cortar não a diminui — só piora a imagem (medido no SFU: 10% de perda
+        // aleatória levava 1316 → 575 → 223 kbps). Nesse caso faz UM corte de sondagem de 20% e olha 2 s depois: se a perda caiu,
+        // era congestionamento sem fila (policiamento) e o corte fica; se não caiu, é aleatória: devolve o bitrate e passa a
+        // tolerar essa perda (a retransmissão é que cuida dela).
+        let rising = rtt > 0.0 && base > 0.0 && rtt > base + (base * 0.25).max(25.0) + self.delay_tol;
+        if loss_eff > self.loss_tol {
+            let evidence = rising || delayed || loss_eff > (self.loss_tol + 0.12).max(0.25);
+            let cut_now = evidence;
+            if evidence { self.probe = None; }
+            else if self.probe.is_none() && since_cut >= 2.5 {
+                self.probe = Some((self.est, loss_eff, 0.0, 0));
+                self.est = (self.est * 0.8).max(FLOOR_BPS);
+                self.last_cut = Some(now);
+            }
             // Quanto cortar: o `enviado` do segundo logo depois de um corte NÃO mede a capacidade (o emissor parou para se
             // recuperar: 0 qps), então ele nunca derruba a estimativa abaixo de metade num corte só, e dentro de 2,5 s do corte
             // anterior só uma perda extrema (> 30%) corta de novo, e só 25%.
-            if since_cut >= 2.5 || (since_cut >= 0.9 && loss_eff > 0.30) {
+            if cut_now && (since_cut >= 2.5 || (since_cut >= 0.9 && loss_eff > 0.30)) {
                 let passed = if using { sent * (1.0 - loss_eff as f64) } else { self.est * (1.0 - 0.5 * loss_eff as f64) };
-                let cut = if since_cut < 2.5 { self.est * 0.75 } else { (passed * 0.9).max(self.est * 0.35) };
+                // Fila comprovadamente cheia (atraso alto E perda > 30% medida agora pelos NACKs) com o emissor de fato enviando perto da
+                // estimativa: o que passou É a capacidade. Vai direto para lá (no máximo metade por corte) em vez de 25% por segundo —
+                // descer devagar deixava 5–7 s de envio acima do gargalo, e nesse tempo nenhum quadro-chave chegava inteiro.
+                let saturated = delayed && loss_eff > 0.30 && using && sent > self.est * 0.6;
+                let cut = if since_cut < 2.5 { if saturated { (passed * 0.9).max(self.est * 0.5) } else { self.est * 0.75 } } else { (passed * 0.9).max(self.est * 0.35) };
                 self.est = self.est.min(cut).max(FLOOR_BPS);
                 if using { self.remember_cap(now, self.est); }
                 self.last_cut = Some(now);
@@ -120,11 +165,12 @@ impl Estimator {
             self.reason = "perda";
         } else if delayed {
             if since_cut >= 2.5 {
-                if self.delay_cuts >= 2 && rtt <= self.first_cut_rtt * 1.3 {
-                    // dois cortes e o atraso continua SEM crescer: não é fila nossa (rota mudou, Wi-Fi, outro tráfego). Nova base.
-                    self.rtt_hist.clear(); self.rtt_hist.push(rtt); self.delay_cuts = 0;
+                if self.delay_cuts >= 2 && rtt <= self.first_cut_rtt * 1.15 {
+                    // dois cortes e o atraso continua SEM crescer: não é fila nossa (rota mudou, Wi-Fi, outro tráfego). Passa a
+                    // tolerar esse tanto de atraso em vez de cortar a cada vez que ele aparece.
+                    self.delay_tol = self.delay_tol.max((rtt - base) * 1.2); self.delay_cuts = 0;
                 } else {
-                    if self.delay_cuts == 0 { self.first_cut_rtt = rtt; }
+                    self.first_cut_rtt = rtt;   // RTT no corte anterior: se o próximo não for maior, o atraso não está crescendo
                     let from = if using { self.est.min(sent.max(self.est * 0.5)) } else { self.est };
                     self.est = (from * 0.85).max(FLOOR_BPS);
                     if using { self.remember_cap(now, self.est); }
@@ -136,8 +182,10 @@ impl Estimator {
         } else {
             // a série de cortes por atraso só zera depois de 10 s sem corte (um segundo limpo no meio não prova nada)
             if since_cut > 10.0 { self.delay_cuts = 0; }
+            self.delay_tol *= 0.995;
             // perda leve (até 6%) é consertada por retransmissão e não impede de subir; entre 6 e 10% só segura
-            if loss_eff < 0.06 && now >= self.hold_until {
+            if loss_eff < self.loss_tol * 0.5 { self.loss_tol = (self.loss_tol - 0.005).max(0.10); }
+            if loss_eff < (self.loss_tol - 0.04).max(0.06) && now >= self.hold_until {
                 // Sobe só quando a estimativa está sendo usada (senão cresceria sem ser testada): rápido (25%/s) enquanto está
                 // abaixo de metade do teto, devagar (10%/s) perto dele.
                 if sent >= self.est * 0.7 || self.est < self.ceil * 0.25 {
@@ -317,6 +365,7 @@ mod tests {
                 hist.push((lost, rtt));
                 let old = hist[hist.len() - 3];
                 let est = e.update(t0 + Duration::from_secs(t), sent * (1.0 - *rand), Some((old.0, old.1, 1.0)), lost);
+                if std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("t={t} sent={:.0} rtt_rep={:.0} lost={:.3} est={:.0} reason={} tol={:.0} cuts={}", sent/1000.0, old.1, lost, est/1000.0, e.reason, e.delay_tol, e.delay_cuts); }
                 out.push(est);
                 sent = est;
                 t += 1;
@@ -365,8 +414,58 @@ mod tests {
         let mut rtt = 20.0f32;
         let mut v = vec![];
         for i in 5..30 { let sent = e.est; rtt = (rtt + ((sent - 5e6) / 5e6 * 1000.0) as f32).clamp(20.0, 3000.0); v.push(e.update(t0 + Duration::from_secs(i), sent, Some((0.0, rtt, 1.0)), 0.0)); }
-        assert!(*v.last().unwrap() < 5_600_000.0 && *v.last().unwrap() > 2_500_000.0, "{v:?}");
-        assert_eq!(e.reason, "atraso");
+        // dente de serra em torno da capacidade (sobe sondando, corta quando o atraso cresce): vale a média
+        let m = avg(&v[8..]);
+        assert!(m < 5_900_000.0 && m > 3_500_000.0, "média {m:.0}: {v:?}");
+    }
+
+    #[test]
+    fn random_loss_without_delay_does_not_drag_the_bitrate_down() {
+        // 10% de perda aleatória num enlace folgado (20 Mbps): a estimativa tem de ficar perto do teto, não descer sem parar
+        for rand in [0.05, 0.10, 0.15] {
+            let mut e = Estimator::new(3_000_000.0);
+            let v = sim(&mut e, Instant::now(), 0, &[(5, 20e6, 0.0), (40, 20e6, rand)], 20.0, 0.0);
+            let low = v[5..].iter().copied().fold(f64::MAX, f64::min);
+            assert!(low >= 2_300_000.0, "perda aleatória de {rand}: desceu a {low:.0} ({:?})", v.iter().map(|x| (x / 1000.0) as u32).collect::<Vec<_>>());
+            assert!(avg(&v[15..]) > 2_800_000.0, "perda aleatória de {rand}: média {:.0}", avg(&v[15..]));
+        }
+    }
+
+    #[test]
+    fn noisy_random_loss_around_the_threshold_does_not_ratchet_down() {
+        // como no sistema real: 10% de perda aleatória medida em poucos pacotes oscila entre ~6% e ~20% de um segundo para o outro
+        let mut e = Estimator::new(3_000_000.0);
+        let t0 = Instant::now();
+        let noise = [0.10f32, 0.06, 0.16, 0.09, 0.12, 0.20, 0.07, 0.11, 0.15, 0.08];
+        let mut v = vec![];
+        for i in 0..5 { e.update(t0 + Duration::from_secs(i), 3_000_000.0, Some((0.0, 30.0, 3.0)), 0.0); }
+        for i in 5..65u64 { let l = noise[(i % 10) as usize]; let sent = e.est; v.push(e.update(t0 + Duration::from_secs(i), sent, Some((0.01, 30.0, 20.0)), l)); }
+        let low = v[10..].iter().copied().fold(f64::MAX, f64::min);
+        assert!(low >= 2_300_000.0 && avg(&v[20..]) > 2_700_000.0, "desceu a {low:.0}, média {:.0}: {:?}", avg(&v[20..]), v.iter().map(|x| (x / 1000.0) as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn policer_loss_without_queue_still_converges() {
+        // policiamento: tudo acima de 3 Mbps é descartado, sem fila (o RTT não sobe). A perda responde ao bitrate: tem de descer.
+        let mut e = Estimator::new(4_000_000.0);
+        let t0 = Instant::now();
+        let mut v = vec![];
+        let mut sent = e.est;
+        for i in 0..30 {
+            let lost = ((sent - 3e6).max(0.0) / sent) as f32;
+            let est = e.update(t0 + Duration::from_secs(i), sent * (1.0 - lost as f64), Some((lost, 20.0, 1.0)), lost);
+            v.push(est); sent = est;
+        }
+        assert!(avg(&v[10..]) < 3_500_000.0 && avg(&v[10..]) > 2_200_000.0, "policiamento: {:?}", v.iter().map(|x| (x / 1000.0) as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn congestion_on_top_of_random_loss_is_still_detected() {
+        // 5% aleatória o tempo todo; no segundo 20 a banda cai de 20 para 2 Mbps: tem de descer para perto de 2
+        let mut e = Estimator::new(4_000_000.0);
+        let v = sim(&mut e, Instant::now(), 0, &[(20, 20e6, 0.05), (20, 2e6, 0.05)], 20.0, 0.0);
+        assert!(avg(&v[5..20]) > 3_500_000.0, "antes da queda: {:.0}", avg(&v[5..20]));
+        assert!(avg(&v[28..]) < 2_300_000.0 && avg(&v[28..]) > 1_000_000.0, "depois da queda: {:?}", v[20..].iter().map(|x| (x / 1000.0) as u32).collect::<Vec<_>>());
     }
 
     #[test]

@@ -227,3 +227,25 @@ async fn glass_to_glass_latency() {
     // p95 < 250 ms em rede boa (meta do plano)
     for (name, p95) in &notes { if name.contains("720p") && (name.starts_with("rede boa") || name.starts_with("loopback") || name.starts_with("proxy")) { assert!(*p95 < 250, "{name}: p95 {p95} ms"); } }
 }
+
+/// Perda ALEATÓRIA sem congestionamento, com a adaptação ligada (como no app): o bitrate não pode descer sem parar. Mesmas fases da
+/// medição do SFU (`sfu_network_adaptive_under_uplink_loss`). Codecs de software por padrão (sem GPU); o CSV vai para a pasta de provas.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn mesh_adaptive_under_random_loss() {
+    if std::env::var("BRIKS_ENCODER").is_err() { std::env::set_var("BRIKS_ENCODER", "mf-soft"); }
+    let (mut s, sim) = Session::open("ea", true, 720, 3000, true).await;
+    let sim = sim.unwrap();
+    let mut csv = String::from("fase,qps_recebido,enviado_kbps,estimativa_kbps,altura,fps_alvo,perda_pct,motivo,lat_p50_ms,lat_p95_ms,maior_intervalo_ms,congelamentos_250ms,plis\n");
+    let _ = s.sample(5000).await;
+    for (name, loss, ms) in [("livre", 0.0, 6000u64), ("perda 5%: 0-10 s", 5.0, 10000), ("perda 5%: 10-20 s", 5.0, 10000), ("perda 10%: 0-10 s", 10.0, 10000), ("perda 10%: 10-20 s", 10.0, 10000), ("perda 10%: 20-30 s", 10.0, 10000), ("livre de novo: 5-15 s depois", 0.0, 10000)] {
+        sim.set(0.0, loss);
+        if name.starts_with("livre de novo") { let _ = s.sample(5000).await; }
+        let r = s.sample(ms).await;
+        let tx = &s.tx;
+        let line = format!("\"{name}\",{:.1},{},{},{},{},{},{},{},{},{},{},{}", r.fps(), tx["kbps"], tx["est_kbps"], tx["h"], tx["target_fps"], tx["loss_pct"], tx["reason"], pct(&r.lats, 0.5), pct(&r.lats, 0.95), r.max_gap, r.freezes, r.plis);
+        eprintln!("{line}"); csv.push_str(&line); csv.push('\n');
+    }
+    std::fs::write(out_dir().join("malha-perda-aleatoria-adaptativo.csv"), csv).unwrap();
+    s.close().await;
+}

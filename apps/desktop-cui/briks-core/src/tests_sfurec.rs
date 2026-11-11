@@ -16,6 +16,24 @@ use crate::signaling::secure_room_id;
 pub struct Server { child: Child }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
+/// Porta do `livekit-server` de teste. `BRIKS_LK_TEST_PORT` troca a 7880 (e as portas RTC seguintes) para não colidir com outro
+/// servidor na máquina. `BRIKS_LIVEKIT_TEST_PORT` é o nome preferido; todos os testes de SFU usam esta porta.
+pub fn lk_port() -> u16 { std::env::var("BRIKS_LIVEKIT_TEST_PORT").or_else(|_| std::env::var("BRIKS_LK_TEST_PORT")).ok().and_then(|v| v.parse().ok()).unwrap_or(7880) }
+
+/// Argumentos do `livekit-server` de teste, na porta de `lk_port()` (RTC nas duas seguintes).
+pub fn lk_args() -> Vec<String> {
+    let port = lk_port();
+    let mut v: Vec<String> = ["--dev", "--bind", "127.0.0.1"].iter().map(|s| s.to_string()).collect();
+    if port != 7880 { v.push("--config-body".into()); v.push(format!("port: {port}
+rtc:
+  tcp_port: {}
+  udp_port: {}
+keys:
+  devkey: secret
+", port + 1, port + 2)); }
+    v
+}
+
 pub fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }

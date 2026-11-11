@@ -19,9 +19,21 @@ use crate::capture::{Capture, SourceKind};
 use crate::video::{self, FrameSink, H264Dec, H264Enc};
 
 pub const VIDEO_TRACK_ID: &str = "screen-video";
-pub const AUDIO_TRACK_ID: &str = "screen-audio";
-/// Faixa de vídeo da câmera: um segundo vídeo por peer, ao lado da transmissão de tela. O receptor distingue pelo id da faixa.
+/// 2ª transmissão simultânea da mesma pessoa (segundo monitor): faixa própria, com pacer, codificador e estimador próprios.
+pub const VIDEO_TRACK_ID_2: &str = "screen-video-2";
+/// Faixa de vídeo da câmera: um vídeo à parte por peer, ao lado da(s) transmissão(ões) de tela. O receptor distingue pelo id da faixa.
 pub const CAMERA_TRACK_ID: &str = "camera-video";
+/// Quantas transmissões de tela uma pessoa pode ter ao mesmo tempo.
+pub const SHARE_SLOTS: usize = 2;
+/// Identificador de quem transmite nos eventos do receptor: a 2ª tela leva o sufixo "#2" (vira `"slot": 1` no evento).
+pub fn recv_key(peer: &str, slot: usize) -> String { if slot == 1 { format!("{peer}#2") } else { peer.to_string() } }
+/// No SFU a 2ª tela de uma pessoa é outra faixa ScreenShare; o que a distingue é este prefixo no nome da faixa.
+pub const SLOT2_NAME: &str = "[2] ";
+pub fn slot_of_name(name: &str) -> usize { if name.starts_with(SLOT2_NAME) { 1 } else { 0 } }
+pub fn strip_slot_name(name: &str) -> &str { name.strip_prefix(SLOT2_NAME).unwrap_or(name) }
+pub fn video_cid(slot: usize) -> &'static str { if slot == 1 { VIDEO_TRACK_ID_2 } else { VIDEO_TRACK_ID } }
+fn split_key(k: &str) -> (&str, u64) { match k.strip_suffix("#2") { Some(p) => (p, 1), None => (k, 0) } }
+pub const AUDIO_TRACK_ID: &str = "screen-audio";
 pub const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
 pub const MAX_BPS: u32 = 50_000_000;
 /// Só testes: transmissões com este rótulo dormem TEST_SLOW_MS antes de codificar cada quadro (codificador lento simulado).
@@ -45,7 +57,10 @@ pub struct ShareCfg {
 }
 
 /// Faixa de vídeo em RTP cru: o empacotamento H264 e o espaçamento dos pacotes (pacer) são nossos.
-pub fn new_video_track() -> Arc<TrackLocalStaticRTP> { new_video_track_named(VIDEO_TRACK_ID, "briks-screen") }
+pub fn new_video_track() -> Arc<TrackLocalStaticRTP> { new_video_track_slot(0) }
+pub fn new_video_track_slot(slot: usize) -> Arc<TrackLocalStaticRTP> {
+    new_video_track_named(if slot == 1 { VIDEO_TRACK_ID_2 } else { VIDEO_TRACK_ID }, if slot == 1 { "briks-screen-2" } else { "briks-screen" })
+}
 pub fn new_video_track_named(id: &str, stream: &str) -> Arc<TrackLocalStaticRTP> {
     Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability { mime_type: "video/H264".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: H264_FMTP.into(), rtcp_feedback: vec![] },
@@ -83,7 +98,8 @@ impl VideoOut {
         self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
         let _ = self.tx.send((au, samples.max(1), pace_bps));
     }
-    pub fn new() -> Self { Self::with_track(new_video_track()) }
+    pub fn new() -> Self { Self::new_slot(0) }
+    pub fn new_slot(slot: usize) -> Self { Self::with_track(new_video_track_slot(slot)) }
     /// Saída de vídeo da câmera (faixa `camera-video`, fluxo `briks-camera`).
     pub fn new_camera() -> Self { Self::with_track(new_video_track_named(CAMERA_TRACK_ID, "briks-camera")) }
     fn with_track(track: Arc<TrackLocalStaticRTP>) -> Self {
@@ -109,24 +125,25 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
-    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
+    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
     loop {
-        // sem `biased`: uma enxurrada de NACKs não pode deixar o vídeo novo esperando (o select sorteia o ramo pronto)
-        tokio::select! {
-            n = nack_rx.recv() => {
-                let Some(seqs) = n else { break };
+        // Atende um lote de pedidos de retransmissão. É macro (e não ramo único do select) porque também roda ENTRE os pacotes de um
+        // quadro: um quadro-chave com a rede apertada leva 1 s ou mais para sair, e se os NACKs esperassem o quadro terminar o
+        // receptor desistia (prazo de 400 ms), pedia outro quadro-chave e o ciclo se repetia — o congelamento longo das quedas bruscas.
+        macro_rules! serve_nacks { ($seqs:expr) => {{
+            let seqs: Vec<u16> = $seqs;
                 // crédito de retransmissão: 60% da taxa do pacer (um quadro-chave grande numa rede com perda precisa de muitos reenvios
                 // para fechar dentro do prazo; com 25% ele nunca completava e o receptor ficava congelado), acumulando no máximo 1 s
                 rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.4 / 8.0).min(pace * 0.4 / 8.0 * 0.75);
                 rtx_t = Instant::now();
                 for sq in seqs {
-                    let Some((p, last, asked, sent_at)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    let Some((p, last, asked, sent_at, is_key)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
                     if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); }
                     // pacote velho: o receptor já desistiu desse quadro (espera no máximo 400 ms) e vai pedir quadro-chave; reenviar só
                     // gastaria banda. O gerador de NACK do outro lado continua pedindo por muito tempo.
-                    if sent_at.elapsed() > Duration::from_millis(600) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
+                    if sent_at.elapsed() > Duration::from_millis(if *is_key { 1500 } else { 600 }) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     let size = (p.payload.len() + 12) as f64;
                     if last.map(|t| t.elapsed() < Duration::from_millis(rtx_gap_ms.load(Ordering::Relaxed))).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
@@ -135,20 +152,37 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     rtx_sent.fetch_add(1, Ordering::Relaxed);
                     budget_at = budget_at.max(tokio::time::Instant::now()) + Duration::from_secs_f64(size * 8.0 / pace);
                 }
+        }}; }
+        // sem `biased`: uma enxurrada de NACKs não pode deixar o vídeo novo esperando (o select sorteia o ramo pronto)
+        tokio::select! {
+            n = nack_rx.recv() => {
+                let Some(seqs) = n else { break };
+                serve_nacks!(seqs);
             }
             m = rx.recv() => {
                 let Some((au, samples, pace_bps)) = m else { break };
                 pace = (pace_bps as f64).max(600_000.0);
                 let len = au.len() as u64;
+                let is_key = crate::mfenc::nals(&au).iter().any(|n| n.0 == 5);   // o receptor espera mais pelos pedaços de um quadro-chave
                 let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
                 if tokio::time::Instant::now().saturating_duration_since(budget_at) > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: sem crédito acumulado
                 for p in pkts {
                     let now = tokio::time::Instant::now();
-                    if budget_at > now + Duration::from_millis(2) { tokio::time::sleep_until(budget_at).await; }
+                    // espera a vez deste pacote atendendo os NACKs que chegarem nesse meio-tempo
+                    let _ = now;
+                    loop {
+                        if budget_at <= tokio::time::Instant::now() + Duration::from_millis(2) { break; }
+                        tokio::select! {
+                            _ = tokio::time::sleep_until(budget_at) => break,
+                            n = nack_rx.recv() => match n { Some(seqs) => { serve_nacks!(seqs); } None => break },
+                        }
+                    }
+                    while let Ok(seqs) = nack_rx.try_recv() { serve_nacks!(seqs); }
+                    let now = tokio::time::Instant::now();
                     let _ = track.write_rtp(&p).await;
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
-                    if hist.insert(sq, (p, None, false, Instant::now())).is_none() { order.push_back(sq); }
+                    if hist.insert(sq, (p, None, false, Instant::now(), is_key)).is_none() { order.push_back(sq); }
                     if order.len() > HISTORY { if let Some(old) = order.pop_front() { hist.remove(&old); } }
                 }
                 queued.fetch_sub(len, Ordering::Relaxed);
@@ -228,6 +262,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             // ---- uma vez por segundo: mede, estima a banda, decide o nível e publica a telemetria ----
             if win_t.elapsed() >= Duration::from_secs(1) {
                 let secs = win_t.elapsed().as_secs_f64();
+                if secs > 1.5 && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] janela de medição durou {secs:.2} s"); }
                 let cpu = cpu_ms();
                 let sent_bps = bytes as f64 * 8.0 / secs;
                 let sent_fps = frames as f64 / secs;
@@ -243,8 +278,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let nack_ratio = if bytes > 0 && left_out == 0 { lost_new as f32 / (bytes as f32 / 1100.0).max(1.0) } else { 0.0 };
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 if cfg.adaptive {
-                    est.set_ceil(ctl.top_ceil());
+                    est.set_ceil(ctl.top_ceil());
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
+                    if std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[est] enviado {:.0} kbps | relatorio {:?} | nack {:.3} (perdidos {lost_new}) | est {:.0} kbps motivo {} tol {:.2}", sent_bps / 1000.0, worst, nack_ratio, est.est / 1000.0, est.reason, est.loss_tol); }
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
                     if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
                     if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
@@ -263,8 +299,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         // envio continua acima do que a rede aguenta. Subidas e ajustes pequenos vão ao vivo, sem quadro-chave.
                         // Cada criação do MFT da NVIDIA deixa ~4 handles para trás (medido: 40 ciclos, +4,1 por ciclo, mesmo com
                         // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos de 70% e no máximo uma vez
-                        // a cada 4 s; o resto vai ao vivo.
-                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(4) { enc = None; recreated = Instant::now(); }
+                        // a cada 2 s; o resto vai ao vivo.
+                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(2) { enc = None; recreated = Instant::now(); }
                         else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;
@@ -311,7 +347,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             let (tw, th) = (yuv.w, yuv.h);
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
-                match H264Enc::new(tw, th, fps as f32, bps) {
+                let tc = Instant::now();
+                let made = H264Enc::new(tw, th, fps as f32, bps);
+                if tc.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] criar codificador {tw}x{th}: {} ms", tc.elapsed().as_millis()); }
+                match made {
                     Ok(e) => { id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; }   // codificador novo já começa com quadro-chave
                     Err(e) => { closed_reason = format!("codificador: {e}"); break; }
                 }
@@ -331,6 +370,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
             let au = e.encode(&yuv);
+            if t0.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] codificar: {} ms", t0.elapsed().as_millis()); }
             held = Some(yuv);   // guardado para o reenvio de tela parada
             enc_ns += t0.elapsed().as_nanos();
             match au {
@@ -413,6 +453,9 @@ pub struct JitterBuf {
     pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
 }
 const WAIT: Duration = Duration::from_millis(400);
+/// Prazo de um buraco DENTRO do quadro-chave que vai destravar a imagem. Com a imagem já parada não há o que perder esperando a
+/// retransmissão; desistir em 400 ms e pedir outro quadro-chave (mais 1 s ou mais) era o que esticava os congelamentos.
+const WAIT_KEY: Duration = Duration::from_millis(1500);
 
 impl JitterBuf {
     pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, fresh: false, recovered: 0 } }
@@ -438,12 +481,15 @@ impl JitterBuf {
             // quebrado, e nunca alcançaria o presente.
             if self.need_key {
                 let cur = self.next.unwrap_or(0);
-                match self.pkts.iter().rev().find(|(_, p)| key_start(&p.payload)).map(|(k, _)| *k) {
+                // já está montando um quadro-chave: fica nele até fechar ou o prazo dele estourar (um quadro-chave mais novo, pedido
+                // nesse meio-tempo, ainda está incompleto; trocar a cada pedido fazia nenhum dos dois terminar)
+                let building_key = self.pkts.get(&cur).map(|p| key_start(&p.payload)).unwrap_or(false);
+                if !building_key { match self.pkts.iter().rev().find(|(_, p)| key_start(&p.payload)).map(|(k, _)| *k) {
                     Some(k) if k > cur => { self.pkts.retain(|q, _| *q >= k); self.next = Some(k); self.gap_since = None; }
                     Some(_) => {}
                     None if !self.pkts.is_empty() => { self.pkts.clear(); self.next = Some(self.hi + 1); self.gap_since = None; }
                     None => {}
-                }
+                } }
             }
             let Some(next) = self.next else { break };
             if self.pkts.contains_key(&next) {
@@ -463,7 +509,8 @@ impl JitterBuf {
                     // k é o primeiro que falta. Se já há pacotes depois dele, é um buraco no meio do quadro: vale o mesmo prazo
                     if self.pkts.range(k..).next().is_none() { break; }   // só ainda chegando
                     let since = match self.gap_since { Some((q, t)) if q == k => t, _ => { self.gap_since = Some((k, now)); now } };
-                    if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }
+                    let wait = if self.need_key && key_start(&self.pkts[&next].payload) { WAIT_KEY } else { WAIT };
+                    if now.duration_since(since) < wait && self.pkts.len() < 3000 { break; }
                     if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[jb] buraco no meio: falta {k}, quadro começa em {next}, ts {ts}, buffer {} pacotes [{:?}..{:?}], marcadores {:?}", self.pkts.len(), self.pkts.keys().next(), self.pkts.keys().next_back(), self.pkts.iter().filter(|(_, p)| p.header.marker).map(|(q, _)| *q).take(6).collect::<Vec<_>>()); }
                     self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
                     let start = self.pkts.range(k..).find(|(_, p)| p.header.timestamp != ts).map(|(q, _)| *q);
@@ -531,7 +578,7 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
                 if sink.as_ref().map(|s| s.0 != path).unwrap_or(true) { sink = FrameSink::create(&path).ok().map(|s| (path, s)); }
                 if let Some((_, s)) = sink.as_mut() { s.write(w, h, rgba); }
                 let n = st2.frames.fetch_add(1, Ordering::Relaxed) + 1;
-                if dims != (w, h) || n == 1 { dims = (w, h); let _ = ev2.try_send(json!({ "ev": ev_remote2, "peer_id": peer2, "state": "frame", "w": w, "h": h })); }
+                if dims != (w, h) || n == 1 { dims = (w, h); let (pid, slot) = split_key(&peer2); let _ = ev2.try_send(json!({ "ev": ev_remote2, "peer_id": pid, "slot": slot, "state": "frame", "w": w, "h": h })); }
             }
         }
     });
@@ -561,7 +608,8 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
-            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+            let (pid, slot) = split_key(&peer);
+            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
             frames0 = f; win = Instant::now();
         }

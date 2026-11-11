@@ -108,10 +108,11 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
     loop {
-        // sem `biased`: uma enxurrada de NACKs não pode deixar o vídeo novo esperando (o select sorteia o ramo pronto)
-        tokio::select! {
-            n = nack_rx.recv() => {
-                let Some(seqs) = n else { break };
+        // Atende um lote de pedidos de retransmissão. É macro (e não ramo único do select) porque também roda ENTRE os pacotes de um
+        // quadro: um quadro-chave com a rede apertada leva 1 s ou mais para sair, e se os NACKs esperassem o quadro terminar o
+        // receptor desistia (prazo de 400 ms), pedia outro quadro-chave e o ciclo se repetia — o congelamento longo das quedas bruscas.
+        macro_rules! serve_nacks { ($seqs:expr) => {{
+            let seqs: Vec<u16> = $seqs;
                 // crédito de retransmissão: 60% da taxa do pacer (um quadro-chave grande numa rede com perda precisa de muitos reenvios
                 // para fechar dentro do prazo; com 25% ele nunca completava e o receptor ficava congelado), acumulando no máximo 1 s
                 rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.4 / 8.0).min(pace * 0.4 / 8.0 * 0.75);
@@ -130,6 +131,12 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     rtx_sent.fetch_add(1, Ordering::Relaxed);
                     budget_at = budget_at.max(tokio::time::Instant::now()) + Duration::from_secs_f64(size * 8.0 / pace);
                 }
+        }}; }
+        // sem `biased`: uma enxurrada de NACKs não pode deixar o vídeo novo esperando (o select sorteia o ramo pronto)
+        tokio::select! {
+            n = nack_rx.recv() => {
+                let Some(seqs) = n else { break };
+                serve_nacks!(seqs);
             }
             m = rx.recv() => {
                 let Some((au, samples, pace_bps)) = m else { break };
@@ -139,7 +146,17 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                 if tokio::time::Instant::now().saturating_duration_since(budget_at) > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: sem crédito acumulado
                 for p in pkts {
                     let now = tokio::time::Instant::now();
-                    if budget_at > now + Duration::from_millis(2) { tokio::time::sleep_until(budget_at).await; }
+                    // espera a vez deste pacote atendendo os NACKs que chegarem nesse meio-tempo
+                    let _ = now;
+                    loop {
+                        if budget_at <= tokio::time::Instant::now() + Duration::from_millis(2) { break; }
+                        tokio::select! {
+                            _ = tokio::time::sleep_until(budget_at) => break,
+                            n = nack_rx.recv() => match n { Some(seqs) => { serve_nacks!(seqs); } None => break },
+                        }
+                    }
+                    while let Ok(seqs) = nack_rx.try_recv() { serve_nacks!(seqs); }
+                    let now = tokio::time::Instant::now();
                     let _ = track.write_rtp(&p).await;
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
@@ -256,8 +273,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         // envio continua acima do que a rede aguenta. Subidas e ajustes pequenos vão ao vivo, sem quadro-chave.
                         // Cada criação do MFT da NVIDIA deixa ~4 handles para trás (medido: 40 ciclos, +4,1 por ciclo, mesmo com
                         // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos de 70% e no máximo uma vez
-                        // a cada 4 s; o resto vai ao vivo.
-                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(4) { enc = None; recreated = Instant::now(); }
+                        // a cada 2 s; o resto vai ao vivo.
+                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(2) { enc = None; recreated = Instant::now(); }
                         else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;

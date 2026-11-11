@@ -151,7 +151,11 @@ impl Estimator {
             // anterior só uma perda extrema (> 30%) corta de novo, e só 25%.
             if cut_now && (since_cut >= 2.5 || (since_cut >= 0.9 && loss_eff > 0.30)) {
                 let passed = if using { sent * (1.0 - loss_eff as f64) } else { self.est * (1.0 - 0.5 * loss_eff as f64) };
-                let cut = if since_cut < 2.5 { self.est * 0.75 } else { (passed * 0.9).max(self.est * 0.35) };
+                // Fila comprovadamente cheia (atraso alto E perda > 30% medida agora pelos NACKs) com o emissor de fato enviando perto da
+                // estimativa: o que passou É a capacidade. Vai direto para lá (no máximo metade por corte) em vez de 25% por segundo —
+                // descer devagar deixava 5–7 s de envio acima do gargalo, e nesse tempo nenhum quadro-chave chegava inteiro.
+                let saturated = delayed && loss_eff > 0.30 && using && sent > self.est * 0.6;
+                let cut = if since_cut < 2.5 { if saturated { (passed * 0.9).max(self.est * 0.5) } else { self.est * 0.75 } } else { (passed * 0.9).max(self.est * 0.35) };
                 self.est = self.est.min(cut).max(FLOOR_BPS);
                 if using { self.remember_cap(now, self.est); }
                 self.last_cut = Some(now);

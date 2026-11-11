@@ -32,11 +32,11 @@ Referência de comportamento: WhatsApp Desktop (setinha + menu) com as funções
 | Criar lembrete | não | UI + grava local, **sem efeito real ainda** | falta notificação/agendador |
 | Criar tópico | não | aviso na UI, **sem efeito real ainda** | falta canal/tópico no protocolo de grupo |
 | Mensagens fixadas (lista) | parcial | sim (por canal) | `pin` |
-| Anexos | sim (files-v2, `AttachmentService`) | não (botão desabilitado) | transferência de arquivos pelo DataChannel |
-| Prévia de links | sim (`safe-link-previews`) | não | `SafeMessageContent` do web |
-| Indicador "digitando" | sim (`chat.typing`) | não | evento `chat.typing` |
+| Anexos | sim (files-v2, `AttachmentService`) | sim: clipe envia a quem está na sala; faixa com miniatura, progresso, cancelar; recebido só abre com confirmação | `file.*` pelo DataChannel (`filetransfer.rs`) |
+| Prévia de links | sim (`safe-link-previews`) | sim (cartão com título, descrição, site e miniatura) | `linkpreview.rs`: busca segura no core |
+| Indicador "digitando" | sim (`chat.typing`) | sim (cabeçalho, 5 s) | `chat.typing` pelo DataChannel |
 | Histórico/sync entre peers | sim (`history.request/chunk`) | não | `chat.history.*` sobre DataChannel |
-| Confirmação de entrega | sim (`ack`) | não | `MessageAck` |
+| Confirmação de entrega | sim (`ack`) | core entrega o `chat.ack`; a UI mostra "enviando…" e "não enviada · reenviar" (gravação local); "entregue" ao peer **não** | UI ainda não envia mensagens pelo canal de DM do core |
 
 ## Protocolo (briks-core/src/chat_events.rs)
 
@@ -62,3 +62,11 @@ Mesmo formato do web (`chat.event` v3, JSON canônico idêntico, assinatura ECDS
 - Os ids de mensagem vêm do backend local de cada pessoa; o efeito remoto só aparece onde a mesma mensagem (mesmo id e canal) está carregada. Sem sincronização de histórico, as pessoas só compartilham ids de mensagens que ambas já têm.
 - O histórico de eventos no `p2p_chat_events` do backend não é reaplicado ao abrir a conversa (a projeção em `p2p_messages` não foi ligada à UI); a exclusão continua sendo só marca local na UI.
 - Reações remotas são persistidas por hash da impressão digital (não pelo nome); favoritos, lembrete e não lida continuam locais.
+
+## Anexos, prévia de links, estados e busca (pós-1.3.0, frente C)
+
+- **Prévia de links** (`briks-core/src/linkpreview.rs`, IPC `link.preview {id,url}` -> evento `link.preview`): só `https` na porta 443, sem usuário/senha, sem localhost/`.local`/IP em forma não canônica, e o resolvedor de DNS descarta endereços privados/loopback/link-local/CGNAT em **cada** salto (cobre redirecionamento e DNS rebinding); no máximo 3 redirecionamentos, cada um revalidado; timeout de 6 s; HTML limitado a 256 KB e só `text/html`; imagem só PNG/JPEG até 1 MB, decodificada e reduzida a miniatura 96 px (nada é executado). Falha ou sem metadados: o link fica só texto. A UI guarda 16 prévias em memória e busca uma vez por link.
+- **Anexos** (`filetransfer.rs`; IPC `file.send {path,to_fp?}`, `file.cancel {id}`, evento `file`): oferta assinada (nome, tamanho, MIME, SHA-256, remetente, relógio) verificada pelo receptor contra o peer provado; limite 25 MB; pedaços de 32 KB em ordem com controle de fluxo; no máximo 3 recebimentos simultâneos por peer; fora de ordem, excesso, hash errado ou conexão perdida apagam o arquivo parcial; nome sanitizado (sem pastas, caracteres reservados ou nomes de dispositivo); gravado em `%LOCALAPPDATA%\Briks-CUIecebidos` e **nunca aberto sozinho**: "Abrir…" pede confirmação (aviso reforçado para extensões executáveis) e há "Mostrar na pasta". Imagens PNG/JPEG recebidas trazem miniatura.
+- **Estados**: "enviando…" e "não enviada · reenviar" (a mensagem não some mais se a gravação falhar); "digitando" via `chat.typing` (limitado a 1 aviso/3 s). **Busca**: lupa no cabeçalho filtra as mensagens carregadas da conversa pelo texto (sem índice). Fixadas: botão "Fixadas" já existente.
+- **Testes**: `cargo test linkpreview` (6: bloqueios de URL, metatags, redirecionamentos, limites, miniatura), `cargo test filetransfer` (4: nomes, assinatura/relógio/limites, hash e fluxo inválido, limites do arquivo) e `file_attachments_travel_with_progress_integrity_limits_and_cancel` (dois nós em loopback: arquivo de 600 KB íntegro e na quarentena, progresso, miniatura de imagem, oferta forjada rejeitada, arquivo inexistente, cancelamento pelo receptor, `Ack` e `Typing`). Captura: `scripts/capturas-mensagens.ps1 -Cenarios anexos` (`BRIKS_HIDDEN=1`, `BRIKS_DEMO_ATTACH`).
+- **Não feito / não testado**: nada disso foi testado entre dois apps reais nem com um servidor https real (a busca foi testada contra servidor HTTP local com política permissiva; a política estrita foi testada só nas validações e no resolvedor); anexos só vão a quem está na mesma sala de voz e aparecem na faixa acima do campo, não dentro da conversa gravada; transferência em grupo vai a todos da sala; sem retomada; confirmação de entrega ao peer não existe na UI; a busca não olha o histórico não carregado; a faixa de anexos e o diálogo "Abrir" não foram capturados em clique.

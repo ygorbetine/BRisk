@@ -2,6 +2,7 @@
 #include <math.h>
 #include "layout.h"
 #include "msgui.h"
+#include "attach.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -267,9 +268,11 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     cui_text(ui, "Você", .size = 12, .color = B_TEXT);
                     cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
                     if (interactive) msgui_tags(ui, m);
+                    if (interactive) attach_state_tag(ui, s, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
                 cui_text(ui, text);
+                if (interactive) attach_link_card(ui, s, text);
                 if (interactive) msgui_reactions(ui, m);
             }
         } else {
@@ -285,6 +288,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                 }
                 if (interactive) msgui_quote(ui, s, m);
                 cui_text(ui, text);
+                if (interactive) attach_link_card(ui, s, text);
                 if (interactive) msgui_reactions(ui, m);
             }
             }
@@ -314,7 +318,9 @@ static void content(cui_ctx *ui, app_state_t *s) {
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
             cui_text(ui, group ? "Grupo P2P · canal geral" : "Mensagem direta P2P", .size = 12, .color = B_MUTED);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
+            { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3); }
             msgui_pinned_button(ui, s);
+            attach_search_button(ui);
         }
         cui_separator(ui);
         msgui_set_view(cui_get_rect(ui, cui_make_id(ui, "chat-scroll")));
@@ -327,17 +333,17 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id)) continue; cui_push_id_int(ui, 5000 + i); bubble(ui, s, &s->msgs[i], true); cui_pop_id(ui); }
+                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); bubble(ui, s, &s->msgs[i], true); cui_pop_id(ui); }
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {
+            attach_strip(ui, s);
             msgui_composer(ui, s);
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
-                cui_push_disabled(ui, true);
-                cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar (marco 3)");
-                cui_pop_disabled(ui);
+                if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar arquivo (envia aos participantes da sala)")) attach_pick(s);
                 int r = cui_input(ui, "draft", s->draft, sizeof s->draft, .placeholder = "Escreva uma mensagem", .width = CUI_FILL);
+                { static char prev[1100]; if (strcmp(prev, s->draft)) { if (s->draft[0]) attach_typing_ping(s); snprintf(prev, sizeof prev, "%s", s->draft); } }
                 bool send = cui_icon_button(ui, CUI_ICON_SEND, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Enviar");
                 if ((send || (r & CUI_SUBMITTED)) && s->draft[0]) msgui_submit(s);
             }
@@ -667,6 +673,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     }
     bubbles_draw(ui);
     msgui_overlay(ui, s);
+    attach_overlay(ui, s);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = B_A(B_PANEL, 0xf2), .border = 1,

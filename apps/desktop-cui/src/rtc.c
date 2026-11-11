@@ -3,6 +3,7 @@
 #include "core.h"
 #include "json.h"
 #include "msgui.h"
+#include "attach.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,6 +113,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack")) {
+        changed = attach_event(s, ev, j);
     } else if (!strcmp(ev, "chat.event")) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));

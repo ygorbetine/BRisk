@@ -1062,7 +1062,7 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
     a.cmd.send(MeshCmd::SendFile { path: src.join("foto.png").to_string_lossy().into(), to_fp: None }).await.unwrap();
     let d2 = wait_for(&mut b, 30, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done" && j["name"] == "foto.png")).await.expect("B não recebeu a imagem");
     let MeshEvent::File(d2) = d2 else { unreachable!() };
-    assert_eq!(d2["thumb"]["w"], 112); assert_eq!(d2["thumb"]["h"], 56);
+    assert_eq!(d2["thumb"]["w"], 96); assert_eq!(d2["thumb"]["h"], 48);
 
     // oferta forjada (assinada por B dizendo ser A) é rejeitada; arquivo inexistente e vazio falham sem travar
     let idn_b = ib.clone();

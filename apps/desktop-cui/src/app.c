@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "backend.h"
 #include "json.h"
+#include "attach.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -205,7 +206,8 @@ void app_pump(app_state_t *s) {
         if (ok) app_load_messages2(s, body);
         break;
     case OP_MSG_SEND:
-        if (!ok) { snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem."); if (s->msg_count) s->msg_count--; }
+        attach_inflight_done(s, ok);   /* falhou: a mensagem fica com "não enviada · reenviar" em vez de sumir */
+        if (!ok) snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem.");
         break;
     case OP_EVENT_SAVE:   /* evento assinado gravado na API local (se falhar, fica só no estado local) */
         break;

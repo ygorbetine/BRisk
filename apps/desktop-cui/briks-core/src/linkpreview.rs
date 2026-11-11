@@ -11,7 +11,7 @@ use std::time::Duration;
 pub const MAX_HTML_BYTES: u64 = 256 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 1024 * 1024;
 pub const MAX_REDIRECTS: usize = 3;
-pub const THUMB_MAX: u32 = 112;
+pub const THUMB_MAX: u32 = 96;
 const TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy)]
@@ -319,7 +319,7 @@ mod tests {
         let mut png = Vec::new();
         image::DynamicImage::new_rgba8(400, 200).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
         let (w, h, b64) = thumbnail(&png).unwrap();
-        assert!(w <= THUMB_MAX && h <= THUMB_MAX && w == THUMB_MAX && h == 56, "{w}x{h}");
+        assert!(w <= THUMB_MAX && h <= THUMB_MAX && w == THUMB_MAX && h == 48, "{w}x{h}");
         assert!(!b64.is_empty());
         assert!(thumbnail(b"nao e imagem").is_err());
     }

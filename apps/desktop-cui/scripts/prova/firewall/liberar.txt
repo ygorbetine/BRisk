@@ -1,0 +1,11 @@
+# Dialogo do Firewall na primeira chamada: Liberar chama o netsh falso (BRIKS_NETSH) com os argumentos certos e guarda a escolha.
+waitms 700
+expect fw_open 0
+sys fwask
+waitms 3000
+expect fw_open 1
+expect fw_choice 0
+click 797 493
+waitms 2500
+expect fw_open 0
+expect fw_choice 1

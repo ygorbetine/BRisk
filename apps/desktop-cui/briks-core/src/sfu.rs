@@ -574,7 +574,7 @@ impl Actor {
             Ok(sender) => {
                 if p.video {
                     self.idr.store(true, Ordering::Relaxed);
-                    let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone()));
+                    let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
                     spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {
                     self.mic_sid = Some(sid.clone());
@@ -1001,14 +1001,14 @@ impl Actor {
 
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports
 /// (perda/jitter/RTT para o adapt.rs). É a mesma leitura da malha, com a chave "sfu" no lugar do peer.
-fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<(mpsc::Sender<Vec<u16>>, Arc<AtomicU64>)>, stats: Arc<SfuStats>) {
+fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<(mpsc::Sender<Vec<u16>>, Arc<AtomicU64>, Arc<AtomicBool>)>, stats: Arc<SfuStats>) {
     tokio::spawn(async move {
         use webrtc::rtcp::receiver_report::ReceiverReport;
         use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
         let ssrc = sender.get_parameters().await.encodings.first().map(|e| e.ssrc).unwrap_or(0);
         // O LiveKit pede cada pacote perdido poucas vezes, em intervalos curtos, e desiste: com os 150 ms da malha a 2ª retransmissão
         // (quando a 1ª também se perde) era sempre recusada e o quadro morria. Aqui o intervalo acompanha o RTT medido (30..150 ms).
-        if let Some((_, gap)) = &nack_tx { gap.store(40, Ordering::Relaxed); }
+        if let Some((_, gap, _)) = &nack_tx { gap.store(40, Ordering::Relaxed); }
         while let Ok((pkts, _)) = sender.read_rtcp().await {
             for pk in pkts {
                 let any = pk.as_any();
@@ -1019,13 +1019,16 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                 } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                     for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
                         e.loss = r.fraction_lost as f32 / 256.0;
+                        // histerese: liga a retransmissão em dobro com 3,5% no relatório, desliga abaixo de 1,5% (o relatório do SFU mostrou cerca de
+                        // metade da perda real do enlace nos testes: 5% relatados com 10% reais)
+                        if let Some((_, _, twice)) = &nack_tx { if e.loss >= 0.035 { twice.store(true, Ordering::Relaxed); } else if e.loss < 0.015 { twice.store(false, Ordering::Relaxed); } }
                         e.jitter_ms = r.jitter as f32 / 90.0;
                         if r.last_sender_report != 0 {
                             let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
                             let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
                             if d < 10 * 65536 {
                                 e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); }
-                                if let Some((_, gap)) = &nack_tx { gap.store(((e.rtt_ms * 1.5) as u64 + 15).clamp(30, 150), Ordering::Relaxed); }
+                                if let Some((_, gap, _)) = &nack_tx { gap.store(((e.rtt_ms * 1.5) as u64 + 15).clamp(30, 150), Ordering::Relaxed); }
                             }
                         }
                         e.updated = std::time::Instant::now();
@@ -1037,7 +1040,7 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                         for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
                         seqs.truncate(512);
                         e.nacks += seqs.len() as u64; stats.nacks.fetch_add(seqs.len() as u64, Ordering::Relaxed);
-                        if let Some((t, _)) = &nack_tx { let _ = t.try_send(seqs); }
+                        if let Some((t, _, _)) = &nack_tx { let _ = t.try_send(seqs); }
                     }
                 }
             }

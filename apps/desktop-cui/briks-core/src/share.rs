@@ -65,6 +65,9 @@ pub struct VideoOut {
     /// intervalo mínimo (ms) entre duas retransmissões do MESMO pacote. 150 na malha (o nosso receptor repete o pedido a cada 20 ms
     /// por muito tempo); o SFU baixa para perto do RTT, porque o LiveKit pede poucas vezes e desiste.
     pub rtx_gap_ms: Arc<AtomicU64>,
+    /// perda alta no caminho (>= 3,5% no relatório do SFU): cada retransmissão sai em dobro, porque com 10% de perda uma em cada dez
+    /// retransmissões também se perde e o LiveKit desiste do pacote depois de poucos pedidos. Só o SFU liga.
+    pub rtx_twice: Arc<AtomicBool>,
     /// pacotes pedidos pela PRIMEIRA vez (perda real antes do conserto; pedidos repetidos do mesmo pacote não contam)
     pub nack_unique: Arc<AtomicU64>,
 }
@@ -85,8 +88,9 @@ impl VideoOut {
         let (nack_tx, nack_rx) = mpsc::channel(256);
         let (queued, rtx_sent, rtx_skipped, nack_unique) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
         let rtx_gap_ms = Arc::new(AtomicU64::new(150));
-        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone(), rtx_gap_ms.clone()));
-        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique, rtx_gap_ms }
+        let rtx_twice = Arc::new(AtomicBool::new(false));
+        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone(), rtx_gap_ms.clone(), rtx_twice.clone()));
+        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique, rtx_gap_ms, rtx_twice }
     }
 }
 
@@ -96,7 +100,7 @@ const HISTORY: usize = 2048;
 /// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Também responde aos NACKs: guarda os últimos
 /// pacotes e retransmite pelo mesmo espaçamento, com orçamento de 25% da taxa e no máximo uma vez a cada 150 ms por pacote —
 /// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
-async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>) {
+async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>, rtx_twice: Arc<AtomicBool>) {
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
@@ -122,6 +126,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     if last.map(|t| t.elapsed() < Duration::from_millis(rtx_gap_ms.load(Ordering::Relaxed))).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
                     let _ = track.write_rtp(p).await;
+                    if rtx_twice.load(Ordering::Relaxed) && rtx_credit >= size { rtx_credit -= size; let _ = track.write_rtp(p).await; }
                     rtx_sent.fetch_add(1, Ordering::Relaxed);
                     budget_at = budget_at.max(tokio::time::Instant::now()) + Duration::from_secs_f64(size * 8.0 / pace);
                 }

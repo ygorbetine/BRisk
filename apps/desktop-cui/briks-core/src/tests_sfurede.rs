@@ -73,7 +73,9 @@ async fn sfu_network_loss_and_outage_matrix() {
     soft_codecs();
     let mut csv = format!("{HEAD}\n");
     let mut bad: Vec<String> = vec![];   // junta as falhas para a matriz sair inteira
+    let only = std::env::var("BRIKS_SFUREDE_LADO").ok();   // "a" ou "b": mede só um lado (o CSV só é gravado na medição completa)
     for (tag, side, label) in [("c1", "a", "envio (emissor->SFU)"), ("c2", "b", "recepcao (SFU->espectador)")] {
+        if only.as_deref().map(|o| o != side).unwrap_or(false) { continue; }
         let mut x = open(tag, side, 720, 3000, false).await;
         let mut base_fps = 0.0;
         for (name, loss) in [("base", 0.0), ("perda 1%", 1.0), ("perda 2%", 2.0), ("perda 5%", 5.0), ("perda 10%", 10.0)] {
@@ -113,7 +115,7 @@ async fn sfu_network_loss_and_outage_matrix() {
         x.s.close().await;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    std::fs::write(out_dir().join("sfu-matriz-perda-queda.csv"), csv).unwrap();
+    if only.is_none() { std::fs::write(out_dir().join("sfu-matriz-perda-queda.csv"), csv).unwrap(); }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
@@ -154,5 +156,31 @@ async fn sfu_network_adapts_to_limited_uplink() {
     assert!(tight.fps() >= 5.0 && tight.freezes <= 6, "adaptado, mas travando: {:.1} qps, {} congelamentos", tight.fps(), tight.freezes);
     assert!(back_kbps > tight_kbps * 1.4, "não voltou a subir quando a banda voltou: {back_kbps} kbps (apertado {tight_kbps})");
     assert_eq!(x.a_stats.reconnects.load(Relaxed) + x.b_stats.reconnects.load(Relaxed), 0, "limitar a banda não deve derrubar a sessão");
+    x.s.close().await;
+}
+
+/// 10% de perda no ENVIO com a adaptação LIGADA (como no app; a matriz acima usa bitrate fixo de propósito). Mede se baixar o
+/// bitrate/resolução segura a transmissão onde o bitrate fixo desaba. Sem exigência dura: o resultado vai para o CSV e para o doc.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn sfu_network_adaptive_under_uplink_loss() {
+    let Some(_srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    soft_codecs();
+    let mut x = open("e1", "a", 720, 3000, true).await;
+    let mut csv = String::from("fase,qps_recebido,enviado_kbps,estimativa_kbps,altura,fps_alvo,perda_pct,motivo,lat_p50_ms,lat_p95_ms,maior_intervalo_ms,congelamentos_250ms,plis\n");
+    let _ = x.s.sample(5000).await;
+    let mut worst10 = f64::MAX;
+    for (name, loss, ms) in [("livre", 0.0, 6000u64), ("perda 5%: 0-10 s", 5.0, 10000), ("perda 5%: 10-20 s", 5.0, 10000), ("perda 10%: 0-10 s", 10.0, 10000), ("perda 10%: 10-20 s", 10.0, 10000), ("perda 10%: 20-30 s", 10.0, 10000), ("livre de novo: 5-15 s depois", 0.0, 10000)] {
+        x.sim.set(0.0, loss);
+        if name.starts_with("livre de novo") { let _ = x.s.sample(5000).await; }
+        let r = x.s.sample(ms).await;
+        let tx = &x.s.tx;
+        let line = format!("\"{name}\",{:.1},{},{},{},{},{},{},{},{},{},{},{}", r.fps(), tx["kbps"], tx["est_kbps"], tx["h"], tx["target_fps"], tx["loss_pct"], tx["reason"], pct(&r.lats, 0.5), pct(&r.lats, 0.95), r.max_gap, r.freezes, r.plis);
+        eprintln!("{line}"); csv.push_str(&line); csv.push('\n');
+        if name.starts_with("perda 10%: 1") || name.starts_with("perda 10%: 2") { worst10 = worst10.min(r.fps()); }
+    }
+    std::fs::write(out_dir().join("sfu-perda-envio-adaptativo.csv"), csv).unwrap();
+    eprintln!("10% de perda no envio com adaptação: pior janela depois de acomodar = {worst10:.1} qps");
+    assert_eq!(x.a_stats.reconnects.load(Relaxed) + x.b_stats.reconnects.load(Relaxed), 0, "perda não deve derrubar a sessão");
     x.s.close().await;
 }

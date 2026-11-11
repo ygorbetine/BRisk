@@ -12,7 +12,6 @@ use crate::mesh::{MeshCmd, MeshEvent};
 use crate::sfu::{self, SfuJoin, SfuStats, TokenFn};
 use crate::sfudata::DataCfg;
 use crate::signaling::secure_room_id;
-use crate::tests_sfu::dev_token_ttl;
 
 pub struct Server { child: Child }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
@@ -56,7 +55,10 @@ impl C {
 }
 
 /// Cliente com camada de dados, áudio sintético e renovação de token. `ttl` = validade (s) do token da ENTRADA; os renovados valem 1 h.
-pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) -> C {
+pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) -> C { client_owner(room, ident, name, joined, ttl, false).await }
+
+/// Como `client`; com `owner`, o token de entrada e os renovados levam a marca de dono (o que a função `livekit-token` faria).
+pub async fn client_owner(room: &str, ident: &str, name: &str, joined: u64, ttl: u64, owner: bool) -> C {
     let id = Arc::new(Identity::generate());
     let fp = id.fingerprint();
     let rh = secure_room_id("room", room);
@@ -64,8 +66,8 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let (au, au_rx) = Audio::new(true);
     let renewals = Arc::new(AtomicU64::new(0));
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
-    let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
-    let h = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
+    let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(crate::tests_sfu::dev_token_owner(&i, &k, 3600, owner)) }) });
+    let h = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: crate::tests_sfu::dev_token_owner(ident, &lk_room, ttl, owner), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);
@@ -87,7 +89,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
                 MeshEvent::History { from_fp, content, id, mine, .. } => format!("hist:{id}:{from_fp}:{mine}:{content}"),
                 MeshEvent::Ack { id, from_fp } => format!("ack:{from_fp}:{id}"),
                 MeshEvent::File(v) => format!("file:{v}"),
-                MeshEvent::Owner { me, .. } => format!("owner:{me}"),
+                MeshEvent::Owner { me, fp } => format!("owner:{me}:{fp}"),
                 MeshEvent::Share(v) => v.to_string(),
                 MeshEvent::Error(m) => format!("err:{m}"),
                 _ => continue,

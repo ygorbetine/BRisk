@@ -165,8 +165,9 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
     assert_eq!(files(&b, |v| v["name"] == "grande.bin").len(), 0);
 
     // 9) falha visível: quem recebe sai no meio; quem envia é avisado e o pedaço gravado some
+    // (arquivo grande o bastante para o envio não terminar antes de a saída ser percebida, mesmo com a máquina ocupada)
     let mid = dir.join("interrompido.bin");
-    std::fs::write(&mid, &bytes).unwrap();
+    std::fs::write(&mid, bytes.repeat(8)).unwrap();
     a.cmd.send(MeshCmd::SendFile { path: mid.to_string_lossy().into(), to_fp: Some(b.fp.clone()) }).await.unwrap();
     let off = wait_file(&b, 15, "oferta do interrompido", |v| v["kind"] == "offer" && v["name"] == "interrompido.bin").await;
     let id = off["id"].as_str().unwrap().to_string();
@@ -178,6 +179,145 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
     assert!(files(&a, |v| v["kind"] == "done" && v["id"] == id.as_str()).is_empty(), "transferência interrompida dada como concluída");
     eprintln!("anexos: dirigido, limite de 100 MB e saída de quem recebe no meio ({}) conferidos", f["error"]);
     for c in [&a, &d] { let _ = c.cmd.send(MeshCmd::Close).await; }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Maior `done` dos eventos de progresso de um anexo, para quem recebe (`mine` = false) ou envia.
+fn progress(c: &C, id: &str, mine: bool) -> u64 {
+    files(c, |v| v["kind"] == "progress" && v["id"] == id && v["mine"] == mine).iter().filter_map(|v| v["done"].as_u64()).max().unwrap_or(0)
+}
+
+/// Anexos pelo SFU: pausar e retomar (por quem envia e por quem recebe) e cancelar durante o envio (idem), com 3 clientes contra o
+/// `livekit-server --dev` real. Confere que o progresso para de verdade na pausa, que o conteúdo chega idêntico depois de retomar,
+/// que o cancelamento apaga o pedaço já gravado e avisa o outro lado, e que um destinatário desistir não derruba o envio aos outros.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_file_pause_resume_and_cancel_during_transfer() {
+    const A: &str = "aaaaaaaa-1111-4111-8111-0000000pau01";
+    const B: &str = "bbbbbbbb-2222-4222-8222-0000000pau02";
+    const D: &str = "dddddddd-3333-4333-8333-0000000pau03";
+    let Some(_srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    let dir = std::env::temp_dir().join(format!("briks-sfupause-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(dir.join("recebidos")).unwrap();
+    std::env::set_var("BRIKS_RECV_DIR", dir.join("recebidos"));
+    let room = format!("pausa-{}", uuid::Uuid::new_v4().simple());
+    let a = client(&room, A, "Ana", 1000, 3600).await;
+    let b = client(&room, B, "Beto", 1001, 3600).await;
+    let d = client(&room, D, "Duda", 1002, 3600).await;
+    let cs = [&a, &b, &d];
+    for c in cs { for o in cs { if c.ident != o.ident { assert!(c.wait(30, &format!("info:{}:{}", o.ident, o.fp)).await, "{} não autenticou {}", c.ident, o.ident); } } }
+    const SIZE: usize = 24 * 1024 * 1024;
+    let bytes: Vec<u8> = { let mut x = 0x9E3779B9u32; (0..SIZE).map(|_| { x ^= x << 13; x ^= x >> 17; x ^= x << 5; x as u8 }).collect() };
+    let recv_files = || std::fs::read_dir(dir.join("recebidos")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect::<Vec<_>>();
+    // envia `name` da Ana para `to` (None = todos); devolve o id depois que `acc` aceitou e o 1º MB chegou
+    let start = |name: &'static str, to: Option<String>, acc: Vec<&'static str>| {
+        let (a, b, d, dir, bytes) = (&a, &b, &d, dir.clone(), &bytes);
+        async move {
+            let src = dir.join(name);
+            std::fs::write(&src, bytes).unwrap();
+            a.cmd.send(MeshCmd::SendFile { path: src.to_string_lossy().into(), to_fp: to }).await.unwrap();
+            let mut id = String::new();
+            for who in &acc {
+                let c = if *who == "b" { b } else { d };
+                let off = wait_file(c, 20, "oferta", |v| v["kind"] == "offer" && v["mine"] == false && v["name"] == name).await;
+                id = off["id"].as_str().unwrap().to_string();
+                c.cmd.send(MeshCmd::AcceptFile { id: id.clone() }).await.unwrap();
+                // só neste teste os dois destinatários gravam na MESMA pasta (mesmo processo): espera o 1º criar o arquivo dele
+                // antes de o 2º escolher o nome, senão os dois escolheriam o mesmo
+                wait_file(c, 20, "aceite", |v| v["kind"] == "accepted" && v["mine"] == false && v["id"] == id.as_str()).await;
+            }
+            let c = if acc[0] == "b" { b } else { d };
+            let t0 = Instant::now();
+            while progress(c, &id, false) < 1024 * 1024 { assert!(t0.elapsed() < Duration::from_secs(60), "{name}: o 1º MB não chegou"); tokio::time::sleep(Duration::from_millis(10)).await; }
+            id
+        }
+    };
+    // o progresso de `c` fica parado por `ms` (depois de um tempo para o que já estava a caminho chegar)
+    let stalled = |c: &'static str, id: String, mine: bool, ms: u64| {
+        let (a, b) = (&a, &b);
+        async move {
+            let c = if c == "a" { a } else { b };
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            let p0 = progress(c, &id, mine);
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            (p0, progress(c, &id, mine))
+        }
+    };
+
+    // 1) quem ENVIA pausa e retoma
+    let id = start("pausa-de-quem-envia.bin", Some(b.fp.clone()), vec!["b"]).await;
+    a.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: true }).await.unwrap();
+    wait_file(&a, 10, "pausado (quem envia)", |v| v["kind"] == "paused" && v["id"] == id.as_str() && v["mine"] == true).await;
+    let (p0, p1) = stalled("b", id.clone(), false, 2000).await;
+    assert!(p0 == p1 && p1 < SIZE as u64, "pausado por quem envia, mas continuou chegando: {p0} -> {p1} de {SIZE}");
+    assert!(files(&b, |v| v["kind"] == "done" && v["id"] == id.as_str()).is_empty());
+    a.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: false }).await.unwrap();
+    let done = wait_file(&b, 120, "concluído depois de retomar", |v| v["kind"] == "done" && v["mine"] == false && v["id"] == id.as_str()).await;
+    assert!(std::fs::read(done["path"].as_str().unwrap()).unwrap() == bytes, "conteúdo diferente depois de pausar e retomar (quem envia)");
+    eprintln!("anexo: pausado por quem envia em {} kB (parado por 2 s), retomado, conteúdo idêntico", p1 / 1024);
+
+    // 2) quem RECEBE pausa e retoma: quem envia para e é avisado
+    let id = start("pausa-de-quem-recebe.bin", Some(b.fp.clone()), vec!["b"]).await;
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: true }).await.unwrap();
+    wait_file(&a, 10, "aviso de pausa a quem envia", |v| v["kind"] == "paused" && v["id"] == id.as_str() && v["mine"] == true && v["peer_fp"] == b.fp.as_str()).await;
+    let (s0, s1) = stalled("a", id.clone(), true, 2000).await;
+    assert!(s0 == s1 && s1 < SIZE as u64, "pausado por quem recebe, mas quem envia continuou: {s0} -> {s1}");
+    let (p0, p1) = (progress(&b, &id, false), { tokio::time::sleep(Duration::from_millis(500)).await; progress(&b, &id, false) });
+    assert_eq!(p0, p1, "continuou chegando com a transferência pausada por quem recebe");
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: false }).await.unwrap();
+    wait_file(&a, 10, "aviso de retomada", |v| v["kind"] == "resumed" && v["id"] == id.as_str() && v["peer_fp"] == b.fp.as_str()).await;
+    let done = wait_file(&b, 120, "concluído depois de retomar", |v| v["kind"] == "done" && v["mine"] == false && v["id"] == id.as_str()).await;
+    assert!(std::fs::read(done["path"].as_str().unwrap()).unwrap() == bytes, "conteúdo diferente depois de pausar e retomar (quem recebe)");
+    eprintln!("anexo: pausado por quem recebe em {} kB (quem envia parou em {} kB), retomado, conteúdo idêntico", p1 / 1024, s1 / 1024);
+    let kept = recv_files().len();
+
+    // 3) quem ENVIA cancela no meio: quem recebe é avisado e o pedaço gravado some
+    let id = start("cancelado-por-quem-envia.bin", Some(b.fp.clone()), vec!["b"]).await;
+    a.cmd.send(MeshCmd::CancelFile { id: id.clone() }).await.unwrap();
+    wait_file(&b, 20, "cancelamento avisado a quem recebe", |v| v["kind"] == "cancelled" && v["id"] == id.as_str()).await;
+    wait_file(&a, 20, "cancelado para quem envia", |v| v["kind"] == "cancelled" && v["id"] == id.as_str() && v["peer_fp"] == b.fp.as_str()).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(files(&b, |v| v["kind"] == "done" && v["id"] == id.as_str()).is_empty() && files(&a, |v| v["kind"] == "done" && v["id"] == id.as_str()).is_empty(), "transferência cancelada dada como concluída");
+    assert_eq!(recv_files().len(), kept, "sobrou pedaço do arquivo cancelado: {:?}", recv_files());
+    let pc = progress(&b, &id, false);
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(progress(&b, &id, false), pc, "continuou chegando depois de cancelado");
+
+    // 4) cancelar com a transferência PAUSADA também encerra
+    let id = start("cancelado-pausado.bin", Some(b.fp.clone()), vec!["b"]).await;
+    a.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: true }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    a.cmd.send(MeshCmd::CancelFile { id: id.clone() }).await.unwrap();
+    wait_file(&b, 20, "cancelamento (pausado) avisado", |v| v["kind"] == "cancelled" && v["id"] == id.as_str()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(recv_files().len(), kept, "sobrou pedaço do arquivo cancelado em pausa: {:?}", recv_files());
+
+    // 5) envio para os dois; o Beto (quem RECEBE) cancela no meio: o envio para ele para, o da Duda vai até o fim
+    let id = start("um-desiste.bin", None, vec!["b", "d"]).await;
+    b.cmd.send(MeshCmd::CancelFile { id: id.clone() }).await.unwrap();
+    let c = wait_file(&a, 20, "desistência avisada a quem envia", |v| v["kind"] == "cancelled" && v["id"] == id.as_str() && v["peer_fp"] == b.fp.as_str()).await;
+    assert_eq!(c["by_peer"], true, "{c}");
+    let done = wait_file(&d, 120, "a Duda recebe até o fim", |v| v["kind"] == "done" && v["mine"] == false && v["id"] == id.as_str()).await;
+    assert!(std::fs::read(done["path"].as_str().unwrap()).unwrap() == bytes, "o arquivo da Duda difere do enviado");
+    wait_file(&a, 20, "concluído para a Duda", |v| v["kind"] == "done" && v["mine"] == true && v["id"] == id.as_str() && v["peer_fp"] == d.fp.as_str()).await;
+    assert!(files(&a, |v| v["kind"] == "done" && v["id"] == id.as_str() && v["peer_fp"] == b.fp.as_str()).is_empty(), "envio ao Beto dado como concluído depois de ele desistir");
+    assert!(files(&b, |v| v["kind"] == "done" && v["id"] == id.as_str()).is_empty());
+    assert_eq!(recv_files().len(), kept + 1, "só o arquivo da Duda devia ter ficado: {:?}", recv_files());
+    eprintln!("anexo: cancelado por quem envia (em curso e em pausa) e por quem recebe; pedaços apagados; a desistência de um não parou o envio ao outro");
+
+    // 6) aceitar e pausar um anexo ENQUANTO envia outro: as mensagens de controle não esperam a fila dos pedaços
+    let back = dir.join("volta.bin");
+    std::fs::write(&back, &bytes[..2 * 1024 * 1024]).unwrap();
+    let id = start("ida.bin", Some(b.fp.clone()), vec!["b"]).await;
+    b.cmd.send(MeshCmd::SendFile { path: back.to_string_lossy().into(), to_fp: Some(a.fp.clone()) }).await.unwrap();
+    let off = wait_file(&a, 20, "oferta de volta", |v| v["kind"] == "offer" && v["mine"] == false && v["name"] == "volta.bin").await;
+    a.cmd.send(MeshCmd::AcceptFile { id: off["id"].as_str().unwrap().into() }).await.unwrap();
+    let rid = off["id"].as_str().unwrap().to_string();
+    let done = wait_file(&a, 120, "arquivo de volta concluído", |v| v["kind"] == "done" && v["mine"] == false && v["id"] == rid.as_str()).await;
+    assert!(std::fs::read(done["path"].as_str().unwrap()).unwrap() == bytes[..2 * 1024 * 1024], "arquivo de volta difere");
+    wait_file(&b, 120, "arquivo de ida concluído", |v| v["kind"] == "done" && v["mine"] == false && v["id"] == id.as_str()).await;
+    eprintln!("anexo: enviar e receber ao mesmo tempo (aceite durante o envio) concluídos");
+    for c in cs { let _ = c.cmd.send(MeshCmd::Close).await; }
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = std::fs::remove_dir_all(&dir);
 }

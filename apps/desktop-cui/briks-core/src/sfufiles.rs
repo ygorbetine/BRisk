@@ -24,7 +24,16 @@ fn now_ms() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX
 fn file_ev(v: Value) -> MeshEvent { MeshEvent::File(v) }
 
 #[derive(Default)]
-struct Ctl { cancel: AtomicBool, paused_all: AtomicBool, accepted: Mutex<HashSet<String>>, paused: Mutex<HashSet<String>>, gone: Mutex<HashSet<String>> }
+struct Ctl {
+    /// quem envia cancelou: para todos os destinatários
+    cancel: AtomicBool,
+    paused_all: AtomicBool,
+    accepted: Mutex<HashSet<String>>,
+    paused: Mutex<HashSet<String>>,
+    gone: Mutex<HashSet<String>>,
+    /// destinatários (fp) que cancelaram/recusaram: só o envio para ELES para; os outros seguem recebendo
+    refused: Mutex<HashSet<String>>,
+}
 
 /// Pacote de arquivo a publicar: (identidade de destino no SFU, mensagem do protocolo de anexos).
 pub type FileOut = (String, Value);
@@ -37,14 +46,19 @@ pub struct Files {
     incoming: HashMap<String, (String, ft::Incoming, u64)>,   // id -> (identidade de quem envia, estado, último progresso emitido)
     pending: HashMap<String, (String, String, ft::Offer)>,     // id -> (identidade, fp, oferta ainda não aceita)
     outgoing: HashMap<String, Arc<Ctl>>,
+    /// Mensagens de controle (aceitar, pausar, cancelar) a publicar já. NÃO passam pela fila dos pedaços: ela é pequena e só o ator
+    /// a esvazia; se ele mesmo esperasse vaga nela (enviando um arquivo e, ao mesmo tempo, aceitando ou pausando outro), travaria.
+    urgent: Vec<FileOut>,
 }
 
 impl Files {
     pub fn new(identity: Arc<Identity>, ev: mpsc::Sender<MeshEvent>, out: mpsc::Sender<FileOut>) -> Self {
-        Files { identity, recv_dir: crate::mesh::recv_dir(), ev, out, incoming: HashMap::new(), pending: HashMap::new(), outgoing: HashMap::new() }
+        Files { identity, recv_dir: crate::mesh::recv_dir(), ev, out, incoming: HashMap::new(), pending: HashMap::new(), outgoing: HashMap::new(), urgent: vec![] }
     }
     async fn emit(&self, v: Value) { let _ = self.ev.send(file_ev(v)).await; }
-    async fn send(&self, to: &str, m: Value) { let _ = self.out.send((to.to_string(), m)).await; }
+    async fn send(&mut self, to: &str, m: Value) { self.urgent.push((to.to_string(), m)); }
+    /// O ator chama depois de cada entrada neste módulo e publica o que vier.
+    pub fn take_urgent(&mut self) -> Vec<FileOut> { std::mem::take(&mut self.urgent) }
 
     /// `targets` = (identidade no SFU, impressão digital) de quem deve receber (todos os autenticados ou só um).
     pub async fn send_file(&mut self, path: String, targets: Vec<(String, String)>) {
@@ -73,6 +87,7 @@ impl Files {
                 loop {
                     if ctl.cancel.load(SeqCst) { let _ = out.send((ident.clone(), cancel_msg.clone())).await; let _ = ev.send(file_ev(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; return; }
                     if ctl.gone.lock().unwrap().contains(&fp) { let _ = ev.send(fail("a pessoa saiu da chamada")).await; return; }
+                    if ctl.refused.lock().unwrap().contains(&fp) { let _ = ev.send(file_ev(json!({ "kind": "cancelled", "id": id, "peer_fp": fp, "by_peer": true }))).await; return; }
                     if ctl.accepted.lock().unwrap().contains(&fp) { break; }
                     if waited.elapsed() > Duration::from_secs(15 * 60) { let _ = ev.send(fail("ninguém aceitou a tempo")).await; return; }
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -81,9 +96,10 @@ impl Files {
                 let mut buf = vec![0u8; SFU_CHUNK_BYTES];
                 let (mut seq, mut sent, mut last) = (0u64, 0u64, 0u64);
                 loop {
-                    while (ctl.paused_all.load(SeqCst) || ctl.paused.lock().unwrap().contains(&fp)) && !ctl.cancel.load(SeqCst) && !ctl.gone.lock().unwrap().contains(&fp) { tokio::time::sleep(Duration::from_millis(100)).await; }
+                    while (ctl.paused_all.load(SeqCst) || ctl.paused.lock().unwrap().contains(&fp)) && !ctl.cancel.load(SeqCst) && !ctl.gone.lock().unwrap().contains(&fp) && !ctl.refused.lock().unwrap().contains(&fp) { tokio::time::sleep(Duration::from_millis(50)).await; }
                     if ctl.cancel.load(SeqCst) { let _ = out.send((ident.clone(), cancel_msg.clone())).await; let _ = ev.send(file_ev(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; return; }
                     if ctl.gone.lock().unwrap().contains(&fp) { let _ = ev.send(fail("a pessoa saiu da chamada")).await; return; }
+                    if ctl.refused.lock().unwrap().contains(&fp) { let _ = ev.send(file_ev(json!({ "kind": "cancelled", "id": id, "peer_fp": fp, "by_peer": true }))).await; return; }
                     let mut n = 0;
                     while n < buf.len() {
                         match tokio::io::AsyncReadExt::read(&mut f, &mut buf[n..]).await { Ok(0) => break, Ok(k) => n += k, Err(_) => { let _ = ev.send(fail("erro de leitura")).await; return; } }
@@ -214,7 +230,8 @@ impl Files {
             }
             "file.cancel" => {
                 if self.pending.get(&id).is_some_and(|(pe, _, _)| pe == peer) { self.pending.remove(&id); self.emit(json!({ "kind": "cancelled", "id": id, "peer_fp": fp })).await; }
-                if let Some(f) = self.outgoing.get(&id) { f.cancel.store(true, SeqCst); }
+                // quem recebia desistiu: para só o envio para ELE (com vários destinatários, os outros continuam recebendo)
+                if let Some(f) = self.outgoing.get(&id) { f.refused.lock().unwrap().insert(fp.to_string()); }
                 if let Some((pe, inc, last)) = self.incoming.remove(&id) {
                     if pe == peer { inc.abort(); self.emit(json!({ "kind": "cancelled", "id": id, "peer_fp": fp })).await; }
                     else { self.incoming.insert(id, (pe, inc, last)); }

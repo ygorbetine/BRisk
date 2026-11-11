@@ -31,6 +31,11 @@ describe("livekit-kick: quem é o dono", () => {
     expect(roomOwner([{ identity: "b", joinedAt: 5 }, { identity: "a", joinedAt: 5 }])).toBe("a");   // empate: determinístico
     expect(roomOwner([])).toBeNull();
   });
+  it("quem entrou com a marca de dono no token vence o mais antigo; sem marcado, vale o mais antigo", () => {
+    expect(roomOwner([{ identity: "b", joinedAt: 5 }, { identity: "a", joinedAt: 9, owner: true }, { identity: "c", joinedAt: 7 }])).toBe("a");
+    expect(roomOwner([{ identity: "b", joinedAt: 5, owner: true }, { identity: "a", joinedAt: 5, owner: true }])).toBe("a");   // dois marcados: determinístico
+    expect(roomOwner([{ identity: "b", joinedAt: 5, owner: false }, { identity: "a", joinedAt: 9 }])).toBe("b");
+  });
   it("valida a identidade pedida", () => {
     expect(isValidIdentity(GUEST)).toBe(true);
     for (const bad of ["", "curto", "com espaço aqui", "a".repeat(129), 42, null, undefined, { identity: GUEST }]) expect(isValidIdentity(bad)).toBe(false);

@@ -2,7 +2,10 @@
 // que existem no Deno (Edge Functions) e no Node 20+ (testes). Usa a chave e o segredo do LiveKit, que ficam SÓ no servidor.
 // Cada chamada leva um token de administração de vida curta, restrito à sala em questão.
 
-export type Participant = { identity: string; joinedAt: number };
+import { hasOwnerMark } from "./owner.ts";
+
+/** `owner` = o token dele traz a marca de dono (ver ./owner.ts); ausente em quem entrou com token sem a marca. */
+export type Participant = { identity: string; joinedAt: number; owner?: boolean };
 
 const b64url = (bytes: Uint8Array): string => {
   let text = "";
@@ -54,7 +57,8 @@ export async function listParticipants(livekitUrl: string, apiKey: string, apiSe
   return list.filter((p) => typeof p.identity === "string" && p.identity).map((p) => {
     const ms = Number(p.joinedAtMs ?? p.joined_at_ms);
     const s = Number(p.joinedAt ?? p.joined_at);
-    return { identity: p.identity as string, joinedAt: Number.isFinite(ms) && ms > 0 ? ms / 1000 : Number.isFinite(s) ? s : 0 };
+    const joinedAt = Number.isFinite(ms) && ms > 0 ? ms / 1000 : Number.isFinite(s) ? s : 0;
+    return hasOwnerMark(p.metadata) ? { identity: p.identity as string, joinedAt, owner: true } : { identity: p.identity as string, joinedAt };
   });
 }
 

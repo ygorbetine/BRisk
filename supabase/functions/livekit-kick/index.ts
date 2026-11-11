@@ -3,7 +3,7 @@
 // que realmente derruba a conexão dele no servidor. A regra (quem é o dono, o que é recusado) está em ../_shared/kick.ts.
 // Secrets: LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL (os mesmos da livekit-token). Opcional: ALLOWED_ORIGINS.
 // Deploy (JWT do gateway ligado, sem --no-verify-jwt): supabase functions deploy livekit-kick
-// AINDA NÃO PUBLICADA e ainda não chamada pelo app: ver docs/plans/sfu-livekit-nativo.md.
+// O dono é quem entrou com a marca de dono no token (../_shared/owner.ts); sem marcado na sala, o mais antigo.
 import { authenticate, peerBelongsToUser } from "../_shared/auth.ts";
 import type { AuthUser } from "../_shared/auth.ts";
 import { persistentRateLimit } from "../_shared/rate-limit.ts";

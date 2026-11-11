@@ -48,6 +48,12 @@ int script_probe(const char *n) {
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
     { extern int call_probe(const char *name); int v = call_probe(n); if (v != -2) return v; }   /* chamada e histórico (call.h) */
+    if (!strncmp(n, "wo_", 3) || !strncmp(n, "wk_", 3)) {   /* retângulo externo da janela (wo_l/t/r/b) e área útil do monitor dela (wk_l/t/r/b), em pixels de tela */
+        HWND hw = state.app ? (HWND)cui_app_native_window(state.app) : NULL; RECT r; MONITORINFO mi = { sizeof mi };
+        if (!hw || !GetWindowRect(hw, &r) || !GetMonitorInfoW(MonitorFromWindow(hw, MONITOR_DEFAULTTONEAREST), &mi)) return -1;
+        const RECT *q = n[1] == 'o' ? &r : &mi.rcWork;
+        return n[3] == 'l' ? q->left : n[3] == 't' ? q->top : n[3] == 'r' ? q->right : q->bottom;
+    }
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
     if (!strncmp(n, "attach_", 7)) return attach_probe(n + 7);   /* pending, pending_img, search_on, search_len, palette, pal_len */
     if (!strcmp(n, "draft_len")) return (int)strlen(state.draft);

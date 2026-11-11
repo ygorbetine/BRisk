@@ -22,3 +22,19 @@ Estado (branch cui-ui-paridade): a interface de grupos (canais texto/voz, cargos
 
 ## Presença "Online" dos amigos
 Não implementada. O cliente Realtime do core (`realtime.rs`) abre um WebSocket por tópico; presença de N amigos pediria N sockets ou um cliente multicanal, e tópicos públicos deixam qualquer um que saiba um `user_id` ver a presença. Caminho seguro: canal privado do Realtime com política RLS em `realtime.messages` (migração nova) e um único socket multicanal. Até lá, "Online" = amigo na sua chamada.
+
+## DECISÃO (2026-11-11): formato NOVO e simples, só entre instalações do CUI
+
+O formato do Electron 1.2.2 (convite por troca manual de SDP, `chat.members.snapshot` v2) **não** é implementado. O que está pronto está em `briks-core/src/group_sync.rs` (+ `mesh.rs`, `ipc.rs`, `ui_groups.c`).
+
+**Snapshot assinado** (`briks.group` formato 1): `group_id`, `name`, `owner_fp`, `version`, `ts`, `members[{fp,name,admin,jwk?}]`, `channels[{id,name,kind text|voice}]`, `signer_fp`, `signature` (ECDSA P-256 sobre o JSON canônico sem `signature`). Membros são identificados pela impressão digital da chave (a mesma do chat). Dono e administradores levam a chave pública (`jwk`), que tem de bater com o `fp`. Canal de voz usa a sala como `id` (todos entram na mesma sala `g-<id>`).
+
+**Regras** (`accept`, testadas): convite = snapshot assinado pelo dono que lista o meu `fp` ("esse convite não é para você" caso contrário); atualização = mesmo grupo e mesmo dono, versão maior, assinada por dono ou administrador **do estado já confiado** (ninguém se promove sozinho); administrador não altera administradores nem tira o dono/outro administrador; o dono vence empate de versão com administrador; revogar = o dono tira a pessoa da lista de administradores (daí em diante a assinatura dela não vale); versão sem o meu `fp` apaga o grupo daqui.
+
+**Convite**: código `briks-grp1.<base64url(snapshot)>` gerado ao convidar um amigo (precisa ter publicado a identidade: `fingerprint`/`public_key` vêm do `friends.list`) ou em "Gerar código do grupo". A pessoa cola em "Entrar com convite". Escolhido em vez de código curto no Supabase: não precisa de migração nem de servidor, e a lista de membros já amarra o convite a quem foi convidado. (Um código curto resolvido pelo Supabase continua possível depois, sem mudar o formato.)
+
+**Entrega de atualizações**: `group.send` manda o snapshot por DataChannel aos peers autenticados **que são membros**; o core confere estrutura, assinatura e que quem assinou é quem enviou; o evento `group.snapshot` volta à UI, que chama `group.verify` com o estado confiado (`briksSnap` no documento do grupo) e grava se a decisão for `update`/`removed`. A UI reenvia os snapshots aos membros sempre que muda um grupo; **peer que entra depois só recebe na próxima alteração** (reenvio ao autenticar fica como melhoria).
+
+**IPC**: `group.sign {snapshot}` -> `group.result{op:sign,snapshot,code}`; `group.verify {snapshot|code, trusted?, tag}` -> `group.result{op:verify,decision invite|update|removed}`; `group.code {snapshot}`; `group.send {snapshot}`; evento `group.snapshot {from_fp,snapshot}`.
+
+**Limites conhecidos**: sem servidor não há relógio comum, então um nó que ainda não recebeu uma revogação aceita edição do administrador revogado até ela chegar; ocupação das salas de voz só aparece para a sala em que eu estou (saber quem está nas outras exige presença por sala, ainda não feita); o convite não é enviado sozinho por DM (o usuário copia o código).

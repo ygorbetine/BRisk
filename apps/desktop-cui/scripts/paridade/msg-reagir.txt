@@ -1,0 +1,13 @@
+# Mensagens (demo msgs): reagir pelo chip existente e abrir o seletor de emoji
+snap r0
+tap 598 158
+snap r1
+at 650 125
+waitms 300
+rdown
+rup
+waitms 500
+click 863 149
+at 2 790
+waitms 500
+shot r2

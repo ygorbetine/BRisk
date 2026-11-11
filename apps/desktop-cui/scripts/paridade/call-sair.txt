@@ -1,0 +1,4 @@
+# Chamada (demo call): botão Sair volta para o menu
+snap x0
+tap 1081 759
+snap x1

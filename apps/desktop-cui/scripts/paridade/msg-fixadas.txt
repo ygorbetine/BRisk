@@ -1,0 +1,4 @@
+# Mensagens (demo msgs): chip Fixadas e anexar desabilitado
+snap f0
+tap 831 44
+snap f1

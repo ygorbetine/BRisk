@@ -1,0 +1,11 @@
+# Mensagens (demo msgs): Editar mensagem propria
+snap e0
+at 1100 250
+waitms 300
+rdown
+rup
+waitms 500
+click 1112 400
+at 2 790
+waitms 500
+shot e1

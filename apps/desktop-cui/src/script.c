@@ -15,6 +15,8 @@
  *   click X Y              move, aperta e solta o botão esquerdo em X,Y (um clique de verdade, pelo mesmo caminho do mouse)
  *   waitms N               espera N milissegundos de relógio (independe da taxa de quadros)
  *   shot <nome>            salva <nome>.png (com BRIKS_SCRIPT_SHOTS=1 só estes são salvos, não um PNG por quadro)
+ *   type <texto>           digita o texto no campo com foco (como o teclado; usado pelo roteiro de paridade)
+ *   key enter|tab|backspace|esc   aperta e solta a tecla (idem)
  *   signal <nome>          cria o arquivo <nome>.flag na pasta de saída (um roteiro externo espera por ele para agir) */
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
@@ -32,7 +34,7 @@ static bool timed_move; static float mx0, my0, mx1, my1;
 static float cx, cy; static bool mdown;
 static char caption[200];
 static int frame_no, tail;
-static bool esc_up;
+static bool esc_up; static int key_up = -1;
 static double wait_until; static int click_phase; static char shot_name[96]; static bool shots_only;
 static char outdir[512];
 static unsigned char *px;
@@ -68,6 +70,7 @@ static bool resolve(const char *tok, const char *tok2, float *x, float *y, const
 
 void script_tick(cui_ctx *ui) {
     if (esc_up) { cui_input_key(ui, CUI_KEY_ESCAPE, false, 0); esc_up = false; }
+    if (key_up >= 0) { cui_input_key(ui, (cui_key)key_up, false, 0); key_up = -1; }
     /* o mouse real do usuário não pode interferir na gravação: o roteiro reafirma posição e botão a cada quadro */
     cui_input_mouse_move(ui, cx, cy);
     cui_input_mouse_button(ui, CUI_MOUSE_LEFT, mdown);
@@ -109,6 +112,11 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "menu")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) dock_script_menu((float)atof(a), (float)atof(b)); }
         else if (!strcmp(cmd, "pick")) { char *k = strtok(NULL, " "); if (k) dock_script_pick(k); }
         else if (!strcmp(cmd, "esc")) { cui_input_key(ui, CUI_KEY_ESCAPE, true, 0); esc_up = true; }
+        else if (!strcmp(cmd, "type")) { char *r = strtok(NULL, ""); if (r) cui_input_text(ui, r); }
+        else if (!strcmp(cmd, "key")) {
+            char *k = strtok(NULL, " "); int kc = !k ? -1 : !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE : -1;
+            if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, 0); key_up = kc; }
+        }
         else if (!strcmp(cmd, "restore")) dock_script_restore();
         else if (!strcmp(cmd, "art")) { char *n = strtok(NULL, " "); drag_stack_set_art(n ? panel_from_name(n) : -1); }
         else if (!strcmp(cmd, "voice")) { char *n = strtok(NULL, " "); demo_voice_n = n ? atoi(n) : -1; drag_stack_set_demo(demo_voice_n, demo_servers_n); }

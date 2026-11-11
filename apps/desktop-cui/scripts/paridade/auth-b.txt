@@ -1,0 +1,4 @@
+# Auth: criar conta com e-mail
+snap b0
+tap 695 601
+snap b1

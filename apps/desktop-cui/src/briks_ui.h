@@ -32,7 +32,12 @@ typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
 #define MAX_MSGS 200
-typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
+#define GROUP_MAX_CH 16
+#define GROUP_MAX_MEMBERS 48
+typedef struct { char id[48]; char name[48]; char room[48]; bool voice; } channel_t;       /* canal de texto ou de voz (room = sala da chamada) */
+typedef struct { char id[48]; char name[96]; bool admin; } gmember_t;
+typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate;
+                 char owner[48]; bool is_owner; channel_t ch[GROUP_MAX_CH]; int nch, active_ch; gmember_t m[GROUP_MAX_MEMBERS]; int nm; char *raw; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
@@ -96,6 +101,7 @@ typedef struct {
     person_t outgoing[MAX_FRIENDS]; int outgoing_count;              /* pedidos que eu enviei e ainda não foram respondidos */
     struct { char id[48]; char name[96]; } blocked[64]; int blocked_count;   /* bloqueados: lista local (ui_friends.c); 0006 prepara o servidor */
     int friends_tab; char friends_q[64];                            /* aba do hub de Amigos (0 todos, 1 online, 2 pendentes, 3 bloqueados, 4 adicionar) e a busca */
+    bool chan_open, members_open, gren_open, gleave_open; char chan_name[48], grp_name_edit[96], gchan_id[48]; int chan_kind;   /* grupos (ui_groups.c) */
     bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
@@ -180,6 +186,12 @@ void friends_block(app_state_t *s, const char *id, const char *name);
 void friends_unblock(app_state_t *s, const char *id);
 void friends_hub(cui_ctx *ui, app_state_t *s);
 void friends_dialogs(cui_ctx *ui, app_state_t *s);
+/* ui_groups.c: canais, cargos, membros e convites dos grupos */
+void groups_load(app_state_t *s, const char *body);
+void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
+void groups_header(cui_ctx *ui, app_state_t *s);
+void groups_dialogs(cui_ctx *ui, app_state_t *s);
+void groups_create_json(const app_state_t *s, char *out, size_t cap);
 void account_friends(app_state_t *s);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
 void account_add_friend(app_state_t *s);

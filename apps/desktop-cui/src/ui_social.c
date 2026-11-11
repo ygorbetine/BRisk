@@ -203,6 +203,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
                 if (person_row(ui, &g, s->active_group == i)) app_open_group(s, i);
+                if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);
             }
             char t[48]; snprintf(t, sizeof t, "AMIGOS — %d", s->friend_count);
@@ -304,7 +305,9 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
-            cui_text(ui, group ? "Grupo P2P · canal geral" : "Mensagem direta P2P", .size = 12, .color = B_MUTED);
+            { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
+              cui_text(ui, sub, .size = 12, .color = B_MUTED); }
+            if (group) groups_header(ui, s);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
             msgui_pinned_button(ui, s);
         }
@@ -650,6 +653,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     }
     profile_dialog(ui, s);
     friends_dialogs(ui, s);
+    groups_dialogs(ui, s);
     cui_dialog(ui, "Trocar @nick", &s->nick_open) {
         cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
         int nr = cui_input(ui, "nick-edit", s->nick_edit, sizeof s->nick_edit, .placeholder = "seu_nick", .autofocus = true);

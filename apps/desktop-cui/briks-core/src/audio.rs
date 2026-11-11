@@ -84,6 +84,10 @@ pub struct Audio {
     /// Supressão de ruído: 0 = Padrão (filtro leve), 1 = desligada
     noise: AtomicU8,
     nf: Mutex<NoiseFilter>,
+    /// Cancelamento de eco: liga/desliga, filtro e fila da referência (o que a saída tocou; a captura consome)
+    echo: AtomicBool,
+    aec: Mutex<crate::aec::Aec>,
+    aec_ref: Mutex<Vec<f32>>,
     /// Dispositivos escolhidos (nome; vazio = padrão do sistema). `dev_gen` sobe quando mudam: a thread do cpal reabre os fluxos.
     mic_dev: Mutex<String>,
     out_dev: Mutex<String>,
@@ -102,8 +106,8 @@ pub fn process_input(x: &[f32], gain: f32, gate_db: Option<f32>) -> Vec<f32> {
 
 /// Ajustes de áudio vindos das Configurações > Voz.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AudioCfg { pub in_gain: f32, pub out_gain: f32, pub gate_db: Option<f32>, pub noise: u8, pub mic: String, pub out: String }
-impl Default for AudioCfg { fn default() -> Self { AudioCfg { in_gain: 1.0, out_gain: 1.0, gate_db: None, noise: 0, mic: String::new(), out: String::new() } } }
+pub struct AudioCfg { pub in_gain: f32, pub out_gain: f32, pub gate_db: Option<f32>, pub noise: u8, pub mic: String, pub out: String, pub echo: bool }
+impl Default for AudioCfg { fn default() -> Self { AudioCfg { in_gain: 1.0, out_gain: 1.0, gate_db: None, noise: 0, mic: String::new(), out: String::new(), echo: true } } }
 
 /// Supressão de ruído "Padrão": filtro passa-altas (~80 Hz, tira ronco e DC) + expansor suave que abaixa até 12 dB o que fica
 /// perto do piso de ruído estacionário (ventilador, chiado). Voz bem acima do piso passa intacta. Não é RNNoise.
@@ -141,7 +145,7 @@ impl Audio {
             "briks".into(),
         ));
         let a = Arc::new(Audio { track, mic_muted: AtomicBool::new(false), deaf: AtomicBool::new(false), stop: AtomicBool::new(false), fake,
-            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), noise: AtomicU8::new(0), nf: Mutex::new(NoiseFilter::new()), mic_dev: Default::default(), out_dev: Default::default(), dev_gen: AtomicU32::new(0), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
+            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), noise: AtomicU8::new(0), nf: Mutex::new(NoiseFilter::new()), echo: AtomicBool::new(true), aec: Default::default(), aec_ref: Default::default(), mic_dev: Default::default(), out_dev: Default::default(), dev_gen: AtomicU32::new(0), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
         (a, rx)
     }
 
@@ -172,10 +176,11 @@ impl Audio {
     pub fn apply_cfg(&self, c: &AudioCfg) {
         self.set_audio_cfg(c.in_gain, c.out_gain, c.gate_db);
         self.noise.store(c.noise.min(1), Ordering::Relaxed);
+        self.echo.store(c.echo, Ordering::Relaxed);
         let mut changed = false;
         { let mut m = self.mic_dev.lock().unwrap(); if *m != c.mic { *m = c.mic.clone(); changed = true; } }
         { let mut o = self.out_dev.lock().unwrap(); if *o != c.out { *o = c.out.clone(); changed = true; } }
-        if changed { self.dev_gen.fetch_add(1, Ordering::Relaxed); }
+        if changed { self.dev_gen.fetch_add(1, Ordering::Relaxed); self.aec.lock().unwrap().reset(); self.aec_ref.lock().unwrap().clear(); }
     }
     pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
     pub fn rx_stat(&self, peer: &str) -> RxStat { self.stats.lock().unwrap().get(peer).cloned().unwrap_or_default() }
@@ -322,10 +327,22 @@ impl Audio {
         }
         let og = f32::from_bits(self.out_gain.load(Ordering::Relaxed));
         out.iter_mut().for_each(|v| *v = (*v * og).clamp(-1.0, 1.0));
+        if self.echo.load(Ordering::Relaxed) {
+            // referência do cancelamento de eco: o que está indo para os alto-falantes, em mono (a captura consome a fila)
+            let mut q = self.aec_ref.lock().unwrap();
+            q.extend(out.chunks_exact(2).map(|p| (p[0] + p[1]) * 0.5));
+            if q.len() > RATE as usize { let d = q.len() - RATE as usize; q.drain(..d); }
+        }
     }
 
     fn push_capture(&self, mono48: &[f32]) {
         let gate = f32::from_bits(self.gate_db.load(Ordering::Relaxed));
+        let aec_out;
+        let mono48 = if self.echo.load(Ordering::Relaxed) {
+            let mut t = mono48.to_vec();
+            { let mut a = self.aec.lock().unwrap(); let r: Vec<f32> = self.aec_ref.lock().unwrap().drain(..).collect(); a.push_ref(&r); a.process(&mut t); }
+            aec_out = t; &aec_out[..]
+        } else { self.aec_ref.lock().unwrap().clear(); mono48 };
         let tmp;
         let mono48 = if self.noise.load(Ordering::Relaxed) == 0 { let mut t = mono48.to_vec(); self.nf.lock().unwrap().process(&mut t); tmp = t; &tmp[..] } else { mono48 };
         let proc = process_input(mono48, f32::from_bits(self.in_gain.load(Ordering::Relaxed)), if gate.is_nan() { None } else { Some(gate) });
@@ -551,6 +568,38 @@ mod unit {
         let _t = MicTest::start(AudioCfg { noise: 1, gate_db: Some(0.0), ..Default::default() }, true, tx);
         let j = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
         assert_eq!(j["level"], 0.0, "porta fechada: {j}");
+    }
+
+    #[test]
+    fn echo_cancel_switch_attenuates_speaker_leak_in_the_capture_path() {
+        // o que a saída toca volta ao microfone atrasado em 30 ms: com o cancelamento ligado a captura fica bem mais baixa que desligado
+        let run = |echo: bool| -> f32 {
+            let (a, _rx) = Audio::new(true);
+            a.apply_cfg(&AudioCfg { echo, noise: 1, ..Default::default() });
+            let mut seed = 5u32; let mut lp = 0.0f32;
+            let mut tot = 0.0f32; let mut cnt = 0usize;
+            let mut played: Vec<f32> = vec![];
+            let n_blocks = 600; // 6 s em blocos de 10 ms
+            a.sinks.lock().unwrap().insert("p".into(), Sink::default());
+            for b in 0..n_blocks {
+                // chega voz remota (ruído em banda) e a saída a toca
+                let vox: Vec<f32> = (0..480).map(|_| { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); lp += (((seed >> 8) as f32 / 8388608.0 - 1.0) - lp) * 0.35; lp * 0.5 }).collect();
+                a.deliver("p", &vox, 1, &mut Speaker::default());
+                let mut out = vec![0.0f32; 960]; a.mix_pull_stereo(&mut out);
+                played.extend(out.chunks_exact(2).map(|p| p[0]));
+                // microfone = saída atrasada 30 ms (1440 amostras) x 0,4
+                let n = played.len();
+                let mic: Vec<f32> = (n - 480..n).map(|i| if i >= 1440 { 0.4 * played[i - 1440] } else { 0.0 }).collect();
+                a.push_capture(&mic);
+                let mut c = a.cap.lock().unwrap();
+                let got: Vec<f32> = c.drain(..).collect();
+                if b >= n_blocks - 100 { tot += got.iter().map(|v| v * v).sum::<f32>(); cnt += got.len(); }
+            }
+            (tot / cnt.max(1) as f32).sqrt()
+        };
+        let (off, on) = (run(false), run(true));
+        assert!(off > 0.01, "sem cancelamento o eco chega ao envio: {off}");
+        assert!(20.0 * (off / on.max(1e-9)).log10() > 12.0, "com cancelamento cai mais de 12 dB: {off} -> {on}");
     }
 
     #[test]

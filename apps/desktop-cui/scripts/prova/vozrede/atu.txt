@@ -1,0 +1,2 @@
+waitms 1200
+shot atu0

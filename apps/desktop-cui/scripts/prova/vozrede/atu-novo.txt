@@ -1,0 +1,7 @@
+waitms 1000
+expect upd_chk 0
+click 567 189
+waitms 2500
+expect upd_chk 3
+expect upd_phase 0
+shot atu-novo

@@ -5,6 +5,7 @@
 //!   briks-core import-electron …  importação somente leitura do Briks antigo (import.rs)
 //!   briks-core mock-realtime [p]  servidor Phoenix/Realtime de teste em 127.0.0.1 (sem Supabase)
 mod accounts;
+mod aec;
 mod audio;
 mod chat_events;
 mod adapt;

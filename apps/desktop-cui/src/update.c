@@ -198,6 +198,32 @@ static void check_once(void) {
     InterlockedExchange(&g_phase, UPD_READY);
 }
 
+/* ---- "Verificar agora": só lê o feed (nada é baixado aqui) ---- */
+static volatile LONG g_chk = UCHK_NONE;
+static char g_chk_ver[48], g_chk_err[160];
+upd_check_t update_check_state(void) { return (upd_check_t)g_chk; }
+const char *update_check_version(void) { return g_chk_ver; }
+const char *update_check_error(void) { return g_chk_err; }
+static unsigned __stdcall check_now_thread(void *unused) {
+    (void)unused;
+    const char *feed = getenv("BRIKS_UPDATE_FEED"); if (!feed || !feed[0]) feed = DEFAULT_FEED;
+    static char yaml[MAX_FEED_BYTES + 1];
+    char ver[48], rel[256], sha[200];
+    g_chk_ver[0] = g_chk_err[0] = 0;
+    if (http_get(feed, yaml, sizeof yaml, NULL, MAX_FEED_BYTES, false) < 0) { snprintf(g_chk_err, sizeof g_chk_err, "Não foi possível consultar o servidor de atualizações. Veja a sua internet e tente de novo."); InterlockedExchange(&g_chk, UCHK_ERROR); return 0; }
+    if (!update_parse_feed(yaml, ver, sizeof ver, rel, sizeof rel, sha, sizeof sha)) { snprintf(g_chk_err, sizeof g_chk_err, "O servidor de atualizações respondeu algo que o Briks não entende."); InterlockedExchange(&g_chk, UCHK_ERROR); return 0; }
+    if (update_version_compare(ver, update_current_version()) <= 0) { InterlockedExchange(&g_chk, UCHK_LATEST); return 0; }
+    snprintf(g_chk_ver, sizeof g_chk_ver, "%s", ver);
+    InterlockedExchange(&g_chk, UCHK_NEWER);
+    return 0;
+}
+void update_check_now(void) {
+    if (g_chk == UCHK_RUNNING) return;
+    InterlockedExchange(&g_chk, UCHK_RUNNING);
+    HANDLE t = (HANDLE)_beginthreadex(NULL, 0, check_now_thread, NULL, 0, NULL);
+    if (t) CloseHandle(t); else { snprintf(g_chk_err, sizeof g_chk_err, "Não foi possível iniciar a verificação."); InterlockedExchange(&g_chk, UCHK_ERROR); }
+}
+
 /* Politica de ligar a atualizacao (pura, testada em tests/smoke.c). Ordem: BRIKS_DISABLE_UPDATE=1 desliga sempre; feed de teste liga; BRIKS_ENABLE_UPDATE=1 ou o arquivo
  * "update-enabled" ligam; e, no build Release do instalador (BRIKS_UPDATE_DEFAULT_ON), liga por padrao SO no app instalado (marcador briks.installed ao lado do exe). */
 bool update_policy(bool disable, bool has_feed, bool enable_env, bool enable_file, bool default_on, bool installed) {
@@ -223,6 +249,8 @@ static bool update_enabled(void) {
 #endif
     return update_policy(d && d[0] == '1', getenv("BRIKS_UPDATE_FEED") != NULL, e && e[0] == '1', file, def, installed);
 }
+
+bool update_auto_on(void) { return update_enabled(); }
 
 static unsigned __stdcall update_thread(void *unused) {
     (void)unused;

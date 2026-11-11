@@ -45,6 +45,11 @@ static void netdiag_tests(void) {
     memcpy(rs, rq, 20); rs[0] = 0x01; rs[1] = 0x01;
     CHECK(stun_is_response(rs, 20, tx) && !stun_is_response(rq, 20, tx), "resposta STUN reconhecida; o próprio pedido não");
     uint8_t other[12] = { 9 }; CHECK(!stun_is_response(rs, 20, other) && !stun_is_response(rs, 10, tx), "txid diferente e pacote curto recusados");
+    { uint8_t m[32] = { 0x01, 0x01, 0x00, 0x0C, 0x21, 0x12, 0xA4, 0x42 }; memcpy(m + 8, tx, 12);
+      m[20] = 0x00; m[21] = 0x20; m[22] = 0x00; m[23] = 0x08; m[24] = 0; m[25] = 1; m[26] = 0x21 ^ 0x12 ^ 0x21; m[27] = 0x12 ^ 0x34 ^ 0x12;   /* porta 0x1234 ^ 0x2112 */
+      m[26] = (uint8_t)((0x1234 ^ 0x2112) >> 8); m[27] = (uint8_t)((0x1234 ^ 0x2112) & 0xFF);
+      CHECK(stun_mapped_port(m, 32) == 0x1234, "porta pública lida do XOR-MAPPED-ADDRESS"); CHECK(stun_mapped_port(m, 20) == 0 && stun_mapped_port(m, 10) == 0, "resposta sem atributo ou curta: porta 0");
+      CHECK(net_needs_relay(40000, 51234) && !net_needs_relay(40000, 40000) && !net_needs_relay(0, 40000), "NAT que muda a porta por destino precisa de relay; porta igual ou desconhecida não afirma"); }
     double r[5] = { 20, 30, -1, 20, 30 }; net_stats_t s = net_stats(r, 5);
     CHECK(s.got == 4 && fabs(s.avg_ms - 25) < 1e-9 && fabs(s.loss_pct - 20) < 1e-9 && fabs(s.jitter_ms - 10) < 1e-9, "estatística: média 25 ms, perda 20%%, variação 10 ms (veio %.1f / %.0f%% / %.1f)", s.avg_ms, s.loss_pct, s.jitter_ms);
     double z[3] = { -1, -1, -1 }; s = net_stats(z, 3); CHECK(s.got == 0 && s.loss_pct == 100, "sem resposta: perda 100%%");

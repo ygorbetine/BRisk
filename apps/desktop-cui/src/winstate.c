@@ -205,7 +205,10 @@ static void run_cmd(int cmd) {
     }
 }
 
+bool overlay_script(const char *args);   /* overlay_host.c */
+bool titlebar_proc(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res); void titlebar_attach(void *hwnd); int titlebar_probe(const char *n); bool titlebar_script(const char *cmd, int a, int b); int titlebar_hit_result(void);   /* titlebar.c */
 static LRESULT CALLBACK sys_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    { LRESULT tr; if (titlebar_proc(h, m, w, l, &tr)) return tr; }   /* barra de título própria: sem moldura do sistema, acerto do mouse */
     if (g_msg_show && m == g_msg_show) { sys_show_window(); return 0; }
     if (g_msg_taskbar && m == g_msg_taskbar) { tray_readd(); return 0; }
     switch (m) {
@@ -238,6 +241,7 @@ void sys_attach(app_state_t *s, bool automation) {
     g_hwnd = (HWND)cui_app_native_window(s->app); g_ui = cui_app_ui(s->app);
     if (!g_hwnd) return;
     g_orig = (WNDPROC)SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, (LONG_PTR)sys_proc);
+    titlebar_attach(g_hwnd);
     g_msg_taskbar = RegisterWindowMessageW(L"TaskbarCreated");
     if (!g_prop[0]) swprintf(g_prop, 100, L"BriksInst."); SetPropW(g_hwnd, g_prop, (HANDLE)1);
     if (!getenv("BRIKS_WINDOW") && !getenv("BRIKS_TEST_WINDOW") && (!automation || getenv("BRIKS_SYS_FILE"))) restore_window();
@@ -319,7 +323,8 @@ int sys_probe(const char *n) {
     if (!strcmp(n, "active_friend")) return g_s ? g_s->active_friend : -1;
     if (!strcmp(n, "tray_visible")) return tray_visible();
     if (!strcmp(n, "tray_icon_badged")) return g_tray_icon_badged;
-    return -9999;
+    if (!strcmp(n, "tb_hit")) return titlebar_hit_result();
+    return titlebar_probe(n);
 }
 
 static int tokens(char *s, char **t, int max) { int n = 0; for (char *p = strtok(s, " "); p && n < max; p = strtok(NULL, " ")) t[n++] = p; return n; }
@@ -337,6 +342,9 @@ bool sys_script(const char *args) {
     else if (!strcmp(c, "move") && n > 4 && g_hwnd) SetWindowPos(g_hwnd, NULL, atoi(t[1]), atoi(t[2]), atoi(t[3]), atoi(t[4]), SWP_NOZORDER | SWP_NOACTIVATE);
     else if (!strcmp(c, "sound") && n > 1) sound_play((sound_kind_t)atoi(t[1]));
     else if (!strcmp(c, "cfg") && n > 2) { bool v = atoi(t[2]) != 0; if (!strcmp(t[1], "close_to_tray")) g_sys.close_to_tray = v; else if (!strcmp(t[1], "nt_msg")) g_sys.nt_msg = v; else if (!strcmp(t[1], "sounds")) g_sys.sounds = v; }
+    else if (!strcmp(c, "ovl") && n > 1) { return overlay_script(rest1); }   /* ovl key | ovl line <texto do overlay> */
+    else if (!strcmp(c, "tbhit") && n > 2) titlebar_script("tbhit", atoi(t[1]), atoi(t[2]));   /* tbhit X Y (pixels do cliente): guarda o WM_NCHITTEST desse ponto; expect tb_hit <n> */
+    else if (!strcmp(c, "tbact") && n > 1) titlebar_script("tbact", !strcmp(t[1], "min") ? 0 : !strcmp(t[1], "max") ? 1 : 2, 0);
     else if (!strcmp(c, "link") && n > 1) handle_link(t[1]);
     else if (!strcmp(c, "fwask")) fw_maybe_prompt();   /* o que a primeira chamada faz */
     else if (!strcmp(c, "autostart") && n > 1) sys_autostart_set(atoi(t[1]) != 0);

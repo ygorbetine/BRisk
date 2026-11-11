@@ -194,6 +194,7 @@ typedef struct {
     /* AMI-15: amigos com o sino desligado (sem aviso de "ficou online" / "entrou na chamada"); lista guardada em friend-bells.txt */
     char fbell[24][48]; int fbell_n; bool fbell_loaded;
     bool friends_loaded;   /* BAS-30: a primeira lista de amigos já chegou do serviço (antes dela a tela mostra o esqueleto) */
+    int ice_test_ms;                                           /* ice.test: tempo até o relay responder (ms) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */

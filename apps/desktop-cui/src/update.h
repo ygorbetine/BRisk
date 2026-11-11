@@ -17,6 +17,15 @@ bool update_dismissed(void);
 bool update_install_now(void);           /* inicia o instalador (silencioso, reabre o app); o chamador fecha o app em seguida */
 void update_install_on_exit(void);       /* ao fechar: se há atualização pronta e verificada, instala em silêncio sem reabrir */
 
+/* "Verificar atualização agora" (Configurações > Atualização): consulta o feed só para LER (não baixa nada); o resultado fica aqui.
+ * Se há versão nova e a atualização automática está ligada (app instalado), o segundo plano baixa no ritmo normal. */
+typedef enum { UCHK_NONE, UCHK_RUNNING, UCHK_LATEST, UCHK_NEWER, UCHK_ERROR } upd_check_t;
+void update_check_now(void);             /* ignora se já está verificando */
+upd_check_t update_check_state(void);
+const char *update_check_version(void);  /* versão nova achada (UCHK_NEWER) */
+const char *update_check_error(void);
+bool update_auto_on(void);               /* a atualização automática está ligada nesta cópia? */
+
 /* utilitários puros (testados em tests/smoke.c) */
 int update_version_compare(const char *a, const char *b);   /* <0, 0, >0 (semver simples; pré-lançamento < final) */
 bool update_parse_feed(const char *yaml, char *version, size_t vcap, char *path, size_t pcap, char *sha512, size_t scap);

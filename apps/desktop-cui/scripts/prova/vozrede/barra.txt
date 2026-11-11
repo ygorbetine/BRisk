@@ -1,0 +1,32 @@
+# Barra de título própria (TRY-09): cliente cobre a janela toda, acerto do mouse (arrastar e duplo clique = HTCAPTION do Windows), botões na área cliente
+waitms 900
+expect tb_nc_client 1
+expect tb_h 36
+sys tbhit 500 10
+expect tb_hit 2
+sys tbhit -10 10
+expect tb_hit 1
+sys tbhit 500 400
+expect tb_hit 1
+sys tbhit 2 400
+expect tb_hit 10
+sys tbhit -3 400
+expect tb_hit 11
+sys tbhit 500 -2
+expect tb_hit 15
+sys tbhit 2 2
+expect tb_hit 13
+sys tbhit -3 2
+expect tb_hit 14
+sys tbhit 2 -2
+expect tb_hit 16
+sys tbhit -3 -2
+expect tb_hit 17
+click 880 18
+waitms 300
+expect tb_min 1
+click 924 18
+waitms 300
+expect tb_max 1
+expect tb_last 1
+shot barra

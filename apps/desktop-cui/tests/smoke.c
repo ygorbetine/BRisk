@@ -6,6 +6,9 @@
 #include "../src/core.h"
 #include "../src/update.h"
 #include "../src/drag_stack.h"
+#include "../src/hotkeys.h"
+#include "../src/netdiag.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -22,6 +25,31 @@ static float area_sum(const layout_t *l, lrect area) {   /* área total das folh
     float s = 0; for (int i = 0; i < LAYOUT_MAX_NODES; i++) if (l->n[i].used && l->n[i].leaf) s += r[i].w * r[i].h;
     return s;
 }
+static void hotkey_tests(void) {
+    unsigned m; int vk;
+    CHECK(hk_parse("Ctrl+Shift+M", &m, &vk) && m == (HK_CTRL | HK_SHIFT) && vk == 'M', "atalho Ctrl+Shift+M");
+    CHECK(hk_parse("alt + f5", &m, &vk) && m == HK_ALT && vk == 0x74, "atalho Alt+F5 (espaços e caixa)");
+    CHECK(hk_parse("Mouse4", &m, &vk) && m == 0 && vk == 0x05 && hk_parse("Mouse5", &m, &vk) && vk == 0x06, "botões laterais do mouse");
+    CHECK(!hk_parse("", &m, &vk) && !hk_parse("Ctrl+Shift", &m, &vk) && !hk_parse("Ctrl+A+B", &m, &vk) && !hk_parse("Ctrl+Banana", &m, &vk), "atalhos inválidos recusados");
+    hk_ptt_t p; memset(&p, 0, sizeof p);
+    CHECK(hk_ptt_step(&p, true, 1000, 200), "PTT abre ao apertar");
+    CHECK(hk_ptt_step(&p, false, 1100, 200), "PTT segue aberto durante o atraso ao soltar");
+    CHECK(!hk_ptt_step(&p, false, 1300, 200), "PTT fecha depois do atraso");
+    CHECK(hk_ptt_step(&p, true, 1400, 200) && hk_ptt_step(&p, false, 1401, 0) == false, "PTT sem atraso fecha na hora");
+}
+
+static void netdiag_tests(void) {
+    uint8_t tx[12] = { 1,2,3,4,5,6,7,8,9,10,11,12 }, rq[20], rs[20];
+    stun_build_request(rq, tx);
+    CHECK(rq[0] == 0 && rq[1] == 1 && rq[4] == 0x21 && !memcmp(rq + 8, tx, 12), "pacote STUN Binding Request");
+    memcpy(rs, rq, 20); rs[0] = 0x01; rs[1] = 0x01;
+    CHECK(stun_is_response(rs, 20, tx) && !stun_is_response(rq, 20, tx), "resposta STUN reconhecida; o próprio pedido não");
+    uint8_t other[12] = { 9 }; CHECK(!stun_is_response(rs, 20, other) && !stun_is_response(rs, 10, tx), "txid diferente e pacote curto recusados");
+    double r[5] = { 20, 30, -1, 20, 30 }; net_stats_t s = net_stats(r, 5);
+    CHECK(s.got == 4 && fabs(s.avg_ms - 25) < 1e-9 && fabs(s.loss_pct - 20) < 1e-9 && fabs(s.jitter_ms - 10) < 1e-9, "estatística: média 25 ms, perda 20%%, variação 10 ms (veio %.1f / %.0f%% / %.1f)", s.avg_ms, s.loss_pct, s.jitter_ms);
+    double z[3] = { -1, -1, -1 }; s = net_stats(z, 3); CHECK(s.got == 0 && s.loss_pct == 100, "sem resposta: perda 100%%");
+}
+
 static void layout_tests(void) {
     const lrect area = { 10, 10, 1260, 777 };
     layout_t l; layout_default(&l, 1280);
@@ -271,6 +299,8 @@ static void update_tests(void) {
 
 int main(void) {
     layout_tests();
+    hotkey_tests();
+    netdiag_tests();
     update_tests();
     pile_tests();
     live_tests();

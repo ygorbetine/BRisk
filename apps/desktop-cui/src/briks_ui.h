@@ -207,6 +207,8 @@ void themes_tab(cui_ctx *ui);                              /* themes.c: aba Tema
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
+void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay);
+void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */

@@ -770,7 +770,7 @@ async fn slow_viewer_does_not_drag_the_others() {
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("B quadro");
     // mede `secs` segundos: (kbps enviado, alvo, fps do emissor, CPU do processo, fps de B, deixados de fora)
     async fn measure(a: &mut MeshHandle, b: &mut MeshHandle, secs: u64) -> (f64, f64, f64, f64, f64, u64) {
-        let (mut k, mut t, mut f, mut c, mut n, mut bf, mut bn, mut out) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0u64);
+        let (mut k, mut t, mut f, mut c, mut n, mut bf, mut bn, mut out) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0u64);
         let end = std::time::Instant::now() + Duration::from_secs(secs);
         while std::time::Instant::now() < end {
             tokio::select! {

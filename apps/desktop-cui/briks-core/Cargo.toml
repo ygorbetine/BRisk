@@ -34,5 +34,12 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+windows-capture = { version = "1", default-features = false }
+openh264 = { version = "0.6", default-features = false, features = ["source"] }
+memmap2 = { version = "0.9", default-features = false }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Dxgi", "Win32_UI_WindowsAndMessaging", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Security", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_Variant", "Win32_System_Ole", "Win32_Storage_FileSystem", "Win32_Storage_Xps", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_Graphics_Dwm", "Win32_System_Registry"] }
+windows-core = "0.61"
+[dev-dependencies]
+socket2 = "0.5"
 
 [workspace]

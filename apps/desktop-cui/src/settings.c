@@ -225,7 +225,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_textf(ui, "Canal: %s", s->in_room ? "na sala" : "indisponível");
                         cui_textf(ui, "Pessoas na sala: %d (autenticadas: %d)", s->rtc_peer_count, s->rtc_authed_count);
                         if (s->rtc_msg[0]) sub(ui, s->rtc_msg);
-                        (void)b; sub(ui, "Servidores STUN/TURN são definidos pelo app; os endereços não entram no diagnóstico.");
+                        (void)b; sub(ui, s->ice_note[0] ? s->ice_note : "Servidores: STUN público (TURN só se configurado)."); sub(ui, "Para TURN: BRIKS_ICE_SERVERS_JSON ou ice.json na pasta de dados do Briks.");
                     }
                     break; }
                 case 2: /* Temas */

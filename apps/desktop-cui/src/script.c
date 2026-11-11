@@ -11,7 +11,11 @@
  *   esc                    aperta Esc (cancela o arraste)
  *   restore                restaura o layout padrão
  *   voice N | servers N    (demo da pilha) pessoas na call / comunidades na arte do cartão; art <painel> força a arte
- *   demo <modo>            não usado no vídeo; reservado */
+ *   demo <modo>            não usado no vídeo; reservado
+ *   click X Y              move, aperta e solta o botão esquerdo em X,Y (um clique de verdade, pelo mesmo caminho do mouse)
+ *   waitms N               espera N milissegundos de relógio (independe da taxa de quadros)
+ *   shot <nome>            salva <nome>.png (com BRIKS_SCRIPT_SHOTS=1 só estes são salvos, não um PNG por quadro)
+ *   signal <nome>          cria o arquivo <nome>.flag na pasta de saída (um roteiro externo espera por ele para agir) */
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
 #include "layout.h"
@@ -28,6 +32,7 @@ static float cx, cy; static bool mdown;
 static char caption[200];
 static int frame_no, tail;
 static bool esc_up;
+static double wait_until; static int click_phase; static char shot_name[96]; static bool shots_only;
 static char outdir[512];
 static unsigned char *px;
 
@@ -48,6 +53,7 @@ bool script_load(void) {
     snprintf(outdir, sizeof outdir, "%s", o && o[0] ? o : "script-frames");
     CreateDirectoryA(outdir, NULL);
     cx = 640; cy = 400;
+    shots_only = getenv("BRIKS_SCRIPT_SHOTS") != NULL;
     return nlines > 0;
 }
 
@@ -64,13 +70,26 @@ void script_tick(cui_ctx *ui) {
     /* o mouse real do usuário não pode interferir na gravação: o roteiro reafirma posição e botão a cada quadro */
     cui_input_mouse_move(ui, cx, cy);
     cui_input_mouse_button(ui, CUI_MOUSE_LEFT, mdown);
+    if (click_phase) {   /* clique em andamento: 3 quadros parado em cima (para o controle ver o cursor), 3 apertado, 3 solto */
+        click_phase++;
+        if (click_phase == 4) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, true); mdown = true; }
+        if (click_phase == 7) { cui_input_mouse_button(ui, CUI_MOUSE_LEFT, false); mdown = false; }
+        if (click_phase >= 10) click_phase = 0;
+        cui_request_redraw(ui);
+        return;
+    }
+    if (wait_until > 0) { if (cui_time(ui) < wait_until) { cui_request_redraw(ui); return; } wait_until = 0; }
     /* inicia operações até achar uma com duração */
-    while (!timed_left && pc < nlines) {
+    while (!timed_left && !click_phase && wait_until == 0 && !shot_name[0] && pc < nlines) {
         char line[1024]; snprintf(line, sizeof line, "%s", lines[pc++]);
         char *cmd = strtok(line, " ");
         if (!cmd) continue;
         if (!strcmp(cmd, "caption")) { char *r = strtok(NULL, ""); snprintf(caption, sizeof caption, "%s", r ? r : ""); }
         else if (!strcmp(cmd, "at")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); } }
+        else if (!strcmp(cmd, "click")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); click_phase = 1; } }
+        else if (!strcmp(cmd, "waitms")) { char *n = strtok(NULL, " "); wait_until = cui_time(ui) + (n ? atof(n) : 100) / 1000.0; }
+        else if (!strcmp(cmd, "shot")) { char *n = strtok(NULL, " "); snprintf(shot_name, sizeof shot_name, "%s", n ? n : "shot"); }
+        else if (!strcmp(cmd, "signal")) { char *n = strtok(NULL, " "); char f[640]; snprintf(f, sizeof f, "%s\\%s.flag", outdir, n ? n : "sinal"); FILE *o = fopen(f, "wb"); if (o) fclose(o); }
         else if (!strcmp(cmd, "down")) { cui_input_mouse_move(ui, cx, cy); cui_input_mouse_button(ui, CUI_MOUSE_LEFT, true); mdown = true; }
         else if (!strcmp(cmd, "rdown")) { cui_input_mouse_move(ui, cx, cy); cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, true); }
         else if (!strcmp(cmd, "rup")) { cui_input_mouse_button(ui, CUI_MOUSE_RIGHT, false); }
@@ -125,10 +144,12 @@ bool script_capture(cui_app *app) {
     float sc = cui_dpi_scale(ui);
     int w = (int)(vp.x * sc + 0.5f), h = (int)(vp.y * sc + 0.5f);
     if (!px) px = malloc((size_t)w * (size_t)h * 4);
-    if (px && cui_app_screenshot(app, px, w, h)) {
-        char name[640]; snprintf(name, sizeof name, "%s\\frame_%05d.png", outdir, frame_no++);
+    if (px && (shot_name[0] || !shots_only) && cui_app_screenshot(app, px, w, h)) {
+        char name[640];
+        if (shot_name[0]) snprintf(name, sizeof name, "%s\\%s.png", outdir, shot_name); else snprintf(name, sizeof name, "%s\\frame_%05d.png", outdir, frame_no++);
         cui_write_png(name, px, w, h, w * 4);
     }
+    shot_name[0] = 0;
     if (tail > 20) { cui_app_quit(app); return true; }
     return false;
 }

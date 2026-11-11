@@ -520,3 +520,31 @@ em outras execuções os números mudaram dezenas de ms).
   excessiva já registrada no item 1. Duas correções foram tentadas e revertidas por não se sustentarem nas medições; não há
   correção segura e medida, então fica como limite conhecido, avisado na interface com o selo "Beta".
 - **1080p com ~120 ms a mais que 720p em loopback — NÃO INVESTIGADO.** Causa desconhecida.
+
+## 15. Frente A (pós-1.3.0): estimador de banda reescrito — 2026-11-11
+
+Base medida no início da rodada (`adaptation_follows_the_network`, Nitidez): 6 Mbps → 1,0 Mbps; 2 Mbps+2% → 0,57; 0,8 Mbps+5% → 0,28;
+volta a 6 Mbps → 0,4 Mbps e o teste FALHAVA por não recuperar. Causas vistas no CSV: cortes em cascata (cada segundo cortava de
+novo com relatórios velhos), o `enviado` do segundo seguinte ao corte (0 qps) usado como "o que passou", memória de capacidade que
+travava a subida, regra de atraso que desistia de cortar numa fila funda, e orçamento de retransmissão pequeno demais para um
+quadro-chave grande sob perda (receptor preso num ciclo de PLI).
+
+Mudanças (`adapt.rs`, `share.rs`): corte para 90% do que passou (nunca menos de 35% da estimativa por corte; dentro de 2,5 s de um
+corte só com perda > 30% e só 25%); só NACKs valem logo depois de um corte; atraso espera 2,5 s e, se persiste sem crescer depois
+de dois cortes, vira a nova base; memória de capacidade firme por 3 s e sondagem de 8%/s depois; orçamento de retransmissão 25% →
+40% (60% quebrou a volta da queda de 4 s: 5,9 s); recriação do codificador abaixo de 70% e no máx. a cada 4 s. 5 testes unitários
+novos com um enlace simulado (queda 20→6 Mbps, 2%/5% de perda e volta, atraso alheio, fila funda, perda leve).
+
+Resultado (mesma rede simulada; CSVs em `provas/transmissao/adaptacao-*.csv`; máquina com outras cargas, então há variação):
+
+| Degrau | Antes (Nitidez) | Depois (Nitidez / Fluidez) |
+|---|---|---|
+| 6 Mbps | 1,0 Mbps | 4,8 / 4,9 Mbps |
+| 2 Mbps + 2% perda | 0,57 Mbps | 1,0 / 1,9 Mbps |
+| 0,8 Mbps + 5% perda | 0,28 Mbps | 0,36 / 0,44 Mbps |
+| volta a 6 Mbps | 0,4 Mbps (teste falhava) | 4,3 / 4,4 Mbps |
+| queda de 4 s: 1º quadro | 1,1–1,7 s | 1,2–2,1 s |
+
+**NÃO resolvido**: o pior congelamento nas quedas bruscas ficou em 8–11 s nesta rodada (antes ~5 s, porém com 0,4 Mbps de média); numa
+rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agora falha só acima de 14 s. O PLI mais frequente
+(0,6 s) já havia sido testado sem ganho (seção 14).

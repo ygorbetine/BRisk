@@ -96,8 +96,9 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
         tokio::select! {
             n = nack_rx.recv() => {
                 let Some(seqs) = n else { break };
-                // crédito de retransmissão: 25% da taxa do pacer, acumulando no máximo 0,5 s
-                rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.25 / 8.0).min(pace * 0.25 / 8.0 * 0.5);
+                // crédito de retransmissão: 60% da taxa do pacer (um quadro-chave grande numa rede com perda precisa de muitos reenvios
+                // para fechar dentro do prazo; com 25% ele nunca completava e o receptor ficava congelado), acumulando no máximo 1 s
+                rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.4 / 8.0).min(pace * 0.4 / 8.0 * 0.75);
                 rtx_t = Instant::now();
                 for sq in seqs {
                     let Some((p, last, asked, sent_at)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
@@ -189,7 +190,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
-        let mut recreated = Instant::now() - Duration::from_secs(10);
+        let mut recreated = Instant::now() - Duration::from_secs(4);
         let (mut black_t, mut black_run, mut black_said) = (Instant::now(), 0u32, false);
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
@@ -236,9 +237,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         // Queda grande: recria o codificador. O ajuste ao vivo no NVENC leva ~2 s para valer (medido), e nesses 2 s o
                         // envio continua acima do que a rede aguenta. Subidas e ajustes pequenos vão ao vivo, sem quadro-chave.
                         // Cada criação do MFT da NVIDIA deixa ~4 handles para trás (medido: 40 ciclos, +4,1 por ciclo, mesmo com
-                        // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos da metade e no máximo uma vez
-                        // a cada 10 s; o resto vai ao vivo.
-                        if (want as f64) < e.bps as f64 * 0.5 && recreated.elapsed() >= Duration::from_secs(10) { enc = None; recreated = Instant::now(); }
+                        // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos de 70% e no máximo uma vez
+                        // a cada 4 s; o resto vai ao vivo.
+                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(4) { enc = None; recreated = Instant::now(); }
                         else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;

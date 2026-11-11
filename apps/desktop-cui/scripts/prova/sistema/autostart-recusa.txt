@@ -1,0 +1,4 @@
+# Sem a chave de teste o automático recusa mexer no registro real
+waitms 500
+sys autostart 1
+expect autostart 0

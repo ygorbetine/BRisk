@@ -1,0 +1,19 @@
+# Clicar no aviso abre a conversa; abrir a conversa em foco zera as não lidas dela
+waitms 700
+sys focus 0
+sys msg c2 Rafael oi grupo
+expect unread 1
+expect active_group -1
+sys tray balloon
+waitms 300
+expect active_group 0
+expect active_friend -1
+expect shown 1
+sys msg dm-friend-demo-0-me Marina oi
+expect unread 2
+sys tray balloon
+waitms 300
+expect active_friend 0
+sys focus 1
+waitms 300
+expect unread 1

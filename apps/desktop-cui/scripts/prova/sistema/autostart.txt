@@ -1,0 +1,9 @@
+# Iniciar com o Windows (numa chave de teste do usuário, nunca a Run real)
+waitms 500
+expect autostart 0
+sys autostart 1
+expect autostart 1
+signal reg
+waitms 3500
+sys autostart 0
+expect autostart 0

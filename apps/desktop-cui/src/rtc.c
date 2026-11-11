@@ -4,6 +4,7 @@
 #include "json.h"
 #include "msgui.h"
 #include "attach.h"
+#include "sysint.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,6 +128,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "chat.event")) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
+    } else if (!strcmp(ev, "chat.message")) {   /* mensagem nova de outra pessoa: aviso do sistema e contador de não lidas (notify.c) */
+        notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), json_str(j, "content", ""));
     } else if (!strcmp(ev, "ice.info")) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);

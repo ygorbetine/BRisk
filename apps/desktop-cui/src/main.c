@@ -4,6 +4,7 @@
 #include "msgui.h"
 #include "backend.h"
 #include "core.h"
+#include "sysint.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,7 @@ static void dev_autologin(void) {
 }
 
 int script_probe(const char *n) {
+    { int sp = sys_probe(n); if (sp != -9999) return sp; }
     if (!strcmp(n, "profile")) return state.profile_open;
     if (!strcmp(n, "settings")) return state.settings_open;
     if (!strcmp(n, "add_friend")) return state.add_friend_open;
@@ -59,6 +61,7 @@ static void frame(cui_ctx *ui) {
     rtc_pump(&state);
     msgui_pump(&state);
     profile_tick(&state);
+    sys_tick(&state);
     settings_tick();
     hotkeys_tick(ui, &state);
     themes_tick(ui);
@@ -96,13 +99,14 @@ static void quiet_automation(void) {
 #endif
 
 #ifdef _WIN32
-int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b; (void)c; (void)d;
+int WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { (void)a; (void)b; (void)d;
 #else
 int main(void) {
 #endif
     const bool automation = getenv("CUI_SCREENSHOT") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_HIDDEN");   /* janela oculta por padrão em testes */
 #ifdef _WIN32
     if (automation) quiet_automation();
+    if (!sys_startup(c, automation)) return 0;   /* instância única: já havia um Briks aberto (foi trazido à frente) */
 #endif
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 560 && h >= 480) { win_w = a; win_h = h; } }
@@ -120,7 +124,7 @@ int main(void) {
 #endif
     cui_app *app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
-        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = true /* sys_attach restaura posição/tamanho e só então mostra (exceto em automação) */ });
     if (!app) {   /* a criação da janela/contexto gráfico pode falhar de forma passageira (várias instâncias ocultas subindo juntas): tenta de novo antes de desistir */
         fputs("briks_cui: cui_app_create falhou; tentando de novo\n", stderr);
 #ifdef _WIN32
@@ -128,10 +132,11 @@ int main(void) {
 #endif
         app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 560, .min_height = 480,
-        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = automation && !getenv("BRIKS_SHOW") });
+        .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL, .hidden = true /* sys_attach restaura posição/tamanho e só então mostra (exceto em automação) */ });
     }
     if (!app) { fputs("briks_cui: nao foi possivel criar a janela (saida 1)\n", stderr); return 1; }
     state.app = app;
+    sys_attach(&state, automation);   /* instância única/bandeja/posição da janela (winstate.c) */
     migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
     update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */
 #ifdef _WIN32
@@ -151,11 +156,13 @@ int main(void) {
     briks_glass_init(app);
     bool scripted = script_load();
     while (cui_app_frame(app)) {
+        if (sys_in_tray()) Sleep(100);   /* na bandeja não há o que animar: ~8 quadros por segundo bastam para os eventos do core */
         if (scripted) { script_tick(cui_app_ui(app)); if (g_script_rw) { cui_app_set_size(app, g_script_rw, g_script_rh); g_script_rw = g_script_rh = 0; } }
         frame(cui_app_ui(app));
         if (scripted && script_capture(app)) break;
     }
     briks_glass_shutdown();
+    sys_before_destroy(&state);   /* grava a janela e tira o ícone da bandeja */
     cui_app_destroy(app);
     core_stop();
     bk_stop();

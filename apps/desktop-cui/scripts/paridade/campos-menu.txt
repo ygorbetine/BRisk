@@ -1,0 +1,51 @@
+# BAS-02: menu de clique direito no campo de texto (composer). A área de transferência é FALSA (BRIKS_FAKE_CLIPBOARD=1 no testes.json).
+snap c0
+click 700 753
+type ola mundo
+snap c1
+key ctrl+a
+rclick 700 753
+at 2 790
+waitms 500
+shot c2
+expect modal 1
+# Recortar: o texto sai do campo e vai para a área de transferência
+tap 770 665
+snap c3
+expect modal 0
+expect draft_len 0
+expect clip_is:ola+mundo 1
+# Desfazer devolve o texto
+rclick 700 753
+at 2 790
+waitms 500
+tap 772 592
+expect draft_is:ola+mundo 1
+# Colar duas vezes no fim: o campo cola o que está na área de transferência
+click 700 753
+key end
+rclick 700 753
+at 2 790
+waitms 500
+tap 760 729
+snap c4
+expect draft_is:ola+mundoola+mundo 1
+# Selecionar tudo + Copiar
+rclick 700 753
+at 2 790
+waitms 500
+tap 795 770
+rclick 700 753
+at 2 790
+waitms 500
+tap 765 697
+expect clip_is:ola+mundoola+mundo 1
+# Escape fecha o menu sem agir
+rclick 700 753
+at 2 790
+waitms 500
+expect modal 1
+esc
+waitms 300
+expect modal 0
+expect draft_is:ola+mundoola+mundo 1

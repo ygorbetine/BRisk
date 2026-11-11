@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <cui/cui_render.h>
 
 static double json_num(const jval *o, const char *k, double fb) { const jval *v = json_get(o, k); return v && v->type == J_NUM ? v->num : fb; }
 
@@ -171,15 +172,148 @@ void attach_pick(app_state_t *s) {
         char full[MAX_PATH]; snprintf(full, sizeof full, "%s/%s", dir, p); send_path(s, full);
     }
 }
-/* arquivos soltos na janela (WM_DROPFILES → cui_dropped_file); pastas são ignoradas */
+/* ---------- anexos preparados: arquivo solto sem sala, imagem colada (BAS-23, BAS-24) ---------- */
+static const char *fmt_size(double b, char *o, size_t n);
+#define NPEND 4
+typedef struct { bool used, pasted; char path[MAX_PATH], name[104]; double size; int w, h; cui_texture tex; } pend_t;
+static pend_t g_pend[NPEND];
+static char g_fake_img[MAX_PATH];
+static void pend_free(cui_ctx *ui, pend_t *p) { if (p->tex && ui) cui_image_destroy(ui, p->tex); memset(p, 0, sizeof *p); }
+static pend_t *pend_new(const char *path) {
+    for (int i = 0; i < NPEND; i++) if (g_pend[i].used && !strcmp(g_pend[i].path, path)) return NULL;   /* o mesmo arquivo não entra duas vezes */
+    for (int i = 0; i < NPEND; i++) if (!g_pend[i].used) {
+        pend_t *p = &g_pend[i]; memset(p, 0, sizeof *p); p->used = true;
+        snprintf(p->path, sizeof p->path, "%s", path);
+        const char *nm = strrchr(path, '\\'); const char *nm2 = strrchr(path, '/'); if (nm2 > nm) nm = nm2;
+        snprintf(p->name, sizeof p->name, "%s", nm ? nm + 1 : path);
+        WIN32_FILE_ATTRIBUTE_DATA fa; if (GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) p->size = (double)(((unsigned long long)fa.nFileSizeHigh << 32) | fa.nFileSizeLow);
+        return p;
+    }
+    return NULL;
+}
+static bool core_ready_in_room(const app_state_t *s) { return core_state() == CORE_READY && s->in_room; }
+
+/* arquivos soltos na janela (WM_DROPFILES → cui_dropped_file); pastas são ignoradas.
+ * Com sala: envia na hora (como o "Solte para enviar" do Electron). Sem sala: fica preparado no cartão, com o motivo, em vez de sumir. */
 static void take_drops(cui_ctx *ui, app_state_t *s) {
-    int n = cui_dropped_file_count(ui); if (n <= 0 || !can_send(s)) return;
-    int sent = 0;
+    int n = cui_dropped_file_count(ui); if (n <= 0) return;
+    bool ok = core_ready_in_room(s);
+    int taken = 0;
     for (int i = 0; i < n; i++) {
         const char *p = cui_dropped_file(ui, i); if (!p || !*p) continue;
         DWORD at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (sent >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; solte o resto de novo.", MAX_SEND_BATCH); break; }
-        send_path(s, p); sent++;
+        if (taken >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Peguei os primeiros %d arquivos; solte o resto de novo.", MAX_SEND_BATCH); break; }
+        if (ok) send_path(s, p); else pend_new(p);
+        taken++;
+    }
+}
+
+/* ---- imagem na área de transferência ---- */
+static bool clip_has_text(void) {
+    if (briks_clip_fake()) return briks_clip_probe()[0] != 0;
+    return IsClipboardFormatAvailable(CF_UNICODETEXT) != 0;
+}
+/* CF_DIB (24/32 bits, sem compressão) -> RGBA de cima para baixo; NULL se não houver ou não couber */
+static unsigned char *clip_dib_rgba(int *ow, int *oh) {
+    if (!IsClipboardFormatAvailable(CF_DIB) || !OpenClipboard(NULL)) return NULL;
+    unsigned char *out = NULL; HANDLE hd = GetClipboardData(CF_DIB);
+    if (hd) {
+        const unsigned char *p = GlobalLock(hd); SIZE_T sz = GlobalSize(hd);
+        if (p && sz >= sizeof(BITMAPINFOHEADER)) {
+            const BITMAPINFOHEADER *bi = (const BITMAPINFOHEADER *)p;
+            int W = bi->biWidth, H = bi->biHeight < 0 ? -bi->biHeight : bi->biHeight; bool topdown = bi->biHeight < 0;
+            int bpp = bi->biBitCount;
+            if (bi->biSize >= 40 && bi->biPlanes == 1 && (bpp == 24 || bpp == 32) && (bi->biCompression == BI_RGB || bi->biCompression == BI_BITFIELDS) && W > 0 && H > 0 && W <= 8192 && H <= 8192) {
+                size_t off = bi->biSize + (bi->biCompression == BI_BITFIELDS && bi->biSize == 40 ? 12 : 0) + (size_t)bi->biClrUsed * 4;
+                size_t stride = ((size_t)W * (size_t)bpp + 31) / 32 * 4;
+                if (off + stride * (size_t)H <= sz && (out = malloc((size_t)W * (size_t)H * 4)) != NULL) {
+                    bool any_a = false;
+                    for (int y = 0; y < H; y++) {
+                        const unsigned char *row = p + off + stride * (size_t)(topdown ? y : H - 1 - y); unsigned char *d = out + (size_t)y * (size_t)W * 4;
+                        for (int x = 0; x < W; x++) {
+                            const unsigned char *px = row + (size_t)x * (size_t)(bpp / 8);
+                            d[x * 4] = px[2]; d[x * 4 + 1] = px[1]; d[x * 4 + 2] = px[0]; d[x * 4 + 3] = bpp == 32 ? px[3] : 255;
+                            if (bpp == 32 && px[3]) any_a = true;
+                        }
+                    }
+                    if (bpp == 32 && !any_a) for (size_t i = 0; i < (size_t)W * (size_t)H; i++) out[i * 4 + 3] = 255;   /* captura de tela: alfa zerado = opaco */
+                    *ow = W; *oh = H;
+                }
+            }
+        }
+        if (p) GlobalUnlock(hd);
+    }
+    CloseClipboard();
+    return out;
+}
+void attach_fake_image(const char *path) { snprintf(g_fake_img, sizeof g_fake_img, "%s", path ? path : ""); }
+
+bool attach_paste_image(cui_ctx *ui) {
+    if (clip_has_text()) return false;   /* texto e imagem juntos (ex.: copiado de planilha): o campo cola o texto */
+    char tmp[MAX_PATH] = ""; pend_t *p = NULL; int w = 0, h = 0;
+    if (briks_clip_fake()) {
+        if (!g_fake_img[0]) return false;
+        for (int i = 0; i < NPEND; i++) if (g_pend[i].used && g_pend[i].pasted && !strcmp(g_pend[i].path, g_fake_img)) return true;
+        cui_texture t = cui_image_load(ui, g_fake_img, &w, &h); if (!t) return false;
+        p = pend_new(g_fake_img); if (!p) { cui_image_destroy(ui, t); return true; }
+        p->tex = t; p->w = w; p->h = h; p->pasted = true;
+        return true;
+    }
+    unsigned char *rgba = clip_dib_rgba(&w, &h); if (!rgba) return false;
+    char dir[MAX_PATH]; GetTempPathA(sizeof dir, dir); strncat(dir, "briks-colados", sizeof dir - strlen(dir) - 1); CreateDirectoryA(dir, NULL);
+    snprintf(tmp, sizeof tmp, "%s\\imagem-colada-%llu.png", dir, (unsigned long long)GetTickCount64());
+    bool wrote = cui_write_png(tmp, rgba, w, h, w * 4);
+    int tw = w, th = h; unsigned char *thumb = rgba;
+    if (w > 96 || h > 96) {   /* miniatura (vizinho mais próximo): a textura cheia de uma captura de 4K pesaria demais */
+        float k = 96.0f / (float)(w > h ? w : h); tw = (int)((float)w * k); th = (int)((float)h * k); if (tw < 1) tw = 1; if (th < 1) th = 1;
+        thumb = malloc((size_t)tw * (size_t)th * 4);
+        if (thumb) for (int y = 0; y < th; y++) for (int x = 0; x < tw; x++) memcpy(thumb + ((size_t)y * (size_t)tw + (size_t)x) * 4, rgba + ((size_t)(y * h / th) * (size_t)w + (size_t)(x * w / tw)) * 4, 4);
+    }
+    if (wrote && thumb && (p = pend_new(tmp)) != NULL) { p->tex = cui_image_create(ui, tw, th, thumb); p->w = w; p->h = h; p->pasted = true; snprintf(p->name, sizeof p->name, "imagem-colada.png"); }
+    if (thumb != rgba) free(thumb);
+    free(rgba);
+    return wrote;
+}
+
+void attach_paste_key(cui_ctx *ui, cui_id field) {
+    if (!cui_edit_focused(ui, field)) return;
+    if (cui_key_pressed(ui, CUI_KEY_V) && (cui_key_mods(ui) & CUI_MOD_PRIMARY)) attach_paste_image(ui);
+}
+
+static void pend_cards(cui_ctx *ui, app_state_t *s) {
+    for (int i = 0; i < NPEND; i++) {
+        pend_t *x = &g_pend[i]; if (!x->used) continue;
+        cui_push_id_int(ui, 8900 + i);
+        char a[24], line[200]; bool ok = core_ready_in_room(s);
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_A(B_C3, 0x66), .align = CUI_ALIGN_CENTER, .clip = true) {
+            if (x->tex) {
+                float k = 44.0f / (float)(x->w > x->h ? x->w : x->h);
+                cui_image(ui, x->tex, .width = CUI_PX((float)x->w * k + 0.5f), .height = CUI_PX((float)x->h * k + 0.5f), .radius = 8);
+            } else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = B_A(B_C1, 0x33), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 20, B_C3); }
+            cui_box(ui, .width = CUI_FILL, .gap = 3) {
+                cui_text(ui, x->name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
+                if (x->w) snprintf(line, sizeof line, "%s · %d×%d · %s", x->pasted ? "Imagem colada" : "Imagem", x->w, x->h, fmt_size(x->size, a, sizeof a));
+                else snprintf(line, sizeof line, "Arquivo preparado · %s", fmt_size(x->size, a, sizeof a));
+                cui_text(ui, line, .size = 11, .color = B_MUTED);
+                cui_text(ui, ok ? "Pronto: toque em Enviar para mandar aos participantes da sala." : "Entre numa sala de voz para enviar aos participantes.", .size = 11, .color = ok ? B_MUTED : CUI_RGB(0xf5c542));
+            }
+            if (cui_button(ui, "Enviar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .disabled = !ok)) { send_path(s, x->path); pend_free(ui, x); }
+            if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Descartar")) pend_free(ui, x);
+        }
+        cui_pop_id(ui);
+    }
+}
+
+/* "Solte para enviar": vidro sobre o painel da conversa enquanto arrastam arquivos pela janela (a biblioteca avisa onde a plataforma informa o arraste) */
+void attach_dropzone(cui_ctx *ui, cui_rect r) {
+    if (!cui_file_drag_active(ui) || r.w <= 0) return;
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = r.x, .pad_top = r.y) {
+        cui_box(ui, .width = CUI_PX(r.w), .height = CUI_PX(r.h), .radius = (int)g_th.panel_radius, .bg = CUI_RGBA(0x0c021499), .border = 2, .border_color = B_C3,
+                .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
+            cui_box(ui, .width = CUI_PX(64), .height = CUI_PX(64), .radius = 32, .bg = B_A(B_C1, 0x55), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 28, B_TEXT); }
+            cui_text(ui, "Solte para enviar", .font = CUI_FONT_DISPLAY, .size = 20, .color = B_TEXT);
+            cui_text(ui, "Os arquivos vão para quem está na sala de voz.", .size = 13, .color = B_MUTED);
+        }
     }
 }
 
@@ -280,6 +414,7 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
 
 void attach_strip(cui_ctx *ui, app_state_t *s) {
     take_drops(ui, s);
+    pend_cards(ui, s);
     bool any = false; for (int i = 0; i < NXF; i++) if (g_xf[i].used) any = true;
     if (!any) return;
     int imgs = 0; for (int i = 0; i < NXF; i++) if (g_xf[i].used && g_xf[i].st == XF_DONE && (g_xf[i].th.tex || g_xf[i].th.rgba)) imgs++;
@@ -413,11 +548,14 @@ const char *attach_typing_label(const app_state_t *s) {
 }
 
 /* ---------- busca ---------- */
+static bool g_search_focus;
+void attach_search_open(void) { g_search_on = true; g_search_focus = true; }
 void attach_search_button(cui_ctx *ui) {
     if (g_search_on) {
         cui_input(ui, "msgsearch", g_search, sizeof g_search, .placeholder = "Buscar nesta conversa", .width = CUI_PX(190));
+        if (g_search_focus) { cui_edit_command(ui, cui_make_id(ui, "msgsearch"), CUI_EDIT_SELECT_ALL); g_search_focus = false; }   /* devolve o foco ao campo (e marca o termo antigo) */
         if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Fechar busca")) { g_search_on = false; g_search[0] = 0; }
-    } else if (cui_icon_button(ui, CUI_ICON_SEARCH, .size = CUI_SIZE_SM, .tooltip = "Buscar mensagens")) g_search_on = true;
+    } else if (cui_icon_button(ui, CUI_ICON_SEARCH, .size = CUI_SIZE_SM, .tooltip = "Buscar mensagens (Ctrl+F)")) attach_search_open();
 }
 bool attach_search_match(const char *text) {
     if (!g_search_on || !g_search[0]) return true;
@@ -465,11 +603,28 @@ void attach_demo(app_state_t *s) {
 
 /* ---------- texto rico, menções, agrupamento (paridade com SafeMessageContent/MessageComposer do Electron) ---------- */
 void attach_rich(cui_ctx *ui, const char *id, const char *text) {
+    if (rich_is_plain(text)) {   /* sem formatação: texto selecionável com o mouse (BAS-04); com link/negrito/código segue em markdown */
+        cui_push_id(ui, id); cui_selectable_text(ui, "sel", text); cui_pop_id(ui);
+        return;
+    }
     /* o cui_markdown lê o texto só ao desenhar (fim do quadro): cada chamada precisa do seu buffer, que vale até o próximo ciclo do anel */
     static char ring[256][1700]; static unsigned ri;
     char *md = ring[ri++ % 256]; rich_prepare(text, md, sizeof ring[0]);
     cui_markdown_result r = cui_markdown(ui, id, md, .fit_content = true, .compact = true);
     if (r.link && rich_safe_url(r.link)) ShellExecuteA(NULL, "open", r.link, NULL, NULL, SW_SHOWNORMAL);   /* só http(s), como o openExternal do Electron */
+}
+
+cui_id attach_text_id(cui_ctx *ui, const char *msg_id) {
+    cui_push_id(ui, msg_id); cui_id r = cui_make_id(ui, "sel"); cui_pop_id(ui);
+    return r;
+}
+bool attach_selected_text(cui_ctx *ui, const char *msg_id, const char *text, char *out, size_t cap) {
+    if (!rich_is_plain(text)) return false;
+    cui_id id = attach_text_id(ui, msg_id); int a = 0, b = 0;
+    if (!cui_edit_focused(ui, id) || !cui_edit_selection(ui, id, &a, &b, NULL, NULL) || b <= a || (size_t)b > strlen(text)) return false;
+    size_t n = (size_t)(b - a); if (n >= cap) n = cap - 1;
+    memcpy(out, text + a, n); out[n] = 0;
+    return true;
 }
 
 static bool starts_ci(const char *s, const char *q) { while (*q) { if (tolower((unsigned char)*s) != tolower((unsigned char)*q)) return false; s++; q++; } return true; }
@@ -501,4 +656,59 @@ bool attach_grouped(const app_state_t *s, int idx) {
     if (idx <= 0 || idx >= s->msg_count) return false;
     const msg_t *p = &s->msgs[idx - 1], *m = &s->msgs[idx];
     return rich_group_with_prev(p->author, rich_iso_ms(p->created), m->author, rich_iso_ms(m->created), msgui_has_reply(m));
+}
+
+/* ---------- Ctrl+K: paleta de troca rápida; Ctrl+F: busca na conversa (BAS-08) ---------- */
+static bool g_pal_open, g_pal_focus; static char g_pal_q[64];
+void attach_palette_keys(cui_ctx *ui) {
+    if (briks_blocked() && !g_pal_open) return;   /* diálogo aberto: o atalho não abre nada por baixo */
+    bool ctrl = (cui_key_mods(ui) & CUI_MOD_PRIMARY) != 0;
+    if (ctrl && cui_key_pressed(ui, CUI_KEY_K)) { g_pal_open = !g_pal_open; if (g_pal_open) { g_pal_q[0] = 0; g_pal_focus = true; } }
+    else if (ctrl && cui_key_pressed(ui, CUI_KEY_F) && !g_pal_open) attach_search_open();
+}
+static bool has_ci(const char *hay, const char *needle) {
+    if (!needle[0]) return true;
+    for (const char *h = hay; *h; h++) { const char *a = h, *b = needle; while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; } if (!*b) return true; }
+    return false;
+}
+void attach_palette(cui_ctx *ui, app_state_t *s) {
+    cui_vec2 vp = cui_viewport_size(ui);
+    cui_dialog(ui, "Ir para…", &g_pal_open, .width = fminf(460.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        cui_input(ui, "palq", g_pal_q, sizeof g_pal_q, .placeholder = "Buscar amigo, grupo ou mensagem", .width = CUI_FILL, .autofocus = true);
+        if (g_pal_focus) { cui_edit_command(ui, cui_make_id(ui, "palq"), CUI_EDIT_SELECT_ALL); g_pal_focus = false; }
+        int shown = 0;
+        cui_box(ui, .width = CUI_FILL, .max_height = fmaxf(vp.y - 300.0f, 120.0f), .scroll_y = true, .gap = 4) {
+            for (int i = 0; i < s->group_count && shown < 12; i++) {
+                if (!has_ci(s->groups[i].name, g_pal_q)) continue;
+                cui_push_id_int(ui, 9300 + i); char lab[140]; snprintf(lab, sizeof lab, "Grupo · %s", s->groups[i].name);
+                if (cui_button(ui, lab, .width = CUI_FILL, .variant = CUI_BUTTON_SECONDARY)) { app_open_group(s, i); g_pal_open = false; }
+                cui_pop_id(ui); shown++;
+            }
+            for (int i = 0; i < s->friend_count && shown < 12; i++) {
+                if (!has_ci(s->friends[i].name, g_pal_q)) continue;
+                cui_push_id_int(ui, 9400 + i); char lab[140]; snprintf(lab, sizeof lab, "Amigo · %s", s->friends[i].name);
+                if (cui_button(ui, lab, .width = CUI_FILL, .variant = CUI_BUTTON_SECONDARY)) { app_open_friend(s, i); g_pal_open = false; }
+                cui_pop_id(ui); shown++;
+            }
+            int msgs = 0;
+            for (int i = s->msg_count - 1; i >= 0 && g_pal_q[0] && msgs < 5; i--) {
+                if (msgui_deleted(s->msgs[i].id) || !has_ci(msgui_text(&s->msgs[i]), g_pal_q)) continue;
+                cui_push_id_int(ui, 9500 + i); char lab[160]; snprintf(lab, sizeof lab, "Mensagem · %.60s: %.70s", s->msgs[i].author, msgui_text(&s->msgs[i]));
+                if (cui_button(ui, lab, .width = CUI_FILL, .variant = CUI_BUTTON_SECONDARY)) { snprintf(g_search, sizeof g_search, "%s", g_pal_q); g_search_on = true; g_pal_open = false; }
+                cui_pop_id(ui); msgs++; shown++;
+            }
+            if (!shown) cui_text(ui, "Nada encontrado.", .color = B_MUTED, .size = 13);
+        }
+        cui_text(ui, "Ctrl+K abre e fecha esta janela. Ctrl+F busca dentro da conversa aberta.", .size = 11, .color = B_MUTED);
+    }
+}
+
+int attach_probe(const char *n) {
+    if (!strcmp(n, "pending")) { int k = 0; for (int i = 0; i < NPEND; i++) k += g_pend[i].used; return k; }
+    if (!strcmp(n, "pending_img")) { int k = 0; for (int i = 0; i < NPEND; i++) k += g_pend[i].used && g_pend[i].tex; return k; }
+    if (!strcmp(n, "search_on")) return g_search_on;
+    if (!strcmp(n, "search_len")) return (int)strlen(g_search);
+    if (!strcmp(n, "palette")) return g_pal_open;
+    if (!strcmp(n, "pal_len")) return (int)strlen(g_pal_q);
+    return -1;
 }

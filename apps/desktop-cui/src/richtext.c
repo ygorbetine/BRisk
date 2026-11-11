@@ -162,3 +162,13 @@ bool rich_mentions_me(const char *text, const char *name, const char *nick) {
     }
     return false;
 }
+
+bool rich_is_plain(const char *text) {
+    if (!text) return true;
+    for (const char *p = text; *p; p++) {
+        if (*p == 0x60 || *p == 0x40 || *p == 0x5b || (unsigned char)*p >= 0xF0 || ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xB8)) return false;   /* emoji: o texto simples do CUI nao os desenha; segue no markdown */
+        if (p[0] == '*' && p[1] == '*') return false;
+        if ((*p == 'h' || *p == 'H') && at_url(p)) return false;
+    }
+    return true;
+}

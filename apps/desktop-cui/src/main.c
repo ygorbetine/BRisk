@@ -42,6 +42,15 @@ int script_probe(const char *n) {
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
+    if (!strncmp(n, "attach_", 7)) return attach_probe(n + 7);   /* pending, pending_img, search_on, search_len, palette, pal_len */
+    if (!strcmp(n, "draft_len")) return (int)strlen(state.draft);
+    if (!strncmp(n, "draft_is:", 9) || !strncmp(n, "clip_is:", 8)) {   /* '+' = espaço (o roteiro separa por espaço): draft_is:ola+mundo */
+        char want[200]; const char *src = n[0] == 'd' ? n + 9 : n + 8; size_t i = 0;
+        for (; src[i] && i < sizeof want - 1; i++) want[i] = src[i] == '+' ? ' ' : src[i];
+        want[i] = 0;
+        return !strcmp(n[0] == 'd' ? state.draft : briks_clip_probe(), want);
+    }
+    if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     return dock_probe(n);
 }
 
@@ -132,6 +141,7 @@ int main(void) {
     }
     if (!app) { fputs("briks_cui: nao foi possivel criar a janela (saida 1)\n", stderr); return 1; }
     state.app = app;
+    briks_clip_install(cui_app_ui(app));   /* BRIKS_FAKE_CLIPBOARD: área de transferência em memória nos testes */
     migrate_probe(&state);   /* pergunta antes de subir o backend (que abre o banco) */
     update_start();   /* checa o feed de releases em segundo plano (só no app instalado) */
 #ifdef _WIN32

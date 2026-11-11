@@ -22,4 +22,6 @@ bool rich_group_with_prev(const char *prev_author, long long prev_ms, const char
 long long rich_iso_ms(const char *iso);
 /* O texto menciona esta pessoa? "@nick", "@nome" ou "@[Nome com espaço]" (sem diferenciar maiúsculas); null/vazio é ignorado. */
 bool rich_mentions_me(const char *text, const char *name, const char *nick);
+/* O texto não tem nada que o rich_prepare transforme (link, negrito, código, menção): pode ser exibido como texto puro selecionável. */
+bool rich_is_plain(const char *text);
 #endif

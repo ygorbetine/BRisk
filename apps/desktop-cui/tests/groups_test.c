@@ -3,6 +3,7 @@
 #include "../src/ui_groups.c"
 #include <assert.h>
 briks_theme_t g_th; int g_perf;
+int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *o) { return cui_input_ex(ui, id, buf, cap, o); }   /* o app real (msgui.c) acrescenta o menu de clique direito */
 static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }

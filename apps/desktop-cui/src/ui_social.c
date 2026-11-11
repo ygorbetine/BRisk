@@ -363,6 +363,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
     if (interactive) msgui_row(ui, s, m);
 }
 
+static cui_rect g_chat_rect;   /* painel da conversa aberta (quadro anterior): o "Solte para enviar" cobre exatamente ele */
 static void content(cui_ctx *ui, app_state_t *s) {
     if (s->active_friend < 0 && s->active_group < 0) {   /* sem conversa aberta. SEM return dentro do cui_box (deixava a caixa aberta e quebrava os painéis seguintes) */
         const bool hub_here = !dock_has_panel(P_FRIENDS);   /* a tela Amigos (abas, busca, pedidos) fica aqui só quando não há o painel Amigos no layout */
@@ -394,7 +395,8 @@ static void content(cui_ctx *ui, app_state_t *s) {
         }
         return;
     }
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
+    g_chat_rect = cui_get_rect(ui, cui_make_id(ui, "chatpanel"));
+    cui_box(ui, .id = "chatpanel", .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
             .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
         const bool group = s->active_group >= 0;
         const char *title = group ? s->groups[s->active_group].name : s->friends[s->active_friend].name;
@@ -435,6 +437,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
                     .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
                 if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar arquivo (envia aos participantes da sala)")) attach_pick(s);
                 int r = cui_input(ui, "draft", s->draft, sizeof s->draft, .placeholder = "Escreva uma mensagem", .width = CUI_FILL);
+                attach_paste_key(ui, cui_make_id(ui, "draft"));   /* Ctrl+V com imagem na área de transferência vira anexo preparado */
                 { static char prev[1100]; if (strcmp(prev, s->draft)) { if (s->draft[0]) attach_typing_ping(s); snprintf(prev, sizeof prev, "%s", s->draft); } }
                 bool send = cui_icon_button(ui, CUI_ICON_SEND, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Enviar");
                 if ((send || (r & CUI_SUBMITTED)) && s->draft[0]) msgui_submit(s);
@@ -766,6 +769,9 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     bubbles_draw(ui);
     msgui_overlay(ui, s);
     attach_overlay(ui, s);
+    attach_palette_keys(ui);
+    attach_palette(ui, s);
+    attach_dropzone(ui, g_chat_rect);
     if (g_perf_hint) {   /* hardware fraco detectado: aviso discreto no canto, sem bloquear nada */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 14) {   /* canto superior direito: nunca sobre a caixa de escrever */
             cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad_x = 14, .pad_y = 8, .radius = 14, .bg = B_A(B_PANEL, 0xf2), .border = 1,

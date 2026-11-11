@@ -1,0 +1,30 @@
+# BAS-04: selecionar um trecho do texto dentro do balão (arrastando) e copiar (Ctrl+C e "Copiar seleção" do menu). Área de transferência FALSA.
+snap s0
+at 579 339
+waitms 200
+down
+to 760 339 12
+up
+at 2 790
+waitms 400
+shot s1
+key ctrl+c
+waitms 200
+expect clip_is:Perfeito,+te+espero+lá. 1
+# o menu da mensagem oferece "Copiar seleção" e copia só o trecho marcado
+clip x
+rclick 640 339
+at 2 790
+waitms 500
+shot s2
+tap 730 458
+expect clip_is:Perfeito,+te+espero+lá. 1
+# clicar fora desmarca (o realce some)
+click 900 600
+snap s3
+# duas linhas e emoji: mensagem nova com emoji e quebra de linha continua selecionável
+click 700 753
+type oi 😀 tudo bem?
+key enter
+waitms 600
+snap s4

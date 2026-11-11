@@ -27,4 +27,18 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until); 
 void attach_demo(app_state_t *s);                                  /* BRIKS_DEMO=msgs: dados de exemplo para capturas, sem rede */
 void attach_set_inflight(const char *msg_id);                      /* chat.c: mensagem cuja gravação acabou de começar */
 void attach_inflight_done(app_state_t *s, bool ok);                /* app.c: resultado do OP_MSG_SEND */
+
+/* BAS-04: texto da mensagem selecionável com o mouse (só mensagens sem formatação; as com link/negrito/código continuam em markdown) */
+cui_id attach_text_id(cui_ctx *ui, const char *msg_id);              /* id do texto selecionável da mensagem (mesmo escopo de id do attach_rich) */
+bool attach_selected_text(cui_ctx *ui, const char *msg_id, const char *text, char *out, size_t cap);   /* trecho marcado e com foco, copiado de `text` */
+/* BAS-23/24: anexos preparados (arquivo solto ou imagem colada), com cartão acima do campo de texto */
+bool attach_paste_image(cui_ctx *ui);                              /* há imagem na área de transferência (e nenhum texto)? vira anexo preparado; true se pegou */
+void attach_paste_key(cui_ctx *ui, cui_id field);                  /* Ctrl+V com o campo em foco: imagem vira anexo (o texto o próprio campo cola) */
+void attach_dropzone(cui_ctx *ui, cui_rect panel);                 /* "Solte para enviar" sobre o painel enquanto arrastam arquivos pela janela */
+int  attach_probe(const char *name);                               /* roteiro de teste: pending, staged_img, search_on... */
+void attach_fake_image(const char *path);                          /* testes: imagem "na área de transferência" (só com BRIKS_FAKE_CLIPBOARD) */
+/* BAS-08: Ctrl+F busca na conversa; Ctrl+K paleta (amigos, grupos e mensagens) */
+void attach_search_open(void);
+void attach_palette_keys(cui_ctx *ui);                             /* atalhos Ctrl+F / Ctrl+K (todo quadro) */
+void attach_palette(cui_ctx *ui, app_state_t *s);                  /* diálogo da paleta */
 #endif

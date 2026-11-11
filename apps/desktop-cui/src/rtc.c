@@ -6,6 +6,7 @@
 #include "attach.h"
 #include "sysint.h"
 #include "call.h"
+bool settings_echo(void);   /* settings.c: cancelamento de eco ligado? */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -296,14 +297,14 @@ void rtc_pump(app_state_t *s) {
     }
     if (st == CORE_READY) {
         {   /* Configurações > Voz: ganhos, porta de ruído, supressão e dispositivos seguem para o core quando mudam ou quando entra numa sala (o áudio nasce ali) */
-            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16], lmic[64], lout[64]; static int lnoise = -1; static bool lcore;
+            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16], lmic[64], lout[64]; static int lnoise = -1; static bool lcore; static int lecho = -1;
             float gi, go, gd; bool ga; settings_audio(&gi, &go, &ga, &gd);
-            char mic[64], outd[64]; int noff; settings_audio_ex(mic, sizeof mic, outd, sizeof outd, &noff);
-            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state) || strcmp(lmic, mic) || strcmp(lout, outd) || noff != lnoise || !lcore) {
+            char mic[64], outd[64]; int noff; settings_audio_ex(mic, sizeof mic, outd, sizeof outd, &noff); const int echo = settings_echo() ? 1 : 0;
+            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state) || strcmp(lmic, mic) || strcmp(lout, outd) || noff != lnoise || echo != lecho || !lcore) {
                 snprintf(lstate, sizeof lstate, "%s", s->rtc_state); snprintf(lmic, sizeof lmic, "%s", mic); snprintf(lout, sizeof lout, "%s", outd);
-                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room; lnoise = noff; lcore = true;
+                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room; lnoise = noff; lecho = echo; lcore = true;
                 char extra[420], me[140], oe[140]; json_escape(mic, me, sizeof me); json_escape(outd, oe, sizeof oe);
-                int n = snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"noise\":%d,\"mic\":\"%s\",\"out\":\"%s\"", gi, go, noff, me, oe);
+                int n = snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"noise\":%d,\"echo\":%s,\"mic\":\"%s\",\"out\":\"%s\"", gi, go, noff, echo ? "true" : "false", me, oe);
                 if (ga) snprintf(extra + n, sizeof extra - (size_t)n, ",\"gate_db\":%.0f", gd);
                 send_cmd("audio.cfg", extra);
             }

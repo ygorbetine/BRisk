@@ -1,6 +1,8 @@
-// Emissor de credenciais TURN temporárias (modo REST do Coturn). Exige usuário logado no Supabase.
-// Secrets necessários: TURN_HOST, TURN_SECRET (o mesmo do Coturn). Opcionais: TURN_PORT, TURN_TLS_PORT, TURN_TLS_ALT_PORT,
-// TURN_TTL_SECONDS (máx. 3600), ALLOWED_ORIGINS (origens web permitidas, separadas por vírgula).
+// Emissor de credenciais TURN temporárias. Exige usuário logado no Supabase.
+// Dois provedores, escolhidos pelos secrets (o primeiro configurado vence):
+//   1) Cloudflare Realtime TURN: CF_TURN_KEY_ID e CF_TURN_API_TOKEN (sem servidor próprio, franquia grátis grande).
+//   2) Coturn próprio (modo REST): TURN_HOST e TURN_SECRET (o mesmo do Coturn). Opcionais: TURN_PORT, TURN_TLS_PORT, TURN_TLS_ALT_PORT.
+// Opcionais comuns: TURN_TTL_SECONDS (máx. 3600), ALLOWED_ORIGINS (origens web permitidas, separadas por vírgula).
 // Publicar COM a verificação de JWT do gateway ligada (padrão). NÃO use --no-verify-jwt:
 //   supabase functions deploy turn-credentials
 // A função também valida a sessão do usuário (role "authenticated") por conta própria.
@@ -18,6 +20,31 @@ async function hmacBase64(secret: string, message: string): Promise<string> {
   let binary = "";
   for (const byte of signature) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+type Issued = { username: string; credential: string; urls: string[]; stun: string[] };
+
+/** Cloudflare Realtime TURN: gera um par usuário/senha temporário pela API (o token da API nunca sai daqui). */
+async function issueCloudflare(keyId: string, apiToken: string, ttl: number): Promise<Issued | null> {
+  try {
+    const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ttl }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as { iceServers?: { urls?: unknown; username?: unknown; credential?: unknown } | { urls?: unknown; username?: unknown; credential?: unknown }[] };
+    const entry = Array.isArray(data.iceServers) ? data.iceServers.find((item) => typeof item.username === "string") : data.iceServers;
+    if (!entry || typeof entry.username !== "string" || typeof entry.credential !== "string") return null;
+    const all = (Array.isArray(entry.urls) ? entry.urls : [entry.urls]).filter((url): url is string => typeof url === "string");
+    return {
+      username: entry.username,
+      credential: entry.credential,
+      urls: all.filter((url) => /^turns?:/.test(url)),
+      stun: all.filter((url) => /^stun:/.test(url)),
+    };
+  } catch { return null; }
 }
 
 Deno.serve(async (request: Request) => {
@@ -38,21 +65,39 @@ Deno.serve(async (request: Request) => {
   const userWait = combineWaits(perUser.check(user.id), await persistentRateLimit("turn:user", user.id, 20, 600));
   if (userWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(userWait) });
 
-  const host = Deno.env.get("TURN_HOST")?.trim();
-  const secret = Deno.env.get("TURN_SECRET")?.trim();
-  if (!host || !secret) return json({ message: "TURN não configurado." }, 503);
-  const port = Deno.env.get("TURN_PORT") ?? "3478";
-  const tlsPort = Deno.env.get("TURN_TLS_PORT") ?? "5349";
-  const altPort = Deno.env.get("TURN_TLS_ALT_PORT") ?? "443";
   const ttl = clampTtl(Deno.env.get("TURN_TTL_SECONDS"));
   const expiresAt = Math.floor(Date.now() / 1000) + ttl;
-  const username = `${expiresAt}:${user.id}`;
-  const credential = await hmacBase64(secret, username);
-  const urls = [
-    `turn:${host}:${port}?transport=udp`,
-    `turn:${host}:${port}?transport=tcp`,
-    `turns:${host}:${tlsPort}?transport=tcp`,
-    `turns:${host}:${altPort}?transport=tcp`,
+  let issued: Issued | null = null;
+
+  const cfKey = Deno.env.get("CF_TURN_KEY_ID")?.trim();
+  const cfToken = Deno.env.get("CF_TURN_API_TOKEN")?.trim();
+  if (cfKey && cfToken) {
+    issued = await issueCloudflare(cfKey, cfToken, ttl);
+    if (!issued) return json({ message: "Relay TURN indisponível." }, 502);
+  } else {
+    const host = Deno.env.get("TURN_HOST")?.trim();
+    const secret = Deno.env.get("TURN_SECRET")?.trim();
+    if (!host || !secret) return json({ message: "TURN não configurado." }, 503);
+    const port = Deno.env.get("TURN_PORT") ?? "3478";
+    const tlsPort = Deno.env.get("TURN_TLS_PORT") ?? "5349";
+    const altPort = Deno.env.get("TURN_TLS_ALT_PORT") ?? "443";
+    const username = `${expiresAt}:${user.id}`;
+    issued = {
+      username,
+      credential: await hmacBase64(secret, username),
+      urls: [
+        `turn:${host}:${port}?transport=udp`,
+        `turn:${host}:${port}?transport=tcp`,
+        `turns:${host}:${tlsPort}?transport=tcp`,
+        `turns:${host}:${altPort}?transport=tcp`,
+      ],
+      stun: [`stun:${host}:${port}`],
+    };
+  }
+
+  const iceServers = [
+    ...(issued.stun.length ? [{ urls: issued.stun }] : []),
+    { urls: issued.urls, username: issued.username, credential: issued.credential },
   ];
-  return json({ username, credential, ttl, expiresAt, urls, iceServers: [{ urls: [`stun:${host}:${port}`] }, { urls, username, credential }] });
+  return json({ username: issued.username, credential: issued.credential, ttl, expiresAt, urls: issued.urls, iceServers });
 });

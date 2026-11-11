@@ -346,6 +346,26 @@ async fn cycles_failed_starts() {
     measure_cycles("falha", n, |_| cfg(SourceKind::Window(1), "fantasma", AudioMode::None), false).await;
 }
 
+/// Isola o vazamento do codificador do Media Foundation: só criar, codificar 3 quadros e soltar, sem rede nem malha.
+/// `BRIKS_MF_HW=1` usa o MFT de hardware (NVENC etc.: precisa do lock da GPU), sem isso o de software.
+#[test]
+#[ignore]
+fn cycles_mf_encoder_create_drop() {
+    let hw = std::env::var("BRIKS_MF_HW").is_ok();
+    let n: usize = std::env::var("BRIKS_CYCLES").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    let (w, h) = (640usize, 360usize);
+    let nv12 = vec![128u8; w * h * 3 / 2];
+    let mut first = None;
+    for i in 0..=n {
+        let mut e = crate::mfenc::MfEnc::new(w, h, 15, 1_000_000, hw).expect("codificador");
+        for k in 0..3 { let _ = e.encode(&nv12, k == 0).expect("encode"); }
+        drop(e);
+        if i % 10 == 0 { std::thread::sleep(Duration::from_millis(300)); let (ws, p, hd, t) = proc_stats(); eprintln!("[mf {}] ciclo {i:>3}: trabalho {ws:6.1} MB  privada {p:6.1} MB  handles {hd:4}  threads {t:3}", if hw { "hw" } else { "soft" }); if i == 10 { first = Some(hd); } }
+    }
+    let (_, _, hd, _) = proc_stats();
+    if let Some(f) = first { eprintln!("handles: {f} → {hd} entre o ciclo 10 e o {n} ({:+.2} por ciclo)", (hd as f64 - f as f64) / (n as f64 - 10.0).max(1.0)); }
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // 5. IPC com a UI: linha gigante / sem quebra de linha / lixo não derruba nem enche a memória do core
 // ---------------------------------------------------------------------------------------------------------------------

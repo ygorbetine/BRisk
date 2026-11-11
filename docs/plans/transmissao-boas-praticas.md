@@ -279,3 +279,98 @@ Tempo de codificação em bancada, 1080p: GPU 5,2 ms; software da Microsoft 5,9 
 ## Resultado do teste longo
 
 (preenchido ao fim da execução)
+
+## Robustez e revisão crítica (itens 8 e 12) — FEITO / NÃO FEITO, com evidência
+
+Estado em 2026-11-10. Branch de trabalho: `worktree-agent-a1a92532aa3b4d571` (a partir de `cui-transmissao` @ `1e6eeba`). Tudo local, sem
+captura de tela real e sem janela: fontes sintéticas (`SourceKind::Test`), codificador/decodificador de software
+(`BRIKS_ENCODER=openh264 BRIKS_DECODER=openh264`). As duas medições com o codificador de hardware (NVENC) foram curtas e feitas sob o lock
+`.gpu-test.lock`. Os testes novos ficam em `briks-core/src/robust.rs`.
+
+```bash
+# automatizados (sem GPU), ~1 min
+BRIKS_ENCODER=openh264 BRIKS_DECODER=openh264 cargo test --release robust:: -- --test-threads=2
+# medida de vazamento (processo inteiro: rodam sozinhos)
+BRIKS_ENCODER=openh264 BRIKS_DECODER=openh264 BRIKS_CYCLES=200 cargo test --release -- --ignored --nocapture --test-threads=1 robust::cycles
+# MFT de software isolado / de hardware isolado (este com o lock da GPU)
+BRIKS_CYCLES=60 cargo test --release -- --ignored --nocapture cycles_mf_encoder_create_drop
+BRIKS_MF_HW=1 BRIKS_CYCLES=40 cargo test --release -- --ignored --nocapture cycles_mf_encoder_create_drop
+```
+
+### FEITO — cenários automatizados (todos passam; rodados em conjunto com `--test-threads=2`)
+
+| Cenário | Teste | Resultado medido |
+|---|---|---|
+| Sinalização malformada e falsificada: não-objeto, JSON do Phoenix inválido, `timestamp` `i64::MIN/MAX`, tipos trocados, SDP inválido de todos os tipos (offer/answer/pranswer/rollback), SDP de 70 KB, ICE inválido, **remetente falsificado** (lixo "vindo de A" para B), 400 mensagens de inundação, 50 repetidas | `malformed_and_spoofed_signaling_does_not_break_a_live_share` | Com a transmissão no ar: chat A→B e B→A entregues depois do ataque, 25 quadros novos em ~2 s, `ShareStop` ainda chega ao espectador (atores vivos) |
+| Emissor cai (sem `ShareStop`) e volta, 3 vezes, com peerId novo e a mesma identidade | `sender_crashes_and_comes_back_three_times` | Cada rodada: espectador vê a transmissão nova, 1º quadro 1,05–1,19 s depois de assistir, e dá o emissor antigo como saído |
+| Espectador alterna assistir/parar 15 vezes; espectador novo entra e sai 5 vezes com a transmissão no ar | `viewer_toggles_watch_and_rejoins_repeatedly` | Todo "assistir" gerou quadro: 1º quadro p50 **1913 ms**, máx 2043 ms (15 FPS); visita nova: entrar → 1º quadro 1724–2199 ms; o emissor deu cada saída |
+| Canal de sinalização cai (RST) enquanto outro peer sai; volta | `signaling_outage_keeps_the_share_and_does_not_leave_ghost_peers` | O vídeo P2P seguiu (24 quadros em 2 s) e o peer que saiu no intervalo foi dado como saído. **Antes da correção o teste falhava** ("fantasma"): rodado sem a mudança em `realtime.rs`, 29 s e falha |
+| IPC com a UI: 8 MB sem quebra de linha, hello partido em dois pacotes com CRLF, lixo e comandos malformados, linha de 512 KB | `ipc_survives_oversized_partial_and_garbage_lines` | Core cortou a conexão depois de 320 KB (antes não havia limite); ping respondido depois do lixo; nova conexão aceita. **Não rodei este teste contra o código antigo.** |
+| Números extremos/formas erradas no validador | `signaling::tests::extreme_numbers_and_shapes_never_panic` | passa; em release o código antigo não entrava em pânico (sem checagem de overflow), mas com `now=i64::MAX` aceitava `timestamp=i64::MIN` (a subtração dava a volta); em debug seria pânico no ator |
+
+Rodando a suíte inteira com `--test-threads=3` e codificador de software, `two_simultaneous_shares_in_one_room` (de outra sessão) falhou uma
+vez por poucos quadros (máquina carregada) e passou 3/3 sozinho; as outras 49 passaram.
+
+### FEITO e MEDIDO — ciclos de iniciar/parar (transmissão sintética 360p15, metade dos ciclos com áudio de teste; B assistindo)
+
+Medida do processo de teste: memória de trabalho, memória privada, handles (`GetProcessHandleCount`) e threads (ToolHelp; o contador do teste
+longo antigo usa `/proc/self/task`, que não existe no Windows e dá sempre 0).
+
+| Caminho | Ciclos | Handles | Threads | Memória privada |
+|---|---|---|---|---|
+| OpenH264 (software) | 200 | 253 → 253 (plano) | 12 → 13/14 e volta | 4,7 → 9,3 MB |
+| OpenH264 (software) | 1000 | 253 → 253 (plano) | 12–15, termina em 12 | 4,5 → 16,6 MB; oscila entre 10 e 17, sem crescer depois do ciclo 450 |
+| Media Foundation software (`mf-soft`) | 1000 | 253 → 369 até o ciclo 10 (carga do MF), depois **plano** | 11 → 13 | 4,6 → 33,5 MB, plateau desde o ciclo 450 |
+| Início que falha (janela inexistente) | 200 | 253 → 253 | 12 → 12 | 4,1 → 4,1 MB |
+| Codificador isolado, MFT software, criar+3 quadros+soltar | 60 | 318 → 318 | 10 → 10 | sem tendência |
+| **MFT de hardware (NVENC), pipeline completo** | 60 | **496 → 698 (+3,4 por ciclo)** | 19 → 19 | trabalho 55 → 98 MB |
+| **MFT de hardware, codificador isolado** | 40 | **452 → 575 (+4,1 por ciclo)** | 11 → 11 | trabalho 44 → 62 MB (estabiliza em ~62) |
+
+Conclusões com o que a evidência sustenta: a thread do emissor termina (o evento `share.local off` só sai depois de `cap.stop()`; as threads
+voltam à linha de base), o laço start/stop do mesh, do pacer, da captura sintética, do áudio de teste e do receptor não vaza handle nem
+thread. **O MFT de hardware vaza ~4 handles a cada criação**, também isolado da malha/captura (só `MfEnc::new` + `encode` + `drop`).
+Tentei `IMFActivate::ShutdownObject()` guardando o `IMFActivate` no `MfEnc` (patch experimental, descartado, `/tmp/mfenc_experiment.diff`
+na máquina): não mudou nada (+4,1 handles por ciclo). A causa não foi achada: pode estar no driver/MFT e não no nosso código. Impacto
+prático: cada recriação do codificador (queda de bitrate acima de 20% ou mudança de tamanho) custa ~4 handles e ~1 MB; a memória estabiliza.
+**Não medi** o caminho de decodificação por hardware, a conversão de cor na GPU (`gpuconv.rs`) nem a captura real (exigem a tela).
+
+### FEITO — correções (commits locais, só em arquivos que a sessão principal não está alterando)
+
+| Commit | Arquivo | O que mudou |
+|---|---|---|
+| `00f4b0a` | `realtime.rs` | A tabela de Presence e as saídas pendentes sobrevivem à reconexão. Antes, quem saía enquanto o canal estava caído nunca era dado como saído e ficava nas 5 vagas da malha (`MAX_PEERS`). Teste acima |
+| `f882eba` | `signaling.rs` | Janela de tempo com `saturating_sub`/`saturating_abs`; teste de formas/números extremos |
+| `f882eba` | `mesh.rs` | Mesmo conserto no `ts` de `room.kick`/`room.allow` (vem de outro peer); fatia `[..4]` do log de depuração (`BRIKS_SDP_DEBUG`) trocada por `get(..4)` (peerId curto/multibyte derrubava o ator); no máximo 512 números de sequência por NACK (RTCP) para o pacer; `joined` limpo na saída do peer; `seen_msgs` (dedupe de chat) com teto de 8192 |
+| `87913f9` | `ipc.rs` | Linha da UI com teto de 256 KB (antes, `lines()` sem limite, inclusive antes da autenticação) |
+| `07e0a23` | `robust.rs`, `main.rs` | Os testes |
+
+### Revisão crítica — achados que ficam para a sessão principal (arquivos dela, não editei)
+
+- **MFT de hardware vaza ~4 handles por criação** (acima). Reexecutar `cycles_mf_encoder_create_drop` com `BRIKS_MF_HW=1` depois das correções dela
+  de `MFStartup` único. Reduzir recriações do codificador (hoje queda > 20% de bitrate recria) também reduz o custo.
+- `share.rs`, `VideoOut.nack_tx` é `unbounded` e o `select!` do pacer é `biased` com os NACKs na frente: uma inundação de NACKs de um espectador
+  pode deixar o ramo de envio de vídeo sem vez. Limitei cada RTCP a 512 números no `mesh.rs`, mas o canal continua sem limite. Sugestão: canal
+  limitado com `try_send` e tirar o `biased`. O canal `tx` do pacer também é `unbounded`; na prática é limitado pelo teste de `queued`, mas
+  os primeiros quadros (antes de existir `enc`) passam sem esse teste.
+- `share.rs`, a thread do emissor não tem `join`: o fim é só pela bandeira. Verificado pelo evento `share.local off` e pelas contagens de thread
+  acima; sem problema, mas um pânico nela some em silêncio (a sessão principal já tem o `catch_unwind`).
+- O 1º quadro de um espectador que entra no meio leva **~1,9 s** (p50) a 15 FPS, não é imediato: o PLI vira quadro-chave só se passou ≥ 1 s do último
+  (`min_gap` em `start_sender`). Para "entrar" é aceitável; para quem alterna rápido, dá para dispensar o intervalo quando o PLI vem de um
+  espectador novo.
+- `tests.rs` (`soak_no_leaks_no_latency_drift`): a coluna de threads usa `/proc/self/task` (sempre 0 no Windows); usar o contador do `robust.rs`.
+
+### NÃO FEITO / decidi não mexer
+
+- **Sinalização sem autenticação do remetente**: qualquer membro da sala pode enviar uma oferta "de" outro peer. Testei só com SDP inválido
+  (a conexão viva sobreviveu); uma oferta **válida** falsificada pode perturbar a conexão de outro. Consertar exige assinar as ofertas com a
+  identidade ou fixar a impressão digital DTLS: mudança de protocolo, fora do escopo e arriscada sem o cliente do outro lado.
+- Peer com `RTCPeerConnectionState::Failed`: o mesh só emite o evento, não derruba nem refaz a conexão (sem reinício de ICE). Mexer exige decidir
+  política de nova tentativa; deixei como está.
+- Reentrada com o **mesmo** peerId antes da presença expirar usaria uma conexão velha. Não acontece no app (peerId novo a cada entrada na sala);
+  sem teste.
+- Mensagens malformadas pelo DataChannel (já autenticado): só revisão de código (todos os campos usam `as_*`/`unwrap_or`, tamanho limitado a
+  64 KB); sem teste automatizado, porque exigiria um par WebRTC cru.
+- `outbox` por impressão digital sem teto quando o destinatário nunca volta, `blocked` sem limpeza: crescimento pequeno, só por ação do usuário.
+- Codificador de hardware em ciclos longos (só 60 ciclos pelo risco de tela azul), decodificação por hardware, conversão na GPU e captura real:
+  não medidos.
+- O pânico por overflow só aparece em debug; não rodei a suíte em debug.

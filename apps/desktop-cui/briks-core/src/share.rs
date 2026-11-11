@@ -20,6 +20,8 @@ use crate::video::{self, FrameSink, H264Dec, H264Enc};
 
 pub const VIDEO_TRACK_ID: &str = "screen-video";
 pub const AUDIO_TRACK_ID: &str = "screen-audio";
+/// Faixa de vídeo da câmera: um segundo vídeo por peer, ao lado da transmissão de tela. O receptor distingue pelo id da faixa.
+pub const CAMERA_TRACK_ID: &str = "camera-video";
 pub const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
 pub const MAX_BPS: u32 = 50_000_000;
 /// Só testes: transmissões com este rótulo dormem TEST_SLOW_MS antes de codificar cada quadro (codificador lento simulado).
@@ -43,11 +45,12 @@ pub struct ShareCfg {
 }
 
 /// Faixa de vídeo em RTP cru: o empacotamento H264 e o espaçamento dos pacotes (pacer) são nossos.
-pub fn new_video_track() -> Arc<TrackLocalStaticRTP> {
+pub fn new_video_track() -> Arc<TrackLocalStaticRTP> { new_video_track_named(VIDEO_TRACK_ID, "briks-screen") }
+pub fn new_video_track_named(id: &str, stream: &str) -> Arc<TrackLocalStaticRTP> {
     Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability { mime_type: "video/H264".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: H264_FMTP.into(), rtcp_feedback: vec![] },
-        VIDEO_TRACK_ID.into(),
-        "briks-screen".into(),
+        id.into(),
+        stream.into(),
     ))
 }
 
@@ -80,8 +83,10 @@ impl VideoOut {
         self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
         let _ = self.tx.send((au, samples.max(1), pace_bps));
     }
-    pub fn new() -> Self {
-        let track = new_video_track();
+    pub fn new() -> Self { Self::with_track(new_video_track()) }
+    /// Saída de vídeo da câmera (faixa `camera-video`, fluxo `briks-camera`).
+    pub fn new_camera() -> Self { Self::with_track(new_video_track_named(CAMERA_TRACK_ID, "briks-camera")) }
+    fn with_track(track: Arc<TrackLocalStaticRTP>) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         // limitado: um espectador que despeja NACKs não pode encher a memória do emissor; com a fila cheia o pedido é
         // descartado (try_send) e o receptor pede de novo ou pede quadro-chave
@@ -213,7 +218,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut announce = false;
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
-            if cap.shared.closed.load(Ordering::Relaxed) { closed_reason = "A janela foi fechada".into(); break; }
+            if cap.shared.closed.load(Ordering::Relaxed) {
+                closed_reason = { let r = cap.shared.close_reason.lock().unwrap_or_else(|e| e.into_inner()).clone(); if r.is_empty() { "A janela foi fechada".into() } else { r } };
+                break;
+            }
             let now = Instant::now();
             if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
             next += period; if next < now { next = now + period; }
@@ -494,8 +502,14 @@ impl JitterBuf {
 /// Lê o RTP da faixa de vídeo do peer. Só decodifica enquanto `watching`; sem espectador descarta os pacotes (custo ~zero).
 /// `pli` pede um quadro-chave ao emissor (início, perda sem conserto, erro de decodificação).
 pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<RecvState>, ev: mpsc::Sender<Value>, pli: Arc<dyn Fn() + Send + Sync>) {
+    run_remote_video_as("share", peer, track, st, ev, pli).await
+}
+
+/// Igual, com o prefixo dos eventos ("share" para a tela, "cam" para a câmera): `<prefixo>.remote` e `<prefixo>.rxstats`.
+pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<TrackRemote>, st: Arc<RecvState>, ev: mpsc::Sender<Value>, pli: Arc<dyn Fn() + Send + Sync>) {
+    let (ev_remote, ev_rx) = (format!("{evp}.remote"), format!("{evp}.rxstats"));
     let (dtx, drx) = std::sync::mpsc::sync_channel::<Option<Vec<u8>>>(6);
-    let (st2, ev2, peer2) = (st.clone(), ev.clone(), peer.clone());
+    let (st2, ev2, peer2, ev_remote2) = (st.clone(), ev.clone(), peer.clone(), ev_remote.clone());
     // decodificação numa thread: não trava o runtime
     std::thread::spawn(move || {
         let mut dec: Option<H264Dec> = None;
@@ -517,7 +531,7 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
                 if sink.as_ref().map(|s| s.0 != path).unwrap_or(true) { sink = FrameSink::create(&path).ok().map(|s| (path, s)); }
                 if let Some((_, s)) = sink.as_mut() { s.write(w, h, rgba); }
                 let n = st2.frames.fetch_add(1, Ordering::Relaxed) + 1;
-                if dims != (w, h) || n == 1 { dims = (w, h); let _ = ev2.try_send(json!({ "ev": "share.remote", "peer_id": peer2, "state": "frame", "w": w, "h": h })); }
+                if dims != (w, h) || n == 1 { dims = (w, h); let _ = ev2.try_send(json!({ "ev": ev_remote2, "peer_id": peer2, "state": "frame", "w": w, "h": h })); }
             }
         }
     });
@@ -547,7 +561,7 @@ pub async fn run_remote_video(peer: String, track: Arc<TrackRemote>, st: Arc<Rec
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
-            let _ = ev.try_send(json!({ "ev": "share.rxstats", "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": peer, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
             frames0 = f; win = Instant::now();
         }

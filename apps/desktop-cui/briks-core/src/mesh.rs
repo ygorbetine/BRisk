@@ -141,6 +141,11 @@ pub enum MeshCmd {
     /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
     ShareStart { cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf> },
     ShareStop,
+    /// Liga a câmera (faixa de vídeo própria, `camera-video`, ao lado da transmissão de tela). `device` vazio = a primeira.
+    CamStart { device: String, preview: Option<std::path::PathBuf> },
+    CamStop,
+    /// Liga/desliga a decodificação da câmera de um peer e define o arquivo de quadro compartilhado.
+    CamWatch { key: String, on: bool, path: std::path::PathBuf },
     /// Volume (0..2) do áudio da transmissão de um peer, só para mim.
     ShareVolume { key: String, gain: f32 },
     /// Troca os processos capturados durante a transmissão ("Escolher apps"); só vale se ela começou com áudio.
@@ -175,11 +180,15 @@ struct Peer {
     sent_proof: bool,
     name: String,
     vsender: Option<Arc<RTCRtpSender>>,
+    csender: Option<Arc<RTCRtpSender>>,   // faixa da câmera já ligada a este peer
     asender: bool,   // faixa de áudio da transmissão já ligada a este peer
     reneg_pending: bool,   // pediram (ou preciso de) uma nova offer, mas havia uma em andamento: sai quando a resposta chegar
     recv_slots: bool,      // já criei as vagas de recepção (áudio + vídeo) para a transmissão deste peer
     recv: Arc<RecvState>,
+    recv_cam: Arc<RecvState>,   // vídeo da câmera DESTE peer (a transmissão de tela dele é `recv`)
 }
+
+struct ActiveCam { gen: u64, sender: share::Sender, info: Option<Value> }
 
 struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP>, sender: share::Sender, info: Option<Value> }
 
@@ -257,6 +266,14 @@ struct Actor {
     net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT/NACK por espectador (RTCP), lidos pelo laço de adaptação
     idr: Arc<std::sync::atomic::AtomicBool>,   // pedido de quadro-chave (PLI/FIR/novo espectador), único para a sala toda
     vtrack: Option<share::VideoOut>,
+    cam: Option<ActiveCam>,
+    cam_gen: u64,
+    cam_vout: Option<share::VideoOut>,
+    cam_net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT por espectador da CÂMERA: não mistura com a da transmissão de tela
+    cam_idr: Arc<std::sync::atomic::AtomicBool>,
+    cam_tx: mpsc::Sender<Value>,
+    cam_rx: Option<mpsc::Receiver<Value>>,
+    cam_watch: HashMap<String, std::path::PathBuf>,
     atrack: Option<Arc<TrackLocalStaticSample>>,   // áudio da transmissão (só do processo), também persistente   // criada na 1ª transmissão e mantida: parar/retomar não renegocia nem troca de SSRC
     sev_tx: mpsc::Sender<Value>,
     sev_rx: Option<mpsc::Receiver<Value>>,
@@ -269,7 +286,8 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -277,6 +295,7 @@ impl Actor {
         let mut retry = tokio::time::interval(std::time::Duration::from_secs(2));
         let mut arx = self.audio_rx.take();
         let mut srx = self.sev_rx.take().expect("sev_rx");
+        let mut crx = self.cam_rx.take().expect("cam_rx");
         if let Some(a) = &self.audio { a.start(); }
         loop {
             tokio::select! {
@@ -286,6 +305,7 @@ impl Actor {
                     None => { arx = None; }
                 },
                 sv = srx.recv() => if let Some(v) = sv { self.on_share_event(v).await },
+                cv = crx.recv() => if let Some(v) = cv { self.on_cam_event(v).await },
                 _ = retry.tick() => {
                     // mensagens sem ACK são reenviadas (o receptor deduplica por id)
                     let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();
@@ -306,6 +326,7 @@ impl Actor {
         }
         if let Some(a) = &self.audio { a.stop(); }
         if let Some(sh) = self.share.take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } }
+        if let Some(c) = self.cam.take() { c.sender.stop(); }   // fechar a chamada desliga a captura (a luz apaga)
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
         self.rt.close().await;
     }
@@ -344,7 +365,7 @@ impl Actor {
         RTCConfiguration { ice_servers: crate::netmode::ice_servers(&self.cfg.ice_servers), ..Default::default() }
     }
 
-    async fn new_pc(&mut self, peer_id: &str, gen: u32, recv: Arc<RecvState>) -> Result<Arc<RTCPeerConnection>> {
+    async fn new_pc(&mut self, peer_id: &str, gen: u32, recv: Arc<RecvState>, recv_cam: Arc<RecvState>) -> Result<Arc<RTCPeerConnection>> {
         let mut m = MediaEngine::default();
         m.register_default_codecs()?;
         // Interceptadores: relatórios RTCP, feedback TWCC (lado receptor) e GERADOR de NACK. O respondedor de NACK embutido fica de
@@ -372,7 +393,7 @@ impl Actor {
             let (id, sev) = (peer_id.to_string(), self.sev_tx.clone());
             let wk = Arc::downgrade(&pc);
             pc.on_track(Box::new(move |track, rx, _tr| {
-                let (audio, id, sev, recv, wk) = (audio.clone(), id.clone(), sev.clone(), recv.clone(), wk.clone());
+                let (audio, id, sev, recv, recv_cam, wk) = (audio.clone(), id.clone(), sev.clone(), recv.clone(), recv_cam.clone(), wk.clone());
                 Box::pin(async move {
                     // o RTCP recebido só passa pelos interceptadores (Sender Reports → LSR/DLSR dos nossos Receiver Reports, base do RTT
                     // do outro lado) se alguém o ler
@@ -383,7 +404,9 @@ impl Actor {
                         let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                             if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                         });
-                        tokio::spawn(share::run_remote_video(id, track, recv, sev, pli));
+                        // a faixa da câmera tem id próprio: estado, arquivo de quadros e eventos separados da transmissão de tela
+                        if track.id() == share::CAMERA_TRACK_ID { tokio::spawn(share::run_remote_video_as("cam", id, track, recv_cam, sev, pli)); }
+                        else { tokio::spawn(share::run_remote_video(id, track, recv, sev, pli)); }
                     } else if let Some(a) = audio {
                         let key = if track.id() == share::AUDIO_TRACK_ID { format!("{id}#screen") } else { id };
                         tokio::spawn(a.run_remote(key, track));
@@ -405,9 +428,10 @@ impl Actor {
     async fn add_peer(&mut self, peer_id: &str) -> Result<()> {
         let gen = self.next_gen; self.next_gen += 1;
         let recv = Arc::new(RecvState::default());
-        let pc = self.new_pc(peer_id, gen, recv.clone()).await?;
+        let recv_cam = Arc::new(RecvState::default());
+        let pc = self.new_pc(peer_id, gen, recv.clone(), recv_cam.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, asender: false, reneg_pending: false, recv_slots: false, recv });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, csender: None, asender: false, reneg_pending: false, recv_slots: false, recv, recv_cam });
         Ok(())
     }
 
@@ -664,6 +688,21 @@ impl Actor {
             }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
             MeshCmd::ShareStop => self.share_stop().await,
+            MeshCmd::CamStart { device, preview } => self.cam_start(device, preview).await,
+            MeshCmd::CamStop => self.cam_stop().await,
+            MeshCmd::CamWatch { key, on, path } => {
+                let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv_cam.clone()));
+                match found {
+                    Some((id, r)) => {
+                        use std::sync::atomic::Ordering::Relaxed;
+                        if on { self.cam_watch.insert(id.clone(), path.clone()); } else { self.cam_watch.remove(&id); }
+                        if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, Relaxed); r.frames.store(0, Relaxed); }
+                        r.watching.store(on, Relaxed);
+                        self.emit(MeshEvent::Share(json!({ "ev": "cam.remote", "peer_id": id, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
+                    }
+                    None => self.emit(MeshEvent::Error("câmera: peer desconhecido".into())).await,
+                }
+            }
             MeshCmd::ShareVolume { key, gain } => {
                 if let Some(a) = &self.audio { let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key); a.set_screen_gain(&id, gain); }
             }
@@ -719,45 +758,7 @@ impl Actor {
         if !p.asender { if let Some(at) = self.atrack.clone() { if p.pc.add_track(at as Arc<dyn TrackLocal + Send + Sync>).await.is_ok() { p.asender = true; } } }
         match p.pc.add_track(track as Arc<dyn TrackLocal + Send + Sync>).await {
             Ok(sender) => {
-                let (s2, idr2, net, pid) = (sender.clone(), idr.clone(), self.net.clone(), id.to_string());
-                let nack_tx = self.vtrack.as_ref().map(|v| v.nack_tx.clone());
-                tokio::spawn(async move {
-                    use webrtc::rtcp::receiver_report::ReceiverReport;
-                    use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
-                    let ssrc = s2.get_parameters().await.encodings.first().map(|e| e.ssrc).unwrap_or(0);
-                    while let Ok((pkts, _)) = s2.read_rtcp().await {
-                        for pk in pkts {
-                            let any = pk.as_any();
-                            let mut n = net.lock().unwrap();
-                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0 });
-                            if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
-                                e.plis += 1; idr2.store(true, std::sync::atomic::Ordering::Relaxed);
-                            } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
-                                for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
-                                    e.loss = r.fraction_lost as f32 / 256.0;
-                                    e.jitter_ms = r.jitter as f32 / 90.0;
-                                    if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[rr] perda {} jitter {} lsr {:x} dlsr {}", r.fraction_lost, r.jitter, r.last_sender_report, r.delay); }
-                                    if r.last_sender_report != 0 {
-                                        // RTT = agora − LSR − DLSR, em unidades de 1/65536 s (32 bits do meio do NTP)
-                                        let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
-                                        let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
-                                        if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); } }
-                                    }
-                                    e.updated = std::time::Instant::now();
-                                }
-                            } else if let Some(nk) = any.downcast_ref::<TransportLayerNack>() {
-                                if nk.media_ssrc == ssrc {
-                                    let mut seqs = vec![];
-                                    for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
-                                    seqs.truncate(512);   // um RTCP legítimo não passa de ~1 MTU; o limite evita inundar o pacer
-                                    e.nacks += seqs.len() as u64;
-                                    if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
-                                }
-                            }
-                        }
-                    }
-                    net.lock().unwrap().peers.remove(&pid);
-                });
+                spawn_video_rtcp(sender.clone(), idr.clone(), self.net.clone(), id.to_string(), self.vtrack.as_ref().map(|v| v.nack_tx.clone()));
                 p.vsender = Some(sender);
                 idr.store(true, std::sync::atomic::Ordering::Relaxed);
             }
@@ -772,7 +773,13 @@ impl Actor {
     /// tempo geravam offers cruzadas, e o desfazer (rollback) do webrtc-rs travava a conexão.
     async fn renegotiate(&mut self, id: &str) {
         let Some(p) = self.peers.get(id) else { return };
-        if p.polite { self.dc_send(id, json!({ "version": 2, "type": "share.reneg" })).await; return; }
+        // "vn" = quantas faixas de vídeo eu envio a este peer (tela e/ou câmera): o iniciador cria as vagas de recepção que faltam
+        // (conta as vagas de vídeo que EU tenho, não só as faixas que envio: uma faixa nova minha não ocupa uma vaga já associada a uma faixa do outro lado)
+        if p.polite {
+            use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+            let vn = p.pc.get_transceivers().await.iter().filter(|t| t.kind() == RTPCodecType::Video).count().max(1);
+            self.dc_send(id, json!({ "version": 2, "type": "share.reneg", "vn": vn })).await; return;
+        }
         if p.making_offer || p.pc.signaling_state() != RTCSignalingState::Stable { if let Some(p) = self.peers.get_mut(id) { p.reneg_pending = true; } return; }
         self.start_offer(id, false).await;
     }
@@ -789,6 +796,84 @@ impl Actor {
         let mut m = json!({ "version": 2, "type": "share.state", "on": true });
         for k in ["w", "h", "fps", "kbps", "label", "audio"] { if let Some(v) = info.get(k) { m[k] = v.clone(); } }
         self.dc_send(peer, m).await;
+    }
+
+    // ------------------------------------------------------------------------------------------------------------------
+    // Câmera: segunda faixa de vídeo por peer (a transmissão de tela é a primeira). Mesmo codificador/pacer/adaptação da tela, com
+    // 360p/30 como teto; o RTCP dos espectadores da câmera alimenta uma `NetShared` própria.
+    // ------------------------------------------------------------------------------------------------------------------
+    async fn cam_start(&mut self, device: String, preview: Option<std::path::PathBuf>) {
+        self.cam_stop().await;
+        let vout = self.cam_vout.get_or_insert_with(share::VideoOut::new_camera).clone();
+        self.cam_gen += 1;
+        let gen = self.cam_gen;
+        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, adaptive: true };
+        self.cam_idr.store(true, std::sync::atomic::Ordering::Relaxed);
+        match share::start_sender(gen, self.cam_idr.clone(), self.cam_net.clone(), cfg, vout, self.cam_tx.clone(), preview, None) {
+            Ok(sender) => { self.cam = Some(ActiveCam { gen, sender, info: None }); }
+            Err(e) => {
+                let (code, text) = crate::camera::split_code(&e);
+                self.emit(MeshEvent::Share(json!({ "ev": "cam.local", "state": "off", "code": code, "reason": text }))).await;
+                return;
+            }
+        }
+        for id in self.authed_ids() { self.attach_cam(&id).await; }
+    }
+
+    /// Liga a faixa da câmera ao peer (se ainda não tem), lê o RTCP e renegocia.
+    async fn attach_cam(&mut self, id: &str) {
+        let Some(c) = &self.cam else { return };
+        let idr = c.sender.idr.clone();
+        let Some(vout) = self.cam_vout.clone() else { return };
+        let Some(p) = self.peers.get_mut(id) else { return };
+        if p.csender.is_some() {
+            idr.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(info) = self.cam.as_ref().and_then(|c| c.info.clone()) { self.send_cam_state(id, &info).await; }
+            return;
+        }
+        match p.pc.add_track(vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await {
+            Ok(sender) => {
+                spawn_video_rtcp(sender.clone(), idr.clone(), self.cam_net.clone(), id.to_string(), Some(vout.nack_tx.clone()));
+                p.csender = Some(sender);
+                idr.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Err(e) => { self.emit(MeshEvent::Error(format!("faixa da câmera: {e}"))).await; return; }
+        }
+        self.renegotiate(id).await;
+        if let Some(info) = self.cam.as_ref().and_then(|c| c.info.clone()) { self.send_cam_state(id, &info).await; }
+    }
+
+    /// Para a captura e o envio (a luz apaga). A faixa continua ligada aos peers: ligar de novo não renegocia.
+    async fn cam_stop(&mut self) {
+        let Some(c) = self.cam.take() else { return };
+        c.sender.stop();
+        for id in self.authed_ids() { self.dc_send(&id, json!({ "version": 2, "type": "cam.state", "on": false })).await; }
+    }
+
+    async fn send_cam_state(&self, peer: &str, info: &Value) {
+        let mut m = json!({ "version": 2, "type": "cam.state", "on": true });
+        for k in ["w", "h", "fps", "kbps"] { if let Some(v) = info.get(k) { m[k] = v.clone(); } }
+        self.dc_send(peer, m).await;
+    }
+
+    /// Eventos do emissor da câmera (thread de captura/codificação): viram "cam.*" para a UI.
+    async fn on_cam_event(&mut self, mut v: Value) {
+        if let Some(g) = v["gen"].as_u64() { if self.cam.as_ref().map(|c| c.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.cam.is_none()) { return; } }
+        let Some(ev) = v["ev"].as_str().map(|e| e.replacen("share.", "cam.", 1)) else { return };
+        v["ev"] = json!(ev);
+        if ev == "cam.hint" { return; }   // "fonte preta" é um aviso da tela; a câmera tapada simplesmente aparece escura
+        if ev == "cam.local" {
+            if v["state"] == "on" {
+                if let Some(c) = self.cam.as_mut() { c.info = Some(v.clone()); }
+                for id in self.authed_ids() { self.send_cam_state(&id, &v).await; }
+            } else {
+                let (code, text) = crate::camera::split_code(v["reason"].as_str().unwrap_or(""));
+                let (code, text) = (code.to_string(), text.to_string());
+                v["code"] = json!(code); v["reason"] = json!(text);
+                self.cam_stop().await;
+            }
+        }
+        self.emit(MeshEvent::Share(v)).await;
     }
 
     /// Eventos do emissor (thread de captura/codificação) e do receptor.
@@ -1248,15 +1333,41 @@ impl Actor {
                 // o outro lado ligou faixas novas e precisa que eu (o iniciador) faça a offer. Sem faixa minha para aquele tipo de
                 // mídia, crio vagas só de recepção para as dele caberem na offer.
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof && !p.polite) != Some(true) { return; }
+                let vn = v["vn"].as_u64().unwrap_or(1).clamp(1, 6) as usize;
                 let (pc, need) = { let p = &self.peers[peer]; (p.pc.clone(), p.vsender.is_none() && !p.recv_slots) };
+                use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+                use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+                use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+                let recvonly = || Some(RTCRtpTransceiverInit { direction: RTCRtpTransceiverDirection::Recvonly, send_encodings: vec![] });
+                // vagas de vídeo: tantas quanto as faixas que o outro lado vai enviar (a minha própria faixa, se houver, já conta: é bidirecional)
+                let have = pc.get_transceivers().await.iter().filter(|t| t.kind() == RTPCodecType::Video).count();
+                for _ in have..vn { let _ = pc.add_transceiver_from_kind(RTPCodecType::Video, recvonly()).await; }
                 if need {
-                    use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-                    use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-                    use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
-                    for kind in [RTPCodecType::Audio, RTPCodecType::Video] { let _ = pc.add_transceiver_from_kind(kind, Some(RTCRtpTransceiverInit { direction: RTCRtpTransceiverDirection::Recvonly, send_encodings: vec![] })).await; }
+                    let _ = pc.add_transceiver_from_kind(RTPCodecType::Audio, recvonly()).await;
                     if let Some(p) = self.peers.get_mut(peer) { p.recv_slots = true; }
                 }
                 self.renegotiate(peer).await;
+            }
+            "cam.state" => {
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                use std::sync::atomic::Ordering::Relaxed;
+                let on = v["on"].as_bool().unwrap_or(false);
+                let mut m = json!({ "ev": "cam.remote", "peer_id": peer, "state": if on { "on" } else { "off" } });
+                for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
+                if !on { self.cam_watch.remove(peer); if let Some(p) = self.peers.get(peer) { p.recv_cam.watching.store(false, Relaxed); } }
+                self.emit(MeshEvent::Share(m)).await;
+                // conexão refeita com quem tem a câmera ligada e a UI estava mostrando: volta a decodificar sozinho
+                if on {
+                    if let (Some(path), Some(p)) = (self.cam_watch.get(peer).cloned(), self.peers.get(peer)) {
+                        if !p.recv_cam.watching.load(Relaxed) {
+                            *p.recv_cam.sink_path.lock().unwrap() = Some(path.clone());
+                            p.recv_cam.epoch.fetch_add(1, Relaxed);
+                            p.recv_cam.frames.store(0, Relaxed);
+                            p.recv_cam.watching.store(true, Relaxed);
+                            self.emit(MeshEvent::Share(json!({ "ev": "cam.remote", "peer_id": peer, "state": "watch", "path": path.to_string_lossy() }))).await;
+                        }
+                    }
+                }
             }
             "share.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
@@ -1295,8 +1406,51 @@ impl Actor {
             if let Some(fp) = fp { if !self.dm_off.contains(&fp) { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; } }
             self.send_state(peer).await;
             if self.share.is_some() { self.attach_share(peer).await; }
+            if self.cam.is_some() { self.attach_cam(peer).await; }
         }
     }
+}
+
+/// Lê o RTCP que um espectador devolve para uma faixa de vídeo nossa (relatórios de perda/atraso, PLI/FIR, NACK) e alimenta a
+/// adaptação (`net`), o pedido de quadro-chave (`idr2`) e as retransmissões (`nack_tx`). Serve à tela e à câmera.
+fn spawn_video_rtcp(s2: Arc<RTCRtpSender>, idr2: Arc<std::sync::atomic::AtomicBool>, net: Arc<std::sync::Mutex<crate::adapt::NetShared>>, pid: String, nack_tx: Option<mpsc::Sender<Vec<u16>>>) {
+    tokio::spawn(async move {
+                use webrtc::rtcp::receiver_report::ReceiverReport;
+                use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
+                let ssrc = s2.get_parameters().await.encodings.first().map(|e| e.ssrc).unwrap_or(0);
+                while let Ok((pkts, _)) = s2.read_rtcp().await {
+                    for pk in pkts {
+                        let any = pk.as_any();
+                        let mut n = net.lock().unwrap();
+                        let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0 });
+                        if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
+                            e.plis += 1; idr2.store(true, std::sync::atomic::Ordering::Relaxed);
+                        } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
+                            for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
+                                e.loss = r.fraction_lost as f32 / 256.0;
+                                e.jitter_ms = r.jitter as f32 / 90.0;
+                                if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[rr] perda {} jitter {} lsr {:x} dlsr {}", r.fraction_lost, r.jitter, r.last_sender_report, r.delay); }
+                                if r.last_sender_report != 0 {
+                                    // RTT = agora − LSR − DLSR, em unidades de 1/65536 s (32 bits do meio do NTP)
+                                    let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
+                                    let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
+                                    if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); } }
+                                }
+                                e.updated = std::time::Instant::now();
+                            }
+                        } else if let Some(nk) = any.downcast_ref::<TransportLayerNack>() {
+                            if nk.media_ssrc == ssrc {
+                                let mut seqs = vec![];
+                                for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
+                                seqs.truncate(512);   // um RTCP legítimo não passa de ~1 MTU; o limite evita inundar o pacer
+                                e.nacks += seqs.len() as u64;
+                                if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
+                            }
+                        }
+                    }
+                }
+                net.lock().unwrap().peers.remove(&pid);
+            });
 }
 
 fn peer_remote(v: &Value) -> &str { v["fromPeerId"].as_str().unwrap_or("") }

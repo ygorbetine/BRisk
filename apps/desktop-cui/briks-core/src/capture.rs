@@ -28,6 +28,8 @@ pub enum SourceKind {
     /// ruído rolando em 1920x1080 a 30 qps: conteúdo difícil, faz o codificador usar todo o bitrate (testes de adaptação)
     TestMotion,
     TestResize,      // padrão sintético que muda de 1280x720 para 960x540 depois de ~2 s (janela redimensionada)
+    /// webcam (id do dispositivo; vazio = a primeira); com `BRIKS_FAKE_CAMERA` é uma câmera sintética (ver camera.rs)
+    Camera(String),
 }
 
 /// Último quadro capturado, já convertido para I420 no tamanho de envio (a conversão sai direto do buffer da captura:
@@ -50,6 +52,8 @@ pub struct Latest {
 pub struct Shared {
     pub latest: Mutex<Latest>,
     pub closed: AtomicBool,
+    /// por que a fonte fechou, quando não é "a janela foi fechada" (câmera desconectada, por exemplo)
+    pub close_reason: Mutex<String>,
     pub frames: AtomicU64,
     /// altura alvo do envio (a origem nunca é ampliada)
     pub target_h: std::sync::atomic::AtomicUsize,
@@ -138,6 +142,8 @@ fn preview_rgba(bgra: &[u8], stride: usize, w: usize, h: usize) -> (usize, usize
 enum Handle {
     Wgc(Box<dyn FnOnce() + Send>),
     Thread,
+    /// webcam: `stop` espera a thread soltar o dispositivo (a luz da câmera apaga antes de a chamada ou o envio terminarem)
+    Cam(std::thread::JoinHandle<()>),
 }
 
 pub struct Capture {
@@ -248,8 +254,8 @@ pub fn read_stamp_scaled(rgba: &[u8], w: usize, src_w: usize) -> u32 {
 impl Capture {
     /// `target_h` = altura de envio; `preview` = gerar a prévia local; `raw` = guardar o 1º quadro cru (provas).
     pub fn start(kind: SourceKind, fps: u32, target_h: usize, preview: bool, raw: bool) -> Result<Capture> {
-        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), frames: AtomicU64::new(0), target_h: std::sync::atomic::AtomicUsize::new(target_h), conv_ns: AtomicU64::new(0), want_preview: preview,
-            want_raw: AtomicBool::new(raw), preview_every: (fps as u64 / 10).max(1),
+        let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), close_reason: Mutex::new(String::new()), frames: AtomicU64::new(0), target_h: std::sync::atomic::AtomicUsize::new(target_h), conv_ns: AtomicU64::new(0), want_preview: preview,
+            want_raw: AtomicBool::new(raw), preview_every: if matches!(kind, SourceKind::Camera(_)) { 2 } else { (fps as u64 / 10).max(1) },
             min_interval_us: AtomicU64::new(800_000 / fps.clamp(1, 120) as u64), last_accept: Mutex::new(None), dropped: AtomicU64::new(0) });
         let stop = Arc::new(AtomicBool::new(false));
         let interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));
@@ -308,6 +314,16 @@ impl Capture {
                 });
                 Handle::Thread
             }
+            SourceKind::Camera(id) => {
+                let (sh, st) = (shared.clone(), stop.clone());
+                let (otx, orx) = std::sync::mpsc::channel::<Result<(), crate::camera::CamError>>();
+                let jh = std::thread::spawn(move || crate::camera::run(&id, fps, sh, st, otx));
+                match orx.recv_timeout(Duration::from_secs(10)) {
+                    Ok(Ok(())) => Handle::Cam(jh),
+                    Ok(Err(e)) => { let _ = jh.join(); return Err(anyhow!(e.to_string())); }
+                    Err(_) => { stop.store(true, Ordering::Relaxed); return Err(anyhow!(crate::camera::CamError::Other("a câmera não respondeu".into()).to_string())); }
+                }
+            }
             SourceKind::Screen(h) => {
                 if refuses_primary(h) { return Err(anyhow!("teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)")); }
                 let m = Monitor::from_raw_hmonitor(h as *mut std::ffi::c_void);
@@ -328,7 +344,7 @@ impl Capture {
 
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(Handle::Wgc(f)) = self.handle.take() { f(); }
+        match self.handle.take() { Some(Handle::Wgc(f)) => f(), Some(Handle::Cam(j)) => { let _ = j.join(); } _ => {} }
     }
 }
 impl Drop for Capture { fn drop(&mut self) { self.stop(); } }

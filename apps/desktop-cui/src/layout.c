@@ -45,6 +45,18 @@ void layout_default(layout_t *l, float width) {
     l->root = root;
 }
 
+/* Padrão do app (primeiro uso e "Restaurar layout padrão"): grupos | menu | conversa (larga) | Amigos à direita.
+ * Em janela estreita (< 1360 px) não cabe o quarto painel: fica o trio de layout_default e a tela Amigos aparece no painel da conversa. */
+void layout_app_default(layout_t *l, float width) {
+    layout_default(l, width);
+    if (width < 1360.0f || !layout_split(l, P_CHAT, P_FRIENDS, Z_RIGHT)) return;
+    int f = layout_find(l, P_FRIENDS), p = f >= 0 ? l->n[f].parent : -1;
+    if (p < 0) return;
+    float rest = width - 20.0f - 76.0f - 270.0f - 3.0f * LAYOUT_GAP;          /* conversa + Amigos */
+    float fw = width * 0.26f; if (fw < 320.0f) fw = 320.0f; if (fw > 440.0f) fw = 440.0f;
+    if (rest > fw + 340.0f) l->n[p].ratio = 1.0f - fw / rest;
+}
+
 int layout_find(const layout_t *l, int kind) {
     for (int i = 0; i < LAYOUT_MAX_NODES; i++) if (l->n[i].used && l->n[i].leaf && l->n[i].panel == kind) return i;
     return -1;

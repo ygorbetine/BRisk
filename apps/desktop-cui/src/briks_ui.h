@@ -299,6 +299,7 @@ void briks_text_scale_apply(cui_ctx *ui);
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
+bool dock_has_panel(int kind);   /* o painel está no layout atual? */
 int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
 int script_probe(const char *name);
 extern int g_script_fail, g_script_rw, g_script_rh;

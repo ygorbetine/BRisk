@@ -47,7 +47,7 @@ static void save_layout(void) {
 }
 
 static void load_layout(float width) {
-    layout_default(&L, width);
+    layout_app_default(&L, width);
     const char *over = getenv("BRIKS_LAYOUT_FILE");
     if (over && over[0]) snprintf(file_path, sizeof file_path, "%s", over);
     else {
@@ -419,7 +419,7 @@ static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
                     if (menu_pill(ui, panel_title(k), 400 + k, a)) { drag = (drag_t){ true, k, true }; menu_open = false; }
                 }
                 if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
-                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
+                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_app_default(&L, vp.x); save_layout(); menu_open = false; }
             }
         }
     }
@@ -469,5 +469,6 @@ int dock_probe(const char *n) {
     if (!strcmp(n, "fill_gap")) { float mr = 0; for (int k = 0; k < P_COUNT; k++) if (anim_on[k]) mr = fmaxf(mr, anim[k].x + anim[k].w); return (int)lroundf(last_vp_w - 10.0f - mr); }   /* sobra à direita (0 = preenche) */
     return -1;
 }
-void dock_script_restore(void) { layout_default(&L, last_vp_w); menu_open = false; }
-void dock_restore_default(void) { layout_default(&L, last_vp_w); save_layout(); menu_open = false; }
+bool dock_has_panel(int kind) { return layout_find(&L, kind) >= 0; }
+void dock_script_restore(void) { layout_app_default(&L, last_vp_w); menu_open = false; }
+void dock_restore_default(void) { layout_app_default(&L, last_vp_w); save_layout(); menu_open = false; }

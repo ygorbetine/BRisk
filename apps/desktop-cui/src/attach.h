@@ -15,6 +15,7 @@ void attach_link_card(cui_ctx *ui, app_state_t *s, const char *text);   /* cart�
 void attach_typing_ping(app_state_t *s);                           /* o rascunho mudou: avisa os peers (no máximo a cada 3 s) */
 const char *attach_typing_label(const app_state_t *s);             /* "Nome está digitando…" ou NULL */
 void attach_search_button(cui_ctx *ui);                            /* cabeçalho do chat: botão e campo de busca */
+bool attach_search_is_on(void);                                         /* roteiro: a busca da conversa está aberta? */
 bool attach_search_match(const char *text);                        /* true se não há busca ou o texto contém o termo */
 enum { ATT_SENDING = 1, ATT_SENT, ATT_FAILED };
 void attach_mark(const char *msg_id, int state);                   /* estado de envio de uma mensagem minha */

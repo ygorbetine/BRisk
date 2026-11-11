@@ -105,6 +105,16 @@ pub struct Profile {
     pub status: Option<String>,
 }
 
+/// Resultado da busca exata por @nick (migração 0008): só o necessário para convidar para um grupo.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NickHit {
+    pub user_id: String,
+    pub nick: String,
+    #[serde(default)]
+    pub display_name: String,
+    pub fingerprint: String,
+}
+
 /// Presença de um amigo aceito (migração 0007): `online` = batimento há menos de 2 minutos; quem está invisível nem aparece.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Presence {
@@ -166,6 +176,8 @@ pub trait AuthProvider: Send + Sync {
     fn friend_request(&self, access_token: &str, nick: &str) -> AResult<()>;
     fn friend_respond(&self, access_token: &str, request_id: &str, accept: bool) -> AResult<()>;
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()>;
+    /// Busca exata por @nick de quem ainda não é amigo (0008). Sem a RPC: `server_not_ready`.
+    fn nick_lookup(&self, _access_token: &str, _nick: &str) -> AResult<NickHit> { Err(AccountError::new("server_not_ready", "Busca por @nick ainda não disponível no servidor.")) }
     /// Presença por batimento (migração 0007). Sem a RPC o erro é `server_not_ready` e a UI mantém só "na chamada".
     fn presence_beat(&self, _access_token: &str, _invisible: bool) -> AResult<()> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
     fn presence_friends(&self, _access_token: &str) -> AResult<Vec<Presence>> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }

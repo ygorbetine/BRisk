@@ -79,6 +79,7 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "invalid_avatar" => return e("avatar", "O servidor recusou o endereço da foto."),
         "invalid_display_name" => return e("invalid_name", "O nome deve ter de 1 a 64 caracteres."),
         "invalid_user" => return e("not_found", "Pessoa inválida."),
+        "rate_limited" => return e("rate_limited", "Muitas buscas em pouco tempo. Tente de novo mais tarde."),
         "too_many_blocks" => return e("rate_limited", "Você já bloqueou pessoas demais."),
         "blocked_by_you" => return e("blocked_by_you", "Você bloqueou essa pessoa. Desbloqueie para enviar um pedido."),
         _ => {}
@@ -271,6 +272,10 @@ impl AuthProvider for SupabaseProvider {
     }
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()> {
         self.rpc(access_token, "friend_remove", json!({ "p_user": user_id })).map(|_| ())
+    }
+    fn nick_lookup(&self, access_token: &str, nick: &str) -> AResult<NickHit> {
+        let v = self.rpc(access_token, "nick_lookup", json!({ "p_nick": nick }))?;
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
     }
     fn presence_beat(&self, access_token: &str, invisible: bool) -> AResult<()> {
         self.rpc(access_token, "presence_beat", json!({ "p_invisible": invisible })).map(|_| ())

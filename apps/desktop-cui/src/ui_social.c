@@ -168,12 +168,12 @@ static void bubbles_draw(cui_ctx *ui) {
     g_bub_n = 0;
 }
 
-static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
+static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_texture img) {
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
             .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
-        cui_box(ui, .id = "av") { cui_avatar(ui, f->name, .size = 32); }
+        cui_box(ui, .id = "av") { cui_avatar_ex(ui, f->name, &(cui_avatar_opts){ .size = 32, .image = img }); }
         const char *line = f->presence;   /* a linha sob o nome é só o rich presence; o status vai no balão */
         if (line[0]) {   /* rich presence: linha pequena sob o nome */
             cui_column(ui, .gap = 0, .width = CUI_FILL) {
@@ -190,6 +190,7 @@ static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
     cui_pop_id(ui);
     return hit;
 }
+#define person_row(ui, f, active) person_row_ex((ui), (f), (active), 0)
 
 static void navigation(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
@@ -240,7 +241,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             for (int i = 0; i < s->group_count; i++) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
-                if (person_row(ui, &g, s->active_group == i)) app_open_group(s, i);
+                if (person_row_ex(ui, &g, s->active_group == i, groups_image(s, s->groups[i].id))) app_open_group(s, i);
                 if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);
             }

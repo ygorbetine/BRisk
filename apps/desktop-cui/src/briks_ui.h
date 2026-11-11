@@ -106,6 +106,7 @@ typedef struct {
     struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
     char my_jwk[260];                                                                         /* minha chave pública (session.ready), compacta */
     bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768];   /* convite de grupo: colar e entrar / mostrar o código */
+    char gnick[32], gnick_msg[140]; person_t gnick_hit; bool gnick_found;                       /* convite por @nick (friends.lookup): busca e resultado */
     bool notify_off; char ginv_q[48];                                                         /* avisos de amigo online (desligável) · busca na lista de convite do grupo */
     bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
     community_t communities[MAX_COMMUNITIES]; int community_count;
@@ -199,6 +200,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s);
 void friends_dialogs(cui_ctx *ui, app_state_t *s);
 /* ui_groups.c: canais, cargos, membros e convites dos grupos */
 void groups_load(app_state_t *s, const char *body);
+cui_texture groups_image(app_state_t *s, const char *gid);                     /* imagem do grupo (0 = só iniciais); pede ao core na 1ª vez */
 void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   /* group.result / group.snapshot do core */
 void groups_resend(app_state_t *s);                                            /* reenvia snapshots aos membros presentes (peer novo na sala) */
 void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */

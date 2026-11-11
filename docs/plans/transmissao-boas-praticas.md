@@ -565,3 +565,23 @@ rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agor
   Queda de sinalização do emissor com a transmissão no ar NÃO foi testada.
 - **NÃO FEITO nesta rodada:** 4+ espectadores, FEC de vídeo, DPI/múltiplos monitores, tela cheia/DRM reais, Discord tocando,
   cliques restantes (alternar apps, parar/retomar, volume).
+
+## 17. Frente A, 3º marco — reconexão e vários espectadores — 2026-11-11
+
+- **Queda longa de rede (40 s) — ERA UM BURACO REAL, CORRIGIDO E MEDIDO.** Quando o ICE desistia (`Failed`), a malha deixava o par
+  morto para sempre: com a rede de volta e os dois ainda na sala, a imagem NUNCA voltava (60 s de espera no teste). Agora `mesh.rs`
+  fecha o par, espera 1,5 s e o refaz (`Internal::Reconnect`; o lado iniciador oferece, o outro aceita na `on_signal`); a
+  transmissão em curso é re-anexada na reautenticação e o espectador que estava assistindo retoma sozinho (`watch_intent`). O
+  ICE passou a desistir em 8 s (antes ~30 s). Resultado (`survives_a_long_network_outage_and_resumes`, ignorado): imagem de volta
+  **4,8 s** depois da rede (1ª versão da correção, ICE padrão: 27,6 s). Queda curta de 4 s: 1º quadro em 1,1–2,1 s, sem regressão.
+  Risco: uma queda de rede de ~8 s passa a refazer o par (corte de ~1–5 s) em vez de esperar; não foi medido em rede real.
+- **Espectador que sai e volta com a transmissão no ar — MEDIDO** (`viewer_that_leaves_and_comes_back_gets_a_picture_fast`, 3
+  voltas): aviso da transmissão em 33–1104 ms e 1º quadro 1,1–2,2 s depois de entrar na sala (o quadro-chave sai na hora, mas o
+  limite de 1/s e a renegociação somam ~1 s).
+- **Vários espectadores — MEDIDO em loopback** (`many_viewers_all_receive_full_frame_rate`, `BRIKS_VIEWERS`): 1, 2 e 5
+  espectadores recebem exatamente o que o emissor emite (ex.: 5 espectadores: emissor 18,8 qps e cada um 20,2 qps); o bitrate de
+  saída cresce linearmente (7,5 Mbps com 5 a 1,5 Mbps cada) e o CPU do processo inteiro (emissor + N decodificadores, tudo na
+  mesma máquina) foi de 57% com 1 a 140% com 5. O codificador é um só. **Limite da malha: `MAX_PEERS = 5`** (sala de até 6 pessoas;
+  com 8 espectadores o emissor não autenticou com todos em 60 s). A máquina estava ocupada por outras sessões (o emissor chegou
+  a só ~19 qps), então os números absolutos valem pouco; a relação (todos recebem o que sai) é o resultado.
+- **Para o SFU:** `docs/plans/transmissao-api-interna.md` + `VideoOut::publish`.

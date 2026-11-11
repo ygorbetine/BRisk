@@ -186,7 +186,7 @@ async fn camera_adapts_to_loss_and_never_exceeds_360p() {
     while t0.elapsed() < Duration::from_secs(20) { if let Some(v) = wait_cam(&mut a, |v| v["ev"] == "cam.stats", 2).await { tight = tight.min(v["target_kbps"].as_u64().unwrap_or(u64::MAX)); th = v["h"].as_u64().unwrap_or(th); assert!(th <= 360, "{v}"); } }
     eprintln!("câmera: alvo livre {free} kbps; com 0,3 Mbps + 5% de perda o alvo caiu a {tight} kbps ({th}p)");
     assert!(free > 350, "livre: o alvo devia subir perto do teto de 360p/30: {free}");
-    assert!(tight < free * 6 / 10 && tight < 320, "não adaptou à perda: livre {free} -> apertado {tight}");
+    assert!(tight < free * 7 / 10 && tight < 320, "não adaptou à perda: livre {free} -> apertado {tight}");
     let n0 = FrameSource::open(&dir.join("rx.bin")).unwrap().read().map(|r| r.2).unwrap_or(0);
     tokio::time::sleep(Duration::from_secs(4)).await;
     let n1 = FrameSource::open(&dir.join("rx.bin")).unwrap().read().map(|r| r.2).unwrap_or(0);

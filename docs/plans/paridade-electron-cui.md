@@ -464,9 +464,9 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Resultado | Itens |
 |---|---|
-| AUSENTE | 19 |
+| AUSENTE | 18 |
 | PASSOU | 111 |
-| REVER | 12 |
+| REVER | 13 |
 | SEM-EFEITO | 6 |
 | SEM-TESTE | 93 |
 | VERIFICAR | 7 |

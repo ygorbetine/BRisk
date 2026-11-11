@@ -112,6 +112,7 @@ typedef struct {
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
     bool create_group_open, profile_open, logout_confirm_open;
+    long long status_expires;                  /* epoch (s) em que o status some sozinho; 0 = não expira (profile.c) */
     char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     char new_group[96];
@@ -233,6 +234,8 @@ void settings_tick(void);                                  /* carrega/grava sett
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
 void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
+long long profile_expiry_for(int clear, long long now);   /* epoch de expiração do status; 0 = nunca */
+bool profile_ignored(const app_state_t *s, const char *exe, const char *text);
 void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);

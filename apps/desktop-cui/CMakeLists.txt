@@ -53,6 +53,9 @@ add_executable(briks_smoke tests/smoke.c src/update.c src/backend.c src/json.c s
 target_link_libraries(briks_smoke PRIVATE winhttp bcrypt crypt32 shell32 ws2_32)
 add_executable(briks_groups_test tests/groups_test.c src/json.c)
 target_link_libraries(briks_groups_test PRIVATE cui bcrypt shell32 user32 gdi32 opengl32)
+add_executable(briks_profile_test tests/profile_test.c src/json.c)
+target_compile_options(briks_profile_test PRIVATE /utf-8)
+target_link_libraries(briks_profile_test PRIVATE cui bcrypt shell32 user32 gdi32 opengl32)
 # briks_smoke fica na mesma pasta do briks_cui e ja enxerga backend/ ao lado (sem copia)
 
 # Overlay: janela sempre no topo, sem foco, cliques passando (segundo executável, sem dependências).

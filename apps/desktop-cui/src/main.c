@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #endif
 
+void titlebar_draw(cui_ctx *ui, app_state_t *s);   /* titlebar.c */
 static void *g_prev_fg;   /* janela que tinha o foco antes de uma janela de teste abrir */
 static app_state_t state = { .screen = SCREEN_AUTH, .active_friend = -1, .active_group = -1, .mic_on = true };
 
@@ -91,6 +92,7 @@ static void frame(cui_ctx *ui) {
     themes_tick(ui);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
+        titlebar_draw(ui, &state);   /* barra de título própria (titlebar.c) */
         briks_gradient_bar(ui);
         cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
             switch (state.screen) {

@@ -9,6 +9,9 @@
 #include "hotkeys.h"
 #include "storage.h"
 #include "json.h"
+void update_settings_cards(cui_ctx *ui, app_state_t *s); int update_probe(const char *n);   /* ui_update.c */
+void overlay_edit_toggle(void); bool overlay_edit_active(void); void overlay_edit_set(bool on); void settings_ovl_reset(void);   /* overlay_host.c */
+void nettest_card(cui_ctx *ui, app_state_t *s); int nettest_probe(const char *n, app_state_t *s);   /* ui_nettest.c */
 int overlay_state(void); int overlay_probe(const char *n);   /* overlay_host.c */
 void data_refresh(void); void data_ui(cui_ctx *ui, app_state_t *s); int data_probe(const char *n);   /* settings_data.c */
 #include <stdio.h>
@@ -33,6 +36,7 @@ typedef struct {
     bool nt_online, nt_stream;
     bool telemetry;
     int text_size;
+    char ov_lay[190], ov_dev[48];   /* posições da sobreposição por monitor ("dev|x|y|w;...") e o monitor ativo */
 } settings_t;
 settings_t g_set;
 int settings_call_mode(void) { return g_set.call_mode; }
@@ -46,6 +50,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
+    { "ov_lay", 's', g_set.ov_lay, 190 }, { "ov_dev", 's', g_set.ov_dev, 48 },
 };
 #define NF ((int)(sizeof F / sizeof *F))
 
@@ -125,7 +130,7 @@ void settings_notice(const char *text) {
 static void sub(cui_ctx *ui, const char *t) { cui_text(ui, t, .size = 12, .color = B_MUTED); }
 static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efeito, dito com clareza */
     char b[200]; snprintf(b, sizeof b, "Em breve: %s", what);
-    cui_text(ui, b, .size = 11, .color = g_th.ph);
+    cui_text(ui, b, .size = 12, .color = g_th.ph);
 }
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay) { *mute = g_set.key_mute; *deafen = g_set.key_deafen; *stream = g_set.key_stream; *ptt = g_set.key_ptt; *ptt_on = g_set.ptt_on; *delay = g_set.ptt_delay; }
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off) {
@@ -136,11 +141,35 @@ void settings_overlay(bool *on, float *opacity, int *flags, int *corner) {
     *flags = (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
 }
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
+/* Posições da sobreposição por monitor (CFG-25): lista "dev|x|y|w;dev|x|y|w" e o monitor ativo (onde o painel foi solto por último). */
+bool settings_ovl_place(char *dev, size_t cap, int *x, int *y, int *w) {
+    if (!g_set.ov_dev[0]) return false;
+    char b[190]; snprintf(b, sizeof b, "%s", g_set.ov_lay);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) {
+        char d[48]; int a, c, ww;
+        char *bar = strchr(e, '|'); if (!bar) continue; *bar = 0; snprintf(d, sizeof d, "%s", e);
+        if (sscanf(bar + 1, "%d|%d|%d", &a, &c, &ww) == 3 && !strcmp(d, g_set.ov_dev)) { snprintf(dev, cap, "%s", d); *x = a; *y = c; *w = ww; return true; }
+    }
+    return false;
+}
+void settings_ovl_set(const char *dev, int x, int y, int w) {
+    char keep[190] = "", b[190]; snprintf(b, sizeof b, "%s", g_set.ov_lay);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) {
+        if (!strncmp(e, dev, strlen(dev)) && e[strlen(dev)] == '|') continue;   /* troca a entrada deste monitor */
+        size_t n = strlen(keep); if (n + strlen(e) + 2 < sizeof keep) snprintf(keep + n, sizeof keep - n, "%s%s", n ? ";" : "", e);
+    }
+    char ent[80]; snprintf(ent, sizeof ent, "%s|%d|%d|%d", dev, x, y, w);
+    char now[190]; snprintf(now, sizeof now, "%s%s%s", keep, keep[0] ? ";" : "", ent);
+    while (strlen(now) > 180) { char *sc = strchr(now, ';'); if (!sc) break; memmove(now, sc + 1, strlen(sc)); }   /* sobra: descarta o mais antigo */
+    snprintf(g_set.ov_lay, sizeof g_set.ov_lay, "%s", now); snprintf(g_set.ov_dev, sizeof g_set.ov_dev, "%s", dev);
+}
+void settings_ovl_reset(void) { g_set.ov_lay[0] = 0; g_set.ov_dev[0] = 0; }
+bool settings_echo(void) { return g_set.echo; }
 bool settings_nt_online(void) { return g_set.nt_online; }
 bool settings_nt_stream(void) { return g_set.nt_stream; }
 void settings_audio_set(float in_vol, float out_vol, bool gate_on, float gate_db) { g_set.in_vol = in_vol < 0 ? 0 : in_vol > 100 ? 100 : in_vol; g_set.out_vol = out_vol < 0 ? 0 : out_vol > 100 ? 100 : out_vol; g_set.gate_on = gate_on; g_set.gate_db = gate_db < -70 ? -70 : gate_db > -20 ? -20 : gate_db; }   /* ajustes de áudio da chamada (ui_call.c): settings_tick grava */
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
-    cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
+    cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 12, .color = g_th.ph);
 }
 static bool menu_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 7, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
@@ -222,6 +251,8 @@ void settings_export_json(FILE *f) {
 int settings_probe(const char *n, app_state_t *s) {
     unsigned m; int v;
     { int dp = data_probe(n); if (dp != -9999) return dp; }
+    { int np = nettest_probe(n, s); if (np != -9999) return np; }
+    { int up = update_probe(n); if (up != -9999) return up; }
     { int op = overlay_probe(n); if (op != -9999) return op; }
     if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
     if (!strcmp(n, "rec_slot")) return rec_slot;
@@ -236,6 +267,9 @@ int settings_probe(const char *n, app_state_t *s) {
     if (!strncmp(n, "keymods_", 8)) { const char *w = n + 8; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? (int)m : 0; }
     if (!strcmp(n, "cfg_mic")) return g_set.mic;
     if (!strcmp(n, "cfg_noise_off")) return g_set.noise_off;
+    if (!strcmp(n, "cfg_echo")) return g_set.echo;
+    if (!strcmp(n, "cfg_ov_saved")) return g_set.ov_dev[0] != 0;
+    if (!strcmp(n, "cfg_ov_monitors")) { int c = 0; for (const char *p = g_set.ov_lay; *p; p++) if (*p == ';') c++; return g_set.ov_lay[0] ? c + 1 : 0; }
     return -9999;
 }
 
@@ -348,11 +382,11 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sw(ui, "Porta de ruído", "Silencia o microfone abaixo do limite (teclado, ventilador).", &g_set.gate_on);
                         if (g_set.gate_on) { cui_textf(ui, "Limite: %d dB", (int)g_set.gate_db); cui_slider(ui, "##cfg-gate", &g_set.gate_db, -70, -20); }
                         sub(ui, "A porta de ruído e a supressão valem na hora.");
+                        sw(ui, "Cancelamento de eco", "Tira do seu microfone o som das caixas que volta para ele (o filtro aprende o caminho do som em poucos segundos de chamada). Vale na hora. Com fones o eco nem existe: pode desligar.", &g_set.echo);
                         cui_push_disabled(ui, true);
-                        cui_switch(ui, "Cancelamento de eco", &g_set.echo);
                         cui_switch(ui, "Excluir áudio do Briks da transmissão", &g_set.excl_audio);
                         cui_pop_disabled(ui);
-                        soon(ui, "cancelamento de eco e excluir o áudio do Briks da transmissão (os interruptores ficam desligados até lá). Dica: use fones para evitar eco");
+                        soon(ui, "excluir o áudio do Briks da transmissão (o interruptor fica desligado até lá)");
                     }
                     break;
                 case 1: { /* Rede */
@@ -369,21 +403,8 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         tag_nofx(ui);
                     }
                     SCARD(ui, "TESTE DE CONEXÃO") {
-                        netdiag_t nd = netdiag_get();
                         static bool scanned; if (!scanned) { scanned = true; netdiag_vpn_scan(); }
-                        sub(ui, "Verifica se o servidor STUN responde e mede atraso, variação e perda (5 pacotes, uns 3 segundos).");
-                        if (cui_button(ui, nd.running ? "Testando…" : nd.done ? "Testar de novo" : "Testar conexão", .variant = CUI_BUTTON_PRIMARY, .loading = nd.running)) netdiag_start();
-                        if (nd.running) cui_request_wakeup(ui, 0.2f);
-                        if (nd.done) {
-                            if (!nd.reachable) cui_text(ui, "Sem resposta do STUN: a rede pode bloquear UDP. Chamadas diretas podem falhar; tente outra rede ou configure um TURN.", .size = 12, .color = B_DANGER);
-                            else {
-                                cui_textf(ui, "Até o STUN: %.0f ms", nd.st.avg_ms);
-                                cui_textf(ui, "Variação: %.0f ms", nd.st.jitter_ms);
-                                cui_textf(ui, "Perda: %.0f%%", nd.st.loss_pct);
-                                cui_text(ui, nd.st.avg_ms < 80 && nd.st.loss_pct < 5 ? "Conexão boa para chamadas." : "A conexão está instável; a qualidade da chamada pode cair.", .size = 12, .color = B_MUTED);
-                            }
-                        }
-                        soon(ui, "ida e volta pelo relay (TURN) e se o relay é necessário");
+                        nettest_card(ui, s);   /* ui_nettest.c: STUN + NAT + relay, com selos e veredito */
                     }
                     SCARD(ui, "REDES PRIVADAS DETECTADAS") {
                         netdiag_t nd = netdiag_get();
@@ -463,7 +484,16 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         seg(ui, "cfg-ovc", COR, 4, &g_set.ov_corner);
                         sub(ui, "A sobreposição ocupa o canto escolhido do monitor principal e deixa os cliques passarem para o jogo.");
                         sub(ui, "Jogos em tela cheia exclusiva cobrem qualquer sobreposição: use o modo janela ou janela sem bordas.");
-                        soon(ui, "arrastar e redimensionar a sobreposição (por enquanto só os quatro cantos)");
+                        cui_text(ui, "Posição e tamanho", .size = 12, .color = B_MUTED);
+                        cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .wrap = true) {
+                            const bool ed = overlay_edit_active();
+                            if (cui_button(ui, ed ? "Concluir edição" : "Editar posições", .variant = ed ? CUI_BUTTON_SECONDARY : CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .disabled = !g_set.ov_on)) overlay_edit_toggle();
+                            if (g_set.ov_dev[0] && cui_button(ui, "Voltar ao canto", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM)) { settings_ovl_reset(); overlay_edit_set(false); }
+                        }
+                        sub(ui, g_set.ov_on ? "No modo de edição a sobreposição aceita o mouse: arraste para mover, puxe o canto inferior direito para mudar o tamanho e clique em Concluir. A posição fica salva por monitor. Atalho em qualquer tela: Ctrl+Shift+O."
+                                            : "Ligue a sobreposição para editar a posição. Atalho em qualquer tela: Ctrl+Shift+O.");
+                        if (overlay_edit_active()) cui_text(ui, "Editando: a sobreposição está na tela, pronta para arrastar.", .size = 12, .color = B_ONLINE, .width = CUI_FILL);
+                        else if (g_set.ov_dev[0]) sub(ui, "Usando a posição salva neste monitor. Os cantos acima valem onde não há posição salva.");
                     }
                     break;
                 case 5: /* Atalhos */
@@ -471,7 +501,12 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, "Funcionam numa chamada, mesmo com o Briks em segundo plano. Clique em Gravar e aperte a combinação; o botão do meio e os laterais do mouse também servem.");
                         key_row(ui, s, 0); key_row(ui, s, 1); key_row(ui, s, 2);
                         sub(ui, "Se outro programa já usa a combinação, o Briks avisa e não a grava.");
-                        soon(ui, "editar as posições da sobreposição por atalho (Ctrl+Shift+O)");
+                        { const int hs = overlay_probe("overlay_hotkey");
+                          cui_text(ui, "Editar a sobreposição: Ctrl+Shift+O", .size = 12, .color = B_MUTED);
+                          if (!g_set.ov_on) sub(ui, "Liga junto com a sobreposição (Configurações > Sobreposição). Entra e sai do modo de arrastar e redimensionar em qualquer tela.");
+                          else if (hs == 2) cui_text(ui, "Ctrl+Shift+O está em uso por outro programa: o Briks usa Ctrl+Alt+O.", .size = 12, .color = CUI_RGB(0xe8c46a), .width = CUI_FILL);
+                          else if (hs == 3) cui_text(ui, "Ctrl+Shift+O e Ctrl+Alt+O estão em uso por outros programas: use o botão Editar posições.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                          else cui_text(ui, "Ativo agora em qualquer tela: entra e sai do modo de editar a sobreposição.", .size = 12, .color = B_ONLINE, .width = CUI_FILL); }
                     }
                     SCARD(ui, "APERTAR PARA FALAR") {
                         sw(ui, "Apertar para falar", "O microfone fica mudo e só abre enquanto você segura a tecla (numa chamada).", &g_set.ptt_on);
@@ -497,13 +532,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break;
                 case 8: /* Atualizações */
-                    SCARD(ui, "ATUALIZAÇÕES") {
-                        cui_textf(ui, "Versão %s", update_current_version());
-                        { upd_phase_t ph = update_phase();
-                          sub(ui, ph == UPD_READY ? "Atualização pronta: ela é instalada ao fechar o Briks." : ph == UPD_DOWNLOADING ? "Baixando a atualização…" :
-                                  ph == UPD_ERROR ? "Não foi possível verificar agora; o Briks tenta de novo mais tarde." :
-                                  "O Briks verifica novas versões sozinho (a cada 4 horas) quando instalado. BRIKS_DISABLE_UPDATE=1 desliga."); }
-                    }
+                    update_settings_cards(ui, s);   /* ui_update.c: verificar agora + novidades da versão */
                     break;
                 case 9: /* Sobre */
                     sys_settings_system(ui);   /* winstate.c: fechar para a bandeja e iniciar com o Windows */

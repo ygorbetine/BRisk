@@ -182,6 +182,7 @@ typedef struct {
     bool mic_test_on; float mic_test_level; char mic_test_msg[160];
     int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
     char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
+    int ice_test_ms;                                           /* ice.test: tempo até o relay responder (ms) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */

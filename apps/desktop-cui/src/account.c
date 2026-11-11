@@ -457,6 +457,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         const char *lv = json_str(j, "level", "none");
         s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
         copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
+        s->ice_test_ms = (json_get(j, "ms") ? (int)json_get(j, "ms")->num : 0);
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.photos")) on_friend_photos(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);

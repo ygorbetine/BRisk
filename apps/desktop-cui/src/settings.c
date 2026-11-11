@@ -182,7 +182,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
     cui_dialog(ui, "Configurações", &s->settings_open, .width = dw) {
         cui_row(ui, .width = CUI_FILL, .height = CUI_PX(dh), .gap = 16) {
             cui_box(ui, .width = CUI_PX(220), .height = CUI_FILL, .pad = 10, .gap = 2, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
-                cui_scroll(ui, .id = "cfg-menu", .width = CUI_FILL, .height = CUI_FILL, .gap = 2) {
+                cui_scroll(ui, .id = "cfg-menu", .width = CUI_FILL, .height = CUI_PX(fmaxf(dh - 20.0f - 36.0f - 2.0f, 80.0f)), .gap = 2) {   /* altura exata: a lista rola e o botão Desconectar não sobrepõe */
                     for (int i = 0; i < NTABS; i++) {
                         cui_push_id_int(ui, 5000 + i);
                         if (menu_item(ui, TAB_ICONS[i], TAB_NAMES[i], s->settings_tab == i)) s->settings_tab = i;
@@ -313,7 +313,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         char b[32]; fmt_bytes(store_bytes, b, sizeof b);
                         cui_row(ui, .width = CUI_FILL) { cui_text(ui, "Dados do Briks", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, b); }
                         sub(ui, "Tudo fica neste dispositivo: mensagens, grupos e anexos permanecem somente neste computador.");
-                        sub(ui, "Detalhe por tipo (mensagens, grupos, anexos) depende do backend de dados.");
+                        sub(ui, "O detalhe por tipo (mensagens, grupos, anexos) ainda não está disponível.");
                     }
                     SCARD(ui, "LIMPEZA") {
                         cui_push_disabled(ui, true);
@@ -323,7 +323,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                             cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY);
                         }
                         cui_pop_disabled(ui);
-                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados dependem do backend de dados; os botões ficam desligados até lá");
+                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados; os botões ficam desligados até lá");
                     }
                     break; }
                 case 4: /* Sobreposição */

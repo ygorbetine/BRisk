@@ -214,7 +214,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false, "" };
                 cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
                     tile(ui, &me, mic_eff);
-                    if (!s->in_room) tile(ui, &other, s->mic_on);   /* prévia local sem sala */
+                    if (!s->in_room && getenv("BRIKS_DEMO")) tile(ui, &other, s->mic_on);   /* participante de exemplo: só nas capturas de demonstração, nunca no uso real */
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
                         const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,

@@ -1,0 +1,27 @@
+# Perfil aberto: nada por trás reage (+, ×, Criar grupo, itens do menu, alça de arrastar). Rodar com BRIKS_DOCK=default BRIKS_DEV_OPEN=profile
+wait 10
+expect profile 1
+expect modal 1
+expect count 3
+click plus:chat
+wait 6
+expect menu 0
+click close:chat
+wait 6
+expect count 3
+click 47 196
+wait 6
+expect create_group 0
+click 368 144
+wait 6
+expect add_friend 0
+expect friends_tab 0
+click header:nav
+at 400 30
+wait 3
+down
+to 900 400 10
+up
+wait 6
+expect drag 0
+expect count 3

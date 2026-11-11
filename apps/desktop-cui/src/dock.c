@@ -39,6 +39,7 @@ static float pile_w = 170, pile_h = 104, pile_ox, pile_oy;   /* tamanho do cart�
 
 static void save_layout(void) {
     if (demo_mode || !file_path[0]) return;
+    if ((getenv("BRIKS_SCRIPT") || getenv("BRIKS_HIDDEN")) && !getenv("BRIKS_LAYOUT_FILE")) return;   /* teste automatizado nunca grava no layout real do usuário */
     char js[4096];
     if (!layout_to_json(&L, js, sizeof js)) return;
     FILE *f = fopen(file_path, "wb");
@@ -46,7 +47,7 @@ static void save_layout(void) {
 }
 
 static void load_layout(float width) {
-    layout_default(&L, width);
+    layout_app_default(&L, width);
     const char *over = getenv("BRIKS_LAYOUT_FILE");
     if (over && over[0]) snprintf(file_path, sizeof file_path, "%s", over);
     else {
@@ -134,6 +135,13 @@ static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
     cui_pop_id(ui);
 }
 
+typedef struct { bool hot; } grip_t;
+static void paint_grip(cui_ctx *ui, cui_rect r, void *user) {
+    const grip_t *g = (const grip_t *)user;
+    float bw = fminf(34.0f, r.w - 24.0f); cui_rect b = { r.x + r.w * 0.5f - bw * 0.5f, r.y + (r.w < 110.0f ? 4.0f : 8.0f), bw, 4.0f };
+    cui_draw_rect(ui, b, CUI_CORNERS(2), g->hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24));
+}
+
 typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float mx, my; bool down; } rc_t;
 
 /* Painel na posição absoluta r dentro do contêiner de pilha. */
@@ -153,14 +161,11 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = r.x, .pad_top = r.y) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
             g_panel_w = r.w;
+            { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); g_tools_w = (kind == P_SERVERS || !nb) ? 0.0f : 28.0f * (float)nb; }   /* reserva o canto dos botões + e × */
             ui_panel(ui, c->s, kind);
-            if (kind != P_SERVERS) {   /* alça de arrasto: SEMPRE presente, mesma altura/posição em todo layout (só a cor muda ao passar o mouse; nada se move) */
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START) {
-                    cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(header_h(kind)), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 5,
-                            .radius_tl = (int)g_th.panel_radius, .radius_tr = (int)g_th.panel_radius) {
-                        cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(4), .radius = 2, .bg = hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24)) {}
-                    }
-                }
+            if (hot) {   /* alça de arrasto: só aparece com o mouse sobre a faixa que move o painel, em QUALQUER painel; pintada em coordenadas do painel (não mexe no layout) */
+                grip_t gp = { true };
+                cui_canvas(ui, "grip", CUI_FILL, CUI_FILL, paint_grip, &gp, sizeof gp);
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {
                 { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + 8, 28 * nb, 28); }
@@ -215,7 +220,7 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
 
     /* arrastar pelo cabeçalho: aperta no cabeçalho (fora dos botões), passa do limiar e levanta o painel como a barra de título de uma janela */
     int hdr_hot = -1;
-    bool modal = menu_open || s->add_friend_open || s->create_group_open || s->profile_open || s->settings_open;
+    bool modal = menu_open || briks_modal_open();   /* regra central: qualquer diálogo/menu aberto */
     if (!drag.active && resizing < 0 && !modal) {
         int hk = -1;
         for (int k = 0; k < P_COUNT; k++) if (anim_on[k] && in_header(k, anim[k], mp.x, mp.y)) hk = k;
@@ -299,11 +304,11 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
         for (int k = 0; k < P_COUNT; k++) {
             if (!present[k]) continue;
-            bool hover = !drag.active && resizing < 0 && inside(anim[k], mp.x, mp.y);
+            bool hover = !drag.active && resizing < 0 && !modal && inside(anim[k], mp.x, mp.y);
             render_leaf(&c, k, anim[k], hover && !(drag.active && k == dk), hdr_hot == k);
         }
         /* divisórias: alça visível e redimensionável (só com o layout parado) */
-        if (!moving && !drag.active) {
+        if (!moving && !drag.active && !modal) {
             for (int i = 0; i < LAYOUT_MAX_NODES; i++) if (L.n[i].used && !L.n[i].leaf) {
                 const lnode *n = &L.n[i]; lrect r = c.r[i], a = c.r[n->a];
                 lrect d = n->vertical ? (lrect){ r.x, a.y + a.h, r.w, LAYOUT_GAP } : (lrect){ a.x + a.w, r.y, LAYOUT_GAP, r.h };
@@ -414,7 +419,7 @@ static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
                     if (menu_pill(ui, panel_title(k), 400 + k, a)) { drag = (drag_t){ true, k, true }; menu_open = false; }
                 }
                 if (!shown) cui_text(ui, "Todos os painéis já estão na tela.", .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
-                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_default(&L, vp.x); save_layout(); menu_open = false; }
+                if (menu_pill(ui, "Restaurar layout padrão", 499, a)) { layout_app_default(&L, vp.x); save_layout(); menu_open = false; }
             }
         }
     }
@@ -457,5 +462,13 @@ bool dock_script_point(const char *spec, float *x, float *y) {
 }
 void dock_script_pick(const char *kind) { int k = panel_from_name(kind); if (k >= 0) { drag = (drag_t){ true, k, true }; menu_open = false; } }
 void dock_script_menu(float x, float y) { menu_open = true; menu_age = 0; menu_ax = x; menu_ay = y; }
-void dock_script_restore(void) { layout_default(&L, last_vp_w); menu_open = false; }
-void dock_restore_default(void) { layout_default(&L, last_vp_w); save_layout(); menu_open = false; }
+int dock_probe(const char *n) {
+    if (!strcmp(n, "menu")) return menu_open;
+    if (!strcmp(n, "drag")) return drag.active;
+    if (!strcmp(n, "count")) return layout_count(&L);
+    if (!strcmp(n, "fill_gap")) { float mr = 0; for (int k = 0; k < P_COUNT; k++) if (anim_on[k]) mr = fmaxf(mr, anim[k].x + anim[k].w); return (int)lroundf(last_vp_w - 10.0f - mr); }   /* sobra à direita (0 = preenche) */
+    return -1;
+}
+bool dock_has_panel(int kind) { return layout_find(&L, kind) >= 0; }
+void dock_script_restore(void) { layout_app_default(&L, last_vp_w); menu_open = false; }
+void dock_restore_default(void) { layout_app_default(&L, last_vp_w); save_layout(); menu_open = false; }

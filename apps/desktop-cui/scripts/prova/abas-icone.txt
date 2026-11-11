@@ -1,0 +1,10 @@
+# abas só de ícone (painel estreito): clique troca de aba
+wait 10
+expect friends_tab 0
+click 310 93
+wait 6
+expect friends_tab 3
+click 190 93
+wait 6
+expect friends_tab 1
+shot abas

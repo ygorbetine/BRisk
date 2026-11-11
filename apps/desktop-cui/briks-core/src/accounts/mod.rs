@@ -386,6 +386,21 @@ impl Accounts {
         let (p, u) = (self.provider.clone(), user_id.to_string());
         blk(move || p.friend_remove(&tok, &u)).await
     }
+    pub async fn presence_beat(&self, invisible: bool) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_beat(&tok, invisible)).await
+    }
+    pub async fn presence_friends(&self) -> AResult<Vec<Presence>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_friends(&tok)).await
+    }
+    pub async fn presence_clear(&self) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_clear(&tok)).await
+    }
     pub async fn friend_block(&self, user_id: &str) -> AResult<()> {
         let tok = self.access_token().await?;
         let (p, u) = (self.provider.clone(), user_id.to_string());

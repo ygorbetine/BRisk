@@ -268,6 +268,17 @@ impl AuthProvider for SupabaseProvider {
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()> {
         self.rpc(access_token, "friend_remove", json!({ "p_user": user_id })).map(|_| ())
     }
+    fn presence_beat(&self, access_token: &str, invisible: bool) -> AResult<()> {
+        self.rpc(access_token, "presence_beat", json!({ "p_invisible": invisible })).map(|_| ())
+    }
+    fn presence_friends(&self, access_token: &str) -> AResult<Vec<Presence>> {
+        let v = self.rpc(access_token, "presence_friends", json!({}))?;
+        if v.is_null() { return Ok(vec![]); }
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn presence_clear(&self, access_token: &str) -> AResult<()> {
+        self.rpc(access_token, "presence_clear", json!({})).map(|_| ())
+    }
     fn friend_block(&self, access_token: &str, user_id: &str) -> AResult<()> {
         self.rpc(access_token, "friend_block", json!({ "p_user": user_id })).map(|_| ())
     }

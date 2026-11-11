@@ -105,6 +105,16 @@ pub struct Profile {
     pub status: Option<String>,
 }
 
+/// Presença de um amigo aceito (migração 0007): `online` = batimento há menos de 2 minutos; quem está invisível nem aparece.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Presence {
+    pub user_id: String,
+    #[serde(default)]
+    pub online: bool,
+    #[serde(default)]
+    pub last_seen: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Friend {
     pub user_id: String,
@@ -156,6 +166,10 @@ pub trait AuthProvider: Send + Sync {
     fn friend_request(&self, access_token: &str, nick: &str) -> AResult<()>;
     fn friend_respond(&self, access_token: &str, request_id: &str, accept: bool) -> AResult<()>;
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()>;
+    /// Presença por batimento (migração 0007). Sem a RPC o erro é `server_not_ready` e a UI mantém só "na chamada".
+    fn presence_beat(&self, _access_token: &str, _invisible: bool) -> AResult<()> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
+    fn presence_friends(&self, _access_token: &str) -> AResult<Vec<Presence>> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
+    fn presence_clear(&self, _access_token: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
     /// Bloqueio (migração 0006). Sem a RPC no servidor o erro é `server_not_ready` e quem chama cai para a lista local.
     fn friend_block(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
     fn friend_unblock(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }

@@ -10,6 +10,7 @@
 //!   backup.result   {op: save|restore|delete, ok, message}   (comandos: backup.restore {phrase}, backup.delete, backup.status)
 //!   identity.changed {fingerprint}                 a identidade deste aparelho foi trocada pela recuperada
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
+//!   presence.beat {invisible} / presence.friends / presence.clear -> presence.list {remote, friends:[{user_id,online,last_seen}]}   (0007)
 //!   friends.blocks  {remote, blocks:[{user_id,nick,display_name}]}   (friends.block/unblock/blocks {user_id}); remote=false: servidor sem a 0006, vale a lista local da UI
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
 //!   import.result   {state, friends, groups, messages, message}
@@ -426,6 +427,27 @@ impl Service {
                     let r = acc.backup_delete().await;
                     let _ = tx.send(backup_result("delete", r.map(|_| "Cópia de segurança apagada do servidor."))).await;
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "presence.beat" | "presence.friends" | "presence.clear" => {
+                // batimento de presença (0007): o app manda a cada ~60 s; sem a RPC (`server_not_ready`) remote=false e a UI usa só "na chamada"
+                let (cmd, invisible) = (cmd.to_string(), v["invisible"].as_bool().unwrap_or(false));
+                tokio::spawn(async move {
+                    let r = match cmd.as_str() {
+                        "presence.beat" => acc.presence_beat(invisible).await,
+                        "presence.clear" => { let _ = acc.presence_clear().await; return; }
+                        _ => Ok(()),
+                    };
+                    let list = match r {
+                        Ok(_) => acc.presence_friends().await,
+                        Err(e) => Err(e),
+                    };
+                    let ev = match list {
+                        Ok(l) => json!({ "ev": "presence.list", "remote": true, "friends": l }),
+                        Err(e) if e.code == "server_not_ready" => json!({ "ev": "presence.list", "remote": false, "friends": [] }),
+                        Err(_) => return,   // falha de rede: mantém o que já se sabia; o próximo batimento tenta de novo
+                    };
+                    let _ = tx.send(ev).await;
                 });
             }
             "friends.block" | "friends.unblock" | "friends.blocks" => {

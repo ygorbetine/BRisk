@@ -37,6 +37,11 @@ pub struct FakeState {
     blocks: Vec<(String, String)>,                 // quem bloqueou, quem foi bloqueado (0006)
     /// simula um servidor sem a migração 0006 (as RPCs de bloqueio não existem)
     pub no_blocks_rpc: bool,
+    /// presença (0007): user_id -> (último batimento em segundos, invisível)
+    presence: HashMap<String, (u64, bool)>,
+    pub no_presence_rpc: bool,
+    /// segundos "passados" para os testes envelhecerem os batimentos sem esperar
+    pub clock_skew: u64,
     /// validade do access token em segundos (testes de renovação usam valores baixos)
     pub expires_in: u64,
     pub autoconfirm: bool,
@@ -424,6 +429,26 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some(i) = st.requests.iter().position(|r| r.0 == id && r.2 == me && !r.3) else { return pg("not_found") };
             if b["p_accept"].as_bool().unwrap_or(false) { st.requests[i].3 = true } else { st.requests.remove(i); }
             ok(Value::Null)
+        }
+        "presence_beat" | "presence_friends" | "presence_clear" if st.no_presence_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "presence_beat" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            st.presence.insert(me.to_string(), (now, b["p_invisible"].as_bool().unwrap_or(false)));
+            ok(Value::Null)
+        }
+        "presence_clear" => { st.presence.remove(me); ok(Value::Null) }
+        "presence_friends" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let v: Vec<Value> = st.requests.iter().filter(|r| r.3 && (r.1 == me || r.2 == me)).filter_map(|r| {
+                let other = if r.1 == me { &r.2 } else { &r.1 };
+                if st.blocks.iter().any(|x| (x.0 == me && &x.1 == other) || (&x.0 == other && x.1 == me)) { return None; }
+                let (seen, invisible) = *st.presence.get(other)?;
+                if invisible { return None; }
+                Some(json!({ "user_id": other, "last_seen": seen.to_string(), "online": now.saturating_sub(seen) < 120 }))
+            }).collect();
+            ok(json!(v))
         }
         "friend_block" | "friend_unblock" | "friend_blocks_list" if st.no_blocks_rpc => {
             ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))

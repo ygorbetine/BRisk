@@ -46,6 +46,11 @@ pub struct FakeState {
     pub demo: bool,
 }
 
+impl FakeState {
+    /// Revoga todas as sessões (access e refresh), como se o servidor tivesse derrubado o login.
+    pub fn drop_all_sessions(&mut self) { self.access.clear(); self.refresh.clear(); }
+}
+
 pub struct Fake {
     pub port: u16,
     pub state: Arc<Mutex<FakeState>>,

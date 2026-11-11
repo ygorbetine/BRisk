@@ -286,3 +286,23 @@ frase de 12 palavras (128 bits, gerada pelo app, lista BIP39 em português, com 
 - Os botões Google/Discord são clicáveis só com o mouse (sem foco por teclado).
 - Integração do branch `cui-instalador`: `import.rs`, a linha do `rusqlite` e o subcomando `import-electron` foram
   trazidos idênticos para o merge sair limpo; `migrate.c` (assistente de migração da UI) não foi trazido.
+
+## 8. Frente E pós-1.3.0: rede (TURN pela UI), login endurecido, frase
+
+**Rede (Configurações > Rede > SERVIDOR TURN).** A UI grava `ice.json` na pasta de dados pelo core (`ice.set`); a senha
+entra só no comando, é cifrada com a DPAPI (`credential_dpapi`) e nunca volta (a UI recebe `has_credential`). Valida
+`stun:`/`stuns:`/`turn:`/`turns:` com mensagens claras (porta, `//`, `@`, `?transport=`). Senha vazia mantém a guardada
+para o mesmo usuário. `ice.get`/`ice.clear` completam o ciclo; um arquivo escrito à mão (`credential` em texto) e a
+variável `BRIKS_ICE_SERVERS_JSON` continuam valendo (a variável tem prioridade, e a tela avisa). Indicador "Somente STUN" /
+"TURN configurado". **Testar conexão** (`ice.test`) coleta candidatos ICE reais: srflx = STUN respondeu; relay = o TURN
+aceitou usuário e senha. Não devolve IP e termina em até 8 s.
+
+**Login.** Qualquer comando com sessão derrubada (friends, nome, foto, senha, cópia) devolve `signed_out/session_expired`
+e a UI volta à entrada; falha de rede só avisa. Timeout do servidor tem mensagem própria. Entrar com outra conta por cima
+troca a sessão guardada e apaga a foto em cache da anterior. Nome, @nick e foto vêm sempre da conta (perfil do servidor).
+
+**Frase.** Mensagens dizem o que corrigir ("Faltam 2 palavras", "A palavra 12 não está na lista", frase fora de ordem,
+"vale só a última frase") sem repetir o que foi digitado.
+
+**Não exercitado:** TURN real (não há servidor TURN aqui; só o caminho "não respondeu" foi provado), login Google/Discord
+real e e-mail real com as mudanças desta etapa, dois computadores.

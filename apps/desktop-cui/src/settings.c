@@ -3,6 +3,7 @@
  * Cada controle é marcado no relatório como "efeito real" ou "sem efeito real ainda" (UI + persistência, sem backend). */
 #include "briks_ui.h"
 #include "update.h"
+#include "core.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -221,12 +222,40 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, g_set.net_pref == 0 ? "Deixa o WebRTC escolher entre VPN, conexão direta e TURN." : g_set.net_pref == 1 ? "Ignora adaptadores VPN e mantém STUN/TURN disponíveis." : "Prioriza ZeroTier, Tailscale ou WireGuard e usa a internet como fallback.");
                         tag_nofx(ui);
                     }
+                    SCARD(ui, "SERVIDOR TURN") {
+                        if (!s->ice_asked && core_state() == CORE_READY) account_ice_get(s);
+                        cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL) {
+                            cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = s->ice_turn ? B_ONLINE : CUI_RGB(0xe8c46a)) {}
+                            cui_text(ui, s->ice_turn ? "TURN configurado" : "Somente STUN", .font = CUI_FONT_MEDIUM, .size = 13);
+                        }
+                        sub(ui, s->ice_turn ? "Chamadas conseguem passar por um servidor de retransmissão quando a conexão direta falha."
+                                            : "Funciona na maioria das redes. Em redes restritivas (CGNAT, empresa, 4G) a chamada pode não conectar. Um servidor TURN resolve.");
+                        if (!strcmp(s->ice_source, "env")) sub(ui, "Em uso: variável BRIKS_ICE_SERVERS_JSON (tem prioridade sobre o que for salvo aqui).");
+                        cui_text(ui, "Endereços (separe por vírgula)", .size = 12, .color = B_MUTED);
+                        cui_input(ui, "ice-urls", s->ice_urls, sizeof s->ice_urls, .placeholder = "turn:meuservidor.com:3478");
+                        cui_text(ui, "Usuário", .size = 12, .color = B_MUTED);
+                        cui_input(ui, "ice-user", s->ice_user, sizeof s->ice_user, .placeholder = "usuário do TURN");
+                        cui_text(ui, "Senha", .size = 12, .color = B_MUTED);
+                        cui_input(ui, "ice-pass", s->ice_pass, sizeof s->ice_pass, .password = true, .placeholder = s->ice_has_cred ? "•••••• (guardada; deixe vazio para manter)" : "senha do TURN");
+                        sub(ui, "A senha é cifrada neste computador (Windows) e nunca aparece de novo, nem em registros.");
+                        if (s->ice_msg[0]) cui_text(ui, s->ice_msg, .size = 12, .color = CUI_RGB(0xd9cdea), .width = CUI_FILL);
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
+                            if (cui_button(ui, "Salvar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .loading = s->ice_busy, .disabled = !s->ice_urls[0])) account_ice_save(s);
+                            if (cui_button(ui, "Testar conexão", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .loading = s->ice_testing)) account_ice_test(s);
+                            if (cui_button(ui, "Remover", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM, .disabled = !strcmp(s->ice_source, "default"))) account_ice_clear(s);
+                        }
+                        if (s->ice_test_msg[0]) {
+                            const cui_color c = s->ice_test_level == 3 ? B_ONLINE : s->ice_test_level == 2 ? CUI_RGB(0xe8c46a) : s->ice_test_level == 1 ? CUI_RGB(0xff9a9a) : B_MUTED;
+                            cui_text(ui, s->ice_test_msg, .size = 12, .color = c, .width = CUI_FILL);
+                        }
+                        sub(ui, "O teste usa os servidores já salvos. Salve antes de testar.");
+                    }
                     SCARD(ui, "DIAGNÓSTICO") {
                         char b[96]; cui_textf(ui, "Signaling: %s", s->rtc_state[0] ? s->rtc_state : "indisponível");
                         cui_textf(ui, "Canal: %s", s->in_room ? "na sala" : "indisponível");
                         cui_textf(ui, "Pessoas na sala: %d (autenticadas: %d)", s->rtc_peer_count, s->rtc_authed_count);
                         if (s->rtc_msg[0]) sub(ui, s->rtc_msg);
-                        (void)b; sub(ui, s->ice_note[0] ? s->ice_note : "Servidores: STUN público (TURN só se configurado)."); sub(ui, "Para TURN: BRIKS_ICE_SERVERS_JSON ou ice.json na pasta de dados do Briks.");
+                        (void)b; sub(ui, s->ice_note[0] ? s->ice_note : "Servidores: STUN público (TURN só se configurado)."); 
                     }
                     break; }
                 case 2: /* Temas */

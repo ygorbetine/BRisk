@@ -780,6 +780,78 @@ fn backup_phrase_generation_and_typing_mistakes() {
 }
 
 #[test]
+fn backup_phrase_errors_say_what_to_fix_without_echoing_the_phrase() {
+    let a = backup::new_phrase();
+    let words: Vec<&str> = a.split(' ').collect();
+    let e = backup::check_phrase("").unwrap_err();
+    assert!(e.message.contains("12 palavras"));
+    let e = backup::check_phrase(&words[..10].join(" ")).unwrap_err();
+    assert!(e.message.contains("Faltam 2"), "{}", e.message);
+    let e = backup::check_phrase(&format!("{a} casa")).unwrap_err();
+    assert!(e.message.contains("Sobra"), "{}", e.message);
+    let e = backup::check_phrase(&format!("{} xyzzyq", words[..11].join(" "))).unwrap_err();
+    assert!(e.message.contains("palavra 12") && !e.message.contains("xyzzyq"), "{}", e.message);
+    // a mensagem de frase errada orienta sobre troca de frase e conta, sem vazar nada
+    let id = fixed_identity();
+    let phrase = fixed_phrase();
+    let blob = backup::seal(&id, &phrase, "11111111-aaaa-4bbb-8ccc-111111111111").unwrap();
+    let e = backup::open(&blob, &backup::new_phrase(), "11111111-aaaa-4bbb-8ccc-111111111111").unwrap_err();
+    assert!(e.message.contains("mais recente") && !e.message.contains(&phrase));
+}
+
+#[tokio::test]
+async fn dropped_session_during_a_command_sends_the_user_back_to_the_entry_screen() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("svc-drop");
+    let a = Arc::new(accounts(&f, &dir));
+    let rt = service::Runtime::for_tests(Some(a.clone()), dir.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut svc = service::Service::new(rt, tx);
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }   // busy, signed_in, profile, avatar
+    // o servidor derruba a sessão (refresh token revogado) e o access token vence
+    {
+        let mut st = f.state.lock().unwrap();
+        st.drop_all_sessions();
+    }
+    a.expire_access_for_tests();
+    svc.command("account.name", &json!({ "name": "Outro" }));
+    let e = next(&mut rx).await;
+    assert_eq!((e["state"].as_str(), e["error_code"].as_str()), (Some("signed_out"), Some("session_expired")));
+    assert!(a.user().is_none() && !dir.join("account-session.bin").exists(), "sessão guardada apagada");
+    // erro de rede NÃO derruba: continua logado, só avisa
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }
+    let dead = Arc::new(Accounts::new(Arc::new(SupabaseProvider::new("http://127.0.0.1:9", "k")), &tmpdir("svc-net"), fake::auto_browser()));
+    assert_eq!(dead.restore().await.unwrap(), None);
+    assert!(a.user().is_some());
+}
+
+#[tokio::test]
+async fn switching_accounts_replaces_the_session_and_forgets_the_previous_photo() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("switch");
+    let a = accounts(&f, &dir);
+    let first = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(a.take_previous_id(&first.id), None, "primeiro login: nada a esquecer");
+    avatar::store(&dir, &first.id, &[0xff, 0xd8, 0xff, 0xd9]).unwrap();
+    let second = a.sign_in_oauth(OAuthProvider::Discord).await.unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(a.user().unwrap().id, second.id);
+    assert_eq!(a.take_previous_id(&second.id).as_deref(), Some(first.id.as_str()));
+    assert_eq!(a.take_previous_id(&second.id), None, "só uma vez");
+    // a sessão guardada é a da conta nova: reabrir o app entra nela
+    let b = accounts(&f, &dir);
+    assert_eq!(b.restore().await.unwrap().unwrap().id, second.id);
+    // sair apaga a sessão guardada
+    b.sign_out().await;
+    assert!(!dir.join("account-session.bin").exists());
+    assert_eq!(accounts(&f, &dir).restore().await.unwrap(), None);
+}
+
+#[test]
 fn backup_wrong_phrase_tampering_and_other_account_all_fail_the_same_way() {
     let id = fixed_identity();
     let phrase = fixed_phrase();

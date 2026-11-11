@@ -44,7 +44,7 @@ fn err(code: &str, msg: &str) -> AccountError {
     AccountError::new(code, msg)
 }
 fn wrong_phrase() -> AccountError {
-    err("wrong_phrase", "Essa frase não abre a cópia desta conta. Confira as 12 palavras e a ordem.")
+    err("wrong_phrase", "Essa frase não abre a cópia desta conta. Confira se é a frase da cópia mais recente (se você trocou a frase, vale só a última) e se a conta é a mesma.")
 }
 
 /// Frase nova: 128 bits do gerador do sistema, em 12 palavras da lista BIP39 em português (com soma de verificação).
@@ -59,12 +59,18 @@ pub fn new_phrase() -> String {
 pub fn check_phrase(input: &str) -> AResult<String> {
     let norm = input.split_whitespace().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(" ");
     let words = norm.split(' ').filter(|w| !w.is_empty()).count();
+    if words == 0 {
+        return Err(err("invalid_phrase", "Digite as 12 palavras da sua frase de recuperação."));
+    }
     if words != 12 {
-        return Err(err("invalid_phrase", "A frase tem 12 palavras. Confira se não faltou ou sobrou alguma."));
+        let msg = if words < 12 { format!("Faltam {} palavras: a frase tem 12 e você digitou {words}.", 12 - words) } else { format!("Sobram {} palavras: a frase tem 12 e você digitou {words}.", words - 12) };
+        return Err(err("invalid_phrase", &msg));
     }
     match Mnemonic::parse_in_normalized(Language::Portuguese, &norm) {
         Ok(m) => Ok(m.to_string()),
-        Err(_) => Err(err("invalid_phrase", "Essa frase não é válida. Confira se alguma palavra foi trocada ou escrita errado.")),
+        // diz QUAL posição está errada, nunca a palavra (a frase não vai para mensagens)
+        Err(bip39::Error::UnknownWord(i)) => Err(err("invalid_phrase", &format!("A palavra {} não está na lista de palavras do Briks. Confira como ela está escrita (acentos incluídos).", i + 1))),
+        Err(_) => Err(err("invalid_phrase", "As 12 palavras existem, mas não formam uma frase válida: alguma está trocada ou fora de ordem.")),
     }
 }
 

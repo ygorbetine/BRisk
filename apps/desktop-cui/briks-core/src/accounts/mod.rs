@@ -47,6 +47,7 @@ pub struct Accounts {
     bridge: SecretFile,
     session: Mutex<Option<Session>>,
     refresh_lock: tokio::sync::Mutex<()>,
+    replaced: Mutex<Option<String>>,
     opener: Opener,
     pub oauth_timeout: Duration,
     pub email_timeout: Duration,
@@ -108,8 +109,13 @@ impl Accounts {
         Self::with_stores(provider, SecretFile::dpapi(data_dir.join("account-session.bin")), SecretFile::dpapi(data_dir.join("local-bridge.bin")), opener)
     }
     pub fn with_stores(provider: Arc<dyn AuthProvider>, store: SecretFile, bridge: SecretFile, opener: Opener) -> Self {
-        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), opener,
+        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), replaced: Mutex::new(None), opener,
             oauth_timeout: Duration::from_secs(300), email_timeout: Duration::from_secs(900) }
+    }
+
+    #[cfg(test)]
+    pub fn expire_access_for_tests(&self) {
+        if let Some(s) = self.session.lock().unwrap().as_mut() { s.expires_at = 0; }
     }
 
     pub fn user(&self) -> Option<AccountUser> {
@@ -120,8 +126,16 @@ impl Accounts {
         // falha ao cifrar/gravar não impede o uso: a sessão fica só na memória (e nunca vai para o disco em texto aberto)
         let _ = self.store.save(&Stored { version: 1, refresh_token: s.refresh_token.clone(), user: s.user.clone() });
         let u = s.user.clone();
-        *self.session.lock().unwrap() = Some(s);
+        let old = self.session.lock().unwrap().replace(s).map(|o| o.user.id).filter(|id| *id != u.id);
+        if old.is_some() {
+            *self.replaced.lock().unwrap() = old;
+        }
         u
+    }
+
+    /// Se a sessão que acabou de entrar substituiu a de OUTRA conta, devolve o id da anterior (uma vez só).
+    pub fn take_previous_id(&self, current: &str) -> Option<String> {
+        self.replaced.lock().unwrap().take().filter(|p| p != current)
     }
 
     fn drop_session(&self) {

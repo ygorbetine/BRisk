@@ -146,6 +146,11 @@ typedef struct {
     bool reload_groups;
     share_state_t sh;
     char ice_note[120];   /* "Somente STUN" / "STUN + TURN" (evento ice.info do core) */
+    /* tela Rede: TURN próprio (ice.json). A senha só existe aqui enquanto se digita; o core a cifra e nunca a devolve */
+    bool ice_turn, ice_has_cred, ice_asked, ice_busy, ice_testing, ice_edit_init;
+    char ice_urls[300], ice_user[100], ice_pass[130], ice_msg[240], ice_test_msg[240];
+    int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
+    char ice_source[8];                                        /* default | file | env */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -178,6 +183,10 @@ void account_set_name(app_state_t *s);                      /* troca o nome de e
 void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
 void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
 void ui_account_editor(cui_ctx *ui, app_state_t *s);
+void account_ice_get(app_state_t *s);
+void account_ice_save(app_state_t *s);                      /* grava ice_urls/ice_user/ice_pass no core */
+void account_ice_clear(app_state_t *s);
+void account_ice_test(app_state_t *s);
 void account_backup_status(app_state_t *s);
 void account_backup_create(app_state_t *s);                 /* gera a frase (o core mostra uma vez) */
 void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e envia a cópia */

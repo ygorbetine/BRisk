@@ -42,7 +42,11 @@ impl SupabaseProvider {
                 let text = r.into_string().unwrap_or_default();
                 Err(map_error(status, &serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)))
             }
-            Err(ureq::Error::Transport(_)) => Err(AccountError::network()),
+            Err(ureq::Error::Transport(t)) => {
+                // sem o texto técnico (pode conter o endereço): só a diferença entre "demorou" e "sem conexão"
+                let slow = t.to_string().to_lowercase().contains("timed out") || t.to_string().to_lowercase().contains("timeout");
+                Err(if slow { AccountError::new("timeout", "O servidor de contas demorou demais para responder. Tente de novo em instantes.") } else { AccountError::network() })
+            }
         }
     }
 

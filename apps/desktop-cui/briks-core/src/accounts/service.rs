@@ -94,6 +94,8 @@ fn failed(rt: &Runtime, e: &AccountError) -> Value {
 /// Depois de entrar: avisa a UI e publica a chave pública da identidade P2P no perfil da conta.
 async fn signed_in(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, recovery: bool) {
     let Some(u) = acc.user() else { return };
+    // troca de conta (entrou com outra por cima): nada da anterior fica à mostra nem em cache
+    if let Some(prev) = acc.take_previous_id(&u.id) { avatar::clear(&rt.data_dir, &prev); }
     // foto: usa o cache se houver; baixa em segundo plano e avisa quando chegar. nick_hint: provisório, derivado do nome.
     let photo = avatar::cached(&rt.data_dir, &u.id);
     let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name) }))).await;
@@ -149,6 +151,12 @@ fn backup_result(op: &str, r: Result<&str, AccountError>) -> Value {
         Ok(m) => json!({ "ev": "backup.result", "op": op, "ok": true, "message": m }),
         Err(e) => json!({ "ev": "backup.result", "op": op, "ok": false, "error_code": e.code, "message": e.message }),
     }
+}
+
+/// Falha de um comando já logado. Sessão derrubada (token expirado e sem renovação possível) vira "signed_out" para a UI
+/// voltar à entrada; qualquer outra falha é só um aviso e a sessão continua.
+fn notice(rt: &Runtime, e: &AccountError) -> Value {
+    if e.is_auth() { failed(rt, e) } else { json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }) }
 }
 
 fn profile_ev(p: &super::Profile, message: &str) -> Value {
@@ -313,7 +321,9 @@ impl Service {
                         Ok(()) => json!({ "ev": "account.password", "ok": true, "message": "Senha alterada." }),
                         Err(e) => json!({ "ev": "account.password", "ok": false, "error_code": e.code, "message": e.message }),
                     };
+                    let dropped = matches!(&ev["error_code"], Value::String(c) if c == "session_expired");
                     let _ = tx.send(ev).await;
+                    if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; }
                 });
             }
             "account.nick" => {
@@ -321,7 +331,7 @@ impl Service {
                 tokio::spawn(async move {
                     let ev = match acc.set_nick(&nick).await {
                         Ok(p) => json!({ "ev": "account.profile", "nick": p.nick, "fingerprint": p.fingerprint, "display_name": p.display_name, "changed": true }),
-                        Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
+                        Err(e) => notice(&rt, &e),
                     };
                     let _ = tx.send(ev).await;
                 });
@@ -331,7 +341,7 @@ impl Service {
                 tokio::spawn(async move {
                     let ev = match acc.set_display_name(&name).await {
                         Ok(p) => profile_ev(&p, "Nome alterado."),
-                        Err(e) => json!({ "ev": "account.notice", "error_code": e.code, "message": e.message }),
+                        Err(e) => notice(&rt, &e),
                     };
                     let _ = tx.send(ev).await;
                 });
@@ -360,7 +370,7 @@ impl Service {
                             let _ = tx.send(profile_ev(&p, "Voltamos para a foto da sua conta.")).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;
+                            let _ = tx.send(notice(&rt, &e)).await;
                         }
                     }
                 });
@@ -390,7 +400,9 @@ impl Service {
                         (None, _) => Err(AccountError::new("backup", "A frase expirou. Gere uma nova.")),
                         (_, Err(_)) => Err(AccountError::new("backup", "Identidade deste aparelho indisponível.")),
                     };
+                    let dropped = matches!(&r, Err(e) if e.is_auth());
                     let _ = tx.send(backup_result("save", r.map(|_| "Cópia de segurança guardada. Só a sua frase consegue abri-la."))).await;
+                    if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; return; }
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
             }
@@ -415,7 +427,11 @@ impl Service {
                             }
                             let _ = tx.send(backup_result("restore", Ok("Identidade recuperada neste computador."))).await;
                         }
-                        Err(e) => { let _ = tx.send(backup_result("restore", Err(e))).await; }
+                        Err(e) => {
+                            let dropped = e.is_auth();
+                            let _ = tx.send(backup_result("restore", Err(e))).await;
+                            if dropped { let _ = tx.send(failed(&rt, &AccountError::session_expired())).await; return; }
+                        }
                     }
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
                 });
@@ -440,13 +456,17 @@ impl Service {
                         Ok(m) if !m.is_empty() => { let _ = tx.send(json!({ "ev": "friends.result", "ok": true, "message": m })).await; }
                         Err(e) => {
                             let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                            if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }
                             return;
                         }
                         _ => {}
                     }
                     match acc.friends().await {
                         Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; }
-                        Err(e) => { let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await; }
+                        Err(e) => {
+                            let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                            if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }
+                        }
                     }
                 });
             }

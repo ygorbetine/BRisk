@@ -157,6 +157,27 @@ void account_reset_photo(app_state_t *s) {
 
 static void wipe_phrase(app_state_t *s) { memset(s->backup_words, 0, sizeof s->backup_words); s->backup_ack = false; }
 
+void account_ice_get(app_state_t *s) { s->ice_asked = true; if (core_state() == CORE_READY) core_send("{\"cmd\":\"ice.get\"}"); }
+
+void account_ice_save(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_busy) return;
+    s->ice_busy = true; copy(s->ice_msg, sizeof s->ice_msg, "Salvando…");
+    send_kv("ice.set", "urls", s->ice_urls, "username", s->ice_user, "credential", s->ice_pass);
+    memset(s->ice_pass, 0, sizeof s->ice_pass);   /* a senha não fica na memória da UI */
+}
+
+void account_ice_clear(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_busy) return;
+    s->ice_busy = true; s->ice_urls[0] = s->ice_user[0] = 0; memset(s->ice_pass, 0, sizeof s->ice_pass);
+    core_send("{\"cmd\":\"ice.clear\"}");
+}
+
+void account_ice_test(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_testing) return;
+    s->ice_testing = true; s->ice_test_level = 0; copy(s->ice_test_msg, sizeof s->ice_test_msg, "Testando… (até 8 segundos)");
+    core_send("{\"cmd\":\"ice.test\"}");
+}
+
 void account_backup_status(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"backup.status\"}"); }
 
 void account_backup_create(app_state_t *s) {
@@ -316,6 +337,18 @@ bool account_handle_event(app_state_t *s, const char *line) {
         copy(s->bridge_email, sizeof s->bridge_email, json_str(j, "email", ""));
         copy(s->bridge_pw, sizeof s->bridge_pw, json_str(j, "password", ""));
         /* account_tick conclui quando o backend local estiver pronto */
+    } else if (!strcmp(ev, "ice.state")) {
+        s->ice_busy = false; s->ice_turn = jbool(j, "turn"); s->ice_has_cred = jbool(j, "has_credential");
+        copy(s->ice_source, sizeof s->ice_source, json_str(j, "source", "default"));
+        if (json_str(j, "message", "")[0]) copy(s->ice_msg, sizeof s->ice_msg, json_str(j, "message", ""));
+        else if (json_str(j, "warn", "")[0]) snprintf(s->ice_msg, sizeof s->ice_msg, "Configuração ignorada: %s", json_str(j, "warn", ""));
+        if (!s->ice_edit_init || jbool(j, "ok")) { copy(s->ice_urls, sizeof s->ice_urls, json_str(j, "urls", "")); copy(s->ice_user, sizeof s->ice_user, json_str(j, "username", "")); s->ice_edit_init = true; }
+        s->ice_test_level = 0; s->ice_test_msg[0] = 0;   /* a configuração mudou: o resultado antigo não vale mais */
+    } else if (!strcmp(ev, "ice.test")) {
+        s->ice_testing = false;
+        const char *lv = json_str(j, "level", "none");
+        s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
+        copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));

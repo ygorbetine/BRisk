@@ -184,6 +184,18 @@ O que falta você fazer para o login completo:
 2. Rodar `0001`, `0002` e `0003` no SQL Editor, nessa ordem (passo 1 da lista acima).
 3. No Google, como o app está em modo Teste, entrar com um e-mail cadastrado como usuário de teste.
 
+Atualização (mesmo dia, mais tarde):
+
+- As migrações `0001` a `0005` estão aplicadas no projeto (rodadas pelo usuário no SQL Editor) e os redirects do
+  loopback foram adicionados.
+- **Login social real funcionou** (feito pelo usuário no navegador): sessão guardada cifrada, foto da conta em cache,
+  e o app reabre já dentro da conta.
+- Conferido de fora, sem login: as funções da 0003, 0004 e 0005 existem e recusam quem não está logado; as tabelas
+  `profiles` e `identity_backups` recusam leitura direta; o bucket `avatars` existe e recusa envio sem login.
+- **Ainda não exercitado no projeto real**: trocar foto e nome (0004), criar/recuperar/apagar a cópia da identidade
+  (0005), cadastro por e-mail, pedido de amizade entre duas contas. Esses caminhos exigem uma sessão logada; o teste
+  é do usuário no app, porque esta sessão de trabalho não usa as credenciais dele.
+
 Teste repetível: `cargo test --release -- --ignored real_supabase` com `BRIKS_SUPABASE_URL` e
 `BRIKS_SUPABASE_ANON_KEY` no ambiente.
 
@@ -274,3 +286,23 @@ frase de 12 palavras (128 bits, gerada pelo app, lista BIP39 em português, com 
 - Os botões Google/Discord são clicáveis só com o mouse (sem foco por teclado).
 - Integração do branch `cui-instalador`: `import.rs`, a linha do `rusqlite` e o subcomando `import-electron` foram
   trazidos idênticos para o merge sair limpo; `migrate.c` (assistente de migração da UI) não foi trazido.
+
+## 8. Frente E pós-1.3.0: rede (TURN pela UI), login endurecido, frase
+
+**Rede (Configurações > Rede > SERVIDOR TURN).** A UI grava `ice.json` na pasta de dados pelo core (`ice.set`); a senha
+entra só no comando, é cifrada com a DPAPI (`credential_dpapi`) e nunca volta (a UI recebe `has_credential`). Valida
+`stun:`/`stuns:`/`turn:`/`turns:` com mensagens claras (porta, `//`, `@`, `?transport=`). Senha vazia mantém a guardada
+para o mesmo usuário. `ice.get`/`ice.clear` completam o ciclo; um arquivo escrito à mão (`credential` em texto) e a
+variável `BRIKS_ICE_SERVERS_JSON` continuam valendo (a variável tem prioridade, e a tela avisa). Indicador "Somente STUN" /
+"TURN configurado". **Testar conexão** (`ice.test`) coleta candidatos ICE reais: srflx = STUN respondeu; relay = o TURN
+aceitou usuário e senha. Não devolve IP e termina em até 8 s.
+
+**Login.** Qualquer comando com sessão derrubada (friends, nome, foto, senha, cópia) devolve `signed_out/session_expired`
+e a UI volta à entrada; falha de rede só avisa. Timeout do servidor tem mensagem própria. Entrar com outra conta por cima
+troca a sessão guardada e apaga a foto em cache da anterior. Nome, @nick e foto vêm sempre da conta (perfil do servidor).
+
+**Frase.** Mensagens dizem o que corrigir ("Faltam 2 palavras", "A palavra 12 não está na lista", frase fora de ordem,
+"vale só a última frase") sem repetir o que foi digitado.
+
+**Não exercitado:** TURN real (não há servidor TURN aqui; só o caminho "não respondeu" foi provado), login Google/Discord
+real e e-mail real com as mudanças desta etapa, dois computadores.

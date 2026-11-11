@@ -46,6 +46,7 @@ static long table_rows(const jval *j, const char *name) {
 }
 
 void migrate_probe(app_state_t *s) {
+    if (!getenv("BRIKS_LEGACY_IMPORT_DIALOG")) return;   /* desativado: a importação do Briks antigo é a da aba Conta (account_import); a identidade do Electron não é importada */
     if (getenv("BRIKS_NO_IMPORT")) return;
     if ((getenv("CUI_SCREENSHOT") || getenv("BRIKS_SCRIPT")) && !getenv("BRIKS_IMPORT_DEMO")) return;   /* capturas não perguntam */
     static char buf[4096];

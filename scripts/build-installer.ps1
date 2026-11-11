@@ -3,7 +3,7 @@
 #   -Test  usa outro GUID e outra pasta de instalacao ("@briksdesktop-test"), para testar sem tocar na instalacao real do Briks.
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
 # So compila e grava em disco: nao publica, nao cria tag/release e nao executa o instalador.
-param([string]$Version = "1.3.0", [switch]$Test)
+param([string]$Version = "1.3.0", [switch]$Test, [string]$SupabaseJson = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"
@@ -46,6 +46,17 @@ Copy-Item $backend "$stage\backend\briks-desktop-backend.exe"
 $crt = Get-ChildItem "$vs\VC\Redist\MSVC" -Recurse -Filter vcruntime140.dll | Where-Object { $_.FullName -match '\\x64\\Microsoft\.VC\d+\.CRT\\' -and $_.FullName -notmatch 'onecore' } | Sort-Object FullName | Select-Object -Last 1
 if (-not $crt) { throw "vcruntime140.dll (redistribuivel do VC) nao encontrado." }
 Get-ChildItem $crt.DirectoryName -Filter "*.dll" | Where-Object { $_.Name -match '^(vcruntime140|msvcp140)(_1)?\.dll$' } | Copy-Item -Destination $stage   # runtime do VC "app-local" (briks-core e backend em Rust usam vcruntime140)
+# supabase.json (URL + chave PUBLISHABLE/anon) ao lado do Briks.exe: outros PCs passam a ter login. Vem de -SupabaseJson ou da pasta de dados de quem compila.
+# Nunca a chave secret/service_role: o script recusa. O arquivo nao e versionado.
+if (-not $SupabaseJson) { $SupabaseJson = Join-Path $env:APPDATA "Briks-CUI\supabase.json" }
+if (Test-Path $SupabaseJson) {
+    $sj = Get-Content $SupabaseJson -Raw | ConvertFrom-Json
+    $k = if ($sj.anon_key) { $sj.anon_key } elseif ($sj.publishable_key) { $sj.publishable_key } else { "" }
+    if ($sj.url -notmatch '^https://' -or $k -match '^sb_secret_' -or $k -notmatch '^(sb_publishable_|eyJ)') { throw "supabase.json invalido ou com chave secreta: use URL https e chave publishable/anon." }
+    if ($k -match '^eyJ') { $b = $k.Split('.')[1].Replace('-','+').Replace('_','/'); while ($b.Length % 4) { $b += '=' }; $role = ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)) | ConvertFrom-Json).role; if ($role -ne 'anon') { throw "supabase.json: chave nao e anon (role=$role)." } }
+    @{ url = $sj.url; anon_key = $k } | ConvertTo-Json | Set-Content "$stage\supabase.json" -Encoding UTF8
+    Write-Host "supabase.json incluido (chave publishable)."
+} else { Write-Warning "supabase.json nao encontrado: o instalador sai sem login online." }
 foreach ($f in "LICENSE", "THIRD_PARTY_NOTICES.md") { if (Test-Path "$root\$f") { Copy-Item "$root\$f" $stage } }
 if (Test-Path "$root\LICENSES") { Copy-Item "$root\LICENSES" "$stage\LICENSES" -Recurse }
 

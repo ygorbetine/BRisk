@@ -39,6 +39,7 @@ static float pile_w = 170, pile_h = 104, pile_ox, pile_oy;   /* tamanho do cart√
 
 static void save_layout(void) {
     if (demo_mode || !file_path[0]) return;
+    if ((getenv("BRIKS_SCRIPT") || getenv("BRIKS_HIDDEN")) && !getenv("BRIKS_LAYOUT_FILE")) return;   /* teste automatizado nunca grava no layout real do usu√°rio */
     char js[4096];
     if (!layout_to_json(&L, js, sizeof js)) return;
     FILE *f = fopen(file_path, "wb");

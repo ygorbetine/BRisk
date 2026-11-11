@@ -231,7 +231,19 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             char t[48]; snprintf(t, sizeof t, "AMIGOS — %d", s->friend_count);
             section_title(ui, t);
-            if (!s->friend_count) cui_text(ui, "Você ainda não tem amigos.", .size = 12, .color = B_MUTED);   /* a ação é o item "Adicionar amigo" lá em cima: um ponto só */
+            if (!s->friend_count) {   /* estado vazio no espaço livre até o rodapé: centralizado, sem botão (a ação é o item "Adicionar amigo" lá em cima) */
+                cui_box(ui, .id = "nf-anchor", .width = CUI_FILL, .height = CUI_PX(1)) {}
+                cui_rect an = cui_get_rect(ui, cui_make_id(ui, "nf-anchor"));
+                float avail = (an.w > 0 && g_bclip.h > 0) ? g_bclip.y + g_bclip.h - an.y - 9.0f : 0.0f;
+                if (avail >= 150.0f) {
+                    cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = fmaxf(8.0f, (avail - 96.0f) * 0.5f - 6.0f), .gap = 6) {
+                        cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 22, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
+                                .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_USERS, 20, B_C3); }
+                        cui_text(ui, "Nenhum amigo ainda", .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
+                        cui_text(ui, "Quem você adicionar aparece aqui.", .size = 12, .color = B_MUTED, .nowrap = true);
+                    }
+                } else cui_text(ui, "Você ainda não tem amigos.", .size = 12, .color = B_MUTED);
+            }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
                 if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);

@@ -500,3 +500,23 @@ em outras execuções os números mudaram dezenas de ms).
 - Latência vidro a vidro com monitor/câmera, captura real, GPU/NVENC, AMD/Intel, e a etapa de render da UI.
 - Perda de 1% e jitter com a adaptação ligada (a matriz usa bitrate fixo para isolar o conserto de perda).
 - Vários espectadores sob perda.
+
+## 14. Acompanhamento dos achados da rodada 13 — 2026-11-11
+
+- **Vazamento de handles do NVENC — CONFIRMADO, mitigado, não consertado.** `BRIKS_MF_HW=1 BRIKS_CYCLES=40 cycles_mf_encoder_create_drop`:
+  452 → 575 handles entre os ciclos 10 e 40 (+4,10 por criação), threads estáveis. Encerrar também o objeto de ativação
+  (`ShutdownObject`) e mandar `END_STREAMING` não mudou nada (+4,07): o vazamento é de dentro do MFT da NVIDIA. Mitigação: o
+  codificador só é recriado em queda de bitrate para menos da metade e no máximo uma vez a cada 10 s (antes: qualquer queda acima
+  de 20%). NÃO MEDIDO: o efeito dessa troca na adaptação em quedas de 20–50% (o ajuste ao vivo do NVENC leva ~2 s para valer).
+- **Canal de NACK — FEITO.** Limitado a 256 pedidos com `try_send`, e o pacer sem `biased`. Depois da mudança: 30,7 / 30,1 /
+  27,9 / 14,1 qps com 0 / 2 / 5 / 10% de perda.
+- **Threads no teste longo — FEITO E MEDIDO.** O contador lia `/proc/self/task` (sempre 0 no Windows) e o valor era descartado.
+  Agora usa o instantâneo do sistema e o teste falha se crescerem mais de 8. Execução de 2 min: 46 → 46 threads, 110 → 110 MB,
+  700 → 699 handles, latência p50 28 → 27 ms.
+- **Volta de queda com pedido de quadro-chave mais frequente — TESTADO, SEM GANHO, não adotado.** Queda de 4 s, 1º quadro novo
+  depois da volta, 3 execuções cada: repetição a cada 2 s (atual) 1152 / 1713 / 1105 ms; a cada 0,6 s 1578 / 2519 / 1474 ms.
+  O emissor já limita os quadros-chave a 1 por segundo, então pedir mais vezes não adianta. Ficou em 2 s.
+- **Adaptação presa em ~150 kbps (4 Mbps, 2% de perda, RTT alto; `BRIKS_G2G_CASE=5 BRIKS_RN_DEBUG=1`) — NÃO FEITO.** É a queda
+  excessiva já registrada no item 1. Duas correções foram tentadas e revertidas por não se sustentarem nas medições; não há
+  correção segura e medida, então fica como limite conhecido, avisado na interface com o selo "Beta".
+- **1080p com ~120 ms a mais que 720p em loopback — NÃO INVESTIGADO.** Causa desconhecida.

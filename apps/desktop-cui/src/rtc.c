@@ -52,6 +52,12 @@ void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
 }
+void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
+    if (slot < 0 || slot >= 8 || !s->rtc_peers[slot].id[0]) return;
+    char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
+    snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"volume\":%.2f", id, gain);
+    if (core_state() == CORE_READY) send_cmd("peer.volume", extra);
+}
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
 static void set_peer(app_state_t *s, const char *id, const char *state) {
@@ -152,6 +158,18 @@ void rtc_pump(app_state_t *s) {
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());
     }
     if (st == CORE_READY) {
+        {   /* Configurações > Voz: ganhos e porta de ruído seguem para o core quando mudam ou quando entra numa sala (o áudio nasce ali) */
+            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16];
+            float gi, go, gd; bool ga; settings_audio(&gi, &go, &ga, &gd);
+            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state)) {
+                snprintf(lstate, sizeof lstate, "%s", s->rtc_state);
+                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room;
+                char extra[160];
+                if (ga) snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"gate_db\":%.0f", gi, go, gd);
+                else snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f", gi, go);
+                send_cmd("audio.cfg", extra);
+            }
+        }
         {   /* status e presença (programa em uso, se ligado) seguem para o core; ele anuncia aos peers autenticados da sala */
             static char sent_st[64], sent_pr[64]; static bool sent_once;
             const char *pr = s->rp_enabled ? s->user_presence : "";

@@ -124,6 +124,11 @@ void settings_notice(const char *text) {
     .border = 1, .border_color = B_GLASS_BORDER)), cui_text((ui), (title), .font = CUI_FONT_MEDIUM, .size = 13, .color = B_C3)), cui_box_end(ui))
 
 static void sub(cui_ctx *ui, const char *t) { cui_text(ui, t, .size = 12, .color = B_MUTED); }
+static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efeito, dito com clareza */
+    char b[200]; snprintf(b, sizeof b, "Em breve: %s (salvo neste computador, ainda sem efeito)", what);
+    cui_text(ui, b, .size = 11, .color = g_th.ph);
+}
+void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
 }
@@ -188,13 +193,15 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, s->in_room ? "A barra mostra o que o Briks está ouvindo na chamada." : "Entre numa sala para ver o nível; o teste fora da chamada chega com o áudio nativo.");
                         cui_text(ui, "Volume de entrada (ganho)", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-invol", &g_set.in_vol, 0, 100);
-                        tag_nofx(ui);
+                        sub(ui, "O ganho vale na hora, na sua voz que sai para a sala.");
+                        soon(ui, "escolher o microfone (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "SAÍDA") {
                         cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
                         cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
-                        tag_nofx(ui);
+                        sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
+                        soon(ui, "escolher a saída de som (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "PROCESSAMENTO") {
                         static const char *NZ[] = { "Padrão", "RNNoise", "Desligada" };
@@ -205,7 +212,8 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         if (g_set.gate_on) { cui_textf(ui, "Limite: %d dB", (int)g_set.gate_db); cui_slider(ui, "##cfg-gate", &g_set.gate_db, -70, -20); }
                         sw(ui, "Cancelamento de eco", "Evita que o áudio dos alto-falantes volte pelo microfone.", &g_set.echo);
                         sw(ui, "Excluir áudio do Briks da transmissão", "Ao compartilhar a tela, não retransmite as vozes tocadas pelo próprio Briks.", &g_set.excl_audio);
-                        tag_nofx(ui);
+                        sub(ui, "A porta de ruído vale na hora.");
+                        soon(ui, "supressão de ruído, cancelamento de eco e excluir áudio do Briks");
                     }
                     break;
                 case 1: { /* Rede */
@@ -240,17 +248,14 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, "Detalhe por tipo (mensagens, grupos, anexos) depende do backend de dados.");
                     }
                     SCARD(ui, "LIMPEZA") {
+                        cui_push_disabled(ui, true);
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
-                            if (cui_button(ui, "Limpar anexos", .variant = CUI_BUTTON_SECONDARY)) cleared_at = (float)cui_time(ui);
-                            if (cui_button(ui, "Apagar histórico de mensagens", .variant = CUI_BUTTON_SECONDARY)) confirm_hist = true;
-                            if (cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY)) cleared_at = (float)cui_time(ui);
+                            cui_button(ui, "Limpar anexos", .variant = CUI_BUTTON_SECONDARY);
+                            cui_button(ui, "Apagar histórico de mensagens", .variant = CUI_BUTTON_SECONDARY);
+                            cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY);
                         }
-                        if (confirm_hist) cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                            cui_text(ui, "Apagar o histórico? Isso não pode ser desfeito.", .size = 12);
-                            if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) confirm_hist = false;
-                            if (cui_button(ui, "Apagar", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { confirm_hist = false; cleared_at = (float)cui_time(ui); }
-                        }
-                        if ((float)cui_time(ui) - cleared_at < 3.0f) cui_text(ui, "Sem efeito real ainda: os dados chegam com o backend.", .size = 12, .color = B_MUTED);
+                        cui_pop_disabled(ui);
+                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados dependem do backend de dados; os botões ficam desligados até lá");
                     }
                     break; }
                 case 4: /* Sobreposição */

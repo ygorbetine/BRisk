@@ -1,0 +1,7 @@
+# fechar pela barra = bandeja quando configurado (WM_CLOSE passa por winstate.c)
+waitms 900
+sys cfg close_to_tray 1
+click 968 18
+waitms 600
+expect tb_close 1
+expect to_tray 1

@@ -1,0 +1,7 @@
+# com um diálogo aberto os controles da janela continuam valendo
+waitms 900
+expect settings 1
+click 880 18
+waitms 300
+expect tb_min 1
+expect settings 1

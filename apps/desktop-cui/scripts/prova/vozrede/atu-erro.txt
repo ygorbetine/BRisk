@@ -1,0 +1,5 @@
+waitms 1000
+click 567 189
+waitms 3000
+expect upd_chk 4
+shot atu-erro

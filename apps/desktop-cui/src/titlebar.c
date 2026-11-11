@@ -83,13 +83,18 @@ void titlebar_attach(void *hwnd) {
     if (g_hwnd) SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);   /* recalcula o cliente sem a moldura */
 }
 
+/* Os controles da janela valem também com um diálogo aberto (minimizar/fechar nunca ficam presos atrás de um modal): por isso não passam por briks_blocked. */
+static bool tb_inside(cui_ctx *ui, const char *id) {
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
 static bool tb_btn(cui_ctx *ui, const char *id, const char *icon, bool danger) {
-    const bool hov = briks_hover(ui, id);
+    const bool hov = tb_inside(ui, id);
     cui_box(ui, .id = id, .width = CUI_PX(TB_BW), .height = CUI_PX(TB_BH), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
             .bg = hov ? (danger ? CUI_RGBA(0xe95555dd) : CUI_RGBA(0xffffff1f)) : CUI_RGBA(0x00000000)) {
         cui_icon(ui, icon, 14, hov && danger ? CUI_RGB(0xffffff) : B_TEXT);
     }
-    return briks_clicked_r(ui, id, 8);
+    return hov && cui_mouse_clicked(ui, CUI_MOUSE_LEFT);
 }
 
 /* Desenha a barra (primeiro item do quadro, antes do filete de gradiente). */
@@ -131,6 +136,9 @@ static int g_hit_result = -1;
 bool titlebar_script(const char *cmd, int a, int b) {
     if (!strcmp(cmd, "tbhit")) {
         RECT r; if (!g_hwnd || !GetWindowRect(g_hwnd, &r)) return false;
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        if (a < 0) a += w;   /* negativo = distância da borda direita/inferior (a janela real pode ter outro tamanho por causa do DPI) */
+        if (b < 0) b += h;
         g_hit_result = titlebar_hit(a, b, r.right - r.left, r.bottom - r.top, IsZoomed(g_hwnd) != 0, scale());
         return true;
     }

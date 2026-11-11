@@ -483,7 +483,7 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo 
                 char rn[96]; snprintf(rn, sizeof rn, "g-%s", g->ch[i].room);
                 if (s->in_room && !strcmp(s->room_name, rn)) cui_box(ui, .width = CUI_FILL, .pad_left = 26, .gap = 1) {
                     cui_text(ui, s->user_name, .size = 12, .color = B_ONLINE, .nowrap = true);
-                    for (int q = 0; q < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) cui_text(ui, s->rtc_peers[q].name, .size = 12, .color = B_MUTED, .nowrap = true);
+                    for (int q = 0; q < BRIKS_MAX_PEERS; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) cui_text(ui, s->rtc_peers[q].name, .size = 12, .color = B_MUTED, .nowrap = true);
                 }
             }
             cui_pop_id(ui);

@@ -83,7 +83,7 @@ void friends_unblock(app_state_t *s, const char *id) {
 
 /* ---- apresentação ---- */
 static bool in_call(const app_state_t *s, const person_t *p) {   /* está na sua chamada agora */
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado")) && !strcmp(s->rtc_peers[i].name, p->name)) return true;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado")) && !strcmp(s->rtc_peers[i].name, p->name)) return true;
     return false;
 }
 
@@ -209,7 +209,7 @@ static void activity_tab(cui_ctx *ui, app_state_t *s) {
         person_t *p = &s->friends[i];
         if (!friends_online(s, p) || !matches(s, p)) continue;
         const char *txt = "Online agora";
-        for (int q = 0; q < 8; q++) if (s->rtc_peers[q].id[0] && !strcmp(s->rtc_peers[q].name, p->name) && in_call(s, p)) {
+        for (int q = 0; q < BRIKS_MAX_PEERS; q++) if (s->rtc_peers[q].id[0] && !strcmp(s->rtc_peers[q].name, p->name) && in_call(s, p)) {
             txt = s->rtc_peers[q].status[0] ? s->rtc_peers[q].status : s->rtc_peers[q].presence[0] ? s->rtc_peers[q].presence : "Na sua chamada";
         }
         cui_push_id_int(ui, 9500 + i);

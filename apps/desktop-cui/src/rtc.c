@@ -89,13 +89,40 @@ void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
 /* Quem não coube na grade (mais de BRIKS_MAX_PEERS remotos): só os ids, para o "+N" contar certo quando entram e saem. */
-static char g_over[256][48];
+/* Guarda também nome, impressão digital e estado: quando abre vaga na grade, o primeiro da fila sobe já completo. */
+typedef struct { char id[48], state[16], fp[72], name[64], status[64], presence[64]; bool mic_off, deafened; unsigned long order; } over_t;
+static over_t g_over[256];
+static unsigned long g_over_seq;
 static void over_clear(app_state_t *s) { memset(g_over, 0, sizeof g_over); s->rtc_overflow = 0; }
-static void over_set(app_state_t *s, const char *id, bool present) {
-    int at = -1, free_at = -1;
-    for (int i = 0; i < 256; i++) { if (g_over[i][0] && !strcmp(g_over[i], id)) at = i; else if (!g_over[i][0] && free_at < 0) free_at = i; }
-    if (present && at < 0 && free_at >= 0) { copy(g_over[free_at], sizeof g_over[free_at], id); s->rtc_overflow++; }
-    if (!present && at >= 0) { g_over[at][0] = 0; if (s->rtc_overflow > 0) s->rtc_overflow--; }
+static over_t *over_find(const char *id) { for (int i = 0; i < 256; i++) if (g_over[i].id[0] && !strcmp(g_over[i].id, id)) return &g_over[i]; return NULL; }
+static void over_set(app_state_t *s, const char *id, const char *state) {
+    over_t *o = over_find(id);
+    if (!strcmp(state, "fechado")) { if (o) { memset(o, 0, sizeof *o); if (s->rtc_overflow > 0) s->rtc_overflow--; } return; }
+    if (!o) { for (int i = 0; i < 256 && !o; i++) if (!g_over[i].id[0]) o = &g_over[i]; if (!o) return; memset(o, 0, sizeof *o); copy(o->id, sizeof o->id, id); o->order = ++g_over_seq; s->rtc_overflow++; }
+    copy(o->state, sizeof o->state, state);
+}
+/* peer.info / peer.state de quem está fora da grade */
+static void over_note(const jval *j, const char *ev) {
+    if (strcmp(ev, "peer.info") && strcmp(ev, "peer.state")) return;
+    over_t *o = over_find(json_str(j, "peer_id", "")); if (!o) return;
+    if (!strcmp(ev, "peer.info")) { copy(o->fp, sizeof o->fp, json_str(j, "fp", "")); copy(o->name, sizeof o->name, json_str(j, "name", "")); return; }
+    const jval *m = json_get(j, "microphone"), *d = json_get(j, "deafened");
+    o->mic_off = m && m->type == J_BOOL && !m->b; o->deafened = d && d->type == J_BOOL && d->b;
+    copy(o->status, sizeof o->status, json_str(j, "status", "")); copy(o->presence, sizeof o->presence, json_str(j, "presence", ""));
+}
+/* Abriu vaga na grade: sobe quem espera há mais tempo. */
+static void over_promote(app_state_t *s) {
+    for (;;) {
+        int slot = -1; for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (!s->rtc_peers[i].id[0]) { slot = i; break; }
+        over_t *o = NULL; for (int i = 0; i < 256; i++) if (g_over[i].id[0] && (!o || g_over[i].order < o->order)) o = &g_over[i];
+        if (slot < 0 || !o) return;
+        memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]);
+        copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, o->id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, o->state);
+        copy(s->rtc_peers[slot].fp, sizeof s->rtc_peers[slot].fp, o->fp); copy(s->rtc_peers[slot].name, sizeof s->rtc_peers[slot].name, o->name);
+        copy(s->rtc_peers[slot].status, sizeof s->rtc_peers[slot].status, o->status); copy(s->rtc_peers[slot].presence, sizeof s->rtc_peers[slot].presence, o->presence);
+        s->rtc_peers[slot].mic_off = o->mic_off; s->rtc_peers[slot].deafened = o->deafened;
+        memset(o, 0, sizeof *o); if (s->rtc_overflow > 0) s->rtc_overflow--;
+    }
 }
 
 static void set_peer(app_state_t *s, const char *id, const char *state) {
@@ -104,8 +131,8 @@ static void set_peer(app_state_t *s, const char *id, const char *state) {
     if (!id[0]) return;
     for (int i = 0; i < n; i++) if (!strcmp(s->rtc_peers[i].id, id)) { slot = i; break; }
     if (slot < 0 && strcmp(state, "fechado")) for (int i = 0; i < n; i++) if (!s->rtc_peers[i].id[0]) { slot = i; break; }
-    if (slot < 0) { over_set(s, id, strcmp(state, "fechado") != 0); return; }
-    if (!strcmp(state, "fechado")) { memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]); }
+    if (slot < 0) { over_set(s, id, state); return; }
+    if (!strcmp(state, "fechado")) { memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]); over_promote(s); }
     else { copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, state); }
     s->rtc_peer_count = s->rtc_authed_count = 0;
     for (int i = 0; i < n; i++) if (s->rtc_peers[i].id[0]) { s->rtc_peer_count++; if (!strcmp(s->rtc_peers[i].state, "autenticado")) s->rtc_authed_count++; }
@@ -117,6 +144,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     if (!j) return false;
     const char *ev = json_str(j, "ev", "");
     bool changed = true;
+    over_note(j, ev);
     if (!strcmp(ev, "session.ready")) {
         s->rtc_session_ready = true;
         copy(s->rtc_fp, sizeof s->rtc_fp, json_str(j, "fingerprint", ""));
@@ -216,7 +244,13 @@ void rtc_pump(app_state_t *s) {
         for (int i = 0; i < demo_n; i++) { snprintf(s->rtc_peers[i].id, sizeof s->rtc_peers[i].id, "demo-%d", i); copy(s->rtc_peers[i].state, sizeof s->rtc_peers[i].state, "autenticado");
             if (i < 6) copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, nm[i]); else snprintf(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, "%s %d", nm[i % 6], i / 6 + 1);
             snprintf(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, "fp-demo-%d", i); if (i % 5 == 3) s->rtc_peers[i].mic_off = true; if (i % 7 == 4) s->rtc_peers[i].level = 0.5f; }
-        if (atoi(getenv("BRIKS_DEMO_PEERS")) > BRIKS_MAX_PEERS) s->rtc_overflow = atoi(getenv("BRIKS_DEMO_PEERS")) - BRIKS_MAX_PEERS;
+        /* quem passa da grade entra pela fila de verdade; BRIKS_DEMO_LEAVE=K tira os K primeiros da grade (prova da promoção) */
+        for (int i = BRIKS_MAX_PEERS; i < atoi(getenv("BRIKS_DEMO_PEERS")) && i < 200; i++) {
+            char id[48], line[200]; snprintf(id, sizeof id, "demo-%d", i); set_peer(s, id, "autenticado");
+            snprintf(line, sizeof line, "{\"ev\":\"peer.info\",\"peer_id\":\"%s\",\"fp\":\"fp-demo-%d\",\"name\":\"Fila %d\"}", id, i, i - BRIKS_MAX_PEERS + 1);
+            jval *jj = json_parse(line); if (jj) { over_note(jj, "peer.info"); json_free(jj); }
+        }
+        if (getenv("BRIKS_DEMO_LEAVE")) for (int i = 0; i < atoi(getenv("BRIKS_DEMO_LEAVE")) && i < BRIKS_MAX_PEERS; i++) { char id[48]; snprintf(id, sizeof id, "demo-%d", i); set_peer(s, id, "fechado"); }
         if (getenv("BRIKS_DEMO_NETFAIL")) { s->net_failed = true; copy(s->rtc_state, sizeof s->rtc_state, "erro"); copy(s->rtc_msg, sizeof s->rtc_msg, "Não foi possível entrar pelo servidor de chamadas: serviço de tokens inacessível"); }
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         const char *o = getenv("BRIKS_DEV_OPEN"); if (o && !strcmp(o, "kick")) { s->kick_slot = 0; s->kick_open = true; }

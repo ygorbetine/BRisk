@@ -298,7 +298,7 @@ static void demo_frame(char *path, size_t cap, const char *name, int W, int H, i
             unsigned char r = line ? 235 : dot ? (unsigned char)(40 + cx * 13) : (unsigned char)(24 + ((cx + cy) & 1) * 22);
             unsigned char g = line ? 235 : dot ? (unsigned char)(220 - cy * 20) : (unsigned char)(18 + ((cx + cy) & 1) * 16);
             unsigned char bl = line ? 245 : dot ? 200 : (unsigned char)(48 + ((cx + cy) & 1) * 30);
-            p[0] = tint ? g : r; p[1] = tint ? bl : g; p[2] = tint ? r : bl; p[3] = 255;
+            p[0] = tint == 1 ? g : tint == 2 ? bl : r; p[1] = tint == 1 ? bl : tint == 2 ? r : g; p[2] = tint == 1 ? r : tint == 2 ? g : bl; p[3] = 255;
         }
         fwrite(row, 1, (size_t)W * 4, f);
     }
@@ -342,14 +342,22 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     { static int demo; const char *dd = getenv("BRIKS_DEV_SHARE");
       if (!demo && dd && !strncmp(dd, "demo-", 5) && s->rtc_peers[0].id[0]) {
         demo = 1;
-        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
+        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
         jval *jj = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":4000,\"label\":\"Tela 2\"}");
         if (jj) { share_handle_event(s, jj, "share.remote"); json_free(jj); }
-        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two")) demo_frame(q->remote[0].path, sizeof q->remote[0].path, "tela1", 1280, 720, 0);
-        if (!strcmp(dd, "demo-two")) {   /* a mesma pessoa com DUAS telas no ar */
+        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) demo_frame(q->remote[0].path, sizeof q->remote[0].path, "tela1", 1280, 720, 0);
+        if (!strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) {   /* a mesma pessoa com DUAS telas no ar */
             jval *j2 = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"slot\":1,\"state\":\"on\",\"w\":960,\"h\":540,\"fps\":30,\"kbps\":2500,\"label\":\"Tela 3\"}");
             if (j2) { share_handle_event(s, j2, "share.remote"); json_free(j2); }
             demo_frame(q->remote2[0].path, sizeof q->remote2[0].path, "tela2", 960, 540, 1);
+        }
+        if (!strcmp(dd, "demo-many")) {   /* mais duas pessoas transmitindo: 4 blocos no palco (grade / foco) */
+            for (int k = 1; k <= 2; k++) if (s->rtc_peers[k].id[0]) {
+                char js[260]; snprintf(js, sizeof js, "{\"ev\":\"share.remote\",\"peer_id\":\"demo-%d\",\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":3000,\"label\":\"Tela %d\"}", k, k + 3);
+                jval *jk = json_parse(js); if (jk) { share_handle_event(s, jk, "share.remote"); json_free(jk); }
+                char nm[16]; snprintf(nm, sizeof nm, "tela-p%d", k);
+                demo_frame(q->remote[k].path, sizeof q->remote[k].path, nm, 1280, 720, k == 1 ? 2 : 1);
+            }
         }
       }
     }
@@ -635,8 +643,11 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
 }
 
 /* ---------- palco do modo Transmissão ---------- */
-static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv) {
-    int zoom_pct = 100;
+static int g_sfocus = -1;   /* transmissão fixada no Foco (chave de emit_tile); -1 = a primeira da lista */
+static bool s_modal_hint;   /* com um diálogo aberto por cima, o clique não vale para a miniatura */
+static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
+    int zoom_pct = 100; bool clicked = false;
+    if (compact) { chip = NULL; volume = NULL; zv = NULL; }   /* miniatura da faixa do Foco: só a imagem e o nome; clicar traz para o destaque */
     if (key >= 0 && key < 2 * FV_N) g_zoom_pct[key] = 100;
     g_tiles++;
     cui_push_id_int(ui, 800 + key);
@@ -660,10 +671,10 @@ static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
                 cui_text(ui, wait, .size = 14, .color = B_MUTED);
             }
         }
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = 18) {
-            cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = 12, .pad_y = 8, .align = CUI_ALIGN_CENTER });
-            cui_icon(ui, CUI_ICON_MONITOR, 14, B_C3);
-            cui_text(ui, title, .size = 14);
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = compact ? 8 : 18) {
+            cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 8 : 12, .pad_y = compact ? 4 : 8, .align = CUI_ALIGN_CENTER });
+            if (!compact) cui_icon(ui, CUI_ICON_MONITOR, 14, B_C3);
+            cui_text(ui, title, .size = compact ? 11 : 14, .nowrap = true);
             cui_card_end(ui);
         }
         if (chip && chip[0]) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 18) { briks_status_pill(ui, chip); }
@@ -682,7 +693,9 @@ static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             }
         }
     }
+    if (compact && !s_modal_hint && briks_clicked_r(ui, "vt", 20.0f)) clicked = true;
     cui_pop_id(ui);
+    return clicked;
 }
 
 /* Aviso discreto "X começou a transmitir · Assistir". Fica 8 s; some se a pessoa parar, sair, ou se eu já estiver assistindo.
@@ -717,58 +730,106 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_cy")) return (int)g_zoom[0].cy;
     if (!strcmp(n, "share_mode")) return s->call_mode;
     if (!strcmp(n, "share_tiles")) return g_tiles;          /* blocos de vídeo no palco */
+    if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
     if (!strcmp(n, "share_zoom2")) return g_zoom_pct[FV2(0)];   /* % da 2ª tela do 1º participante */
     return -9999;
 }
 
-bool ui_share_stage(cui_ctx *ui, app_state_t *s) {
+/* Um bloco do palco, identificado pela mesma chave de g_fv/g_zoom: i = participante, FV2(i) = a 2ª tela dele,
+ * BRIKS_MAX_PEERS = minha 1ª tela, FV2(BRIKS_MAX_PEERS) = minha 2ª. Devolve true se a miniatura foi clicada. */
+static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
     share_state_t *q = &s->sh;
-    int n = (q->active ? 1 : 0) + (q->second.active ? 1 : 0);
-    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) n += (q->remote[i].on ? 1 : 0) + (q->remote2[i].on ? 1 : 0);
+    char path[300], title[200], chip[96], r[24];
+    if (key == BRIKS_MAX_PEERS) {
+        preview_path(path, sizeof path);
+        bool has = fv_update(ui, s, &g_fv[key], path);
+        snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
+        quality_chip(q, chip, sizeof chip);
+        return video_tile(ui, key, has ? g_fv[key].tex : 0, g_fv[key].w, g_fv[key].h, title, chip, "Preparando a prévia…", NULL, NULL, compact);
+    }
+    if (key == FV2(BRIKS_MAX_PEERS)) {
+        preview_path_n(path, sizeof path, true);
+        fview_t *v = &g_fv[key];
+        bool has = fv_update(ui, s, v, path);
+        snprintf(title, sizeof title, "Você · %s (2ª tela)", q->second.label[0] ? q->second.label : "sua tela");
+        fmt_rate(q->second.kbps, r, sizeof r);
+        snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->second.h), q->second.fps, r);
+        return video_tile(ui, key, has ? v->tex : 0, v->w, v->h, title, chip, "Preparando a prévia…", NULL, NULL, compact);
+    }
+    const bool two = key >= FV_N; const int i = two ? key - FV_N : key;
+    const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";
+    if (two) {
+        fview_t *v = &g_fv[key];
+        bool has2 = q->remote2[i].path[0] && q->remote2[i].watching && fv_update(ui, s, v, q->remote2[i].path);
+        if (q->remote2[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote2[i].label); else snprintf(title, sizeof title, "%s · 2ª tela", nm);
+        fmt_rate(q->remote2[i].kbps, r, sizeof r);
+        snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->remote2[i].h), q->remote2[i].fps, r);
+        return video_tile(ui, key, has2 ? v->tex : 0, v->w, v->h, title, chip, "Carregando a transmissão…", NULL, &g_zoom[key], compact);
+    }
+    bool has = q->remote[i].path[0] && q->remote[i].watching && fv_update(ui, s, &g_fv[i], q->remote[i].path);
+    if (q->remote[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote[i].label); else snprintf(title, sizeof title, "%s", nm);
+    fmt_rate(q->remote[i].kbps, r, sizeof r);
+    snprintf(chip, sizeof chip, "%s · %d FPS · %s%s", res_name(q->remote[i].h), q->remote[i].fps, r, q->remote[i].audio ? " · com áudio" : "");
+    if (q->remote[i].poor) snprintf(chip, sizeof chip, "Conexão instável: a imagem pode ficar parada");
+    if (!q->remote[i].vol_set) { q->remote[i].vol_set = true; q->remote[i].volume = 1.0f; }
+    float before = q->remote[i].volume;
+    bool c = video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, q->remote[i].poor ? "Sua conexão não está dando conta desta transmissão" : "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL, &g_zoom[i], compact);
+    if (fabsf(before - q->remote[i].volume) > 0.01f) {
+        char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
+        snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, q->remote[i].volume);
+        cmd(line);
+    }
+    return c;
+}
+
+
+/* Palco do modo Transmissão. Grade: todas as transmissões lado a lado, a 2ª tela de uma pessoa é um bloco à parte (call_grid, última
+ * linha centralizada). Foco: uma grande (fixada por clique, senão a primeira) e as outras numa faixa; clicar numa miniatura a traz
+ * para o destaque. O seletor Grade/Foco é o mesmo do modo Call (g_call.layout). W x H = área útil do palco. */
+bool ui_share_stage(cui_ctx *ui, app_state_t *s, float W, float H, int layout) {
+    share_state_t *q = &s->sh;
+    int keys[2 * FV_N], n = 0;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) { keys[n++] = i; if (q->remote2[i].on) keys[n++] = FV2(i); }
+    if (q->active) keys[n++] = BRIKS_MAX_PEERS;
+    if (q->second.active) keys[n++] = FV2(BRIKS_MAX_PEERS);
     g_tiles = 0;
     if (!n) return false;
     cui_request_redraw(ui);   /* vídeo: redesenha a cada quadro enquanto o palco está visível */
-    cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
-        if (q->active) {
-            char path[300], title[160], chip[96]; preview_path(path, sizeof path);
-            bool has = fv_update(ui, s, &g_fv[BRIKS_MAX_PEERS], path);
-            snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
-            quality_chip(q, chip, sizeof chip);
-            video_tile(ui, BRIKS_MAX_PEERS, has ? g_fv[BRIKS_MAX_PEERS].tex : 0, g_fv[BRIKS_MAX_PEERS].w, g_fv[BRIKS_MAX_PEERS].h, title, chip, "Preparando a prévia…", NULL, NULL);
-        }
-        if (q->second.active) {   /* minha 2ª tela */
-            char path[300], title[160], chip[96], r[24]; preview_path_n(path, sizeof path, true);
-            fview_t *v = &g_fv[FV2(BRIKS_MAX_PEERS)];
-            bool has = fv_update(ui, s, v, path);
-            snprintf(title, sizeof title, "Você · %s (2ª tela)", q->second.label[0] ? q->second.label : "sua tela");
-            fmt_rate(q->second.kbps, r, sizeof r);
-            snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->second.h), q->second.fps, r);
-            video_tile(ui, FV2(BRIKS_MAX_PEERS), has ? v->tex : 0, v->w, v->h, title, chip, "Preparando a prévia…", NULL, NULL);
-        }
-        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
-            char title[200], chip[96], r[24];
-            bool has = q->remote[i].path[0] && q->remote[i].watching && fv_update(ui, s, &g_fv[i], q->remote[i].path);
-            const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";
-            if (q->remote[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote[i].label); else snprintf(title, sizeof title, "%s", nm);
-            fmt_rate(q->remote[i].kbps, r, sizeof r);
-            snprintf(chip, sizeof chip, "%s · %d FPS · %s%s", res_name(q->remote[i].h), q->remote[i].fps, r, q->remote[i].audio ? " · com áudio" : "");
-            if (q->remote[i].poor) snprintf(chip, sizeof chip, "Conexão instável: a imagem pode ficar parada");
-            if (!q->remote[i].vol_set) { q->remote[i].vol_set = true; q->remote[i].volume = 1.0f; }
-            float before = q->remote[i].volume;
-            video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, q->remote[i].poor ? "Sua conexão não está dando conta desta transmissão" : "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL, &g_zoom[i]);
-            if (fabsf(before - q->remote[i].volume) > 0.01f) {
-                char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
-                snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, q->remote[i].volume);
-                cmd(line);
+    s_modal_hint = q->dialog_open || s->kick_open || briks_modal_open();
+    const float gap = 14.0f;
+    int mi = -1;
+    for (int i = 0; i < n; i++) if (keys[i] == g_sfocus) mi = i;
+    if (mi < 0) { g_sfocus = -1; mi = 0; }   /* quem estava fixado parou: volta à primeira */
+    if (layout == 1 && n > 1 && (W >= 720.0f ? H >= 150.0f : H >= 260.0f)) {
+        const int k = n - 1; const bool side = W >= 720.0f; int pick = -1;
+        cui_box(ui, .dir = side ? CUI_ROW : CUI_COLUMN, .width = CUI_FILL, .height = CUI_FILL, .gap = gap) {
+            if (side) {
+                const float sw = fminf(fmaxf(W * 0.22f, 170.0f), 280.0f), th = fminf(fmaxf((H - gap * (float)(k - 1)) / (float)k, 96.0f), sw * 0.62f);
+                cui_box(ui, .id = "sfocus", .width = CUI_PX(W - gap - sw), .height = CUI_PX(H)) { emit_tile(ui, s, keys[mi], false); }
+                const bool over = th * (float)k + gap * (float)(k - 1) > H + 0.5f;
+                if (over) { cui_scroll(ui, .id = "sstrip", .width = CUI_PX(sw), .height = CUI_PX(H)) { cui_column(ui, .gap = gap) { for (int i = 0; i < n; i++) if (i != mi) { cui_box(ui, .width = CUI_PX(sw - 10.0f), .height = CUI_PX(th)) { if (emit_tile(ui, s, keys[i], true)) pick = keys[i]; } } } } }
+                else cui_column(ui, .gap = gap, .width = CUI_PX(sw), .height = CUI_PX(H), .justify = CUI_JUSTIFY_CENTER) { for (int i = 0; i < n; i++) if (i != mi) { cui_box(ui, .width = CUI_PX(sw), .height = CUI_PX(th)) { if (emit_tile(ui, s, keys[i], true)) pick = keys[i]; } } }
+            } else {
+                const float sh = 110.0f, tw = fminf(fmaxf((W - gap * (float)(k - 1)) / (float)k, 130.0f), 200.0f);
+                cui_box(ui, .id = "sfocus", .width = CUI_PX(W), .height = CUI_PX(H - gap - sh)) { emit_tile(ui, s, keys[mi], false); }
+                cui_box(ui, .id = "sstrip-h", .dir = CUI_ROW, .width = CUI_PX(W), .height = CUI_PX(sh), .gap = gap, .scroll_x = true, .justify = CUI_JUSTIFY_CENTER) {
+                    for (int i = 0; i < n; i++) if (i != mi) { cui_box(ui, .width = CUI_PX(tw), .height = CUI_PX(sh - 8.0f)) { if (emit_tile(ui, s, keys[i], true)) pick = keys[i]; } }
+                }
             }
-            if (q->remote2[i].on) {   /* a 2ª tela da mesma pessoa: bloco próprio, com o próprio zoom */
-                fview_t *v = &g_fv[FV2(i)];
-                bool has2 = q->remote2[i].path[0] && q->remote2[i].watching && fv_update(ui, s, v, q->remote2[i].path);
-                if (q->remote2[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote2[i].label); else snprintf(title, sizeof title, "%s · 2ª tela", nm);
-                fmt_rate(q->remote2[i].kbps, r, sizeof r);
-                snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->remote2[i].h), q->remote2[i].fps, r);
-                video_tile(ui, FV2(i), has2 ? v->tex : 0, v->w, v->h, title, chip, "Carregando a transmissão…", NULL, &g_zoom[FV2(i)]);
+        }
+        if (pick >= 0) g_sfocus = pick;
+        return true;
+    }
+    /* Grade: blocos iguais; a última linha fica centralizada */
+    int cols, rows; call_grid(n, W, H, gap, &cols, &rows);
+    const float tw = floorf((W - gap * (float)(cols - 1)) / (float)cols), th = floorf((H - gap * (float)(rows - 1)) / (float)rows);
+    cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = gap, .justify = CUI_JUSTIFY_CENTER) {
+        for (int r = 0; r < rows; r++) {
+            cui_push_id_int(ui, 780 + r);
+            cui_row(ui, .width = CUI_FILL, .gap = gap, .justify = CUI_JUSTIFY_CENTER) {
+                for (int c = 0; c < cols && r * cols + c < n; c++) cui_box(ui, .width = CUI_PX(tw), .height = CUI_PX(th)) { emit_tile(ui, s, keys[r * cols + c], false); }
             }
+            cui_pop_id(ui);
         }
     }
     return true;

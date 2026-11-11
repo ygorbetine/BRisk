@@ -131,9 +131,29 @@ pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool, fallback: bool) 
     }
 }
 
+/// Preferência de conexão (Configurações > Rede): 0 Automático, 1 Internet direta, 2 VPN privada. Vale para as próximas conexões.
+static NET_PREF: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub fn set_pref(p: u8) { NET_PREF.store(p.min(2), std::sync::atomic::Ordering::Relaxed); }
+pub fn pref() -> u8 { NET_PREF.load(std::sync::atomic::Ordering::Relaxed) }
+
+/// Adaptador de VPN privada conhecido (ZeroTier, Tailscale, WireGuard e túneis genéricos), pelo nome da interface.
+pub fn is_vpn_iface(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["zerotier", "tailscale", "wireguard", "wintun", "openvpn", "tap-windows", "vpn"].iter().any(|k| n.contains(k)) || n.starts_with("wg") || n.starts_with("zt") || n.starts_with("tun") || n.starts_with("utun")
+}
+
+/// Filtro de interfaces do ICE conforme a preferência: "Internet direta" não oferece candidatos de adaptadores de VPN (o STUN/TURN
+/// seguem valendo). Automático e "VPN privada" deixam todos os adaptadores: a prioridade entre eles é do ICE.
+pub fn iface_allowed(name: &str) -> bool { pref() != 1 || !is_vpn_iface(name) }
+
 #[cfg(test)]
 mod t {
     use super::*;
+    #[test]
+    fn direct_pref_hides_vpn_interfaces() {
+        assert!(super::is_vpn_iface("ZeroTier One [8056c2e21c000001]") && super::is_vpn_iface("Tailscale") && super::is_vpn_iface("wg0"));
+        assert!(!super::is_vpn_iface("Ethernet") && !super::is_vpn_iface("Wi-Fi") && !super::is_vpn_iface("Realtek PCIe GbE"));
+    }
     fn env_of(v: Vec<(&'static str, &'static str)>) -> impl Fn(&str) -> Option<String> { move |k| v.iter().find(|(a, _)| *a == k).map(|(_, b)| b.to_string()) }
 
     #[test]

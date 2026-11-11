@@ -36,6 +36,7 @@ typedef struct {
 } settings_t;
 settings_t g_set;
 int settings_call_mode(void) { return g_set.call_mode; }
+int settings_net_pref(void) { return g_set.net_pref; }
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
@@ -360,13 +361,15 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     static const char *NP[] = { "Automático", "Internet direta", "VPN privada" };
                     SCARD(ui, "MODO DA CHAMADA") {
                         seg(ui, "cfg-cm", CM, 3, &g_set.call_mode);
-                        sub(ui, g_set.call_mode == 0 ? "Conexão direta; passa para o servidor em sala grande ou rede ruim." : g_set.call_mode == 1 ? "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio." : "Passa por um servidor. Melhor para salas grandes e redes difíceis.");
-                        sub(ui, "Todos da sala precisam usar o mesmo modo."); tag_nofx(ui);
+                        sub(ui, g_set.call_mode == 0 ? "Usa o servidor de chamadas (SFU) quando ele está configurado. Se ele falhar, o Briks mostra o erro e oferece entrar em P2P; nunca troca sozinho." : g_set.call_mode == 1 ? "Conexão direta entre todos, até 8 pessoas. Sem servidor no meio." : "Passa por um servidor. Melhor para salas grandes e redes difíceis.");
+                        sub(ui, "Todos da sala precisam usar o mesmo modo. Vale a partir da próxima chamada.");
+                        if (s->net_cfg_known) sub(ui, s->net_cfg_err[0] ? s->net_cfg_err : s->net_cfg_sfu ? "Servidor de chamadas: configurado." : g_set.call_mode == 2 ? "Servidor de chamadas: não configurado; \"Sempre SFU\" usa P2P até configurar." : "Servidor de chamadas: não configurado; as chamadas usam P2P.");
                     }
                     SCARD(ui, "PREFERÊNCIA DE CONEXÃO") {
                         seg(ui, "cfg-np", NP, 3, &g_set.net_pref);
-                        sub(ui, g_set.net_pref == 0 ? "Deixa o WebRTC escolher entre VPN, conexão direta e TURN." : g_set.net_pref == 1 ? "Ignora adaptadores VPN e mantém STUN/TURN disponíveis." : "Prioriza ZeroTier, Tailscale ou WireGuard e usa a internet como fallback.");
-                        tag_nofx(ui);
+                        sub(ui, g_set.net_pref == 0 ? "Deixa o WebRTC escolher entre VPN, conexão direta e TURN." : g_set.net_pref == 1 ? "Não oferece os adaptadores de VPN (ZeroTier, Tailscale, WireGuard) à chamada; STUN/TURN seguem disponíveis." : "Mantém os adaptadores de VPN disponíveis junto com a internet.");
+                        if (g_set.net_pref == 2) sub(ui, "A prioridade entre VPN e internet ainda é decidida pelo WebRTC; esta opção não bloqueia nenhum adaptador.");
+                        else sub(ui, "Vale a partir da próxima chamada.");
                     }
                     SCARD(ui, "TESTE DE CONEXÃO") {
                         netdiag_t nd = netdiag_get();

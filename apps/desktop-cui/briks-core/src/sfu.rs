@@ -167,6 +167,7 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
     let registry = webrtc::api::interceptor_registry::configure_twcc_receiver_only(registry, &mut m)?;
     let mut se = webrtc::api::setting_engine::SettingEngine::default();
     se.set_srtp_replay_protection_window(8192);
+        se.set_interface_filter(Box::new(|n: &str| crate::sfu_cfg::iface_allowed(n)));
     // O webrtc-rs 0.12 anuncia AEAD_AES_256_GCM mas o SRTP dele entra em pânico com chave de 256 bits (generic-array, key_derivation.rs);
     // o LiveKit/pion prefere esse perfil. Anunciando só os de 128 bits a negociação cai num perfil que funciona.
     se.set_srtp_protection_profiles(vec![SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm, SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80]);

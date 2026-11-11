@@ -244,6 +244,12 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
         changed = true;
+    } else if (!strcmp(ev, "group.roster")) {
+        groups_roster_event(s, j);
+    } else if (!strcmp(ev, "net.config")) {
+        const jval *c = json_get(j, "configured");
+        s->net_cfg_known = true; s->net_cfg_sfu = c && c->type == J_BOOL && c->b;
+        copy(s->net_cfg_err, sizeof s->net_cfg_err, json_str(j, "error", ""));
     } else if (!strcmp(ev, "net.mode")) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
         s->net_sfu = !strcmp(md, "sfu");
@@ -259,7 +265,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, "O serviço de chamadas encerrou.");
-        s->rtc_session_ready = s->rtc_session_sent = false;
+        s->rtc_session_ready = s->rtc_session_sent = false; groups_roster_reset();
     } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
     return changed;
@@ -329,17 +335,27 @@ void rtc_pump(app_state_t *s) {
                 send_cmd("profile.set", extra);
             }
         }
-        if (s->rtc_want_room && !s->rtc_session_sent) {
+        {   /* Configurações > Rede: o modo da chamada e a preferência de conexão seguem para o core (que grava net-mode.json) quando mudam */
+            static int lcm = -1, lnp = -1;
+            const int cm = settings_call_mode(), np = settings_net_pref();
+            if (cm != lcm || np != lnp) {
+                lcm = cm; lnp = np;
+                char extra[96]; snprintf(extra, sizeof extra, "\"mode\":\"%s\",\"pref\":%d", cm == 1 ? "p2p" : cm == 2 ? "sfu" : "auto", np);
+                send_cmd("net.mode.set", extra);
+            }
+        }
+        if ((s->rtc_want_room || groups_want_roster(s)) && !s->rtc_session_sent) {
             char extra[256], nm[160];
             json_escape(s->user_name[0] ? s->user_name : "Você", nm, sizeof nm);
             snprintf(extra, sizeof extra, "\"display_name\":\"%s\"", nm);
             send_cmd("session.start", extra);
             s->rtc_session_sent = true;
         }
+        groups_roster_tick(s);
         if (s->rtc_want_room && s->rtc_session_ready) {
             char extra[256], rm[160];
             json_escape(s->room_name, rm, sizeof rm);
-            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\"", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto"); }
+            { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\",\"pref\":%d", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto", settings_net_pref()); }
             send_cmd("room.join", extra);
             s->rtc_want_room = false;
         }

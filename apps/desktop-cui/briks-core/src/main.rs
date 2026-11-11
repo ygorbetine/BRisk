@@ -13,6 +13,7 @@ mod video;
 mod gpuconv;
 mod friend_invite;
 mod group_sync;
+mod grouproster;
 mod ice;
 mod history;
 mod identity;

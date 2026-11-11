@@ -798,3 +798,95 @@ async fn slow_viewer_does_not_drag_the_others() {
     assert!(two.1 >= one.1 * 0.7, "o bitrate de todos caiu por causa de um: {:.0} → {:.0} kbps", one.1, two.1);
     assert_eq!(two.5, 1, "o espectador ruim deveria ter ficado fora do cálculo");
 }
+
+/// Queda TOTAL de rede por 4 s (nada passa nos dois sentidos) e volta. Mede quanto tempo depois da volta chega o primeiro quadro
+/// novo e se a latência volta ao que era (sem acúmulo: o receptor não pode ficar exibindo quadros atrasados da fila).
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn survives_a_four_second_network_outage() {
+    use crate::capture::{read_stamp, SourceKind};
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000a7", "bbbbbbbb-2222-4222-8222-0000000000b7");
+    let sim = crate::netsim::register(&[pa, pb]);
+    let mut a = node(port, pa, "Ana", "queda1", Arc::new(Identity::generate()));
+    let mut b = node(port, pb, "Beto", "queda1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+    let dir = std::env::temp_dir().join(format!("briks-queda-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Queda".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
+    let src = FrameSource::open(&dir.join("rx.bin")).unwrap();
+    // amostra por `ms`: (quadros novos, latência p50, instante do 1º quadro novo desde o início da amostra)
+    async fn sample(src: &FrameSource, ms: u64) -> (u32, i32, Option<u128>) {
+        let (mut last_n, mut n, mut lats, mut first) = (src.read().map(|r| r.2).unwrap_or(0), 0u32, vec![], None);
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < Duration::from_millis(ms) {
+            if let Some((w, _, k, rgba)) = src.read() { if k != last_n { last_n = k; n += 1; first.get_or_insert(t0.elapsed().as_millis());
+                let l = (src.ts() as u32).wrapping_sub(read_stamp(&rgba, w)) as i32; if (0..20_000).contains(&l) { lats.push(l); } } }
+            tokio::time::sleep(Duration::from_millis(8)).await;
+        }
+        lats.sort();
+        (n, lats.get(lats.len() / 2).copied().unwrap_or(-1), first)
+    }
+    let before = sample(&src, 4000).await;
+    sim.set(0.0, 100.0);   // nada passa
+    let during = sample(&src, 4000).await;
+    sim.set(0.0, 0.0);
+    let after = sample(&src, 6000).await;
+    let late = sample(&src, 3000).await;
+    eprintln!("antes: {} quadros em 4 s, latência p50 {} ms | durante a queda de 4 s: {} quadros | depois: 1º quadro novo {} ms após a volta, {} quadros em 6 s, latência p50 {} ms | 6–9 s depois: latência p50 {} ms",
+        before.0, before.1, during.0, after.2.map(|v| v as i64).unwrap_or(-1), after.0, after.1, late.1);
+    assert!(during.0 <= 3, "a queda não cortou a rede");
+    assert!(after.2.map(|v| v < 3000).unwrap_or(false), "não voltou em 3 s depois da rede voltar");
+    assert!(late.1 >= 0 && late.1 < before.1 + 80, "latência acumulada depois da queda: {} → {} ms", before.1, late.1);
+}
+
+/// Duas transmissões na mesma sala: A e B transmitem ao mesmo tempo e cada um assiste ao outro.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn two_simultaneous_shares_in_one_room() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let mut a = node(port, PA, "Ana", "duas1", Arc::new(Identity::generate()));
+    let mut b = node(port, PB, "Beto", "duas1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-duas-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = |kind, label: &str| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "de A"), preview: None, dump: None }).await.unwrap();
+    b.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::TestResize, "de B"), preview: None, dump: None }).await.unwrap();
+    let on_b = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão de A");
+    let on_a = wait_share(&mut a, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("A não soube da transmissão de B");
+    assert_eq!((on_b["label"].as_str(), on_a["label"].as_str()), (Some("de A"), Some("de B")));
+    b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b-ve-a.bin") }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareWatch { key: PB.into(), on: true, path: dir.join("a-ve-b.bin") }).await.unwrap();
+    // junta os erros dos dois lados enquanto espera (uma colisão de ofertas mal resolvida aparece aqui)
+    async fn frame_or_errors(h: &mut MeshHandle, who: &str) {
+        let end = std::time::Instant::now() + Duration::from_secs(25);
+        loop {
+            match timeout(end.saturating_duration_since(std::time::Instant::now()), h.events.recv()).await {
+                Ok(Some(MeshEvent::Share(v))) => { if v["ev"] == "share.remote" && v["state"] == "frame" { return; } if v["ev"] == "share.rxstats" { eprintln!("[{who}] {v}"); } }
+                Ok(Some(MeshEvent::Error(e))) => eprintln!("[{who}] erro: {e}"),
+                Ok(Some(_)) => {}
+                _ => panic!("{who} sem quadro do outro"),
+            }
+        }
+    }
+    frame_or_errors(&mut b, "B").await;
+    frame_or_errors(&mut a, "A").await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let (na, nb) = (FrameSource::open(&dir.join("a-ve-b.bin")).unwrap().read().map(|r| r.2).unwrap_or(0), FrameSource::open(&dir.join("b-ve-a.bin")).unwrap().read().map(|r| r.2).unwrap_or(0));
+    eprintln!("duas transmissões: A recebeu {na} quadros de B e B recebeu {nb} quadros de A em ~3 s");
+    assert!(na > 30 && nb > 30);
+    // A para a dele: a de B continua
+    a.cmd.send(MeshCmd::ShareStop).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await.expect("B não soube que A parou");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let na2 = FrameSource::open(&dir.join("a-ve-b.bin")).unwrap().read().map(|r| r.2).unwrap_or(0);
+    assert!(na2 > na + 15, "a transmissão de B parou junto: {na} → {na2}");
+}

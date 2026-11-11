@@ -115,6 +115,8 @@ struct Peer {
     name: String,
     vsender: Option<Arc<RTCRtpSender>>,
     asender: bool,   // faixa de áudio da transmissão já ligada a este peer
+    reneg_pending: bool,   // pediram (ou preciso de) uma nova offer, mas havia uma em andamento: sai quando a resposta chegar
+    recv_slots: bool,      // já criei as vagas de recepção (áudio + vídeo) para a transmissão deste peer
     recv: Arc<RecvState>,
 }
 
@@ -323,7 +325,7 @@ impl Actor {
         let recv = Arc::new(RecvState::default());
         let pc = self.new_pc(peer_id, gen, recv.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, asender: false, recv });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: None, asender: false, reneg_pending: false, recv_slots: false, recv });
         Ok(())
     }
 
@@ -336,6 +338,12 @@ impl Actor {
     }
 
     async fn send_signal(&self, kind: &str, target: &str, payload: Value) {
+        if std::env::var("BRIKS_SDP_DEBUG").is_ok() { if let Some(sdp) = payload["sdp"]["sdp"].as_str() {
+            let mut sum = vec![]; let mut cur = String::new();
+            for l in sdp.lines() { if l.starts_with("m=") { if !cur.is_empty() { sum.push(cur.clone()); } cur = l.split(' ').next().unwrap_or("").to_string(); } else if l.starts_with("a=mid:") { cur += &format!(" {}", &l[2..]); } else if ["a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"].contains(&l) { cur += &format!(" {}", &l[2..]); } else if l.starts_with("a=msid:") { cur += &format!(" {}", l.split(' ').last().unwrap_or("")); } }
+            sum.push(cur);
+            eprintln!("[sdp {} -> {}] {kind}: {}", &self.cfg.local_peer[..4], &target[..4], sum.join(" | "));
+        } }
         #[cfg(test)]
         let payload = { let mut p = payload; if crate::netsim::for_peer(&self.cfg.local_peer).is_some() { if let Some(s) = p["sdp"]["sdp"].as_str().map(crate::netsim::strip_sdp) { p["sdp"]["sdp"] = json!(s); } } p };
         let env = Envelope { version: 1, room_id: self.room_hash.clone(), from_peer_id: self.cfg.local_peer.clone(), target_peer_id: Some(target.into()),
@@ -372,6 +380,7 @@ impl Actor {
                 let Ok(sdp) = serde_json::from_value::<RTCSessionDescription>(env.payload["sdp"].clone()) else { return };
                 let (collision, polite) = { let p = &self.peers[&from]; (p.making_offer || p.pc.signaling_state() != RTCSignalingState::Stable, p.polite) };
                 if collision && !polite { self.peers.get_mut(&from).unwrap().ignore_offer = true; return; }
+                let redo = collision && polite;
                 if collision && polite {
                     // rollback da offer local (Perfect Negotiation) e segue como respondedor na MESMA conexão
                     let pc = self.peers[&from].pc.clone();
@@ -385,6 +394,9 @@ impl Actor {
                 let r: Result<RTCSessionDescription> = async { pc.set_remote_description(sdp).await?; let a = pc.create_answer(None).await?; pc.set_local_description(a.clone()).await?; Ok(a) }.await;
                 self.flush_ice(&from).await;
                 match r { Ok(a) => self.send_signal("webrtc.answer", &from, json!({ "sdp": a })).await, Err(e) => self.emit(MeshEvent::Error(format!("answer: {e}"))).await }
+                // A minha offer foi desfeita pela colisão: o que ela levava (ex.: a faixa de vídeo de uma transmissão iniciada ao mesmo
+                // tempo que a do outro) ainda não foi negociado. Reoferece agora que a conexão voltou a ficar estável.
+                if redo { self.start_offer(&from, false).await; }
             }
             "webrtc.answer" => {
                 let Ok(sdp) = serde_json::from_value::<RTCSessionDescription>(env.payload["sdp"].clone()) else { return };
@@ -392,6 +404,7 @@ impl Actor {
                 if pc.signaling_state() != RTCSignalingState::HaveLocalOffer { return; }
                 if let Err(e) = pc.set_remote_description(sdp).await { self.emit(MeshEvent::Error(format!("set answer: {e}"))).await; return; }
                 self.flush_ice(&from).await;
+                if self.peers.get_mut(&from).map(|p| std::mem::take(&mut p.reneg_pending)).unwrap_or(false) { self.start_offer(&from, false).await; }
             }
             "webrtc.ice-candidate" => {
                 let Ok(init) = serde_json::from_value::<RTCIceCandidateInit>(env.payload["candidate"].clone()) else { return };
@@ -551,8 +564,18 @@ impl Actor {
             }
             Err(e) => { self.emit(MeshEvent::Error(format!("faixa de vídeo: {e}"))).await; return; }
         }
-        self.start_offer(id, false).await;
+        self.renegotiate(id).await;
         if let Some(info) = self.share.as_ref().and_then(|s| s.info.clone()) { self.send_share_state(id, &info).await; }
+    }
+
+    /// Renegociação sem colisão: só o lado iniciador (o de peerId menor) faz offers. O outro lado pede a ele pelo DataChannel
+    /// ("share.reneg"); se já há uma offer em andamento, a nova sai quando a resposta chegar. Duas transmissões começando ao mesmo
+    /// tempo geravam offers cruzadas, e o desfazer (rollback) do webrtc-rs travava a conexão.
+    async fn renegotiate(&mut self, id: &str) {
+        let Some(p) = self.peers.get(id) else { return };
+        if p.polite { self.dc_send(id, json!({ "version": 2, "type": "share.reneg" })).await; return; }
+        if p.making_offer || p.pc.signaling_state() != RTCSignalingState::Stable { if let Some(p) = self.peers.get_mut(id) { p.reneg_pending = true; } return; }
+        self.start_offer(id, false).await;
     }
 
     /// Para o envio. A faixa continua ligada aos peers (retomar não renegocia); os espectadores são avisados pelo DataChannel.
@@ -743,6 +766,20 @@ impl Actor {
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
+            }
+            "share.reneg" => {
+                // o outro lado ligou faixas novas e precisa que eu (o iniciador) faça a offer. Sem faixa minha para aquele tipo de
+                // mídia, crio vagas só de recepção para as dele caberem na offer.
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof && !p.polite) != Some(true) { return; }
+                let (pc, need) = { let p = &self.peers[peer]; (p.pc.clone(), p.vsender.is_none() && !p.recv_slots) };
+                if need {
+                    use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+                    use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+                    use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+                    for kind in [RTPCodecType::Audio, RTPCodecType::Video] { let _ = pc.add_transceiver_from_kind(kind, Some(RTCRtpTransceiverInit { direction: RTCRtpTransceiverDirection::Recvonly, send_encodings: vec![] })).await; }
+                    if let Some(p) = self.peers.get_mut(peer) { p.recv_slots = true; }
+                }
+                self.renegotiate(peer).await;
             }
             "share.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }

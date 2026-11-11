@@ -293,6 +293,8 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
+void briks_text_scale_apply(cui_ctx *ui);
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
@@ -327,6 +329,11 @@ static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     }
 }
 /* passar o mouse de verdade sobre a caixa `id` (cui_last_hovered não serve para caixas simples; em modo roteiro deixava tooltips presos no topo) */
+/* tooltip próprio: registra o texto neste quadro; briks_tip_draw (fim do quadro, dentro da pilha raiz) o desenha ao lado do mouse, dentro da janela.
+   Não entra no layout (o cui_tooltip ancorava no "último componente" e ficava preso no topo / empurrava irmãos). */
+extern char g_tip[160];
+static inline void briks_tip(const char *t) { snprintf(g_tip, sizeof g_tip, "%s", t); }
+void briks_tip_draw(cui_ctx *ui);
 static inline bool briks_hover(cui_ctx *ui, const char *id) {
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;

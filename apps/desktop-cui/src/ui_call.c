@@ -238,7 +238,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 }
                 if (pill(ui, 2, CUI_ICON_VOLUME_2, "Ensurdecer", s->deaf ? 1 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
                 cui_push_disabled(ui, true); pill(ui, 3, CUI_ICON_VIDEO, "Câmera · em breve", 0); cui_pop_disabled(ui);
-                cui_push_id_int(ui, 3); if (briks_hover(ui, "b")) cui_tooltip(ui, "O envio de vídeo da câmera chega numa próxima versão. Compartilhar tela já funciona."); cui_pop_id(ui);   /* sem backend de vídeo da câmera nesta versão */
+                cui_push_id_int(ui, 3); if (briks_hover(ui, "b")) briks_tip("O envio de vídeo da câmera chega numa próxima versão. Compartilhar tela já funciona."); cui_pop_id(ui);   /* sem backend de vídeo da câmera nesta versão */
                 ui_share_bar(ui, s);
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
             }

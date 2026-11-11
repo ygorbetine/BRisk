@@ -19,6 +19,23 @@ static void initials(const char *name, char *out) {
 /* Barra de grupos responsiva: só ícones (36..56 px conforme a largura) ou, com folga, ícone + nome + "N membros".
  * g_panel_w é a largura atual do painel (dock.c). Texto sempre medido com a fonte real e cortado com reticências antes da borda. */
 float g_panel_w = 76;
+char g_tip[160];
+void briks_tip_draw(cui_ctx *ui) {
+    if (!g_tip[0]) return;
+    cui_vec2 vp = cui_viewport_size(ui), m = cui_mouse_pos(ui);
+    cui_text_metrics tm = cui_measure_text(ui, CUI_FONT_BODY, 12.0f, g_tip, (int)strlen(g_tip));
+    float w = fminf(tm.width, 320.0f) + 24, h = 28, x = m.x + 14, y = m.y + 20;
+    if (x + w + 6 > vp.x) x = m.x - w - 8;
+    if (y + h + 6 > vp.y) y = m.y - h - 10;
+    x = fmaxf(x, 6); y = fmaxf(y, 6);
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
+        cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 14, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xffffff30), .clip = true,
+                .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+            cui_text(ui, g_tip, .size = 12, .nowrap = true, .color = CUI_RGB(0xf6f1ff));
+        }
+    }
+    g_tip[0] = 0;
+}
 
 static void fit_text(cui_ctx *ui, cui_font font, float size, const char *src, float maxw, char *out, size_t cap, bool *cut) {
     snprintf(out, cap, "%s", src); *cut = false;
@@ -61,7 +78,7 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
         }
     }
     { cui_rect tr = cui_get_rect(ui, cui_make_id(ui, "b")); cui_vec2 tm = cui_mouse_pos(ui);   /* tooltip só com o mouse realmente sobre o item (cui_last_hovered não serve p/ caixas simples) */
-      if (tr.w > 0 && tm.x >= tr.x && tm.y >= tr.y && tm.x < tr.x + tr.w && tm.y < tr.y + tr.h && (!wide || strlen(name) > 14)) cui_tooltip(ui, name); }
+      if (tr.w > 0 && tm.x >= tr.x && tm.y >= tr.y && tm.x < tr.x + tr.w && tm.y < tr.y + tr.h && (!wide || strlen(name) > 14)) briks_tip(name); }
     if (briks_clicked(ui, "b")) *clicked_id = id;
     cui_pop_id(ui);
 }
@@ -72,7 +89,7 @@ static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char 
     cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
         cui_icon(ui, icon, 15, B_MUTED);
     }
-    if (briks_hover(ui, "b")) cui_tooltip(ui, tip);
+    if (briks_hover(ui, "b")) briks_tip(tip);
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
     return hit;
@@ -214,7 +231,9 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             char t[48]; snprintf(t, sizeof t, "AMIGOS — %d", s->friend_count);
             section_title(ui, t);
-            if (!s->friend_count) cui_text(ui, "Nenhum amigo ainda. Use “Adicionar amigo”.", .size = 12, .color = B_MUTED);
+            if (!s->friend_count) {
+                if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .width = CUI_FILL)) { app_open_friend(s, -1); s->friends_tab = 4; }
+            }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
                 if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);
@@ -388,7 +407,12 @@ static void panel_friends(cui_ctx *ui, app_state_t *s) {
         panel_shell(ui, "Amigos", CUI_ICON_USERS);
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "friends-scroll"));
         cui_scroll(ui, .id = "friends-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            if (!s->friend_count) cui_text(ui, "Nenhum amigo ainda.", .size = 12, .color = B_MUTED);
+            if (!s->friend_count) {
+                cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 24, .gap = 10) {
+                    cui_text(ui, "Você ainda não tem amigos.", .size = 12, .color = B_MUTED);
+                    if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_USER_PLUS)) { app_open_friend(s, -1); s->friends_tab = 4; }
+                }
+            }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, 7000 + i);
                 if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);

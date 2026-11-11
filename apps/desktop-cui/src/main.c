@@ -34,6 +34,7 @@ static void dev_autologin(void) {
 }
 
 static void frame(cui_ctx *ui) {
+    { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
@@ -57,6 +58,7 @@ static void frame(cui_ctx *ui) {
             case SCREEN_CALL: ui_call(ui, &state); break;
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            briks_tip_draw(ui);
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }

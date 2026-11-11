@@ -890,3 +890,73 @@ async fn two_simultaneous_shares_in_one_room() {
     let na2 = FrameSource::open(&dir.join("a-ve-b.bin")).unwrap().read().map(|r| r.2).unwrap_or(0);
     assert!(na2 > na + 15, "a transmissão de B parou junto: {na} → {na2}");
 }
+
+/// Teste longo (30 min por padrão; BRIKS_SOAK_MIN muda): A transmite vídeo + áudio sintéticos, B assiste. A cada 30 s registra
+/// memória, handles e threads do processo e a latência p50. Passa se, depois do aquecimento, nada cresce e a latência não deriva.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn soak_no_leaks_no_latency_drift() {
+    use crate::capture::{read_stamp, SourceKind};
+    use crate::procaudio::AudioMode;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    fn proc_stats() -> (f64, u32, usize) {
+        use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        unsafe {
+            let mut m = PROCESS_MEMORY_COUNTERS::default();
+            let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut m, std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32);
+            let mut h = 0u32; let _ = GetProcessHandleCount(GetCurrentProcess(), &mut h);
+            let threads = std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0);
+            (m.WorkingSetSize as f64 / 1048576.0, h, threads)
+        }
+    }
+    let minutes: u64 = std::env::var("BRIKS_SOAK_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000a9", "bbbbbbbb-2222-4222-8222-0000000000b9");
+    let mut a = node(port, pa, "Ana", "soak1", Arc::new(Identity::generate()));
+    let (mut b, bau) = node_audio(port, pb, "Beto", "soak1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+    let dir = std::env::temp_dir().join(format!("briks-soak-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longo".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: true }, preview: Some(dir.join("pv.bin")), dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
+    let src = FrameSource::open(&dir.join("rx.bin")).unwrap();
+    let out = std::env::var("BRIKS_ADAPT_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    let mut csv = String::from("minuto,memoria_mb,handles,quadros_em_30s,latencia_p50_ms,quadros_audio\n");
+    let mut rows: Vec<(f64, u32, u32, i32)> = vec![];
+    let t0 = std::time::Instant::now();
+    let mut last_n = src.read().map(|r| r.2).unwrap_or(0);
+    while t0.elapsed() < Duration::from_secs(minutes * 60) {
+        let (mut frames, mut lats) = (0u32, vec![]);
+        let w0 = std::time::Instant::now();
+        while w0.elapsed() < Duration::from_secs(30) {
+            if let Some((w, _, n, rgba)) = src.read() { if n != last_n { frames += (n - last_n) as u32; last_n = n; let l = (src.ts() as u32).wrapping_sub(read_stamp(&rgba, w)) as i32; if (0..20_000).contains(&l) { lats.push(l); } } }
+            while a.events.try_recv().is_ok() {}
+            while b.events.try_recv().is_ok() {}
+            let mut sink = [0.0f32; 960]; bau.mix_pull_stereo(&mut sink);   // consome o áudio como a placa de som faria
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        lats.sort();
+        let (mem, handles, _) = proc_stats();
+        let p50 = lats.get(lats.len() / 2).copied().unwrap_or(-1);
+        let af = bau.rx_stat(&format!("{pa}#screen")).frames;
+        csv += &format!("{:.1},{mem:.1},{handles},{frames},{p50},{af}\n", t0.elapsed().as_secs_f64() / 60.0);
+        let _ = std::fs::write(out.join("teste-longo.csv"), &csv);
+        rows.push((mem, handles, frames, p50));
+    }
+    let warm = rows.len().min(4);   // 2 minutos de aquecimento
+    let (first, last) = (&rows[warm..warm + 4.min(rows.len() - warm)], &rows[rows.len().saturating_sub(4)..]);
+    let avg = |v: &[(f64, u32, u32, i32)], f: &dyn Fn(&(f64, u32, u32, i32)) -> f64| v.iter().map(f).sum::<f64>() / v.len().max(1) as f64;
+    let (m0, m1) = (avg(first, &|r| r.0), avg(last, &|r| r.0));
+    let (h0, h1) = (avg(first, &|r| r.1 as f64), avg(last, &|r| r.1 as f64));
+    let (l0, l1) = (avg(first, &|r| r.3 as f64), avg(last, &|r| r.3 as f64));
+    let fmin = rows.iter().map(|r| r.2).min().unwrap_or(0);
+    eprintln!("teste longo de {minutes} min: memória {m0:.0} → {m1:.0} MB; handles {h0:.0} → {h1:.0}; latência p50 {l0:.0} → {l1:.0} ms; menor nº de quadros num intervalo de 30 s: {fmin}");
+    assert!(m1 < m0 * 1.25 + 20.0, "memória cresceu: {m0:.0} → {m1:.0} MB");
+    assert!(h1 < h0 * 1.2 + 30.0, "handles cresceram: {h0:.0} → {h1:.0}");
+    assert!((l1 - l0).abs() < 40.0, "latência derivou: {l0:.0} → {l1:.0} ms");
+    assert!(fmin > 300, "houve um intervalo de 30 s quase sem quadros: {fmin}");
+}

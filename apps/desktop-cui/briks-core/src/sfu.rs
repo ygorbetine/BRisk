@@ -242,6 +242,19 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                     let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                         if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                     });
+                    // Faixa nova (1ª assinatura ou reassinatura depois de uma reconexão): o receptor pede um quadro-chave ao começar,
+                    // mas esse 1º pedido pode chegar ao servidor antes de a faixa de quem transmite estar pronta e se perder; o
+                    // seguinte só sairia depois de 2 s sem quadros. Repete o pedido algumas vezes, até o 1º quadro aparecer.
+                    if !(cfg!(test) && std::env::var("BRIKS_SFU_TEST_REKEY_OLD").is_ok()) {
+                        let (pli2, recv2) = (pli.clone(), recv.clone());
+                        tokio::spawn(async move {
+                            for ms in [250u64, 350, 500, 700] {
+                                tokio::time::sleep(Duration::from_millis(ms)).await;
+                                if recv2.frames.load(Ordering::Relaxed) > 0 { break; }
+                                if recv2.watching.load(Ordering::Relaxed) { pli2(); }
+                            }
+                        });
+                    }
                     tokio::spawn(share::run_remote_video(meta.identity.clone(), track, recv, sev, pli));
                 } else if let Some(a) = audio {
                     let key = if meta.source == lk::TrackSource::ScreenShareAudio as i32 { format!("{}#screen", meta.identity) } else { meta.identity.clone() };
@@ -285,13 +298,15 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
         data, dc_pub: None, dc_queue: vec![], leave: false,
         url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
+        owner_marks: HashMap::new(), republish_video: false,
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
         pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
+    remember_token(&actor.token);
     actor.handle_join(join, false).await;
-    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx, frx).await; });
+    tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx, frx).await; forget_token(&actor.token); });
     Ok(SfuHandle { cmd: ctx, events: erx, stats, identity, server })
 }
 
@@ -313,7 +328,7 @@ fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<
     if let Some(m) = crate::netmode::deny_url(token_url) { return Err(m.into()); }
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
         .post(token_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
-        .send_json(json!({ "room": room }));
+        .send_json(match previous_token(room, access_token) { Some(p) => json!({ "room": room, "previous": p }), None => json!({ "room": room }) });
     match resp {
         Ok(r) => {
             let v: Value = r.into_json().map_err(|e| format!("resposta do serviço de tokens inválida: {e}"))?;
@@ -332,6 +347,46 @@ fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<
         Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>()).into()),
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Dono fixo: a função `livekit-token` põe a marca de dono no próprio token (metadata do participante, que o servidor de chamadas
+// repassa a todos e o cliente não consegue alterar). Para o dono continuar o mesmo depois de uma queda, o pedido de token feito
+// DURANTE uma chamada leva o token em uso (`previous`), que a função confere pela assinatura. Regra em
+// supabase/functions/_shared/owner.ts.
+// ---------------------------------------------------------------------------------------------------------------------
+/// Tokens das chamadas em curso neste processo: (sala do LiveKit, identidade, token). Só existem enquanto a chamada está aberta.
+static ACTIVE_TOKENS: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
+
+/// Corpo (claims) de um JWT, sem conferir a assinatura (quem confere é o servidor).
+fn jwt_claims(token: &str) -> Option<Value> {
+    use base64::Engine;
+    let body = token.split('.').nth(1)?;
+    serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body.trim_end_matches('=')).ok()?).ok()
+}
+fn token_key(token: &str) -> Option<(String, String)> {
+    let c = jwt_claims(token)?;
+    Some((c["video"]["room"].as_str()?.to_string(), c["sub"].as_str()?.to_string()))
+}
+pub(crate) fn remember_token(token: &str) {
+    let Some((room, ident)) = token_key(token) else { return };
+    let mut t = ACTIVE_TOKENS.lock().unwrap();
+    t.retain(|(r, i, _)| !(*r == room && *i == ident));
+    t.push((room, ident, token.to_string()));
+}
+pub(crate) fn forget_token(token: &str) { ACTIVE_TOKENS.lock().unwrap().retain(|(_, _, t)| t != token); }
+/// O token em uso NESTA sala por ESTE usuário (a identidade no servidor de chamadas é o `sub` da sessão da conta), se houver
+/// uma chamada em curso: é o que prova a reentrada.
+fn previous_token(room: &str, access_token: &str) -> Option<String> {
+    let user = jwt_claims(access_token)?["sub"].as_str()?.to_string();
+    ACTIVE_TOKENS.lock().unwrap().iter().find(|(r, i, _)| r == room && *i == user).map(|(_, _, t)| t.clone())
+}
+
+/// A metadata do participante (vinda do token) traz a marca de dono? Mesmo formato de `hasOwnerMark` da função.
+fn has_owner_mark(metadata: &str) -> bool {
+    if metadata.is_empty() || metadata.len() > 2048 { return false; }
+    serde_json::from_str::<Value>(metadata).map(|v| v["briks"]["owner"] == json!(true)).unwrap_or(false)
+}
+fn joined_ms(p: &lk::ParticipantInfo) -> i64 { if p.joined_at_ms > 0 { p.joined_at_ms } else { p.joined_at.saturating_mul(1000) } }
 
 /// Pede à função `livekit-kick` do Supabase para tirar `identity` da sala no servidor de mídia (só o dono consegue; a função confere).
 /// Autenticado com a sessão do usuário, como o pedido de token. Bloqueante: chame de `spawn_blocking`.
@@ -405,6 +460,10 @@ struct Actor {
     audio_started: bool,
     last_rx: std::time::Instant,
     ping_timeout: Duration,
+    /// identidade -> instante de entrada (ms, do servidor) de quem entrou com a marca de dono no token (eu incluído)
+    owner_marks: HashMap<String, i64>,
+    /// a faixa de vídeo está sendo REpublicada depois de uma reconexão (ver `on_track_published`)
+    republish_video: bool,
 }
 
 #[derive(Default, Clone)]
@@ -432,7 +491,12 @@ impl Actor {
             self.published.clear();
             self.last_mic_open = true;
         }
+        // marca de dono no MEU token (a dos outros vem em `on_participants`; quem eu conhecia antes de uma queda mantém a marca
+        // até reaparecer ou o prazo vencer, para o dono não "trocar" enquanto ele ainda está voltando)
+        let me = self.me.clone();
+        if has_owner_mark(&me.metadata) { self.owner_marks.insert(me.identity.clone(), joined_ms(&me)); } else { self.owner_marks.remove(&me.identity); }
         self.on_participants(&j.other_participants).await;
+        self.sync_owner().await;
         // áudio do microfone: publica agora (o publisher só conecta quando há o que enviar)
         if let Some(a) = self.audio.clone() {
             if !std::mem::replace(&mut self.audio_started, true) { a.start(); }
@@ -445,6 +509,7 @@ impl Actor {
             // transmissão em curso: republica as mesmas faixas (o codificador e o pacer nem pararam)
             let sh = self.share.as_ref().map(|s| (s.label.clone(), s.h, s.audio.is_some()));
             if let (Some((label, h, has_audio)), Some(vout)) = (sh, self.vout.clone()) {
+                self.republish_video = true;
                 self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
                 if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
                     self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
@@ -511,7 +576,7 @@ impl Actor {
             if let Some(f) = self.renew.clone() {
                 if let Some(d) = self.down.as_mut() { d.token_at = Some(std::time::Instant::now()); }
                 match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err(TokenFail::from("serviço de tokens não respondeu".to_string()))) {
-                    Ok(t) => { self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
+                    Ok(t) => { forget_token(&self.token); remember_token(&t); self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
                     Err(e) => {
                         let msg = fail(self, e.msg);
                         // 429: o serviço disse quanto esperar; a próxima tentativa (e o próximo pedido de token) só depois disso
@@ -559,6 +624,15 @@ impl Actor {
         if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
         if let Some(l) = self.data.as_mut() { l.left(identity); }
         self.emit(MeshEvent::Peer { peer_id: identity.to_string(), state: "fechado".into() }).await;
+        if self.owner_marks.remove(identity).is_some() { self.sync_owner().await; }
+    }
+
+    /// Diz à camada de dados quem o servidor de chamadas marcou como dono: entre os marcados, o que entrou primeiro (empate: menor
+    /// identidade). É a mesma regra da função `livekit-kick`, para o app e o servidor concordarem sobre quem pode expulsar.
+    async fn sync_owner(&mut self) {
+        let best = self.owner_marks.iter().min_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0))).map(|(id, _)| id.clone());
+        let outs = self.data.as_mut().map(|l| l.set_server_owner(best)).unwrap_or_default();
+        if !outs.is_empty() { self.apply(outs).await; }
     }
 
     /// Prazo vencido depois de uma reconexão: quem não voltou saiu; quem voltou sem a transmissão parou de transmitir.
@@ -623,7 +697,18 @@ impl Actor {
         match pc.add_track(p.track.clone()).await {
             Ok(sender) => {
                 if p.video {
-                    self.idr.store(true, Ordering::Relaxed);
+                    // Publicação nova: pede um quadro-chave. REpublicação depois de uma reconexão: NÃO pede aqui. O codificador
+                    // nem parou, e um quadro-chave agora sairia antes de o transporte novo existir (perdido); pior, o pedido do
+                    // servidor quando o espectador reassina (PLI) teria de esperar o intervalo mínimo entre quadros-chave (1 a 2 s)
+                    // contado a partir desse quadro desperdiçado. Sem ele, o PLI do servidor é atendido na hora.
+                    let rekey = !std::mem::take(&mut self.republish_video) || (cfg!(test) && std::env::var("BRIKS_SFU_TEST_REKEY_OLD").is_ok());
+                    if rekey { self.idr.store(true, Ordering::Relaxed); }
+                    else {
+                        // rede de segurança: se em 1,5 s nenhum pedido de quadro-chave chegou do servidor (ninguém assistindo ainda,
+                        // ou o pedido se perdeu), manda um mesmo assim
+                        let (idr, stats, plis0) = (self.idr.clone(), self.stats.clone(), self.stats.plis.load(Ordering::Relaxed));
+                        tokio::spawn(async move { tokio::time::sleep(Duration::from_millis(1500)).await; if stats.plis.load(Ordering::Relaxed) == plis0 { idr.store(true, Ordering::Relaxed); } });
+                    }
                     let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
                     spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {
@@ -747,6 +832,7 @@ impl Actor {
                 for t in &p.tracks { sh.tracks.insert(t.sid.clone(), TrackMeta { identity: p.identity.clone(), source: t.source, ttype: t.r#type, name: t.name.clone(), w: t.width, h: t.height, muted: t.muted }); }
             }
             k.sid = p.sid.clone();
+            if has_owner_mark(&p.metadata) { self.owner_marks.insert(p.identity.clone(), joined_ms(p)); } else { self.owner_marks.remove(&p.identity); }
             if first {
                 let name = if p.name.is_empty() { p.identity.clone() } else { p.name.clone() };
                 k.name = name.clone();
@@ -790,6 +876,7 @@ impl Actor {
             self.known.insert(p.identity.clone(), k);
         }
         self.subscribe(want_sub, true).await;
+        self.sync_owner().await;
     }
 
     async fn subscribe(&mut self, items: Vec<(String, String)>, on: bool) {
@@ -903,6 +990,7 @@ impl Actor {
                     _ => {}
                 }
             }
+            self.flush_files().await;
             return;
         }
         #[cfg(test)]
@@ -979,6 +1067,12 @@ impl Actor {
     }
 
     #[allow(deprecated)]
+    /// Publica as mensagens de controle dos anexos (aceitar, pausar, cancelar) sem passar pela fila dos pedaços.
+    async fn flush_files(&mut self) {
+        let urgent = self.files.as_mut().map(|f| f.take_urgent()).unwrap_or_default();
+        for (to, m) in urgent { self.publish_data(vec![to], json!({ "v": 1, "t": "file", "m": m })).await; }
+    }
+
     async fn publish_data(&mut self, to: Vec<String>, msg: Value) {
         let payload = msg.to_string().into_bytes();
         if payload.len() > crate::sfudata::MAX_PACKET { self.emit(MeshEvent::Error("mensagem grande demais para o canal de dados".into())).await; return; }
@@ -1013,7 +1107,11 @@ impl Actor {
                 }
                 Out::MuteLocal { ident, muted } => { if let Some(a) = &self.audio { a.mute_peer(&ident, muted); } }
                 Out::Leave => self.leave = true,
-                Out::File { from, fp, jwk, m } => { if let Some(f) = self.files.as_mut() { f.on_msg(&from, &fp, &jwk, &m).await; } }
+                Out::File { from, fp, jwk, m } => {
+                    if let Some(f) = self.files.as_mut() { f.on_msg(&from, &fp, &jwk, &m).await; }
+                    let urgent = self.files.as_mut().map(|f| f.take_urgent()).unwrap_or_default();
+                    for (to, m) in urgent { self.publish_data(vec![to], json!({ "v": 1, "t": "file", "m": m })).await; }
+                }
             }
         }
     }
@@ -1086,6 +1184,14 @@ impl Actor {
     }
 }
 
+/// Intervalo mínimo (ms) entre duas retransmissões do MESMO pacote para o SFU. Normal: 1,5 x RTT + 15 ms (30 a 150). Com perda alta
+/// no enlace de envio (`high_loss` = retransmissão em dobro ligada), a própria retransmissão se perde com frequência e o servidor
+/// pede de novo logo em seguida, poucas vezes, e desiste: o intervalo cai para RTT + 5 ms (10 a 150) para o 2º e o 3º pedido não
+/// serem recusados por "acabou de sair". O custo é alguma retransmissão repetida, dentro do mesmo orçamento do pacer.
+fn rtx_gap_ms(rtt_ms: f32, high_loss: bool) -> u64 {
+    if high_loss { (rtt_ms as u64 + 5).clamp(10, 150) } else { ((rtt_ms * 1.5) as u64 + 15).clamp(30, 150) }
+}
+
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports
 /// (perda/jitter/RTT para o adapt.rs). É a mesma leitura da malha, com a chave "sfu" no lugar do peer.
 fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<(mpsc::Sender<Vec<u16>>, Arc<AtomicU64>, Arc<AtomicBool>)>, stats: Arc<SfuStats>) {
@@ -1108,14 +1214,20 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                         e.loss = r.fraction_lost as f32 / 256.0;
                         // histerese: liga a retransmissão em dobro com 3,5% no relatório, desliga abaixo de 1,5% (o relatório do SFU mostrou cerca de
                         // metade da perda real do enlace nos testes: 5% relatados com 10% reais)
-                        if let Some((_, _, twice)) = &nack_tx { if e.loss >= 0.035 { twice.store(true, Ordering::Relaxed); } else if e.loss < 0.015 { twice.store(false, Ordering::Relaxed); } }
+                        if let Some((_, gap, twice)) = &nack_tx {
+                            let was = twice.load(Ordering::Relaxed);
+                            if e.loss >= 0.035 { twice.store(true, Ordering::Relaxed); } else if e.loss < 0.015 { twice.store(false, Ordering::Relaxed); }
+                            // a perda mudou de faixa: o intervalo entre retransmissões acompanha já, sem esperar o próximo RTT medido
+                            let now = twice.load(Ordering::Relaxed);
+                            if now != was { gap.store(rtx_gap_ms(e.rtt_ms, now), Ordering::Relaxed); }
+                        }
                         e.jitter_ms = r.jitter as f32 / 90.0;
                         if r.last_sender_report != 0 {
                             let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
                             let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
                             if d < 10 * 65536 {
                                 e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); }
-                                if let Some((_, gap, _)) = &nack_tx { gap.store(((e.rtt_ms * 1.5) as u64 + 15).clamp(30, 150), Ordering::Relaxed); }
+                                if let Some((_, gap, twice)) = &nack_tx { gap.store(rtx_gap_ms(e.rtt_ms, twice.load(Ordering::Relaxed)), Ordering::Relaxed); }
                             }
                         }
                         e.updated = std::time::Instant::now();
@@ -1146,6 +1258,13 @@ mod t {
         assert!(s.contains("access_token=***&protocol=15"));
         assert_eq!(redact("sem token"), "sem token");
     }
+    #[test]
+    fn retransmission_gap_follows_rtt_and_shrinks_under_high_loss() {
+        assert_eq!((rtx_gap_ms(1.0, false), rtx_gap_ms(40.0, false), rtx_gap_ms(400.0, false)), (30, 75, 150));
+        assert_eq!((rtx_gap_ms(1.0, true), rtx_gap_ms(40.0, true), rtx_gap_ms(400.0, true)), (10, 45, 150));
+        for rtt in [0.0f32, 5.0, 20.0, 60.0, 120.0] { assert!(rtx_gap_ms(rtt, true) <= rtx_gap_ms(rtt, false)); }
+    }
+
     #[test]
     fn url_building() {
         assert_eq!(ws_url("ws://127.0.0.1:7880/", "T"), "ws://127.0.0.1:7880/rtc?access_token=T&protocol=15&auto_subscribe=0&sdk=rust&version=briks-0.1&adaptive_stream=0");

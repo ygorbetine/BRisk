@@ -1,10 +1,11 @@
 // Regra da expulsão de verdade (tirar do servidor de mídia), separada do `Deno.serve` para poder ser testada com simulações.
 // Quem pode: só o DONO da chamada. O servidor não tem tabela de salas nem de membros, então o dono é definido pelo que o
-// próprio LiveKit registra: o participante que está há mais tempo na sala (menor `joinedAt` do servidor; empate = menor
-// identidade). É a mesma regra do app quando ele não informa um dono ("o mais antigo"), só que com o relógio do servidor,
-// que o cliente não consegue forjar.
-// LIMITE: depois de uma queda/reinício do servidor de chamadas a ordem de volta pode trocar o "mais antigo". Para um dono
-// fixo (o criador do grupo) é preciso uma tabela de salas com o dono; fica para quando existir.
+// próprio LiveKit registra:
+//   1. quem entrou com a marca de dono no token (emitida pela `livekit-token`, ver ./owner.ts): o dono fixo, que continua
+//      sendo o mesmo depois de uma queda ou reinício do servidor de chamadas;
+//   2. sem ninguém marcado na sala (o dono saiu de vez, ou tokens antigos): quem está há mais tempo na sala.
+// Nos dois casos o desempate é o menor `joinedAt` do servidor e depois a menor identidade: nada disso o cliente forja.
+// É a mesma regra que o app usa para mostrar quem é o dono.
 import { clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed } from "./guard.ts";
 import type { Participant } from "./livekit-admin.ts";
 
@@ -24,10 +25,11 @@ export type KickDeps = {
 const IDENTITY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 export function isValidIdentity(value: unknown): value is string { return typeof value === "string" && IDENTITY_PATTERN.test(value); }
 
-/** Dono segundo o servidor: quem está há mais tempo na sala. `null` = sala vazia. */
+/** Dono segundo o servidor: o marcado no token; sem marcado, quem está há mais tempo na sala. `null` = sala vazia. */
 export function roomOwner(participants: Participant[]): string | null {
+  const marked = participants.filter((p) => p.owner === true);
   let best: Participant | null = null;
-  for (const p of participants) {
+  for (const p of marked.length ? marked : participants) {
     if (!best || p.joinedAt < best.joinedAt || (p.joinedAt === best.joinedAt && p.identity < best.identity)) best = p;
   }
   return best ? best.identity : null;

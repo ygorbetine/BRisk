@@ -1,4 +1,6 @@
 // Edge Function: emite tokens do LiveKit para usuários logados. O segredo fica só no servidor.
+// O token também diz quem é o DONO da chamada (marca na `metadata`, ver ../_shared/owner.ts); o corpo aceita `previous`
+// (o token anterior, ao reentrar depois de uma queda) para o dono continuar o mesmo.
 // Secrets: LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL. Opcionais: ALLOWED_ORIGINS, LIVEKIT_TOKEN_TTL_SECONDS (máx. 3600).
 // Deploy (JWT do gateway ligado, sem --no-verify-jwt): supabase functions deploy livekit-token
 //
@@ -10,6 +12,8 @@
 import { AccessToken } from "npm:livekit-server-sdk@2";
 import { authenticate, peerBelongsToUser } from "../_shared/auth.ts";
 import { persistentRateLimit } from "../_shared/rate-limit.ts";
+import { listParticipants } from "../_shared/livekit-admin.ts";
+import { OWNER_METADATA, grantsOwner } from "../_shared/owner.ts";
 import { RateLimiter, clampTtl, combineWaits, clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed, parseAllowedOrigins } from "../_shared/guard.ts";
 
 const allowedOrigins = parseAllowedOrigins(Deno.env.get("ALLOWED_ORIGINS"));
@@ -34,7 +38,7 @@ Deno.serve(async (request) => {
   const userWait = combineWaits(perUser.check(user.id), await persistentRateLimit("livekit:user", user.id, 30, 600));
   if (userWait) return json({ message: "Muitas requisições. Tente de novo em instantes." }, 429, { "retry-after": String(userWait) });
 
-  const body = await request.json().catch(() => ({})) as { room?: unknown; peerId?: unknown };
+  const body = await request.json().catch(() => ({})) as { room?: unknown; peerId?: unknown; previous?: unknown };
   if (!isValidRoom(body.room)) return json({ message: "Nome de sala inválido." }, 400);
   // A identidade nunca vem do corpo livremente: é o usuário, ou um peerId (UUID) registrado para ele.
   let identity = user.id;
@@ -48,7 +52,12 @@ Deno.serve(async (request) => {
   const secret = Deno.env.get("LIVEKIT_API_SECRET");
   if (!key || !secret) return json({ message: "LiveKit não configurado." }, 503);
   const ttl = clampTtl(Deno.env.get("LIVEKIT_TOKEN_TTL_SECONDS"));
-  const token = new AccessToken(key, secret, { identity, ttl });
+  // Dono fixo: a marca vai no próprio token (regra em ../_shared/owner.ts). Se não der para perguntar ao servidor de chamadas
+  // quem está na sala, o token sai sem a marca (vale "o mais antigo") em vez de a entrada falhar.
+  const livekitUrl = Deno.env.get("LIVEKIT_URL");
+  const participants = livekitUrl ? await listParticipants(livekitUrl, key, secret, body.room).catch(() => null) : null;
+  const owner = await grantsOwner({ room: body.room, identity, participants, previous: body.previous, apiSecret: secret });
+  const token = new AccessToken(key, secret, owner ? { identity, ttl, metadata: OWNER_METADATA } : { identity, ttl });
   token.addGrant({ room: body.room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
-  return json({ token: await token.toJwt(), url: Deno.env.get("LIVEKIT_URL"), ttl });
+  return json({ token: await token.toJwt(), url: livekitUrl, ttl, owner });
 });

@@ -45,7 +45,7 @@ async fn open(tag: &str, sim_on: &str, height: usize, kbps: u32, adaptive: bool)
     let mut aus = vec![];
     for id in [&pa, &pb] {
         let (au, au_rx) = Audio::new(true);
-        let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", crate::tests_sfu::lk_port()), token: dev_token(id, &room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
+        let h = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token(id, &room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
         hs.push(h); aus.push(au);
     }
     let (hb, ha) = (hs.pop().unwrap(), hs.pop().unwrap());

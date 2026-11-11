@@ -44,6 +44,8 @@ rtc:
 struct Server { child: Child, port: u16 }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
+pub fn lk_ws() -> String { format!("ws://127.0.0.1:{}", lk_port()) }
+
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
@@ -60,11 +62,16 @@ fn start_server() -> Option<Server> {
 
 pub fn dev_token(identity: &str, room: &str) -> String { dev_token_ttl(identity, room, 3600) }
 
-pub fn dev_token_ttl(identity: &str, room: &str, ttl: u64) -> String {
+pub fn dev_token_ttl(identity: &str, room: &str, ttl: u64) -> String { dev_token_owner(identity, room, ttl, false) }
+
+/// Como a função `livekit-token` emite: com `owner`, o token leva a marca de dono na metadata do participante.
+pub fn dev_token_owner(identity: &str, room: &str, ttl: u64, owner: bool) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let head = B64.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
-    let body = B64.encode(json!({ "iss": "devkey", "sub": identity, "nbf": now - 10, "exp": now + ttl,
-        "video": { "room": room, "roomJoin": true, "canPublish": true, "canSubscribe": true, "canPublishData": true } }).to_string());
+    let mut claims = json!({ "iss": "devkey", "sub": identity, "nbf": now - 10, "exp": now + ttl,
+        "video": { "room": room, "roomJoin": true, "canPublish": true, "canSubscribe": true, "canPublishData": true } });
+    if owner { claims["metadata"] = json!(r#"{"briks":{"owner":true}}"#); }
+    let body = B64.encode(claims.to_string());
     let mut m = Hmac::<Sha256>::new_from_slice(b"secret").unwrap();
     m.update(format!("{head}.{body}").as_bytes());
     format!("{head}.{body}.{}", B64.encode(m.finalize().into_bytes()))
@@ -228,6 +235,57 @@ fn token_service(expect_bearer: &'static str, room: String) -> u16 {
         }
     });
     port
+}
+
+/// Dono fixo, lado do app: o pedido de token feito DURANTE uma chamada leva o token em uso (`previous`), e só então; nunca o
+/// token de outra pessoa nem o de outra sala. Serviço de tokens simulado em loopback que guarda os corpos recebidos.
+#[test]
+fn token_request_carries_the_previous_token_only_during_a_call() {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let bodies = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+    let b2 = bodies.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { break };
+            let (mut buf, mut n) = (vec![0u8; 16384], 0);
+            let body = loop {
+                let r = s.read(&mut buf[n..]).unwrap_or(0); if r == 0 { break None; } n += r;
+                let txt = String::from_utf8_lossy(&buf[..n]).to_string();
+                let Some(i) = txt.find("\r\n\r\n") else { continue };
+                let len = txt[..i].lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                if txt.len() >= i + 4 + len { break serde_json::from_str::<serde_json::Value>(&txt[i + 4..i + 4 + len]).ok(); }
+            };
+            b2.lock().unwrap().push(body.unwrap_or(serde_json::Value::Null));
+            let out = json!({ "token": "tok", "ttl": 3600 }).to_string();
+            let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", out.len(), out);
+        }
+    });
+    let url = format!("http://127.0.0.1:{port}/functions/v1/livekit-token");
+    // sessão da conta: um JWT cujo `sub` é o usuário (é a identidade dele no servidor de chamadas)
+    let session = |user: &str| format!("{}.{}.assinatura", B64.encode(br#"{"alg":"HS256"}"#), B64.encode(json!({ "sub": user, "role": "authenticated" }).to_string()));
+    let room = format!("room:{}", uuid::Uuid::new_v4().simple());
+    let ask = |user: &str, room: &str| { sfu::fetch_token(&url, &session(user), room).expect("pedido de token"); bodies.lock().unwrap().last().cloned().unwrap() };
+    // 1) entrada nova (nenhuma chamada em curso): sem `previous`
+    let b = ask(A, &room);
+    assert_eq!(b["room"], room.as_str()); assert!(b.get("previous").is_none(), "entrada nova mandou token anterior: {b}");
+    // 2) chamada em curso nesta sala: o pedido (renovação ao reconectar) leva o token em uso
+    let mine = dev_token_owner(A, &room, 3600, true);
+    sfu::remember_token(&mine);
+    assert_eq!(ask(A, &room)["previous"], mine.as_str(), "a renovação não levou o token em uso");
+    // 3) outra pessoa neste processo, ou outra sala: nada do token da Ana
+    assert!(ask(B, &room).get("previous").is_none(), "token da Ana foi no pedido de outra pessoa");
+    assert!(ask(A, "room:outra-sala-qualquer").get("previous").is_none(), "token de uma sala foi no pedido de outra");
+    // 4) sessão que não é um JWT legível: pede sem `previous` em vez de falhar
+    sfu::fetch_token(&url, "sessao-opaca", &room).expect("sessão opaca");
+    assert!(bodies.lock().unwrap().last().unwrap().get("previous").is_none());
+    // 5) token renovado toma o lugar do antigo; ao sair da chamada, some
+    let newer = dev_token_owner(A, &room, 7200, true);
+    sfu::forget_token(&mine); sfu::remember_token(&newer);
+    assert_eq!(ask(A, &room)["previous"], newer.as_str());
+    sfu::forget_token(&newer);
+    assert!(ask(A, &room).get("previous").is_none(), "token ficou guardado depois de sair da chamada");
 }
 
 /// Fluxo do app: sessão do usuário -> serviço de tokens (Bearer) -> token -> entrada no SFU real. Sem sessão válida: 401 legível.

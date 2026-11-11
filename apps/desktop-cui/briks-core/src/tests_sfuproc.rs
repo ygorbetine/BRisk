@@ -56,7 +56,7 @@ async fn sfu_proc_child() {
     let errs: Vec<String> = c.log.lock().unwrap().iter().filter(|s| s.starts_with("err:")).take(4).cloned().collect();
     let r = json!({
         "i": i, "authed": authed(), "authed_at_t0": authed_at_t0, "auth_secs": auth_secs,
-        "owner_me": c.log.lock().unwrap().iter().rev().find(|s| s.starts_with("owner:")).map(|s| s == "owner:true").unwrap_or(false), "status": c.count(&format!("state:{}:", ident(0))) > 0 && c.log.lock().unwrap().iter().any(|s| s.starts_with(&format!("state:{}:", ident(0))) && s.ends_with(":reunião")),
+        "owner_me": c.log.lock().unwrap().iter().rev().find(|s| s.starts_with("owner:")).map(|s| s.starts_with("owner:true")).unwrap_or(false), "status": c.count(&format!("state:{}:", ident(0))) > 0 && c.log.lock().unwrap().iter().any(|s| s.starts_with(&format!("state:{}:", ident(0))) && s.ends_with(":reunião")),
         "event": c.count("event:") > 0, "dm": c.count(":só para você"), "mic_open": c.audio.mic_open(),
         "saw_mute3": c.log.lock().unwrap().iter().any(|s| s.starts_with(&format!("state:{}:mic=false", ident(3)))),
         "kicked": c.count("kicked:") > 0, "banned": c.count("banned:"), "voice_owner_3s": o1 - o0, "voice_next_3s": v1 - v0, "heard": heard,

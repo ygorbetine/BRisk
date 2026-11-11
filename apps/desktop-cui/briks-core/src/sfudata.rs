@@ -72,6 +72,8 @@ pub struct Layer {
     state_ts: i64,
     rate: HashMap<String, (Instant, u32)>,
     owner_sent: Option<String>,
+    /// identidade (no SFU) de quem entrou com a marca de dono no token, segundo o servidor de chamadas (`None` = ninguém marcado)
+    server_owner: Option<String>,
     tick_n: u64,
     /// difusões (estado/evento) a repetir: o canal confiável do SFU pode perder um pacote para um receptor sobrecarregado; os receptores deduplicam
     resend: Vec<(Instant, u8, Value)>,
@@ -110,7 +112,7 @@ impl Layer {
         let fp = cfg.identity.fingerprint();
         Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(),
             seen_msgs: HashSet::new(), seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
-            rate: HashMap::new(), owner_sent: None, tick_n: 0, resend: vec![],
+            rate: HashMap::new(), owner_sent: None, server_owner: None, tick_n: 0, resend: vec![],
             hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new() }
     }
 
@@ -156,17 +158,31 @@ impl Layer {
 
     fn ident_of_fp(&self, fp: &str) -> Option<String> { self.peers.iter().find(|(_, p)| p.fp == fp).map(|(k, _)| k.clone()) }
 
-    /// Dono segundo este nó: o informado pelo app ou, sem isso, o mais antigo (joinedAt declarado e assinado no hello) entre os autenticados.
+    /// Dono segundo este nó, nesta ordem: o informado pelo app; quem o servidor de chamadas diz que entrou com a marca de dono no
+    /// token (dono fixo: não muda com a ordem de volta depois de uma queda); sem ninguém marcado, o mais antigo (joinedAt declarado
+    /// e assinado no hello) entre os autenticados. Vazio = há um dono marcado, mas ele ainda não se autenticou comigo (ninguém
+    /// passa por dono nesse intervalo).
     fn owner(&self) -> String {
         if let Some(o) = &self.cfg.owner_fp { return o.clone(); }
+        if let Some(id) = &self.server_owner {
+            if *id == self.me { return self.fp.clone(); }
+            return self.peers.get(id).map(|p| p.fp.clone()).unwrap_or_default();
+        }
         let mut best = (self.cfg.joined_at, self.fp.clone());
         for p in self.peers.values() { if (p.joined_at, p.fp.as_str()) < (best.0, best.1.as_str()) { best = (p.joined_at, p.fp.clone()); } }
         best.1
     }
 
+    /// O servidor de chamadas informou quem tem a marca de dono (identidade no SFU), ou que ninguém tem.
+    pub fn set_server_owner(&mut self, ident: Option<String>) -> Vec<Out> {
+        if self.server_owner == ident { return vec![]; }
+        self.server_owner = ident;
+        self.owner_ev().into_iter().collect()
+    }
+
     fn owner_ev(&mut self) -> Option<Out> {
         let o = self.owner();
-        if self.owner_sent.as_deref() == Some(o.as_str()) { return None; }
+        if o.is_empty() || self.owner_sent.as_deref() == Some(o.as_str()) { return None; }
         self.owner_sent = Some(o.clone());
         let me = o == self.fp;
         Some(Out::Ev(MeshEvent::Owner { fp: o, me }))
@@ -625,6 +641,46 @@ mod t {
         assert!(b.on_packet("ida", &bytes(&m)).iter().any(|o| matches!(o, Out::Ev(MeshEvent::ChatEvent { local: false, .. }))));
         let mut bad = m.clone(); bad["wire"]["emoji"] = json!("💀");
         assert!(b.on_packet("ida", &bytes(&bad)).iter().all(|o| !matches!(o, Out::Ev(MeshEvent::ChatEvent { .. }))));
+    }
+
+    /// Dono fixo: quem o servidor de chamadas marcou é o dono, mesmo não sendo o mais antigo; enquanto o marcado não se autenticou
+    /// ninguém passa por dono; sem marcado, volta a valer o mais antigo; o dono informado pelo app vence os dois.
+    #[test]
+    fn server_marked_owner_wins_over_the_oldest() {
+        let mut a = layer("Ana", "ida", None, 1);   // a mais antiga
+        let (mut b, mut c) = (layer("Beto", "idb", None, 2), layer("Cris", "idc", None, 3));
+        let (ha, hb, hc) = (a.hello(), b.hello(), c.hello());
+        // a Cris ainda não se autenticou com ninguém
+        a.on_packet("idb", &bytes(&hb)); b.on_packet("ida", &bytes(&ha));
+        assert_eq!(a.owner(), a.fp); assert_eq!(b.owner(), a.fp);
+        // o servidor diz: a marcada é a Cris (idc). Ela ainda não fez hello: ninguém é dono, e a Ana não consegue expulsar
+        assert!(a.set_server_owner(Some("idc".into())).is_empty(), "não anuncia dono que ainda não se autenticou");
+        b.set_server_owner(Some("idc".into()));
+        assert_eq!(a.owner(), ""); assert_eq!(b.owner(), "");
+        assert!(matches!(&a.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "x".into() }, (true, false)).unwrap()[0], Out::Ev(MeshEvent::Error(_))), "a mais antiga não é mais a dona");
+        // a Cris se autentica: passa a ser a dona para todos, e ela mesma sabe que é
+        let o = a.on_packet("idc", &bytes(&hc));
+        assert!(o.iter().any(|x| matches!(x, Out::Ev(MeshEvent::Owner { fp, me: false }) if *fp == c.fp)), "dono marcado não foi anunciado");
+        b.on_packet("idc", &bytes(&hc));
+        c.on_packet("ida", &bytes(&ha)); c.on_packet("idb", &bytes(&hb));
+        let o = c.set_server_owner(Some("idc".into()));
+        assert!(matches!(&o[0], Out::Ev(MeshEvent::Owner { me: true, .. })));
+        assert_eq!((a.owner(), b.owner(), c.owner()), (c.fp.clone(), c.fp.clone(), c.fp.clone()));
+        // a expulsão assinada pela Cris vale; a mesma mensagem assinada pela Ana (a mais antiga) não
+        let kick = sends(&c.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "regra".into() }, (true, false)).unwrap()).remove(0);
+        let ts = now_ms();
+        let forged = json!({ "v": 1, "t": "kick", "target_fp": b.fp, "reason": "x", "ts": ts, "sig": a.cfg.identity.sign(&kick_canon("sala-x", &b.fp, ts, "x")) });
+        assert!(b.on_packet("ida", &bytes(&forged)).iter().all(|x| !matches!(x, Out::Leave)), "a mais antiga expulsou sem ser a dona");
+        assert!(b.on_packet("idc", &bytes(&kick)).iter().any(|x| matches!(x, Out::Leave)), "a dona marcada não conseguiu expulsar");
+        // a marcada sai de vez e o servidor não aponta mais ninguém: volta o mais antigo
+        a.left("idc");
+        let o = a.set_server_owner(None);
+        assert!(matches!(&o[0], Out::Ev(MeshEvent::Owner { me: true, .. })));
+        assert_eq!(a.owner(), a.fp);
+        // dono informado pelo app (grupo com dono conhecido) vence a marca do servidor
+        let mut g = layer("Gil", "idg", Some("fp-do-dono-do-grupo".into()), 9);
+        g.set_server_owner(Some("idg".into()));
+        assert_eq!(g.owner(), "fp-do-dono-do-grupo");
     }
 
     #[test]

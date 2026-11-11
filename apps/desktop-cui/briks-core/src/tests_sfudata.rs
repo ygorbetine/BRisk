@@ -65,7 +65,7 @@ async fn client(room: &str, ident: &str, name: &str, joined: u64, owner_fp: Opti
     let rh = secure_room_id("room", room);
     let lk_room = format!("room:{}", &rh[..32]);
     let (au, au_rx) = Audio::new(true);
-    let h: SfuHandle = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", crate::tests_sfu::lk_port()), token: dev_token(ident, &lk_room), audio: Some((au.clone(), au_rx)),
+    let h: SfuHandle = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token(ident, &lk_room), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id, name: name.into(), room_hash: rh, owner_fp, joined_at: joined }), renew: None }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);

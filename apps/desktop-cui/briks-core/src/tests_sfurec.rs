@@ -12,7 +12,6 @@ use crate::mesh::{MeshCmd, MeshEvent};
 use crate::sfu::{self, SfuJoin, SfuStats, TokenFn};
 use crate::sfudata::DataCfg;
 use crate::signaling::secure_room_id;
-use crate::tests_sfu::dev_token_ttl;
 
 pub struct Server { child: Child }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
@@ -56,7 +55,10 @@ impl C {
 }
 
 /// Cliente com camada de dados, áudio sintético e renovação de token. `ttl` = validade (s) do token da ENTRADA; os renovados valem 1 h.
-pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) -> C {
+pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) -> C { client_owner(room, ident, name, joined, ttl, false).await }
+
+/// Como `client`; com `owner`, o token de entrada e os renovados levam a marca de dono (o que a função `livekit-token` faria).
+pub async fn client_owner(room: &str, ident: &str, name: &str, joined: u64, ttl: u64, owner: bool) -> C {
     let id = Arc::new(Identity::generate());
     let fp = id.fingerprint();
     let rh = secure_room_id("room", room);
@@ -64,8 +66,8 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let (au, au_rx) = Audio::new(true);
     let renewals = Arc::new(AtomicU64::new(0));
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
-    let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
-    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", crate::tests_sfu::lk_port()), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
+    let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(crate::tests_sfu::dev_token_owner(&i, &k, 3600, owner)) }) });
+    let h = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: crate::tests_sfu::dev_token_owner(ident, &lk_room, ttl, owner), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);
@@ -80,14 +82,14 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
                 MeshEvent::ChatEvent { local: false, from_fp, .. } => format!("event:{from_fp}"),
                 MeshEvent::Banned { fp } => format!("banned:{fp}"),
                 MeshEvent::Typing { from_fp } => format!("typing:{from_fp}"),
-                MeshEvent::RoomChat { peer_id, from_fp, author, content, id, .. } => format!("roomchat:{peer_id}:{from_fp}:{author}:{id}:{content}"),
+                MeshEvent::RoomChat { peer_id, from_fp, author, content, id, .. } => format!("salamsg:{peer_id}:{from_fp}:{author}:{id}:{content}"),
                 MeshEvent::StreamRequest { peer_id, name } => format!("streamreq:{peer_id}:{name}"),
                 MeshEvent::StreamReply { peer_id, name, accepted } => format!("streamreply:{peer_id}:{name}:{accepted}"),
                 MeshEvent::GroupSnapshot { from_fp, snapshot } => format!("group:{from_fp}:{}", snapshot["name"].as_str().unwrap_or("")),
                 MeshEvent::History { from_fp, content, id, mine, .. } => format!("hist:{id}:{from_fp}:{mine}:{content}"),
                 MeshEvent::Ack { id, from_fp } => format!("ack:{from_fp}:{id}"),
                 MeshEvent::File(v) => format!("file:{v}"),
-                MeshEvent::Owner { me, .. } => format!("owner:{me}"),
+                MeshEvent::Owner { me, fp } => format!("owner:{me}:{fp}"),
                 MeshEvent::Share(v) => v.to_string(),
                 MeshEvent::Error(m) => format!("err:{m}"),
                 _ => continue,
@@ -131,10 +133,12 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
     b.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: rpath.clone() }).await.unwrap();
     assert!(b.wait(25, r#""state":"frame""#).await, "nenhum quadro chegou ao B antes da queda");
     let src = FrameSource::open(&rpath).unwrap();
-    let frame_n = || src.read().map(|x| x.2).unwrap_or(0);
+    // o leitor devolve None enquanto o quadro está sendo gravado: tenta de novo em vez de ler isso como "quadro 0"
+    let frame_n = || { for _ in 0..200 { if let Some(x) = src.read() { return x.2; } std::thread::sleep(Duration::from_millis(1)); } 0 };
     let before = (voice(&b, A, 2).await, d.audio.rx_stat(B).frames, frame_n());
     assert!(before.0 > 40 && before.1 > 20 && before.2 > 0, "mídia antes da queda: {before:?}");
 
+    let mut video_back: Vec<(Option<Duration>, [u64; 5])> = vec![];
     for round in 1..=2u64 {
         // garante que o token de entrada já venceu (só na 1ª rodada importa)
         while t_tok.elapsed() < Duration::from_secs(8) { tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -159,13 +163,23 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
             assert_eq!(c.renewals.load(Ordering::Relaxed), round, "{}: um token novo por queda", c.ident);
         }
         eprintln!("rodada {round}: os 3 clientes voltaram {:.1} s depois de o servidor subir (fora do ar por {:.1} s); tokens renovados: {}", t_up.elapsed().as_secs_f32(), t_kill.elapsed().as_secs_f32(), cs.iter().map(|c| c.renewals.load(Ordering::Relaxed)).sum::<u64>());
+        // vídeo do espectador logo depois de voltar: quanto demora o 1º quadro novo e a que taxa os quadros chegam, segundo a segundo
+        // (o contador recomeça do zero quando o receptor é recriado; conta-se cada mudança de valor)
+        let (t_rec, mut last, mut first, mut per_s) = (Instant::now(), frame_n(), None, [0u64; 5]);
+        while t_rec.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let n = frame_n();
+            if n != last { last = n; let el = t_rec.elapsed(); if first.is_none() { first = Some(el); } per_s[(el.as_secs() as usize).min(4)] += 1; }
+        }
+        eprintln!("rodada {round}: vídeo do espectador depois de reconectar: 1º quadro novo em {} ms; quadros por segundo nos 5 s seguintes: {per_s:?}", first.map(|d| d.as_millis() as i64).unwrap_or(-1));
+        video_back.push((first, per_s));
         // voz nos dois sentidos, para todos
-        tokio::time::sleep(Duration::from_secs(3)).await;
         for c in cs { for o in cs { if c.ident != o.ident { let f = voice(c, &o.ident, 1).await; assert!(f > 25, "rodada {round}: {} sem voz de {} depois de voltar ({f} quadros/s)", c.ident, o.ident); } } }
         // a transmissão volta para quem assistia, sem novo share.watch
         let end = Instant::now() + Duration::from_secs(25);
         while Instant::now() < end && frame_n() < n_before + 20 { tokio::time::sleep(Duration::from_millis(100)).await; }
-        let got = frame_n() - n_before;
+        let n_after = frame_n(); let got = n_after.saturating_sub(n_before);
+        eprintln!("rodada {round}: contador de quadros do espectador {n_before} -> {n_after}");
         assert!(got >= 20, "rodada {round}: vídeo não voltou para o espectador ({got} quadros novos)");
         // o que foi enviado durante a queda chega
         assert!(d.wait(20, &format!("chat:{}:durante a queda {round}", b.fp)).await, "rodada {round}: DM enviada durante a queda não chegou");
@@ -180,8 +194,8 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
         assert_eq!(c.count(r#""state":"lost""#), 0);
     }
     assert_eq!(b.count(r#""ev":"share.remote","peer_id":"aaaaaaaa-1111-4111-8111-000000000001","state":"off""#), 0, "a transmissão piscou para o espectador");
-    let n1 = frame_n(); tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(frame_n() > n1 + 10, "vídeo parou depois do prazo");
+    let n1 = frame_n(); tokio::time::sleep(Duration::from_secs(2)).await; let n2 = frame_n();
+    assert!(n2 > n1 + 10, "vídeo parou depois do prazo (contador {n1} -> {n2} em 2 s)");
     // saída de verdade continua sendo vista
     d.cmd.send(MeshCmd::Close).await.unwrap();
     assert!(a.wait(15, &format!("peer:{D}:fechado")).await && b.wait(15, &format!("peer:{D}:fechado")).await, "saída real não foi vista depois das reconexões");

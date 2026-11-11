@@ -46,7 +46,7 @@ pub fn dev_token(identity: &str, room: &str) -> String {
 async fn client(port: u16, room: &str, ident: &str, muted: bool) -> (SfuHandle, Arc<Audio>) {
     let (au, au_rx) = Audio::new(true);
     au.set_mic_muted(muted);
-    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{port}"), token: dev_token(ident, room), audio: Some((au.clone(), au_rx)) }).await.expect("entrar no SFU");
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{port}"), token: dev_token(ident, room), audio: Some((au.clone(), au_rx)), data: None }).await.expect("entrar no SFU");
     (h, au)
 }
 
@@ -171,12 +171,12 @@ async fn sfu_screen_share_published_and_watched() {
 async fn sfu_connect_failures_are_fast_and_do_not_leak_the_token() {
     // nada ouvindo nessa porta
     let t0 = Instant::now();
-    let r = sfu::connect(SfuJoin { url: "ws://127.0.0.1:9".into(), token: "eyJsegredo.abc.def".into(), audio: None }).await;
+    let r = sfu::connect(SfuJoin { url: "ws://127.0.0.1:9".into(), token: "eyJsegredo.abc.def".into(), audio: None, data: None }).await;
     let e = r.err().expect("devia falhar").to_string();
     assert!(!e.contains("eyJsegredo"), "{e}");
     assert!(t0.elapsed() < Duration::from_secs(12));
     let Some(srv) = start_server() else { eprintln!("PULADO (servidor): BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
-    let r = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token: "eyJsegredo.abc.def".into(), audio: None }).await;
+    let r = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token: "eyJsegredo.abc.def".into(), audio: None, data: None }).await;
     let e = r.err().expect("token inválido devia falhar").to_string();
     assert!(!e.contains("eyJsegredo"), "{e}");
     eprintln!("erro com token inválido: {e}");
@@ -212,7 +212,7 @@ async fn sfu_token_service_flow_with_user_session() {
     let url = format!("http://127.0.0.1:{port}/functions/v1/livekit-token");
     let (u2, r2) = (url.clone(), room.clone());
     let token = tokio::task::spawn_blocking(move || sfu::fetch_token(&u2, "sessao-do-usuario", &r2)).await.unwrap().expect("token com sessão válida");
-    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token, audio: None }).await.expect("entrar com o token do serviço");
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token, audio: None, data: None }).await.expect("entrar com o token do serviço");
     assert_eq!(h.identity, A);
     h.cmd.send(MeshCmd::Close).await.unwrap();
     let (u3, r3) = (url, room);
@@ -300,7 +300,7 @@ async fn ipc_try_sfu_uses_the_account_session_end_to_end() {
         let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body);
     });
     let sc = crate::sfu_cfg::SfuConfig { url: format!("ws://127.0.0.1:{}", srv.port), token_url: format!("http://127.0.0.1:{tport}/functions/v1/livekit-token") };
-    let h = crate::ipc::try_sfu(&sc, &rt, "room", "sala-do-grupo", None).await.expect("entrar no SFU com a sessão da conta");
+    let h = crate::ipc::try_sfu(&sc, &rt, "room", "sala-do-grupo", None, None).await.expect("entrar no SFU com a sessão da conta");
     assert_eq!(h.identity, A);
     let hdr = seen.lock().unwrap().clone();
     assert!(hdr.to_ascii_lowercase().ends_with(&format!("bearer {}", session.to_ascii_lowercase())), "o serviço de tokens não recebeu a sessão do usuário: {}", hdr.len());
@@ -308,7 +308,7 @@ async fn ipc_try_sfu_uses_the_account_session_end_to_end() {
     h.cmd.send(MeshCmd::Close).await.unwrap();
     // sem conta: erro legível, sem tentar a rede
     let rt2 = crate::accounts::service::Runtime::for_tests(None, dir.clone());
-    let e = crate::ipc::try_sfu(&sc, &rt2, "room", "x", None).await.err().expect("sem conta deve falhar");
+    let e = crate::ipc::try_sfu(&sc, &rt2, "room", "x", None, None).await.err().expect("sem conta deve falhar");
     assert!(e.contains("conta"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }

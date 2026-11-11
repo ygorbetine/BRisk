@@ -75,3 +75,20 @@ Estado em 01:47: o lock de GPU pertence à sessão da transmissão; nada de GPU 
 - Automático NUNCA escolhe SFU (só escolha manual em Rede ou configuração explícita) até o híbrido ser validado em uso real.
 - Teste `tests_hybrid::hybrid_chat_presence_voice_share_and_kick` (livekit-server --dev real): DM, evento de chat assinado, status, voz (66 quadros/2 s), mudo, tela com peer_id da malha, expulsão pela dona. Passa.
 - Limite: a malha tem `MAX_PEERS = 5`, então o chat em sala grande no SFU ainda é limitado. NÃO FEITO: reconexão automática, regra do Automático, perda de pacotes/merge `cui-transmissao`, NVENC sobre SFU, mudo remoto assinado.
+
+## Marco 1 (feito): NVENC/MFT sobre o SFU
+
+`BRIKS_SFU_TEST_GPU=1 cargo test --release sfu_screen` com o lock `A:\BRiskCall\.gpu-test.lock` criado de forma exclusiva e removido ao fim: codificador "NVIDIA H.264 Encoder MFT" (hardware: true), publicado ao `livekit-server --dev` e assistido por outro cliente (decodificação por software no teste). 40 quadros em 4 s (a fonte sintética roda a 10 fps), latência captura→quadro p50 35-42 ms, p95 69-92 ms, 12 Receiver Reports, RTT 1 ms, 13 PLIs. O SFU aceitou o H264 do NVENC (perfil negociado no SDP) e repassou ao assinante.
+
+## Marco 6 (feito): camada de dados própria do SFU (sem teto de 5 peers)
+
+Objetivo do usuário: o SFU deve conectar MUITO mais de 5 pessoas. A malha P2P (`MAX_PEERS = 5`) deixou de ser usada no modo SFU. `sfudata.rs` leva chat, status, presença, estado do microfone, expulsão e mudo remoto pelas data channels do LiveKit (DataPacket reliable, tópico `briks`), todas as mensagens assinadas pela identidade ECDSA.
+
+- Confiança: o servidor carimba a identidade do remetente em cada pacote. O `hello` assinado carrega `sfuId` dentro do texto assinado: só vale se `sfuId == remetente carimbado` e a assinatura bate com a chave anunciada (que define a impressão digital). A 1ª identidade de um `sfuId` vale até ele sair.
+- Mensagens: `hello`, `state` (mic/ensurdecido/status/presença, `ts` monotônico), `chat` (ChatWire v2 assinado, DM só ao destinatário, com `ack` e reenvio), `event` (`chat.event` assinado), `kick`/`allow`/`mute` (só o dono; assinatura sobre sala+alvo+ts, janela de 5 min).
+- Descartes: lixo, `v` errado, > 15 KB, de quem não fez hello, de banido, estado repetido/antigo, conteúdo adulterado, não-dono, ts fora da janela, inundação (400 msgs/10 s por remetente). Prova em 10 testes unitários e ao vivo (cliente 4 injeta lixo e comandos forjados via data channel; ninguém é expulso/silenciado).
+- Robustez: hello com `ack` (uma resposta perdida se repara sozinha, sem ping-pong); difusões (estado/evento) repetidas após 3 s e 9 s (receptores deduplicam); participante que nunca faz hello aparece como "não verificado" (fp = identidade do SFU) após 12 s.
+- Dono: `owner_fp` do app ou o de menor `joinedAt` (assinado no hello) entre os autenticados, como na malha.
+- IPC: no modo SFU o core não abre malha nem Realtime; o `peer_id` local é a identidade no SFU. `BRIKS_SFU_MESH=1` volta ao híbrido (SFU + malha até 5) de `hybrid.rs`.
+- Teste ao vivo `tests_sfudata::sfu_data_layer_scales_past_five_clients` (`BRIKS_SFU_CLIENTS`, padrão 10): todos autenticam todos com o fp real, todos ouvem voz do dono e do vizinho, status, evento e DM (sem vazar), mudo remoto, expulsão pela dona. Passou com 10, 12, 16 e 20 clientes (20 duas vezes). Com 25 clientes num único processo o teste falha de forma intermitente (presença passa; um DM/evento fica sem chegar). Causa NÃO confirmada: 25 clientes x 24 fluxos de áudio decodificados no mesmo processo saturam a CPU; precisa de teste com clientes em processos separados.
+- Limites: expulsar faz os clientes honestos ignorarem e silenciarem o banido (ele sai sozinho), mas só a API de administração do LiveKit (RemoveParticipant, numa função do Supabase que verifique o dono) o tira do servidor de mídia: NÃO FEITO. Mudo remoto assinado: FEITO só na camada de dados do SFU (a malha P2P responde "só no modo SFU"). Não testado pela UI C nem por `room.join` de ponta a ponta no IPC com SFU puro.

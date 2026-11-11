@@ -71,6 +71,8 @@ pub enum MeshCmd {
     KickUnchecked { fp: String },
     /// O dono permite a volta de alguém banido.
     Allow { fp: String },
+    /// O dono fecha/abre o microfone de outro (mensagem assinada). Só no modo SFU (camada de dados do LiveKit).
+    RemoteMute { fp: String, muted: bool },
     /// Reenvia o estado local (microfone/ensurdecido) a todos os peers autenticados.
     BroadcastState,
     /// Só no modo híbrido: estado de mídia (mic aberto, ensurdecido) e identidade no SFU a anunciar; reenvia o estado.
@@ -521,6 +523,7 @@ impl Actor {
                     None => self.emit(MeshEvent::Error("assistir: peer desconhecido".into())).await,
                 }
             }
+            MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto só existe no modo SFU".into())).await,
             MeshCmd::Close => {}
         }
     }

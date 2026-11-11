@@ -62,13 +62,13 @@ fn net_env(k: &str) -> Option<String> {
 }
 
 /// Tenta entrar na sala pelo SFU: token do Supabase (sessão do usuário), depois sinalização LiveKit. Erro = texto para o diagnóstico.
-pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::accounts::service::Runtime, ns: &str, room: &str, audio: Option<(Arc<Audio>, mpsc::Receiver<crate::audio::AudioEvent>)>) -> Result<crate::sfu::SfuHandle, String> {
+pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::accounts::service::Runtime, ns: &str, room: &str, audio: Option<(Arc<Audio>, mpsc::Receiver<crate::audio::AudioEvent>)>, data: Option<crate::sfudata::DataCfg>) -> Result<crate::sfu::SfuHandle, String> {
     let acc = accounts.acc.clone().ok_or("entre na sua conta Briks para usar o servidor de chamadas")?;
     let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
     let lk_room = format!("{ns}:{}", &secure_room_id(ns, room)[..32]);
     let url = sc.token_url.clone();
     let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &lk_room)).await.map_err(|e| e.to_string())??;
-    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio }).await.map_err(|e| e.to_string())
+    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio, data }).await.map_err(|e| e.to_string())
 }
 
 pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {
@@ -224,8 +224,24 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
                                     let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
                                     if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
-                                    match try_sfu(sc, &accounts, &ns, &room, au.clone().zip(au_rx)).await {
-                                        // Híbrido: a mídia vai ao SFU e a malha P2P só de DataChannel (abaixo) cuida de chat, status, presença e expulsão.
+                                    // Padrão: chat/status/presença/expulsão pelas data channels do próprio LiveKit (sem teto de peers). BRIKS_SFU_MESH=1: híbrido com a malha P2P (até 5).
+                                    let with_mesh = std::env::var("BRIKS_SFU_MESH").map(|v| v == "1").unwrap_or(false);
+                                    let dcfg = if with_mesh { None } else { Some(crate::sfudata::DataCfg { identity: id.clone(), name: name.clone(), room_hash: secure_room_id(&ns, &room), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }) };
+                                    match try_sfu(sc, &accounts, &ns, &room, au.clone().zip(au_rx), dcfg).await {
+                                        Ok(h) if !with_mesh => {
+                                            // SFU puro: sem malha nem Realtime. O peer_id local é a identidade no SFU.
+                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
+                                            out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
+                                            cur_room = format!("{ns}:{room}");
+                                            local_peer = h.identity.clone();
+                                            audio = au.clone();
+                                            mesh_cmd = Some(h.cmd);
+                                            mesh_ev = Some(h.events);
+                                            rt_status = None;
+                                            out(&mut wr, json!({ "ev": "room.joining", "peer_id": local_peer })).await?;
+                                            if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
+                                            continue;
+                                        }
                                         Ok(h) => { hybrid = Some(h); sfu_au = au; }
                                         Err(e) => { sfu_failed = true; sfu_err = e; }
                                     }

@@ -23,6 +23,7 @@ mod procaudio;
 mod realtime;
 mod hybrid;
 mod sfu;
+mod sfudata;
 mod sfu_cfg;
 mod share;
 mod signaling;
@@ -82,5 +83,7 @@ mod tests;
 mod tests_rede;
 #[cfg(test)]
 mod tests_hybrid;
+#[cfg(test)]
+mod tests_sfudata;
 #[cfg(test)]
 mod tests_sfu;

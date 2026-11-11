@@ -56,6 +56,8 @@ pub struct SfuJoin {
     /// JWT de acesso à sala, emitido pela função `livekit-token` (ou, só em testes, por um segredo de desenvolvimento).
     pub token: String,
     pub audio: Option<(Arc<Audio>, mpsc::Receiver<AudioEvent>)>,
+    /// Camada de dados (chat/status/presença/expulsão pelas data channels do LiveKit). None = só voz e tela (ou malha P2P ao lado).
+    pub data: Option<crate::sfudata::DataCfg>,
 }
 
 #[derive(Default)]
@@ -93,6 +95,8 @@ struct Shared {
 }
 
 enum Internal {
+    Data(Vec<u8>),
+    DcOpen,
     Ice { target: i32, init: RTCIceCandidateInit },
     Pc { target: i32, state: RTCPeerConnectionState },
 }
@@ -206,10 +210,21 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
             })
         }));
     }
-    sub.on_data_channel(Box::new(|_dc| Box::pin(async {})));   // as duas data channels do servidor (_reliable/_lossy): ainda sem uso
+    // data channels do servidor (_reliable/_lossy): cada pacote do LiveKit (DataPacket) chega ao ator, que entrega à camada de dados
+    {
+        let itx = itx.clone();
+        sub.on_data_channel(Box::new(move |dc| {
+            let itx = itx.clone();
+            Box::pin(async move {
+                dc.on_message(Box::new(move |msg| { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::Data(msg.data.to_vec())).await; }) }));
+            })
+        }));
+    }
     let server = target.host.clone();
     let identity = me.identity.clone();
+    let data = j.data.map(|c| crate::sfudata::Layer::new(c, me.identity.clone()));
     let mut actor = Actor {
+        data, dc_pub: None, dc_queue: vec![], leave: false,
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
         pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
@@ -277,6 +292,10 @@ struct Actor {
     last_mic_open: bool,
     ping_ms: u64,
     subscriber_primary: bool,
+    data: Option<crate::sfudata::Layer>,
+    dc_pub: Option<Arc<webrtc::data_channel::RTCDataChannel>>,
+    dc_queue: Vec<Vec<u8>>,
+    leave: bool,
 }
 
 #[derive(Default, Clone)]
@@ -312,7 +331,9 @@ impl Actor {
         let pc = build_pc(&self.ice, true).await?;
         wire_pc(&pc, 0, &self.itx);
         // o servidor espera as duas data channels na offer do publisher
-        pc.create_data_channel("_reliable", Some(RTCDataChannelInit { ordered: Some(true), ..Default::default() })).await?;
+        let dc = pc.create_data_channel("_reliable", Some(RTCDataChannelInit { ordered: Some(true), ..Default::default() })).await?;
+        { let itx = self.itx.clone(); dc.on_open(Box::new(move || { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::DcOpen).await; }) })); }
+        self.dc_pub = Some(dc);
         pc.create_data_channel("_lossy", Some(RTCDataChannelInit { ordered: Some(false), max_retransmits: Some(0), ..Default::default() })).await?;
         self.publisher = Some(pc.clone());
         Ok(pc)
@@ -422,6 +443,7 @@ impl Actor {
                 self.known.remove(&p.identity);
                 { let mut sh = self.shared.lock().unwrap(); sh.part_ident.remove(&p.sid); sh.tracks.retain(|_, t| t.identity != p.identity); sh.recv.remove(&p.identity); }
                 if let Some(a) = &self.audio { a.remove_peer(&p.identity); }
+                if let Some(l) = self.data.as_mut() { l.left(&p.identity); }
                 self.emit(MeshEvent::Peer { peer_id: p.identity.clone(), state: "fechado".into() }).await;
                 continue;
             }
@@ -437,14 +459,18 @@ impl Actor {
             if first {
                 let name = if p.name.is_empty() { p.identity.clone() } else { p.name.clone() };
                 k.name = name.clone();
-                self.emit(MeshEvent::Peer { peer_id: p.identity.clone(), state: "autenticado".into() }).await;
-                self.emit(MeshEvent::PeerInfo { peer_id: p.identity.clone(), fp: p.identity.clone(), name }).await;
+                // com a camada de dados, quem autentica é o hello assinado (fp real); sem ela, a identidade do token faz as vezes de fp
+                if let Some(l) = self.data.as_mut() { l.present(&p.identity, &name); }
+                else {
+                    self.emit(MeshEvent::Peer { peer_id: p.identity.clone(), state: "autenticado".into() }).await;
+                    self.emit(MeshEvent::PeerInfo { peer_id: p.identity.clone(), fp: p.identity.clone(), name }).await;
+                }
             }
             // microfone
             let mic = p.tracks.iter().find(|t| t.source == lk::TrackSource::Microphone as i32).map(|t| t.muted);
             if mic != k.mic {
                 k.mic = mic;
-                self.emit(MeshEvent::PeerState { peer_id: p.identity.clone(), microphone: mic == Some(false), deafened: false, status: String::new(), presence: String::new() }).await;
+                if self.data.is_none() { self.emit(MeshEvent::PeerState { peer_id: p.identity.clone(), microphone: mic == Some(false), deafened: false, status: String::new(), presence: String::new() }).await; }
             }
             // áudio de voz: assina sempre
             for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::Microphone as i32) {
@@ -482,6 +508,7 @@ impl Actor {
 
     async fn run(&mut self, mut rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>) {
         let mut ping = tokio::time::interval(Duration::from_millis(self.ping_ms));
+        let mut dtick = tokio::time::interval(Duration::from_secs(1));
         loop {
             tokio::select! {
                 m = rx.next() => match m {
@@ -501,8 +528,10 @@ impl Actor {
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
                     None => { arx = None; }
                 },
+                _ = dtick.tick() => { if self.data.is_some() { self.set_media(); let outs = self.data.as_mut().map(|l| l.tick()).unwrap_or_default(); self.apply(outs).await; } }
                 _ = ping.tick() => { let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0); self.send(rq::Message::Ping(t)).await; }
             }
+            if self.leave { break; }
         }
         // saída limpa: avisa o servidor, para captura/áudio e fecha os PeerConnections
         self.send(rq::Message::Leave(lk::LeaveRequest { can_reconnect: false, reason: lk::DisconnectReason::ClientInitiated as i32, action: lk::leave_request::Action::Disconnect as i32, ..Default::default() })).await;
@@ -515,6 +544,8 @@ impl Actor {
 
     async fn on_internal(&mut self, i: Internal) {
         match i {
+            Internal::Data(b) => self.on_data(b).await,
+            Internal::DcOpen => { for b in std::mem::take(&mut self.dc_queue) { self.dc_send_raw(b).await; } }
             Internal::Ice { target, init } => {
                 if let Ok(s) = serde_json::to_string(&init) { self.send(rq::Message::Trickle(lk::TrickleRequest { candidate_init: s, target, r#final: false })).await; }
             }
@@ -528,13 +559,19 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+            let media = self.media();
+            let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
+            self.apply(outs).await;
+            return;
+        }
+        if matches!(c, MeshCmd::BroadcastState) && self.data.is_some() {
+            let media = self.media();
+            let outs = self.data.as_mut().and_then(|l| l.on_cmd(MeshCmd::BroadcastState, media)).unwrap_or_default();
+            self.apply(outs).await;
+        }
         match c {
-            MeshCmd::BroadcastState => {
-                if let (Some(a), Some(sid)) = (self.audio.clone(), self.mic_sid.clone()) {
-                    let open = a.mic_open();
-                    if open != self.last_mic_open { self.last_mic_open = open; self.send(rq::Message::Mute(lk::MuteTrackRequest { sid, muted: !open })).await; }
-                }
-            }
+            MeshCmd::BroadcastState => self.sync_mic().await,
             MeshCmd::SetProfile { .. } => {}   // status/presença ainda não viajam pelo SFU
             MeshCmd::MutePeer { key, muted } => { if let Some(a) = &self.audio { a.mute_peer(&key, muted); } }
             MeshCmd::ShareVolume { key, gain } => { if let Some(a) = &self.audio { a.set_screen_gain(&key, gain); } }
@@ -544,10 +581,81 @@ impl Actor {
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
             MeshCmd::Chat { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
             MeshCmd::Kick { .. } | MeshCmd::Allow { .. } => self.emit(MeshEvent::Error("expulsar exige a API de administração do LiveKit: ainda não disponível".into())).await,
+            MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto exige a camada de dados do SFU".into())).await,
             MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } => {}
             #[cfg(test)]
-            MeshCmd::KickUnchecked { .. } | MeshCmd::RawDc { .. } => {}
+            MeshCmd::KickUnchecked { .. } => {}
+            // só testes: publica bytes crus na data channel (provar que forjados/malformados são descartados pelos outros)
+            #[cfg(test)]
+            MeshCmd::RawDc { text } => {
+                #[allow(deprecated)]
+                let pkt = lk::DataPacket { kind: 0, participant_identity: self.me.identity.clone(), value: Some(lk::data_packet::Value::User(lk::UserPacket { payload: text.into_bytes(), topic: Some("briks".into()), ..Default::default() })), ..Default::default() };
+                self.dc_send_raw(pkt.encode_to_vec()).await;
+            }
             MeshCmd::Close => {}
+        }
+    }
+
+    /// Reflete no servidor o estado atual do microfone (faixa muda/aberta).
+    async fn sync_mic(&mut self) {
+        if let (Some(a), Some(sid)) = (self.audio.clone(), self.mic_sid.clone()) {
+            let open = a.mic_open();
+            if open != self.last_mic_open { self.last_mic_open = open; self.send(rq::Message::Mute(lk::MuteTrackRequest { sid, muted: !open })).await; }
+        }
+    }
+
+    fn media(&self) -> (bool, bool) { self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).unwrap_or((true, false)) }
+    fn set_media(&mut self) { let m = self.media(); if let Some(l) = self.data.as_mut() { l.set_media(m); } }
+
+    /// Pacote de dados do LiveKit (DataPacket) recebido: o servidor carimba a identidade do remetente; só o tópico "briks" interessa.
+    #[allow(deprecated)]
+    async fn on_data(&mut self, bytes: Vec<u8>) {
+        if self.data.is_none() { return; }
+        let Ok(p) = lk::DataPacket::decode(bytes.as_slice()) else { return };
+        let Some(lk::data_packet::Value::User(u)) = p.value else { return };
+        if u.topic.as_deref() != Some("briks") { return; }
+        let from = if !p.participant_identity.is_empty() { p.participant_identity } else { u.participant_identity };
+        self.set_media();
+        let outs = self.data.as_mut().map(|l| l.on_packet(&from, &u.payload)).unwrap_or_default();
+        self.apply(outs).await;
+    }
+
+    #[allow(deprecated)]
+    async fn publish_data(&mut self, to: Vec<String>, msg: Value) {
+        let payload = msg.to_string().into_bytes();
+        if payload.len() > crate::sfudata::MAX_PACKET { self.emit(MeshEvent::Error("mensagem grande demais para o canal de dados".into())).await; return; }
+        let pkt = lk::DataPacket {
+            kind: lk::data_packet::Kind::Reliable as i32, participant_identity: self.me.identity.clone(), destination_identities: to.clone(),
+            value: Some(lk::data_packet::Value::User(lk::UserPacket { payload, topic: Some("briks".into()), destination_identities: to, ..Default::default() })), ..Default::default()
+        };
+        self.dc_send_raw(pkt.encode_to_vec()).await;
+    }
+
+    async fn dc_send_raw(&mut self, b: Vec<u8>) {
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+        match &self.dc_pub {
+            Some(dc) if dc.ready_state() == RTCDataChannelState::Open => { let _ = dc.send(&bytes::Bytes::from(b)).await; }
+            _ => { if self.dc_queue.len() < 512 { self.dc_queue.push(b); } }
+        }
+    }
+
+    async fn apply(&mut self, outs: Vec<crate::sfudata::Out>) {
+        use crate::sfudata::Out;
+        for o in outs {
+            match o {
+                Out::Ev(e) => self.emit(e).await,
+                Out::Send { to, msg } => self.publish_data(to, msg).await,
+                Out::Mic(open) => {
+                    if let Some(a) = &self.audio { a.set_mic_muted(!open); }
+                    self.sync_mic().await;
+                    self.set_media();
+                    let media = self.media();
+                    let outs = self.data.as_mut().and_then(|l| l.on_cmd(MeshCmd::BroadcastState, media)).unwrap_or_default();
+                    for o in outs { if let Out::Send { to, msg } = o { self.publish_data(to, msg).await; } }
+                }
+                Out::MuteLocal { ident, muted } => { if let Some(a) = &self.audio { a.mute_peer(&ident, muted); } }
+                Out::Leave => self.leave = true,
+            }
         }
     }
 

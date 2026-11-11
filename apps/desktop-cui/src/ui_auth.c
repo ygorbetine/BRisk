@@ -39,7 +39,7 @@ static bool provider_button(cui_ctx *ui, const char *id, const char *label, cons
         }
         cui_text(ui, label, .font = CUI_FONT_MEDIUM, .size = 16, .color = enabled ? CUI_RGB(0xffffff) : B_MUTED, .nowrap = true);
     }
-    bool hit = enabled && briks_clicked(ui, "b");
+    bool hit = enabled && briks_clicked_r(ui, "b", 17.0f);
     cui_pop_id(ui);
     return hit;
 }

@@ -284,7 +284,7 @@ static bool seg(cui_ctx *ui, const char *id, const char *const *labels, const in
                     if (counts) { char c[12]; snprintf(c, sizeof c, "%d", counts[i]); cui_text(ui, c, .size = 11, .color = on ? CUI_RGBA(0xffffffb0) : CUI_RGBA(0xa592b888)); }
                 }
             }
-            if (briks_clicked(ui, "s") && !on) { *idx = i; changed = true; }
+            if (briks_clicked_r(ui, "s", 8.0f) && !on) { *idx = i; changed = true; }
             cui_pop_id(ui);
         }
     }
@@ -480,7 +480,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         }
         /* com o seletor aberto a barra fica por baixo dele: um clique no diálogo não pode valer também aqui */
         bool modal = q->dialog_open || s->kick_open;
-        if (!modal && briks_clicked(ui, "b")) { if (on) share_stop(s); else share_open_dialog(s); }
+        if (!modal && briks_clicked_r(ui, "b", 25.0f)) { if (on) share_stop(s); else share_open_dialog(s); }
         if (q->active) {
             vsep(ui);
             cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
@@ -497,7 +497,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             else if (adapting) cui_icon(ui, q->black ? CUI_ICON_TRIANGLE_ALERT : !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
             cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
-        if ((!modal && briks_clicked(ui, "q")) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
+        if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
             beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");

@@ -321,7 +321,7 @@ void msgui_arrow(cui_ctx *ui, const msg_t *m) {
             .bg = show ? B_GLASS_BUBBLE : CUI_RGBA(0x00000000), .border = show ? 1 : 0, .border_color = CUI_RGBA(0xffffff30)) {
         if (show) cui_icon(ui, CUI_ICON_CHEVRON_DOWN, 15, B_TEXT);
     }
-    if (show && briks_clicked(ui, "arw")) {
+    if (show && briks_clicked_r(ui, "arw", 13.0f)) {
         cui_rect r = cui_get_rect(ui, cui_make_id(ui, "arw"));
         open_menu(ui, m, r.x < 640 ? r.x : r.x - 200, r.y + r.h + 4);
     }
@@ -366,7 +366,7 @@ void msgui_reactions(cui_ctx *ui, const msg_t *m) {
                 cui_emoji(ui, t->r[i].e, 14);
                 cui_textf(ui, "%d", t->r[i].n);
             }
-            if (briks_clicked(ui, "rx")) toggle_react(m->id, t->r[i].e);
+            if (briks_clicked_r(ui, "rx", 10.0f)) toggle_react(m->id, t->r[i].e);
             cui_pop_id(ui);
         }
     }
@@ -423,7 +423,7 @@ static bool chip(cui_ctx *ui, const char *id, const char *emoji, const char *ico
             .bg = CUI_RGBA(0xffffff10)) {
         if (emoji) cui_emoji(ui, emoji, (float)sz); else cui_icon(ui, icon, 15, B_TEXT);
     }
-    bool hit = briks_clicked(ui, "c");
+    bool hit = briks_clicked_r(ui, "c", 9.0f);
     cui_pop_id(ui);
     return hit;
 }
@@ -442,7 +442,7 @@ static bool mrow(cui_ctx *ui, int id, const char *icon, const char *label, const
         cui_text(ui, label, .size = 13, .color = c, .nowrap = true, .width = CUI_FILL);
         if (hint) cui_text(ui, hint, .size = 10, .color = CUI_RGB(0xf5c542), .nowrap = true);
     }
-    bool hit = briks_clicked(ui, "r");
+    bool hit = briks_clicked_r(ui, "r", 9.0f);
     cui_pop_id(ui);
     return hit;
 }
@@ -541,7 +541,7 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
                         cui_push_id_int(ui, 7200 + c);
                         cui_box(ui, .id = "t", .width = CUI_PX(38), .height = CUI_PX(30), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
                                 .bg = c == cat ? CUI_RGBA(0x8b5cf65a) : CUI_RGBA(0x00000000)) { cui_emoji(ui, CATS[c].icon, 17); }
-                        if (briks_clicked(ui, "t")) cat = c;
+                        if (briks_clicked_r(ui, "t", 9.0f)) cat = c;
                         cui_pop_id(ui);
                     }
                 }

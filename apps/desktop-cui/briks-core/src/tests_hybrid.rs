@@ -41,7 +41,7 @@ async fn node(rt_port: u16, room: &str, peer: &str, sfu_ident: &str, name: &str,
     let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": joined, "clientVersion": "teste" }));
     let lk_room = format!("room:{}", &secure_room_id("room", room)[..32]);
     let (au, au_rx) = Audio::new(true);
-    let sh = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token(sfu_ident, &lk_room), audio: Some((au.clone(), au_rx)), data: None }).await.expect("entrar no SFU");
+    let sh = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token(sfu_ident, &lk_room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
     let m = mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: None, joined_at: joined }, id, rt, rx);
     let h = crate::hybrid::spawn(m, sh, Some(au.clone())).await;
     Node { h, audio: au, fp }

@@ -66,9 +66,18 @@ pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::ac
     let acc = accounts.acc.clone().ok_or("entre na sua conta Briks para usar o servidor de chamadas")?;
     let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
     let lk_room = format!("{ns}:{}", &secure_room_id(ns, room)[..32]);
-    let url = sc.token_url.clone();
-    let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &lk_room)).await.map_err(|e| e.to_string())??;
-    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio, data }).await.map_err(|e| e.to_string())
+    let (url, room2) = (sc.token_url.clone(), lk_room.clone());
+    let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room2)).await.map_err(|e| e.to_string())??;
+    // reconexão: token novo pela mesma função, com a sessão da conta renovada se preciso (o token da sala vale ~1 h)
+    let token_url = sc.token_url.clone();
+    let renew: crate::sfu::TokenFn = Arc::new(move || {
+        let (acc, url, room) = (acc.clone(), token_url.clone(), lk_room.clone());
+        Box::pin(async move {
+            let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
+            tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &room)).await.map_err(|e| e.to_string())?
+        })
+    });
+    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio, data, renew: Some(renew) }).await.map_err(|e| e.to_string())
 }
 
 pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {

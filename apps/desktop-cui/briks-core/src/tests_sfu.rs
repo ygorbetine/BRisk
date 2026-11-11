@@ -33,10 +33,12 @@ fn start_server() -> Option<Server> {
     let mut s = Server { child, port }; let _ = s.child.kill(); None
 }
 
-pub fn dev_token(identity: &str, room: &str) -> String {
+pub fn dev_token(identity: &str, room: &str) -> String { dev_token_ttl(identity, room, 3600) }
+
+pub fn dev_token_ttl(identity: &str, room: &str, ttl: u64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let head = B64.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
-    let body = B64.encode(json!({ "iss": "devkey", "sub": identity, "nbf": now - 10, "exp": now + 3600,
+    let body = B64.encode(json!({ "iss": "devkey", "sub": identity, "nbf": now - 10, "exp": now + ttl,
         "video": { "room": room, "roomJoin": true, "canPublish": true, "canSubscribe": true, "canPublishData": true } }).to_string());
     let mut m = Hmac::<Sha256>::new_from_slice(b"secret").unwrap();
     m.update(format!("{head}.{body}").as_bytes());
@@ -46,7 +48,7 @@ pub fn dev_token(identity: &str, room: &str) -> String {
 async fn client(port: u16, room: &str, ident: &str, muted: bool) -> (SfuHandle, Arc<Audio>) {
     let (au, au_rx) = Audio::new(true);
     au.set_mic_muted(muted);
-    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{port}"), token: dev_token(ident, room), audio: Some((au.clone(), au_rx)), data: None }).await.expect("entrar no SFU");
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{port}"), token: dev_token(ident, room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
     (h, au)
 }
 
@@ -171,12 +173,12 @@ async fn sfu_screen_share_published_and_watched() {
 async fn sfu_connect_failures_are_fast_and_do_not_leak_the_token() {
     // nada ouvindo nessa porta
     let t0 = Instant::now();
-    let r = sfu::connect(SfuJoin { url: "ws://127.0.0.1:9".into(), token: "eyJsegredo.abc.def".into(), audio: None, data: None }).await;
+    let r = sfu::connect(SfuJoin { url: "ws://127.0.0.1:9".into(), token: "eyJsegredo.abc.def".into(), audio: None, data: None, renew: None }).await;
     let e = r.err().expect("devia falhar").to_string();
     assert!(!e.contains("eyJsegredo"), "{e}");
     assert!(t0.elapsed() < Duration::from_secs(12));
     let Some(srv) = start_server() else { eprintln!("PULADO (servidor): BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
-    let r = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token: "eyJsegredo.abc.def".into(), audio: None, data: None }).await;
+    let r = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token: "eyJsegredo.abc.def".into(), audio: None, data: None, renew: None }).await;
     let e = r.err().expect("token inválido devia falhar").to_string();
     assert!(!e.contains("eyJsegredo"), "{e}");
     eprintln!("erro com token inválido: {e}");
@@ -212,7 +214,7 @@ async fn sfu_token_service_flow_with_user_session() {
     let url = format!("http://127.0.0.1:{port}/functions/v1/livekit-token");
     let (u2, r2) = (url.clone(), room.clone());
     let token = tokio::task::spawn_blocking(move || sfu::fetch_token(&u2, "sessao-do-usuario", &r2)).await.unwrap().expect("token com sessão válida");
-    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token, audio: None, data: None }).await.expect("entrar com o token do serviço");
+    let h = sfu::connect(SfuJoin { url: format!("ws://127.0.0.1:{}", srv.port), token, audio: None, data: None, renew: None }).await.expect("entrar com o token do serviço");
     assert_eq!(h.identity, A);
     h.cmd.send(MeshCmd::Close).await.unwrap();
     let (u3, r3) = (url, room);

@@ -58,6 +58,25 @@ pub struct SfuJoin {
     pub audio: Option<(Arc<Audio>, mpsc::Receiver<AudioEvent>)>,
     /// Camada de dados (chat/status/presença/expulsão pelas data channels do LiveKit). None = só voz e tela (ou malha P2P ao lado).
     pub data: Option<crate::sfudata::DataCfg>,
+    /// Busca um token novo para a reconexão (o da entrada vale ~1 h). None = reconecta com o mesmo token.
+    pub renew: Option<TokenFn>,
+}
+
+/// Função que devolve um token de sala novo (no app: a função `livekit-token` do Supabase com a sessão da conta).
+pub type TokenFn = Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+
+/// Reconexão: 1ª tentativa quase imediata, depois espera crescente até 5 s (com ±20% de acaso para os clientes não baterem juntos
+/// num servidor que acabou de voltar); desiste após 2 min fora do ar.
+const RETRY_MS: [u64; 6] = [200, 500, 1000, 2000, 4000, 5000];
+const GIVE_UP: Duration = Duration::from_secs(120);
+/// Depois de voltar, quem ainda não reapareceu (ou ainda não republicou a tela) só é dado como saído após este prazo:
+/// numa queda do servidor todos voltam em momentos diferentes e a lista não deve piscar.
+const GRACE: Duration = Duration::from_secs(20);
+
+fn retry_delay(attempt: u32) -> Duration {
+    let base = RETRY_MS[(attempt as usize).min(RETRY_MS.len() - 1)];
+    let r = (uuid::Uuid::new_v4().as_u128() % 41) as u64;   // 0..=40 -> 80%..120%
+    Duration::from_millis(base * (80 + r) / 100)
 }
 
 #[derive(Default)]
@@ -73,6 +92,9 @@ pub struct SfuStats {
     pub plis: AtomicU64,
     pub rtt_us: AtomicU64,
     pub loss_permille: AtomicU64,
+    /// reconexões concluídas e tokens renovados para reconectar
+    pub reconnects: AtomicU64,
+    pub token_renewals: AtomicU64,
 }
 
 pub struct SfuHandle {
@@ -94,12 +116,15 @@ struct Shared {
     recv: HashMap<String, Arc<RecvState>>,  // identity -> estado de recepção do vídeo
 }
 
+/// `epoch` = geração da sessão (sobe a cada reconexão): o que vier de PeerConnections antigos é descartado.
 enum Internal {
-    Data(Vec<u8>),
-    DcOpen,
-    Ice { target: i32, init: RTCIceCandidateInit },
-    Pc { target: i32, state: RTCPeerConnectionState },
+    Data(u32, Vec<u8>),
+    DcOpen(u32),
+    Ice { epoch: u32, target: i32, init: RTCIceCandidateInit },
+    Pc { epoch: u32, target: i32, state: RTCPeerConnectionState },
 }
+
+struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String }
 
 struct Pending { track: Arc<dyn TrackLocal + Send + Sync>, video: bool }
 
@@ -141,49 +166,54 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
     Ok(Arc::new(api.new_peer_connection(RTCConfiguration { ice_servers: ice.to_vec(), ..Default::default() }).await?))
 }
 
-fn wire_pc(pc: &Arc<RTCPeerConnection>, target: i32, itx: &mpsc::Sender<Internal>) {
+fn wire_pc(pc: &Arc<RTCPeerConnection>, epoch: u32, target: i32, itx: &mpsc::Sender<Internal>) {
     let itx1 = itx.clone();
     pc.on_ice_candidate(Box::new(move |c| { let itx = itx1.clone(); Box::pin(async move {
-        if let Some(c) = c { if let Ok(init) = c.to_json() { let _ = itx.send(Internal::Ice { target, init }).await; } } }) }));
+        if let Some(c) = c { if let Ok(init) = c.to_json() { let _ = itx.send(Internal::Ice { epoch, target, init }).await; } } }) }));
     let itx2 = itx.clone();
-    pc.on_peer_connection_state_change(Box::new(move |state| { let itx = itx2.clone(); Box::pin(async move { let _ = itx.send(Internal::Pc { target, state }).await; }) }));
+    pc.on_peer_connection_state_change(Box::new(move |state| { let itx = itx2.clone(); Box::pin(async move { let _ = itx.send(Internal::Pc { epoch, target, state }).await; }) }));
 }
 
-/// Conecta, entra na sala e só devolve quando o servidor respondeu `Join` (para o chamador poder cair no P2P se falhar).
-pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
-    let target = crate::realtime::parse_target(&j.url)?;
-    let io = tokio::time::timeout(Duration::from_secs(10), crate::realtime::open_io(&target)).await.map_err(|_| anyhow!("tempo esgotado ao conectar ao servidor de chamadas"))??;
+/// Falha ao abrir a sessão. `auth` = o servidor respondeu e RECUSOU (token vencido/inválido): vale buscar outro token.
+struct OpenErr { auth: bool, msg: String }
+impl OpenErr { fn net(m: impl std::fmt::Display) -> Self { OpenErr { auth: false, msg: redact(&m.to_string()) } } }
+
+/// Abre o WebSocket de sinalização e espera o `JoinResponse`. Usado na entrada e em cada tentativa de reconexão.
+async fn open_session(url: &str, token: &str, secs: u64) -> Result<(WsTx, WsRx, lk::JoinResponse, String), OpenErr> {
+    use tokio_tungstenite::tungstenite::Error as WsErr;
+    let target = crate::realtime::parse_target(url).map_err(OpenErr::net)?;
+    let io = tokio::time::timeout(Duration::from_secs(secs), crate::realtime::open_io(&target)).await.map_err(|_| OpenErr::net("tempo esgotado ao conectar ao servidor de chamadas"))?.map_err(OpenErr::net)?;
     let hostport = format!("{}:{}", target.host, target.port);
-    let url = ws_url(&format!("{}://{}", if target.tls { "wss" } else { "ws" }, hostport), &j.token);
-    let (ws, _) = tokio_tungstenite::client_async(url, io).await.map_err(|e| anyhow!("servidor de chamadas recusou a conexão: {}", redact(&e.to_string())))?;
-    let (mut tx, mut rx): (WsTx, WsRx) = ws.split();
-    // espera o JoinResponse
-    let join = tokio::time::timeout(Duration::from_secs(10), async {
+    let url = ws_url(&format!("{}://{}", if target.tls { "wss" } else { "ws" }, hostport), token);
+    let (ws, _) = tokio::time::timeout(Duration::from_secs(secs), tokio_tungstenite::client_async(url, io)).await.map_err(|_| OpenErr::net("servidor de chamadas não respondeu"))?
+        .map_err(|e| OpenErr { auth: matches!(&e, WsErr::Http(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403), msg: format!("servidor de chamadas recusou a conexão: {}", redact(&e.to_string())) })?;
+    let (tx, mut rx): (WsTx, WsRx) = ws.split();
+    let join = tokio::time::timeout(Duration::from_secs(secs), async {
         loop {
             match rx.next().await {
                 Some(Ok(Message::Binary(b))) => {
                     if let Ok(lk::SignalResponse { message: Some(m) }) = lk::SignalResponse::decode(b.as_slice()) {
-                        match m { rs::Message::Join(j) => return Ok(j), rs::Message::Leave(_) => return Err(anyhow!("servidor encerrou a entrada")), _ => {} }
+                        match m { rs::Message::Join(j) => return Ok(j), rs::Message::Leave(_) => return Err(OpenErr { auth: true, msg: "servidor encerrou a entrada".into() }), _ => {} }
                     }
                 }
                 Some(Ok(_)) => {}
-                Some(Err(e)) => return Err(anyhow!("WebSocket: {}", redact(&e.to_string()))),
-                None => return Err(anyhow!("servidor fechou a conexão")),
+                Some(Err(e)) => return Err(OpenErr::net(format!("WebSocket: {e}"))),
+                None => return Err(OpenErr::net("servidor fechou a conexão")),
             }
         }
-    }).await.map_err(|_| anyhow!("servidor de chamadas não respondeu"))??;
-    let me = join.participant.clone().unwrap_or_default();
-    let ice: Vec<RTCIceServer> = join.ice_servers.iter().map(|s| RTCIceServer { urls: s.urls.clone(), username: s.username.clone(), credential: s.credential.clone(), ..Default::default() }).collect();
-    let sub = build_pc(&ice, false).await?;
-    let (itx, irx) = mpsc::channel::<Internal>(512);
-    wire_pc(&sub, 1, &itx);
-    let shared = Arc::new(Mutex::new(Shared::default()));
-    let stats = Arc::new(SfuStats::default());
-    let (etx, erx) = mpsc::channel::<MeshEvent>(256);
-    let (ctx, crx) = mpsc::channel::<MeshCmd>(64);
-    let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-    let (audio, audio_rx) = match j.audio { Some((a, r)) => (Some(a), Some(r)), None => (None, None) };
-    // faixas recebidas
+    }).await.map_err(|_| OpenErr::net("servidor de chamadas não respondeu"))??;
+    Ok((tx, rx, join, target.host.clone()))
+}
+
+fn ice_of(join: &lk::JoinResponse) -> Vec<RTCIceServer> {
+    join.ice_servers.iter().map(|s| RTCIceServer { urls: s.urls.clone(), username: s.username.clone(), credential: s.credential.clone(), ..Default::default() }).collect()
+}
+
+/// PeerConnection de RECEPÇÃO (o servidor oferece): faixas recebidas vão para o áudio/vídeo de sempre; as data channels do servidor
+/// (_reliable/_lossy) entregam cada DataPacket ao ator.
+async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>, audio: Option<Arc<Audio>>, shared: Arc<Mutex<Shared>>, etx: mpsc::Sender<MeshEvent>, sev_tx: mpsc::Sender<Value>, stats: Arc<SfuStats>) -> Result<Arc<RTCPeerConnection>> {
+    let sub = build_pc(ice, false).await?;
+    wire_pc(&sub, epoch, 1, itx);
     {
         let (audio, shared, etx, wk, sev, stats) = (audio.clone(), shared.clone(), etx.clone(), Arc::downgrade(&sub), sev_tx.clone(), stats.clone());
         sub.on_track(Box::new(move |track, rtp_rx, _tr| {
@@ -210,27 +240,44 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
             })
         }));
     }
-    // data channels do servidor (_reliable/_lossy): cada pacote do LiveKit (DataPacket) chega ao ator, que entrega à camada de dados
     {
         let itx = itx.clone();
         sub.on_data_channel(Box::new(move |dc| {
             let itx = itx.clone();
             Box::pin(async move {
-                dc.on_message(Box::new(move |msg| { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::Data(msg.data.to_vec())).await; }) }));
+                dc.on_message(Box::new(move |msg| { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::Data(epoch, msg.data.to_vec())).await; }) }));
             })
         }));
     }
-    let server = target.host.clone();
+    Ok(sub)
+}
+
+/// Conecta, entra na sala e só devolve quando o servidor respondeu `Join` (para o chamador poder cair no P2P se falhar).
+/// Depois disso a sessão se mantém sozinha: se o WebSocket ou a mídia caírem, o ator reconecta (ver `Actor::try_rejoin`).
+pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
+    let (tx, rx, join, server) = open_session(&j.url, &j.token, 10).await.map_err(|e| anyhow!(e.msg))?;
+    let me = join.participant.clone().unwrap_or_default();
+    let ice = ice_of(&join);
+    let (itx, irx) = mpsc::channel::<Internal>(512);
+    let shared = Arc::new(Mutex::new(Shared::default()));
+    let stats = Arc::new(SfuStats::default());
+    let (etx, erx) = mpsc::channel::<MeshEvent>(256);
+    let (ctx, crx) = mpsc::channel::<MeshCmd>(64);
+    let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
+    let (audio, audio_rx) = match j.audio { Some((a, r)) => (Some(a), Some(r)), None => (None, None) };
+    let sub = make_sub(&ice, 0, &itx, audio.clone(), shared.clone(), etx.clone(), sev_tx.clone(), stats.clone()).await?;
     let identity = me.identity.clone();
     let data = j.data.map(|c| crate::sfudata::Layer::new(c, me.identity.clone()));
     let mut actor = Actor {
         data, dc_pub: None, dc_queue: vec![], leave: false,
+        url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(),
+        ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
         pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
-    actor.handle_join(join).await;
+    actor.handle_join(join, false).await;
     tokio::spawn(async move { actor.run(rx, crx, irx, sev_rx, audio_rx).await; });
     Ok(SfuHandle { cmd: ctx, events: erx, stats, identity, server })
 }
@@ -261,7 +308,7 @@ fn redact(s: &str) -> String {
     match s.find("access_token=") { Some(i) => { let end = s[i..].find(|c: char| c == '&' || c.is_whitespace()).map(|e| i + e).unwrap_or(s.len()); format!("{}access_token=***{}", &s[..i], &s[end..]) } None => s.to_string() }
 }
 
-struct ActiveShare { gen: u64, sender: share::Sender, audio: Option<crate::procaudio::ProcAudio>, info: Option<Value> }
+struct ActiveShare { gen: u64, sender: share::Sender, audio: Option<crate::procaudio::ProcAudio>, info: Option<Value>, label: String, h: u32 }
 
 struct Actor {
     tx: WsTx,
@@ -296,6 +343,17 @@ struct Actor {
     dc_pub: Option<Arc<webrtc::data_channel::RTCDataChannel>>,
     dc_queue: Vec<Vec<u8>>,
     leave: bool,
+    // reconexão
+    url: String,
+    token: String,
+    renew: Option<TokenFn>,
+    epoch: u32,
+    down: Option<Down>,
+    /// identidade -> prazo: conhecidos antes da queda que ainda podem estar voltando (não anuncia saída/fim de transmissão antes do prazo)
+    stale: HashMap<String, std::time::Instant>,
+    audio_started: bool,
+    last_rx: std::time::Instant,
+    ping_timeout: Duration,
 }
 
 #[derive(Default, Clone)]
@@ -310,13 +368,146 @@ impl Actor {
         if std::env::var("BRIKS_SFU_DEBUG").is_ok() { let d = format!("{m:?}"); eprintln!("[sfu {}] -> {}", &self.me.identity[..4.min(self.me.identity.len())], &d[..d.len().min(1500)]); }
         let _ = self.tx.send(encode_req(m)).await; }
 
-    async fn handle_join(&mut self, j: lk::JoinResponse) {
-        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "joined", "server_version": j.server_version, "region": j.server_region, "room": j.room.as_ref().map(|r| r.name.clone()).unwrap_or_default() }))).await;
+    async fn handle_join(&mut self, j: lk::JoinResponse, rejoin: bool) {
+        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": if rejoin { "rejoined" } else { "joined" }, "server_version": j.server_version, "region": j.server_region, "room": j.room.as_ref().map(|r| r.name.clone()).unwrap_or_default() }))).await;
+        if rejoin {
+            // sessão nova no servidor: sids antigos não valem; quem eu conhecia ganha um prazo para reaparecer
+            let deadline = std::time::Instant::now() + GRACE;
+            for id in self.known.keys() { self.stale.insert(id.clone(), deadline); }
+            for k in self.known.values_mut() { k.mic = None; }
+            { let mut sh = self.shared.lock().unwrap(); sh.tracks.clear(); sh.part_ident.clear(); }
+            self.subscribed.clear();
+            self.pending.clear();
+            self.published.clear();
+            self.last_mic_open = true;
+        }
         self.on_participants(&j.other_participants).await;
         // áudio do microfone: publica agora (o publisher só conecta quando há o que enviar)
         if let Some(a) = self.audio.clone() {
-            a.start();
+            if !std::mem::replace(&mut self.audio_started, true) { a.start(); }
             self.publish("audio", a.track.clone() as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::Microphone, "microfone", 0, 0).await;
+        } else if self.data.is_some() {
+            // sem áudio nada abriria o publisher, e é dele a data channel por onde saem chat/estado
+            match self.ensure_publisher().await { Ok(_) => self.negotiate_publisher().await, Err(e) => self.emit(MeshEvent::Error(format!("publisher: {e}"))).await }
+        }
+        if rejoin {
+            // transmissão em curso: republica as mesmas faixas (o codificador e o pacer nem pararam)
+            let sh = self.share.as_ref().map(|s| (s.label.clone(), s.h, s.audio.is_some()));
+            if let (Some((label, h, has_audio)), Some(vout)) = (sh, self.vout.clone()) {
+                self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
+                if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
+                    self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
+                }
+            }
+            // meu estado (microfone/status) de novo para todos: quem voltou depois de mim pode ter perdido a última mudança
+            if self.data.is_some() {
+                let media = self.media();
+                let outs = self.data.as_mut().and_then(|l| l.on_cmd(MeshCmd::BroadcastState, media)).unwrap_or_default();
+                self.apply(outs).await;
+            }
+        }
+    }
+
+    /// A sessão caiu (WebSocket fechado, servidor mudo ou mídia falhou): entra no estado "fora do ar"; o laço tenta voltar.
+    fn lost(&mut self, reason: &str) {
+        if self.down.is_some() || self.leave { return; }
+        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string() });
+    }
+
+    /// Fim definitivo que NÃO é expulsão (a sala não fica bloqueada nesta sessão): a UI mostra o erro e o usuário pode entrar de novo.
+    async fn terminal(&mut self, msg: &str) {
+        self.emit(MeshEvent::Error(msg.to_string())).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "lost", "message": msg }))).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "erro", "message": msg }))).await;
+        self.leave = true;
+    }
+
+    /// Desmonta a sessão que caiu: fecha os PeerConnections antigos (em segundo plano) e zera o que dependia deles.
+    /// Ficam: áudio (faixa e captura), transmissão (codificador, pacer, faixa), camada de dados (pares autenticados, fila de envio),
+    /// lista de participantes conhecidos e quem eu estava assistindo.
+    async fn teardown(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        let _ = tokio::time::timeout(Duration::from_secs(1), self.tx.close()).await;
+        let (old_sub, old_pub) = (self.sub.clone(), self.publisher.take());
+        tokio::spawn(async move { if let Some(p) = old_pub { let _ = tokio::time::timeout(Duration::from_secs(3), p.close()).await; } let _ = tokio::time::timeout(Duration::from_secs(3), old_sub.close()).await; });
+        self.dc_pub = None;
+        self.pending.clear();
+        self.published.clear();
+        self.pub_offering = false;
+        self.pub_dirty = false;
+        self.pend_ice = [vec![], vec![]];
+        self.mic_sid = None;
+        self.stats.sub_connected.store(false, Ordering::Relaxed);
+        self.stats.pub_connected.store(false, Ordering::Relaxed);
+        let reason = self.down.as_ref().map(|d| d.reason.clone()).unwrap_or_default();
+        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "reconnecting", "reason": reason }))).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "reconectando", "message": reason }))).await;
+    }
+
+    /// Uma tentativa de voltar: token novo (uma vez por queda, ou de novo se o servidor recusar), sinalização do zero (o servidor pode
+    /// ter reiniciado e esquecido a sessão), PeerConnections novos e as mesmas faixas republicadas.
+    async fn try_rejoin(&mut self) -> Option<WsRx> {
+        let (attempt, since, fresh) = { let d = self.down.as_mut()?; d.attempt += 1; (d.attempt, d.since, d.token_fresh) };
+        if since.elapsed() > GIVE_UP { self.terminal("conexão com o servidor de chamadas perdida (sem resposta por 2 minutos)").await; return None; }
+        let fail = |a: &mut Actor, e: String| { if let Some(d) = a.down.as_mut() { d.next = tokio::time::Instant::now() + retry_delay(attempt); } e };
+        if !fresh {
+            if let Some(f) = self.renew.clone() {
+                match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err("serviço de tokens não respondeu".into())) {
+                    Ok(t) => { self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
+                    Err(e) => { let e = fail(self, e); self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": format!("token: {e}") }))).await; return None; }
+                }
+            }
+        }
+        let opened = open_session(&self.url, &self.token, 6).await;
+        let (tx, rx, join, _) = match opened {
+            Ok(x) => x,
+            Err(e) => {
+                // recusa do servidor = token vencido/inválido: a próxima tentativa busca outro
+                if e.auth { if let Some(d) = self.down.as_mut() { d.token_fresh = false; } }
+                let e = fail(self, e.msg);
+                self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": e }))).await;
+                return None;
+            }
+        };
+        let ice = ice_of(&join);
+        let sub = match make_sub(&ice, self.epoch, &self.itx, self.audio.clone(), self.shared.clone(), self.ev.clone(), self.sev_tx.clone(), self.stats.clone()).await {
+            Ok(s) => s,
+            Err(e) => { let e = fail(self, e.to_string()); self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "retry", "attempt": attempt, "error": e }))).await; return None; }
+        };
+        self.tx = tx; self.ice = ice; self.sub = sub;
+        if let Some(p) = join.participant.clone() { self.me = p; }
+        self.down = None;
+        self.last_rx = std::time::Instant::now();
+        self.stats.reconnects.fetch_add(1, Ordering::Relaxed);
+        self.handle_join(join, true).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "conectado", "message": "" }))).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "reconnected", "attempt": attempt, "down_ms": since.elapsed().as_millis() as u64 }))).await;
+        Some(rx)
+    }
+
+    async fn peer_gone(&mut self, identity: &str, sid: &str) {
+        self.known.remove(identity);
+        self.stale.remove(identity);
+        { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); }
+        if let Some(a) = &self.audio { a.remove_peer(identity); }
+        if let Some(l) = self.data.as_mut() { l.left(identity); }
+        self.emit(MeshEvent::Peer { peer_id: identity.to_string(), state: "fechado".into() }).await;
+    }
+
+    /// Prazo vencido depois de uma reconexão: quem não voltou saiu; quem voltou sem a transmissão parou de transmitir.
+    async fn expire_stale(&mut self) {
+        if self.down.is_some() || self.stale.is_empty() { return; }
+        let now = std::time::Instant::now();
+        let due: Vec<String> = self.stale.iter().filter(|(_, t)| **t <= now).map(|(k, _)| k.clone()).collect();
+        for id in due {
+            self.stale.remove(&id);
+            let (here, sharing) = { let sh = self.shared.lock().unwrap(); (sh.part_ident.values().any(|v| *v == id), sh.tracks.values().any(|t| t.identity == id && t.source == lk::TrackSource::ScreenShare as i32 && !t.muted)) };
+            if !here { self.peer_gone(&id, "").await; continue; }
+            if !sharing && self.known.get(&id).map(|k| k.share.is_some()).unwrap_or(false) {
+                if let Some(k) = self.known.get_mut(&id) { k.share = None; }
+                let r = self.shared.lock().unwrap().recv.get(&id).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); }
+                self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "state": "off" }))).await;
+            }
         }
     }
 
@@ -329,10 +520,10 @@ impl Actor {
     async fn ensure_publisher(&mut self) -> Result<Arc<RTCPeerConnection>> {
         if let Some(p) = &self.publisher { return Ok(p.clone()); }
         let pc = build_pc(&self.ice, true).await?;
-        wire_pc(&pc, 0, &self.itx);
+        wire_pc(&pc, self.epoch, 0, &self.itx);
         // o servidor espera as duas data channels na offer do publisher
         let dc = pc.create_data_channel("_reliable", Some(RTCDataChannelInit { ordered: Some(true), ..Default::default() })).await?;
-        { let itx = self.itx.clone(); dc.on_open(Box::new(move || { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::DcOpen).await; }) })); }
+        { let (itx, ep) = (self.itx.clone(), self.epoch); dc.on_open(Box::new(move || { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::DcOpen(ep)).await; }) })); }
         self.dc_pub = Some(dc);
         pc.create_data_channel("_lossy", Some(RTCDataChannelInit { ordered: Some(false), max_retransmits: Some(0), ..Default::default() })).await?;
         self.publisher = Some(pc.clone());
@@ -427,7 +618,17 @@ impl Actor {
                 };
                 for (peer_id, level) in evs { self.emit(MeshEvent::Speaking { peer_id, level }).await; }
             }
-            rs::Message::Leave(l) => { self.emit(MeshEvent::Error(format!("o servidor encerrou a sessão (motivo {})", l.reason))).await; self.emit(MeshEvent::Kicked { reason: "sessão encerrada pelo servidor".into() }).await; }
+            rs::Message::Leave(l) => {
+                use lk::DisconnectReason as R;
+                match R::try_from(l.reason).unwrap_or(R::UnknownReason) {
+                    // só a remoção pela administração (expulsão feita pelo dono, via função do Supabase) bloqueia a sala nesta sessão
+                    R::ParticipantRemoved => { self.emit(MeshEvent::Kicked { reason: "removido da chamada pelo dono".into() }).await; self.leave = true; }
+                    R::DuplicateIdentity => self.terminal("esta conta entrou na chamada em outro aparelho").await,
+                    R::RoomDeleted => self.terminal("a chamada foi encerrada").await,
+                    // reinício/migração do servidor, estado dessincronizado etc.: volta sozinho
+                    other => self.lost(&format!("o servidor pediu reconexão ({})", other.as_str_name())),
+                }
+            }
             rs::Message::Mute(m) => { let _ = m; }   // mudo pedido pelo servidor (moderação): ainda sem política de UI
             _ => {}
         }
@@ -440,11 +641,9 @@ impl Actor {
             if p.identity == self.me.identity || p.sid == self.me.sid { continue; }
             let gone = p.state == lk::participant_info::State::Disconnected as i32;
             if gone {
-                self.known.remove(&p.identity);
-                { let mut sh = self.shared.lock().unwrap(); sh.part_ident.remove(&p.sid); sh.tracks.retain(|_, t| t.identity != p.identity); sh.recv.remove(&p.identity); }
-                if let Some(a) = &self.audio { a.remove_peer(&p.identity); }
-                if let Some(l) = self.data.as_mut() { l.left(&p.identity); }
-                self.emit(MeshEvent::Peer { peer_id: p.identity.clone(), state: "fechado".into() }).await;
+                // saída de uma sessão antiga de quem já voltou com outro sid: ignora
+                if self.known.get(&p.identity).map(|k| !k.sid.is_empty() && k.sid != p.sid).unwrap_or(false) { continue; }
+                self.peer_gone(&p.identity, &p.sid).await;
                 continue;
             }
             let first = !self.known.contains_key(&p.identity);
@@ -476,11 +675,18 @@ impl Actor {
             for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::Microphone as i32) {
                 if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
             }
+            // transmissão que eu estava assistindo (antes de uma reconexão, minha ou dele): assina de novo sozinho
+            if self.shared.lock().unwrap().recv.get(&p.identity).map(|r| r.watching.load(Ordering::Relaxed)).unwrap_or(false) {
+                for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::ScreenShare as i32 || t.source == lk::TrackSource::ScreenShareAudio as i32) {
+                    if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
+                }
+            }
             // tela
             let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32 && !t.muted);
             let has_audio = p.tracks.iter().any(|t| t.source == lk::TrackSource::ScreenShareAudio as i32);
             let now = scr.map(|t| (t.name.clone(), t.width, t.height));
-            if now != k.share {
+            // dentro do prazo pós-reconexão, "sem tela" pode ser só "ainda não republicou": espera (expire_stale decide)
+            if now != k.share && !(now.is_none() && self.stale.contains_key(&p.identity)) {
                 k.share = now.clone();
                 if now.is_none() { let r = self.shared.lock().unwrap().recv.get(&p.identity).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); } }
                 let ev = match &now {
@@ -506,19 +712,22 @@ impl Actor {
         self.send(rq::Message::Subscription(req)).await;
     }
 
-    async fn run(&mut self, mut rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>) {
+    async fn run(&mut self, rx: WsRx, mut cmds: mpsc::Receiver<MeshCmd>, mut irx: mpsc::Receiver<Internal>, mut srx: mpsc::Receiver<Value>, mut arx: Option<mpsc::Receiver<AudioEvent>>) {
+        let mut rx = Some(rx);   // None = fora do ar, esperando a próxima tentativa
         let mut ping = tokio::time::interval(Duration::from_millis(self.ping_ms));
         let mut dtick = tokio::time::interval(Duration::from_secs(1));
         loop {
+            let retry_at = self.down.as_ref().map(|d| d.next);
             tokio::select! {
-                m = rx.next() => match m {
+                m = async { match rx.as_mut() { Some(r) => r.next().await, None => std::future::pending().await } } => match m {
                     Some(Ok(Message::Binary(b))) => {
+                        self.last_rx = std::time::Instant::now();
                         self.stats.ws_msgs.fetch_add(1, Ordering::Relaxed);
                         if let Ok(lk::SignalResponse { message: Some(m) }) = lk::SignalResponse::decode(b.as_slice()) { self.on_signal(m).await; }
                     }
-                    Some(Ok(Message::Close(_))) | None => { self.emit(MeshEvent::Error("conexão com o servidor de chamadas caiu".into())).await; self.emit(MeshEvent::Kicked { reason: "conexão com o servidor de chamadas caiu".into() }).await; break; }
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => { self.emit(MeshEvent::Error(format!("WebSocket: {}", redact(&e.to_string())))).await; break; }
+                    Some(Ok(Message::Close(_))) | None => self.lost("conexão com o servidor de chamadas caiu"),
+                    Some(Ok(_)) => { self.last_rx = std::time::Instant::now(); }
+                    Some(Err(e)) => self.lost(&format!("WebSocket: {}", redact(&e.to_string()))),
                 },
                 c = cmds.recv() => match c { Some(MeshCmd::Close) | None => break, Some(c) => self.on_cmd(c).await },
                 i = irx.recv() => if let Some(i) = i { self.on_internal(i).await },
@@ -528,10 +737,27 @@ impl Actor {
                     Some(AudioEvent::Error(m)) => self.emit(MeshEvent::Error(format!("áudio: {m}"))).await,
                     None => { arx = None; }
                 },
-                _ = dtick.tick() => { if self.data.is_some() { self.set_media(); let outs = self.data.as_mut().map(|l| l.tick()).unwrap_or_default(); self.apply(outs).await; } }
-                _ = ping.tick() => { let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0); self.send(rq::Message::Ping(t)).await; }
+                _ = dtick.tick() => {
+                    if self.data.is_some() && self.down.is_none() { self.set_media(); let outs = self.data.as_mut().map(|l| l.tick()).unwrap_or_default(); self.apply(outs).await; }
+                    self.expire_stale().await;
+                }
+                _ = ping.tick() => {
+                    if self.down.is_none() {
+                        // o TCP pode ficar "aberto" por minutos numa queda de rede: sem nenhuma mensagem do servidor pelo prazo dele, reconecta
+                        if self.last_rx.elapsed() > self.ping_timeout + Duration::from_millis(self.ping_ms) { self.lost("o servidor de chamadas parou de responder"); }
+                        else { let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0); self.send(rq::Message::Ping(t)).await; }
+                    }
+                }
+                _ = async { match retry_at { Some(t) => tokio::time::sleep_until(t).await, None => std::future::pending().await } } => {
+                    if let Some(nrx) = self.try_rejoin().await { rx = Some(nrx); }
+                }
             }
             if self.leave { break; }
+            if self.down.as_ref().map(|d| !d.announced).unwrap_or(false) {
+                if let Some(d) = self.down.as_mut() { d.announced = true; }
+                rx = None;
+                self.teardown().await;
+            }
         }
         // saída limpa: avisa o servidor, para captura/áudio e fecha os PeerConnections
         self.send(rq::Message::Leave(lk::LeaveRequest { can_reconnect: false, reason: lk::DisconnectReason::ClientInitiated as i32, action: lk::leave_request::Action::Disconnect as i32, ..Default::default() })).await;
@@ -544,16 +770,18 @@ impl Actor {
 
     async fn on_internal(&mut self, i: Internal) {
         match i {
-            Internal::Data(b) => self.on_data(b).await,
-            Internal::DcOpen => { for b in std::mem::take(&mut self.dc_queue) { self.dc_send_raw(b).await; } }
-            Internal::Ice { target, init } => {
+            Internal::Data(ep, b) => { if ep == self.epoch { self.on_data(b).await } }
+            Internal::DcOpen(ep) => { if ep == self.epoch { for b in std::mem::take(&mut self.dc_queue) { self.dc_send_raw(b).await; } } }
+            Internal::Ice { epoch, target, init } => {
+                if epoch != self.epoch { return; }
                 if let Ok(s) = serde_json::to_string(&init) { self.send(rq::Message::Trickle(lk::TrickleRequest { candidate_init: s, target, r#final: false })).await; }
             }
-            Internal::Pc { target, state } => {
+            Internal::Pc { epoch, target, state } => {
+                if epoch != self.epoch || self.down.is_some() { return; }
                 let up = state == RTCPeerConnectionState::Connected;
                 if target == 1 { self.stats.sub_connected.store(up, Ordering::Relaxed); } else { self.stats.pub_connected.store(up, Ordering::Relaxed); }
                 self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": format!("{}:{}", if target == 1 { "sub" } else { "pub" }, state) }))).await;
-                if state == RTCPeerConnectionState::Failed { self.emit(MeshEvent::Error("conexão de mídia com o SFU falhou".into())).await; }
+                if state == RTCPeerConnectionState::Failed { self.lost("conexão de mídia com o servidor de chamadas falhou"); }
             }
         }
     }
@@ -682,7 +910,7 @@ impl Actor {
         self.share_stop().await;
         self.share_gen += 1;
         let gen = self.share_gen;
-        let first = self.vout.is_none();
+        let first = !self.published.contains_key(share::VIDEO_TRACK_ID) && !self.pending.contains_key(share::VIDEO_TRACK_ID);
         let vout = self.vout.get_or_insert_with(share::VideoOut::new).clone();
         let (amode, label, h) = (cfg.audio.clone(), cfg.label.clone(), cfg.height as u32);
         match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, vout.clone(), self.sev_tx.clone(), preview, dump) {
@@ -690,7 +918,7 @@ impl Actor {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
                 let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack.clone())) } else { None };
-                self.share = Some(ActiveShare { gen, sender, audio, info: None });
+                self.share = Some(ActiveShare { gen, sender, audio, info: None, label: label.clone(), h });
                 if first {
                     self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
                 } else { self.set_muted(share::VIDEO_TRACK_ID, false).await; }

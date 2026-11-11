@@ -86,4 +86,6 @@ mod tests_hybrid;
 #[cfg(test)]
 mod tests_sfudata;
 #[cfg(test)]
+mod tests_sfurec;
+#[cfg(test)]
 mod tests_sfu;

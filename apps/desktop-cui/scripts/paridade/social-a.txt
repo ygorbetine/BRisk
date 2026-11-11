@@ -1,0 +1,17 @@
+# Social: barra lateral e amigos (demo social)
+snap s0
+tap 330 103
+snap s1
+tap 367 465
+snap s2
+tap 362 509
+snap s3
+tap 362 140
+snap s4
+key esc
+waitms 400
+snap s5
+tap 383 177
+snap h1
+tap 348 338
+snap s7

@@ -1,0 +1,12 @@
+# Mensagens (demo msgs): menu de contexto e Responder
+snap m0
+at 650 125
+waitms 300
+rdown
+rup
+waitms 500
+shot m1
+click 723 184
+at 2 790
+waitms 500
+shot m2

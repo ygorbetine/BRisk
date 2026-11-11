@@ -1,0 +1,31 @@
+# Configurações: abrir e percorrer as 13 abas (demo social)
+snap k0
+tap 441 755
+snap k1
+tap 240 159
+snap k2
+tap 240 194
+snap k3
+tap 240 229
+snap k4
+tap 240 264
+snap k5
+tap 240 298
+snap k6
+tap 240 333
+snap k7
+tap 240 368
+snap k8
+tap 240 403
+snap k9
+tap 240 438
+snap k10
+tap 240 473
+snap k11
+tap 240 508
+snap k12
+tap 240 542
+snap k13
+key esc
+waitms 500
+snap k14

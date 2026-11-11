@@ -1,0 +1,18 @@
+# Chamada (demo call): microfone, ensurdecer, câmera (em breve), modos, abas, minimizar e sair
+snap c0
+tap 218 759
+snap c1
+tap 366 759
+snap c2
+tap 503 759
+snap c3
+tap 934 38
+snap c4
+tap 810 38
+snap c5
+tap 1203 38
+snap c6
+tap 1115 38
+snap c7
+tap 757 38
+snap c8

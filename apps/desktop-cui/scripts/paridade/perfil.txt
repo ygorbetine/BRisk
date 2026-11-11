@@ -1,0 +1,14 @@
+# Perfil e conta: abrir pelo rodapé e navegar pelas abas (demo social)
+snap p0
+tap 413 755
+snap p1
+tap 340 289
+snap p2
+tap 340 329
+snap p3
+tap 340 370
+snap p4
+tap 340 411
+snap p5
+tap 341 636
+snap p6

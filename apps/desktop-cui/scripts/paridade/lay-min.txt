@@ -1,0 +1,7 @@
+# Layout (demo social) na janela mínima 560x480: abre uma conversa e captura
+at 2 470
+waitms 500
+click 330 103
+at 2 470
+waitms 500
+shot l0

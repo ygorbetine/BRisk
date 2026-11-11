@@ -104,7 +104,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
-    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
+    let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
     loop {
@@ -118,11 +118,11 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                 rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.4 / 8.0).min(pace * 0.4 / 8.0 * 0.75);
                 rtx_t = Instant::now();
                 for sq in seqs {
-                    let Some((p, last, asked, sent_at)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
+                    let Some((p, last, asked, sent_at, is_key)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
                     if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); }
                     // pacote velho: o receptor já desistiu desse quadro (espera no máximo 400 ms) e vai pedir quadro-chave; reenviar só
                     // gastaria banda. O gerador de NACK do outro lado continua pedindo por muito tempo.
-                    if sent_at.elapsed() > Duration::from_millis(600) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
+                    if sent_at.elapsed() > Duration::from_millis(if *is_key { 1500 } else { 600 }) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     let size = (p.payload.len() + 12) as f64;
                     if last.map(|t| t.elapsed() < Duration::from_millis(rtx_gap_ms.load(Ordering::Relaxed))).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
@@ -142,6 +142,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                 let Some((au, samples, pace_bps)) = m else { break };
                 pace = (pace_bps as f64).max(600_000.0);
                 let len = au.len() as u64;
+                let is_key = crate::mfenc::nals(&au).iter().any(|n| n.0 == 5);   // o receptor espera mais pelos pedaços de um quadro-chave
                 let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
                 if tokio::time::Instant::now().saturating_duration_since(budget_at) > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: sem crédito acumulado
                 for p in pkts {
@@ -160,7 +161,7 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     let _ = track.write_rtp(&p).await;
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
-                    if hist.insert(sq, (p, None, false, Instant::now())).is_none() { order.push_back(sq); }
+                    if hist.insert(sq, (p, None, false, Instant::now(), is_key)).is_none() { order.push_back(sq); }
                     if order.len() > HISTORY { if let Some(old) = order.pop_front() { hist.remove(&old); } }
                 }
                 queued.fetch_sub(len, Ordering::Relaxed);
@@ -423,6 +424,9 @@ pub struct JitterBuf {
     pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
 }
 const WAIT: Duration = Duration::from_millis(400);
+/// Prazo de um buraco DENTRO do quadro-chave que vai destravar a imagem. Com a imagem já parada não há o que perder esperando a
+/// retransmissão; desistir em 400 ms e pedir outro quadro-chave (mais 1 s ou mais) era o que esticava os congelamentos.
+const WAIT_KEY: Duration = Duration::from_millis(1500);
 
 impl JitterBuf {
     pub fn new() -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, fresh: false, recovered: 0 } }
@@ -448,12 +452,15 @@ impl JitterBuf {
             // quebrado, e nunca alcançaria o presente.
             if self.need_key {
                 let cur = self.next.unwrap_or(0);
-                match self.pkts.iter().rev().find(|(_, p)| key_start(&p.payload)).map(|(k, _)| *k) {
+                // já está montando um quadro-chave: fica nele até fechar ou o prazo dele estourar (um quadro-chave mais novo, pedido
+                // nesse meio-tempo, ainda está incompleto; trocar a cada pedido fazia nenhum dos dois terminar)
+                let building_key = self.pkts.get(&cur).map(|p| key_start(&p.payload)).unwrap_or(false);
+                if !building_key { match self.pkts.iter().rev().find(|(_, p)| key_start(&p.payload)).map(|(k, _)| *k) {
                     Some(k) if k > cur => { self.pkts.retain(|q, _| *q >= k); self.next = Some(k); self.gap_since = None; }
                     Some(_) => {}
                     None if !self.pkts.is_empty() => { self.pkts.clear(); self.next = Some(self.hi + 1); self.gap_since = None; }
                     None => {}
-                }
+                } }
             }
             let Some(next) = self.next else { break };
             if self.pkts.contains_key(&next) {
@@ -473,7 +480,8 @@ impl JitterBuf {
                     // k é o primeiro que falta. Se já há pacotes depois dele, é um buraco no meio do quadro: vale o mesmo prazo
                     if self.pkts.range(k..).next().is_none() { break; }   // só ainda chegando
                     let since = match self.gap_since { Some((q, t)) if q == k => t, _ => { self.gap_since = Some((k, now)); now } };
-                    if now.duration_since(since) < WAIT && self.pkts.len() < 3000 { break; }
+                    let wait = if self.need_key && key_start(&self.pkts[&next].payload) { WAIT_KEY } else { WAIT };
+                    if now.duration_since(since) < wait && self.pkts.len() < 3000 { break; }
                     if std::env::var("BRIKS_SHARE_DEBUG").is_ok() { eprintln!("[jb] buraco no meio: falta {k}, quadro começa em {next}, ts {ts}, buffer {} pacotes [{:?}..{:?}], marcadores {:?}", self.pkts.len(), self.pkts.keys().next(), self.pkts.keys().next_back(), self.pkts.iter().filter(|(_, p)| p.header.marker).map(|(q, _)| *q).take(6).collect::<Vec<_>>()); }
                     self.gap_since = None; self.need_key = true; want_pli = true; self.lost_frames += 1;
                     let start = self.pkts.range(k..).find(|(_, p)| p.header.timestamp != ts).map(|(q, _)| *q);

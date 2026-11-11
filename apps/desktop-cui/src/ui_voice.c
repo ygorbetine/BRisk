@@ -82,7 +82,7 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
     cui_scroll(ui, .id = "voice-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 10) {
         cui_column(ui, .gap = 8, .width = CUI_FILL) {
             person_card(ui, s, -1, true);
-            for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) person_card(ui, s, i, false);
+            for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) person_card(ui, s, i, false);
         }
     }
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 10, .gap = 8, .justify = CUI_JUSTIFY_CENTER, .align = CUI_ALIGN_CENTER) {

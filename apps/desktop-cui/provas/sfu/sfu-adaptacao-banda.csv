@@ -1,0 +1,5 @@
+fase,qps_recebido,enviado_kbps,alvo_kbps,estimativa_kbps,altura,fps_alvo,perda_pct,rtt_ms,motivo,lat_p50_ms,lat_p95_ms,congelamentos_250ms
+"livre",14.0,2871.0,2550,3000.0,720,20,0.0,10.0,"",57,88,0
+"1,2 Mbps: primeiros 10 s",3.4,718.0,822,968.0,360,10,0.0,39.0,"perda",107,158,1
+"1,2 Mbps: 10-20 s",7.2,724.0,783,922.0,360,10,0.0,16.0,"atraso",126,263,1
+"livre de novo: 15-25 s depois",13.0,2105.0,2550,3000.0,720,10,0.0,24.0,"",60,108,0

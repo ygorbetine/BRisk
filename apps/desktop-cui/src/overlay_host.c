@@ -64,7 +64,7 @@ static void compose(const app_state_t *s, float opacity, int flags, int corner, 
     if ((flags & 8) && (s->deaf || !s->mic_on)) { n += (size_t)snprintf(out + n, cap - n, "w %s\n", s->deaf ? "Ensurdecido" : "Microfone mudo"); lines++; }
     if (flags & 2) {
         n += (size_t)snprintf(out + n, cap - n, "p %d %s\n", (s->mic_on && !s->deaf && s->me_level > 0.05f) ? 1 : 0, s->user_name[0] ? s->user_name : "Você"); lines++;
-        for (int i = 0; i < 8 && n + 100 < cap; i++) if (s->rtc_peers[i].id[0]) {
+        for (int i = 0; i < BRIKS_MAX_PEERS && n + 100 < cap; i++) if (s->rtc_peers[i].id[0]) {
             char nm[64]; snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante");
             for (char *c = nm; *c; c++) if (*c == '\n' || *c == '\r') *c = ' ';
             n += (size_t)snprintf(out + n, cap - n, "p %d %s\n", s->rtc_peers[i].level > 0.05f ? 1 : 0, nm); lines++;

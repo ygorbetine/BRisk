@@ -62,9 +62,9 @@ impl Realtime {
     }
 }
 
-struct Target { tls: bool, host: String, port: u16 }
+pub(crate) struct Target { pub tls: bool, pub host: String, pub port: u16 }
 
-fn parse_target(url: &str) -> Result<Target> {
+pub(crate) fn parse_target(url: &str) -> Result<Target> {
     let (scheme, rest) = url.split_once("://").ok_or_else(|| anyhow!("URL inválida"))?;
     let tls = match scheme { "https" | "wss" => true, "http" | "ws" => false, _ => return Err(anyhow!("esquema não suportado: {scheme}")) };
     let hostport = rest.split('/').next().unwrap_or("");
@@ -76,7 +76,7 @@ fn parse_target(url: &str) -> Result<Target> {
     Ok(Target { tls, host, port })
 }
 
-async fn open_io(t: &Target) -> Result<Box<dyn Io>> {
+pub(crate) async fn open_io(t: &Target) -> Result<Box<dyn Io>> {
     let tcp = TcpStream::connect((t.host.as_str(), t.port)).await?;
     tcp.set_nodelay(true).ok();
     if !t.tls {

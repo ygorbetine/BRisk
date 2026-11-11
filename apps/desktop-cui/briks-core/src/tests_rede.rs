@@ -39,9 +39,13 @@ async fn wait_share(h: &mut MeshHandle, pred: impl Fn(&serde_json::Value) -> boo
     }
 }
 
-fn pct(v: &[i32], p: f64) -> i32 { if v.is_empty() { -1 } else { v[((v.len() as f64 * p) as usize).min(v.len() - 1)] } }
+pub(crate) fn pct(v: &[i32], p: f64) -> i32 { if v.is_empty() { -1 } else { v[((v.len() as f64 * p) as usize).min(v.len() - 1)] } }
 
-struct Session { a: MeshHandle, b: MeshHandle, src: FrameSource, w: usize, tx: serde_json::Value, rx: serde_json::Value, last_n: u64, tx_sum: [u64; 4] }
+/// As duas pontas de comando/eventos de um nó: iguais na malha P2P e no SFU, então a mesma medição serve aos dois.
+pub(crate) struct Ends { pub cmd: tokio::sync::mpsc::Sender<MeshCmd>, pub events: tokio::sync::mpsc::Receiver<MeshEvent> }
+impl From<MeshHandle> for Ends { fn from(h: MeshHandle) -> Self { Ends { cmd: h.cmd, events: h.events } } }
+
+pub(crate) struct Session { pub a: Ends, pub b: Ends, pub src: FrameSource, pub w: usize, pub tx: serde_json::Value, pub rx: serde_json::Value, pub last_n: u64, pub tx_sum: [u64; 4] }
 
 impl Session {
     async fn open(tag: &str, sim_peers: bool, height: usize, kbps: u32, adaptive: bool) -> (Session, Option<Arc<crate::netsim::NetSim>>) {
@@ -59,11 +63,11 @@ impl Session {
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("1º quadro");
         let src = FrameSource::open(&rpath).unwrap();
         let w = height * 16 / 9;
-        (Session { a, b, src, w, tx: json!(null), rx: json!(null), last_n: 0, tx_sum: [0; 4] }, sim)
+        (Session { a: a.into(), b: b.into(), src, w, tx: json!(null), rx: json!(null), last_n: 0, tx_sum: [0; 4] }, sim)
     }
 
     /// Amostra `ms` de quadros recebidos.
-    async fn sample(&mut self, ms: u64) -> Samp {
+    pub(crate) async fn sample(&mut self, ms: u64) -> Samp {
         let mut s = Samp::default();
         let (t0, mut last_new) = (Instant::now(), Instant::now());
         let mut first_gap: Option<u128> = None;
@@ -99,20 +103,20 @@ impl Session {
         s.lats.sort();
         s
     }
-    async fn close(self) { let _ = self.a.cmd.send(MeshCmd::Close).await; let _ = self.b.cmd.send(MeshCmd::Close).await; }
+    pub(crate) async fn close(self) { let _ = self.a.cmd.send(MeshCmd::Close).await; let _ = self.b.cmd.send(MeshCmd::Close).await; }
 }
 
 #[derive(Default, Clone)]
-struct Samp { ms: u64, frames: u32, max_gap: u128, freezes: u32, first_ms: Option<u128>, lats: Vec<i32>, plis: u64, lost_frames: u64, recovered: u64, nacks: u64, rtx: u64, rtx_skipped: u64, lost_pkts: u64, sent_kbps: f64, work_ms: f64, enc_ms: f64, rtt_ms: f64 }
+pub(crate) struct Samp { pub ms: u64, pub frames: u32, pub max_gap: u128, pub freezes: u32, pub first_ms: Option<u128>, pub lats: Vec<i32>, pub plis: u64, pub lost_frames: u64, pub recovered: u64, pub nacks: u64, pub rtx: u64, pub rtx_skipped: u64, pub lost_pkts: u64, pub sent_kbps: f64, pub work_ms: f64, pub enc_ms: f64, pub rtt_ms: f64 }
 impl Samp {
-    fn fps(&self) -> f64 { self.frames as f64 * 1000.0 / self.ms.max(1) as f64 }
-    fn row(&self, name: &str) -> String {
+    pub(crate) fn fps(&self) -> f64 { self.frames as f64 * 1000.0 / self.ms.max(1) as f64 }
+    pub(crate) fn row(&self, name: &str) -> String {
         format!("\"{name}\",{:.1},{},{},{},{},{},{},{},{},{},{},{},{}", self.fps(), self.frames, pct(&self.lats, 0.5), pct(&self.lats, 0.95), pct(&self.lats, 0.99), self.max_gap, self.freezes, self.nacks, self.rtx, self.rtx_skipped, self.lost_pkts, self.plis, self.lost_frames)
     }
 }
-const HEAD: &str = "cenario,qps_recebido,quadros,lat_p50_ms,lat_p95_ms,lat_p99_ms,maior_intervalo_ms,congelamentos_250ms,nacks_unicos,retransmitidos,retransmissoes_recusadas,pacotes_perdidos_real,plis,quadros_perdidos_rx";
+pub(crate) const HEAD: &str = "cenario,qps_recebido,quadros,lat_p50_ms,lat_p95_ms,lat_p99_ms,maior_intervalo_ms,congelamentos_250ms,nacks_unicos,retransmitidos,retransmissoes_recusadas,pacotes_perdidos_real,plis,quadros_perdidos_rx";
 
-fn out_dir() -> std::path::PathBuf {
+pub(crate) fn out_dir() -> std::path::PathBuf {
     let d = std::env::var("BRIKS_PROVAS_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("briks-rede"));
     std::fs::create_dir_all(&d).unwrap();
     d

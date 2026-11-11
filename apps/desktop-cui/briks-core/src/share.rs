@@ -62,10 +62,24 @@ pub struct VideoOut {
     queued: Arc<AtomicU64>,
     pub rtx_sent: Arc<AtomicU64>,
     pub rtx_skipped: Arc<AtomicU64>,
+    /// intervalo mínimo (ms) entre duas retransmissões do MESMO pacote. 150 na malha (o nosso receptor repete o pedido a cada 20 ms
+    /// por muito tempo); o SFU baixa para perto do RTT, porque o LiveKit pede poucas vezes e desiste.
+    pub rtx_gap_ms: Arc<AtomicU64>,
+    /// perda alta no caminho (>= 3,5% no relatório do SFU): cada retransmissão sai em dobro, porque com 10% de perda uma em cada dez
+    /// retransmissões também se perde e o LiveKit desiste do pacote depois de poucos pedidos. Só o SFU liga.
+    pub rtx_twice: Arc<AtomicBool>,
     /// pacotes pedidos pela PRIMEIRA vez (perda real antes do conserto; pedidos repetidos do mesmo pacote não contam)
     pub nack_unique: Arc<AtomicU64>,
 }
 impl VideoOut {
+    /// API interna de publicação (ver docs/plans/transmissao-api-interna.md): entrega UMA unidade de acesso H264 (Annex-B, já com
+    /// SPS/PPS no quadro-chave) ao pacer, que empacota (RTP, MTU 1180), espaça e guarda para retransmissão. `samples` = intervalo desde
+    /// o quadro anterior em ticks de 90 kHz; `pace_bps` = ritmo de saída (convenção: 2,5 × bitrate, piso de 600 kbps).
+    /// É o ponto em que um SFU/LiveKit pode receber o MESMO codificador: troque o consumidor do canal, não o laço de captura/codificação.
+    pub fn publish(&self, au: Vec<u8>, samples: u32, pace_bps: u32) {
+        self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
+        let _ = self.tx.send((au, samples.max(1), pace_bps));
+    }
     pub fn new() -> Self {
         let track = new_video_track();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -73,8 +87,10 @@ impl VideoOut {
         // descartado (try_send) e o receptor pede de novo ou pede quadro-chave
         let (nack_tx, nack_rx) = mpsc::channel(256);
         let (queued, rtx_sent, rtx_skipped, nack_unique) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
-        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone()));
-        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique }
+        let rtx_gap_ms = Arc::new(AtomicU64::new(150));
+        let rtx_twice = Arc::new(AtomicBool::new(false));
+        tokio::spawn(pacer_task(track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone(), rtx_gap_ms.clone(), rtx_twice.clone()));
+        VideoOut { track, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique, rtx_gap_ms, rtx_twice }
     }
 }
 
@@ -84,7 +100,7 @@ const HISTORY: usize = 2048;
 /// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Também responde aos NACKs: guarda os últimos
 /// pacotes e retransmite pelo mesmo espaçamento, com orçamento de 25% da taxa e no máximo uma vez a cada 150 ms por pacote —
 /// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
-async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>) {
+async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>, rtx_twice: Arc<AtomicBool>) {
     use std::collections::{HashMap, VecDeque};
     let mut pk = webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, Box::new(H264Payloader::default()), Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000);
     let mut budget_at = tokio::time::Instant::now();
@@ -96,8 +112,9 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
         tokio::select! {
             n = nack_rx.recv() => {
                 let Some(seqs) = n else { break };
-                // crédito de retransmissão: 25% da taxa do pacer, acumulando no máximo 0,5 s
-                rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.25 / 8.0).min(pace * 0.25 / 8.0 * 0.5);
+                // crédito de retransmissão: 60% da taxa do pacer (um quadro-chave grande numa rede com perda precisa de muitos reenvios
+                // para fechar dentro do prazo; com 25% ele nunca completava e o receptor ficava congelado), acumulando no máximo 1 s
+                rtx_credit = (rtx_credit + rtx_t.elapsed().as_secs_f64() * pace * 0.4 / 8.0).min(pace * 0.4 / 8.0 * 0.75);
                 rtx_t = Instant::now();
                 for sq in seqs {
                     let Some((p, last, asked, sent_at)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
@@ -106,9 +123,10 @@ async fn pacer_task(track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedRece
                     // gastaria banda. O gerador de NACK do outro lado continua pedindo por muito tempo.
                     if sent_at.elapsed() > Duration::from_millis(600) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     let size = (p.payload.len() + 12) as f64;
-                    if last.map(|t| t.elapsed() < Duration::from_millis(150)).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
+                    if last.map(|t| t.elapsed() < Duration::from_millis(rtx_gap_ms.load(Ordering::Relaxed))).unwrap_or(false) || rtx_credit < size { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
                     rtx_credit -= size; *last = Some(Instant::now());
                     let _ = track.write_rtp(p).await;
+                    if rtx_twice.load(Ordering::Relaxed) && rtx_credit >= size { rtx_credit -= size; let _ = track.write_rtp(p).await; }
                     rtx_sent.fetch_add(1, Ordering::Relaxed);
                     budget_at = budget_at.max(tokio::time::Instant::now()) + Duration::from_secs_f64(size * 8.0 / pace);
                 }
@@ -189,7 +207,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
-        let mut recreated = Instant::now() - Duration::from_secs(10);
+        let mut recreated = Instant::now() - Duration::from_secs(4);
         let (mut black_t, mut black_run, mut black_said) = (Instant::now(), 0u32, false);
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
@@ -236,9 +254,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         // Queda grande: recria o codificador. O ajuste ao vivo no NVENC leva ~2 s para valer (medido), e nesses 2 s o
                         // envio continua acima do que a rede aguenta. Subidas e ajustes pequenos vão ao vivo, sem quadro-chave.
                         // Cada criação do MFT da NVIDIA deixa ~4 handles para trás (medido: 40 ciclos, +4,1 por ciclo, mesmo com
-                        // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos da metade e no máximo uma vez
-                        // a cada 10 s; o resto vai ao vivo.
-                        if (want as f64) < e.bps as f64 * 0.5 && recreated.elapsed() >= Duration::from_secs(10) { enc = None; recreated = Instant::now(); }
+                        // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos de 70% e no máximo uma vez
+                        // a cada 4 s; o resto vai ao vivo.
+                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(4) { enc = None; recreated = Instant::now(); }
                         else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;

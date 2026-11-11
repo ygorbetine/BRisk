@@ -76,7 +76,7 @@ void msgui_pump(app_state_t *s) {
 }
 
 static const char *peer_name(const app_state_t *s, const char *fp) {
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].fp[0] && !strcmp(s->rtc_peers[i].fp, fp)) return s->rtc_peers[i].name;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].fp[0] && !strcmp(s->rtc_peers[i].fp, fp)) return s->rtc_peers[i].name;
     return NULL;
 }
 

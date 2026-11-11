@@ -26,6 +26,11 @@ mod mock;
 mod phoenix;
 mod procaudio;
 mod realtime;
+mod hybrid;
+mod sfu;
+mod sfudata;
+mod sfufiles;
+mod sfu_cfg;
 mod roomchat;
 mod share;
 mod signaling;
@@ -83,3 +88,21 @@ mod robust;
 mod tests;
 #[cfg(test)]
 mod tests_rede;
+#[cfg(test)]
+mod tests_hybrid;
+#[cfg(test)]
+mod tests_sfudata;
+#[cfg(test)]
+mod tests_sfurec;
+#[cfg(test)]
+mod tests_sfurede;
+#[cfg(test)]
+mod tests_sfuipc;
+#[cfg(test)]
+mod tests_sfuproc;
+#[cfg(test)]
+mod tests_sfukick;
+#[cfg(test)]
+mod tests_sfuapps;
+#[cfg(test)]
+mod tests_sfu;

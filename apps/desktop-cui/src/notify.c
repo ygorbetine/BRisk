@@ -92,12 +92,12 @@ void notify_friend(app_state_t *s, const char *text, bool in_call) { notify_post
 
 /* a cada quadro: sons da chamada, transmissão iniciada, contador na bandeja e na barra de tarefas */
 void notify_tick(app_state_t *s) {
-    static bool init; static bool prev_room; static int prev_peers = -1; static bool prev_share[8];
+    static bool init; static bool prev_room; static int prev_peers = -1; static bool prev_share[BRIKS_MAX_PEERS];
     if (!init) { init = true; const char *g = getenv("BRIKS_NOTIFY_GRACE"); g_grace_until = GetTickCount64() + (g ? (unsigned)atoi(g) : 15000u); }   /* logo ao abrir: nada é avisado */
-    int peers = 0; for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado"))) peers++;
+    int peers = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado"))) peers++;
     if (s->in_room != prev_room) { sound_play(s->in_room ? SND_JOIN : SND_LEAVE); prev_room = s->in_room; prev_peers = peers; }
     else if (s->in_room && peers != prev_peers) { if (prev_peers >= 0) sound_play(peers > prev_peers ? SND_PEER_JOIN : SND_PEER_LEAVE); prev_peers = peers; }
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
         bool on = s->rtc_peers[i].id[0] && s->sh.remote[i].on;
         if (on && !prev_share[i]) { char t[140]; snprintf(t, sizeof t, "%s começou a transmitir", s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Alguém"); notify_post(s, NT_STREAM, NULL, "Briks", t); }
         prev_share[i] = on;

@@ -8,6 +8,9 @@
 #include "theme_cfg.h"
 #include "perf.h"
 
+/* Participantes remotos que a UI acompanha numa chamada (a grade se ajusta; o servidor de chamadas aceita mais que a malha P2P). */
+#define BRIKS_MAX_PEERS 32
+
 /* Paleta (--briks-*, --glass-*) */
 #define B_C1        (g_th.c1)   /* acento: vem do gradiente do tema (themes.c) */
 #define B_C2        (g_th.c2)
@@ -76,7 +79,7 @@ typedef struct {
     char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
-    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; float volume; bool vol_set; char label[64], path[300]; } remote[8];
+    struct { bool on, audio, watching, has_frame, poor; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[BRIKS_MAX_PEERS];
 } share_state_t;
 
 typedef struct {
@@ -136,7 +139,8 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
-    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; float volume; bool vol_set; char fp[72], name[64], status[64], presence[64]; } rtc_peers[8];
+    int rtc_overflow;              /* participantes além de BRIKS_MAX_PEERS: estão na chamada (o áudio toca), mas sem quadro: a grade mostra "+N" */
+    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; float volume; bool vol_set; char fp[72], name[64], status[64], presence[64]; } rtc_peers[BRIKS_MAX_PEERS];
     float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
@@ -163,6 +167,10 @@ typedef struct {
     bool reload_groups;
     share_state_t sh;
     char ice_note[120];   /* "Somente STUN" / "STUN + TURN" (evento ice.info do core) */
+    char net_note[220];   /* modo de rede da chamada: "SFU · servidor" ou "P2P · motivo" (evento net.mode do core) */
+    bool net_failed;      /* a entrada pelo servidor de chamadas falhou e nenhuma chamada abriu: a tela oferece "Entrar em modo P2P" */
+    bool force_p2p;       /* o usuário escolheu entrar em P2P nesta chamada (vale até sair dela) */
+    bool net_sfu;         /* a chamada atual está no servidor de chamadas (SFU): o dono pode silenciar alguém para todos */
     /* tela Rede: TURN próprio (ice.json). A senha só existe aqui enquanto se digita; o core a cifra e nunca a devolve */
     bool ice_turn, ice_has_cred, ice_asked, ice_busy, ice_testing, ice_edit_init;
     char ice_urls[300], ice_user[100], ice_pass[130], ice_msg[240], ice_test_msg[240];
@@ -265,6 +273,7 @@ void rtc_leave_room(app_state_t *s);
 void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */
 void rtc_mic_test(app_state_t *s, bool on);               /* rtc.c: teste do microfone fora da chamada (eventos mic.test) */
@@ -291,6 +300,8 @@ void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só 
 void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
+void rtc_join_p2p(app_state_t *s);                          /* reentra na mesma sala pedindo P2P de propósito (depois de o SFU falhar) */
+void rtc_room_mute(app_state_t *s, int slot, bool muted);   /* só o dono, só no SFU: fecha/reabre o microfone da pessoa para todos */
 void rtc_pump(app_state_t *s);
 void rtc_chat_event(const char *fields);   /* assina e envia um chat.event (campos JSON sem chaves) a quem está na sala */                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */

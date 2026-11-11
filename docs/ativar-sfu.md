@@ -24,3 +24,37 @@ Siga `infrastructure/livekit/README.md` (Docker + `livekit.yaml`) e depois os pa
 ## Como saber se funcionou
 Em uma sala com mais de 8 pessoas (ou escolhendo SFU), o diagnóstico da conexão mostra "SFU".
 Sem as variáveis, o app continua só com a malha P2P.
+
+## App nativo (CUI): passo a passo curto
+
+Nada aqui foi publicado ainda: é o que VOCÊ faz quando quiser ligar o servidor de chamadas. Nenhum segredo vai para o app.
+
+1. **Servidor LiveKit** (escolha um):
+   - **LiveKit Cloud**: crie a conta e um projeto em livekit.io. Anote a URL (`wss://SEU-PROJETO.livekit.cloud`), a API Key e o API Secret.
+   - **VPS própria**: `infrastructure/livekit/` (Docker). Gere as chaves (`docker run --rm livekit/generate`), ponha no `livekit.yaml`,
+     abra 7880/tcp, 7881/tcp, 3478/udp, 5349/tcp e 50000-50200/udp e coloque TLS na frente para ter `wss://`.
+2. **Segredos no Supabase** (ficam só no servidor; rode no seu terminal, não cole em conversa nenhuma):
+   ```bash
+   supabase secrets set LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=... LIVEKIT_URL=wss://SEU-SERVIDOR
+   ```
+3. **Publicar a função de tokens** (com o JWT do gateway ligado): `supabase functions deploy livekit-token`.
+   Opcional, para a expulsão derrubar a pessoa de verdade no servidor: `supabase functions deploy livekit-kick`
+   (já escrita e testada localmente; o app ainda NÃO a chama).
+4. **Dizer ao app onde fica o servidor** (são endereços públicos, não segredos). Crie `%APPDATA%\Briks-CUI\livekit.json`:
+   ```json
+   {"url":"wss://SEU-SERVIDOR","token_url":"https://SEU-PROJETO.supabase.co/functions/v1/livekit-token"}
+   ```
+   (ou as variáveis `BRIKS_LIVEKIT_URL` / `BRIKS_LIVEKIT_TOKEN_URL`). Só `wss://` e `https://` valem.
+   Para todos os usuários receberem isso no instalador ainda falta embutir o arquivo: NÃO FEITO.
+5. **Entrar na conta Briks** no app e abrir uma chamada. Em Configurações > Rede > diagnóstico deve aparecer
+   "Modo da chamada: SFU · automático: servidor de chamadas (SFU) · servidor SEU-SERVIDOR".
+
+O que muda para quem usa:
+- Com o arquivo acima, **Automático e "Sempre SFU" usam o servidor de chamadas**. Se o token não sair (sem conta, Supabase ou LiveKit
+  fora do ar), a chamada **não abre** e aparece o motivo; ela não cai em P2P sozinha, porque quem caísse ficaria falando com ninguém
+  numa sala à parte. "Sempre P2P" continua disponível, desde que todos escolham o mesmo.
+- Reserva P2P automática (só se todos combinarem): `"fallback":"p2p"` no `net-mode.json` da pasta de dados ou `BRIKS_NET_FALLBACK=p2p`.
+- Queda de rede ou do servidor: o app reconecta sozinho (até 2 minutos tentando) e a lista de pessoas não pisca.
+- Sem o arquivo, nada muda: tudo continua em P2P.
+
+Detalhes técnicos, medições e o que falta: `docs/plans/sfu-livekit-nativo.md`.

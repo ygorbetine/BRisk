@@ -63,7 +63,7 @@ static void quality_chip(const share_state_t *q, char *out, size_t cap) {
 
 /* ---------- quadro compartilhado -> textura ---------- */
 typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; } fview_t;
-static fview_t g_fv[9];           /* 0..7 = slots de rtc_peers; 8 = prévia local */
+static fview_t g_fv[BRIKS_MAX_PEERS + 1];   /* 0..MAX-1 = slots de rtc_peers; MAX = prévia local */
 static cui_texture g_trash[64]; static int g_ntrash;   /* texturas a destruir no próximo quadro (só a thread da UI mexe em GL) */
 
 static void fv_close(fview_t *v) {
@@ -139,6 +139,8 @@ static void start_selected(app_state_t *s) {
     share_state_t *q = &s->sh;
     int t = q->tab;
     if (q->sel[t] < 0 || q->sel[t] >= q->nsrc[t]) return;
+    /* trava de teste: com BRIKS_SHARE_NO_PRIMARY os roteiros automáticos nunca transmitem o monitor principal do usuário */
+    if (t == 0 && getenv("BRIKS_SHARE_NO_PRIMARY") && strstr(q->src[t][q->sel[t]].sub, "principal")) { copy(q->err, sizeof q->err, "Teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)"); return; }
     send_start(s, t == 0 ? "screen" : "window", q->src[t][q->sel[t]].id, q->src[t][q->sel[t]].name);
     q->dialog_open = false;
 }
@@ -148,16 +150,16 @@ void share_stop(app_state_t *s) { cmd("{\"cmd\":\"share.stop\"}"); s->sh.active 
 void share_reset(app_state_t *s) {
     share_state_t *q = &s->sh;
     for (int t = 0; t < 2; t++) for (int i = 0; i < q->nsrc[t]; i++) if (q->src[t][i].tex && g_ntrash < 64) g_trash[g_ntrash++] = q->src[t][i].tex;
-    for (int i = 0; i < 9; i++) fv_close(&g_fv[i]);
+    for (int i = 0; i <= BRIKS_MAX_PEERS; i++) fv_close(&g_fv[i]);
     int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode; float bc = q->br_custom;
     memset(q, 0, sizeof *q);
     q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc;
 }
 
-bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < 8 && s->sh.remote[slot].on; }
+bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < BRIKS_MAX_PEERS && s->sh.remote[slot].on; }
 
 static int slot_of(const app_state_t *s, const char *peer) {
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, peer)) return i;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, peer)) return i;
     return -1;
 }
 
@@ -212,13 +214,19 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
         q->live_h = jint(j, "h"); q->target_fps = jint(j, "target_fps"); q->target_kbps = jint(j, "target_kbps"); q->est_kbps = jint(j, "est_kbps");
         q->rtt_ms = jint(j, "rtt_ms"); q->rtx = jint(j, "rtx"); q->loss_pct = jnum(j, "loss_pct");
         copy(q->adapting, sizeof q->adapting, json_str(j, "adapting", "")); copy(q->reason, sizeof q->reason, json_str(j, "reason", ""));
+    } else if (!strcmp(ev, "share.rxstats")) {
+        /* quem assiste: com menos de 3 quadros por segundo por 4 s seguidos, a conexão não está dando conta (o emissor não baixa a
+           qualidade por um espectador só quando há outros bem; avisa em vez de deixar a imagem parada sem explicação) */
+        int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0 || !q->remote[i].watching) return false;
+        if (jint(j, "fps") < 3) { if (q->remote[i].low_secs < 99) q->remote[i].low_secs++; } else q->remote[i].low_secs = 0;
+        q->remote[i].poor = q->remote[i].low_secs >= 4;
     } else if (!strcmp(ev, "share.remote")) {
         int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) return false;
         const char *st = json_str(j, "state", "");
         if (!strcmp(st, "on")) {
             q->remote[i].on = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps");
             q->remote[i].audio = jbool(j, "audio"); copy(q->remote[i].label, sizeof q->remote[i].label, json_str(j, "label", ""));
-        } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; fv_close(&g_fv[i]); }
+        } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]); }
         else if (!strcmp(st, "watch")) copy(q->remote[i].path, sizeof q->remote[i].path, json_str(j, "path", ""));
         else if (!strcmp(st, "frame")) { q->remote[i].has_frame = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); }
     } else return false;
@@ -233,7 +241,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     if (q->fps < 0 || q->fps >= FPS_N) q->fps = FPS_DEFAULT;   /* padrão: 1080p · 30 FPS · automático */
     /* só assiste no modo Transmissão (aba Chamada): fora dele o core nem decodifica */
     bool viewing = s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
         if (!s->rtc_peers[i].id[0]) { if (q->remote[i].on || q->remote[i].watching) { memset(&q->remote[i], 0, sizeof q->remote[i]); fv_close(&g_fv[i]); } continue; }
         bool want = viewing && q->remote[i].on;
         if (want != q->remote[i].watching) {
@@ -553,27 +561,28 @@ static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
 bool ui_share_stage(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
     int n = (q->active ? 1 : 0);
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) n++;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) n++;
     if (!n) return false;
     cui_request_redraw(ui);   /* vídeo: redesenha a cada quadro enquanto o palco está visível */
     cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
         if (q->active) {
             char path[300], title[160], chip[96]; preview_path(path, sizeof path);
-            bool has = fv_update(ui, s, &g_fv[8], path);
+            bool has = fv_update(ui, s, &g_fv[BRIKS_MAX_PEERS], path);
             snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
             quality_chip(q, chip, sizeof chip);
-            video_tile(ui, 8, has ? g_fv[8].tex : 0, g_fv[8].w, g_fv[8].h, title, chip, "Preparando a prévia…", NULL);
+            video_tile(ui, BRIKS_MAX_PEERS, has ? g_fv[BRIKS_MAX_PEERS].tex : 0, g_fv[BRIKS_MAX_PEERS].w, g_fv[BRIKS_MAX_PEERS].h, title, chip, "Preparando a prévia…", NULL);
         }
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
             char title[200], chip[96], r[24];
             bool has = q->remote[i].path[0] && q->remote[i].watching && fv_update(ui, s, &g_fv[i], q->remote[i].path);
             const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";
             if (q->remote[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote[i].label); else snprintf(title, sizeof title, "%s", nm);
             fmt_rate(q->remote[i].kbps, r, sizeof r);
             snprintf(chip, sizeof chip, "%s · %d FPS · %s%s", res_name(q->remote[i].h), q->remote[i].fps, r, q->remote[i].audio ? " · com áudio" : "");
+            if (q->remote[i].poor) snprintf(chip, sizeof chip, "Conexão instável: a imagem pode ficar parada");
             if (!q->remote[i].vol_set) { q->remote[i].vol_set = true; q->remote[i].volume = 1.0f; }
             float before = q->remote[i].volume;
-            video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL);
+            video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, q->remote[i].poor ? "Sua conexão não está dando conta desta transmissão" : "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL);
             if (fabsf(before - q->remote[i].volume) > 0.01f) {
                 char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
                 snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, q->remote[i].volume);

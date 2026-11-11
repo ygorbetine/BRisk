@@ -520,3 +520,84 @@ em outras execuções os números mudaram dezenas de ms).
   excessiva já registrada no item 1. Duas correções foram tentadas e revertidas por não se sustentarem nas medições; não há
   correção segura e medida, então fica como limite conhecido, avisado na interface com o selo "Beta".
 - **1080p com ~120 ms a mais que 720p em loopback — NÃO INVESTIGADO.** Causa desconhecida.
+
+## 15. Frente A (pós-1.3.0): estimador de banda reescrito — 2026-11-11
+
+Base medida no início da rodada (`adaptation_follows_the_network`, Nitidez): 6 Mbps → 1,0 Mbps; 2 Mbps+2% → 0,57; 0,8 Mbps+5% → 0,28;
+volta a 6 Mbps → 0,4 Mbps e o teste FALHAVA por não recuperar. Causas vistas no CSV: cortes em cascata (cada segundo cortava de
+novo com relatórios velhos), o `enviado` do segundo seguinte ao corte (0 qps) usado como "o que passou", memória de capacidade que
+travava a subida, regra de atraso que desistia de cortar numa fila funda, e orçamento de retransmissão pequeno demais para um
+quadro-chave grande sob perda (receptor preso num ciclo de PLI).
+
+Mudanças (`adapt.rs`, `share.rs`): corte para 90% do que passou (nunca menos de 35% da estimativa por corte; dentro de 2,5 s de um
+corte só com perda > 30% e só 25%); só NACKs valem logo depois de um corte; atraso espera 2,5 s e, se persiste sem crescer depois
+de dois cortes, vira a nova base; memória de capacidade firme por 3 s e sondagem de 8%/s depois; orçamento de retransmissão 25% →
+40% (60% quebrou a volta da queda de 4 s: 5,9 s); recriação do codificador abaixo de 70% e no máx. a cada 4 s. 5 testes unitários
+novos com um enlace simulado (queda 20→6 Mbps, 2%/5% de perda e volta, atraso alheio, fila funda, perda leve).
+
+Resultado (mesma rede simulada; CSVs em `provas/transmissao/adaptacao-*.csv`; máquina com outras cargas, então há variação):
+
+| Degrau | Antes (Nitidez) | Depois (Nitidez / Fluidez) |
+|---|---|---|
+| 6 Mbps | 1,0 Mbps | 4,8 / 4,9 Mbps |
+| 2 Mbps + 2% perda | 0,57 Mbps | 1,0 / 1,9 Mbps |
+| 0,8 Mbps + 5% perda | 0,28 Mbps | 0,36 / 0,44 Mbps |
+| volta a 6 Mbps | 0,4 Mbps (teste falhava) | 4,3 / 4,4 Mbps |
+| queda de 4 s: 1º quadro | 1,1–1,7 s | 1,2–2,1 s |
+
+**NÃO resolvido**: o pior congelamento nas quedas bruscas ficou em 8–11 s nesta rodada (antes ~5 s, porém com 0,4 Mbps de média); numa
+rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agora falha só acima de 14 s. O PLI mais frequente
+(0,6 s) já havia sido testado sem ganho (seção 14).
+
+## 16. Frente A, 2º marco — 2026-11-11
+
+- **1080p com latência maior que 720p (loopback, `glass_to_glass_latency`) — INVESTIGADO, causa não isolada.** Padrão (NVENC +
+  decodificador do Media Foundation): 720p p50 17 ms / p95 26; 1080p p50 61 / p95 70. Com `BRIKS_DECODER=openh264`: 1080p p50 49;
+  com `BRIKS_ENCODER=mf-soft`: 151 (codificador por software); conversão na CPU: 97 e 14 qps. O pacer não é a causa (fila 0 KB,
+  excesso de bitrate 1,0). A bancada (codificar/decodificar isolados) dá 5,0 e 7,3 ms em 1080p, então a diferença vem do pipeline
+  dos MFTs de hardware com quadros maiores. Medições variam bastante com a máquina ocupada; nenhuma correção foi feita.
+- **Espectador de rede ruim sem explicação — FEITO (UI), NÃO verificado em tela.** Com menos de 3 quadros/s por 4 s seguidos, o
+  espectador vê "Conexão instável: a imagem pode ficar parada" (e "Sua conexão não está dando conta desta transmissão" se ainda
+  não houve quadro). A regra da maioria (seção anterior) continua: o emissor não baixa a qualidade de todos por um espectador só.
+  NÃO FEITO: bitrate/camada própria por espectador (exige simulcast ou um 2º codificador).
+- **Reconexão do emissor — SÓ LEITURA DO CÓDIGO.** O `mesh.rs` re-anexa a transmissão em curso quando um par volta a autenticar
+  (`attach_share` na autenticação), então um espectador que sai e volta recebe a imagem (teste `late_joiner_resize_and_leave_keep_the_share_alive`).
+  Queda de sinalização do emissor com a transmissão no ar NÃO foi testada.
+- **NÃO FEITO nesta rodada:** 4+ espectadores, FEC de vídeo, DPI/múltiplos monitores, tela cheia/DRM reais, Discord tocando,
+  cliques restantes (alternar apps, parar/retomar, volume).
+
+## 17. Frente A, 3º marco — reconexão e vários espectadores — 2026-11-11
+
+- **Queda longa de rede (40 s) — ERA UM BURACO REAL, CORRIGIDO E MEDIDO.** Quando o ICE desistia (`Failed`), a malha deixava o par
+  morto para sempre: com a rede de volta e os dois ainda na sala, a imagem NUNCA voltava (60 s de espera no teste). Agora `mesh.rs`
+  fecha o par, espera 1,5 s e o refaz (`Internal::Reconnect`; o lado iniciador oferece, o outro aceita na `on_signal`); a
+  transmissão em curso é re-anexada na reautenticação e o espectador que estava assistindo retoma sozinho (`watch_intent`). O
+  ICE passou a desistir em 8 s (antes ~30 s). Resultado (`survives_a_long_network_outage_and_resumes`, ignorado): imagem de volta
+  **4,8 s** depois da rede (1ª versão da correção, ICE padrão: 27,6 s). Queda curta de 4 s: 1º quadro em 1,1–2,1 s, sem regressão.
+  Risco: uma queda de rede de ~8 s passa a refazer o par (corte de ~1–5 s) em vez de esperar; não foi medido em rede real.
+- **Espectador que sai e volta com a transmissão no ar — MEDIDO** (`viewer_that_leaves_and_comes_back_gets_a_picture_fast`, 3
+  voltas): aviso da transmissão em 33–1104 ms e 1º quadro 1,1–2,2 s depois de entrar na sala (o quadro-chave sai na hora, mas o
+  limite de 1/s e a renegociação somam ~1 s).
+- **Vários espectadores — MEDIDO em loopback** (`many_viewers_all_receive_full_frame_rate`, `BRIKS_VIEWERS`): 1, 2 e 5
+  espectadores recebem exatamente o que o emissor emite (ex.: 5 espectadores: emissor 18,8 qps e cada um 20,2 qps); o bitrate de
+  saída cresce linearmente (7,5 Mbps com 5 a 1,5 Mbps cada) e o CPU do processo inteiro (emissor + N decodificadores, tudo na
+  mesma máquina) foi de 57% com 1 a 140% com 5. O codificador é um só. **Limite da malha: `MAX_PEERS = 5`** (sala de até 6 pessoas;
+  com 8 espectadores o emissor não autenticou com todos em 60 s). A máquina estava ocupada por outras sessões (o emissor chegou
+  a só ~19 qps), então os números absolutos valem pouco; a relação (todos recebem o que sai) é o resultado.
+- **Para o SFU:** `docs/plans/transmissao-api-interna.md` + `VideoOut::publish`.
+
+## 18. Frente A, 4º marco — cliques e segurança dos testes — 2026-11-11
+
+- **Cliques restantes (alternar apps, parar/retomar, volume do espectador) — NÃO FEITO.** Dois roteiros foram tentados e descartados:
+  os cliques por coordenada do `teste-ui-real.sh` ficaram defasados quando o diálogo ganhou o selo "Beta" (o clique na aba
+  "Janelas" caiu na aba "Telas") e a tentativa com fonte sintética (`BRIKS_DEV_SHARE=test`) não iniciou a transmissão.
+- **INCIDENTE de teste (corrigido):** por causa do clique defasado, um roteiro automático transmitiu por ~10 s a "Tela 1", o
+  MONITOR PRINCIPAL do usuário, para um espectador local em loopback (nada saiu da máquina; as capturas desse teste foram apagadas
+  sem abrir). Resposta: `BRIKS_SHARE_NO_PRIMARY=1` (agora definido pelo `teste-ui-real.sh`) faz o app recusar transmitir a tela
+  principal. Lembrete: a miniatura do monitor principal aparece sempre no seletor, então capturas do seletor também mostram a tela
+  real do usuário; roteiros futuros devem evitar fotografar o seletor.
+- **DPI / vários monitores — NÃO FEITO** (só a 2ª tela 1920x1080 foi usada; nada com escala de DPI diferente de 100%).
+- **Tela cheia exclusiva / DRM reais — NÃO FEITO.** Existe a detecção de quadros pretos e o aviso na interface; nenhum jogo ou
+  conteúdo protegido real foi testado.
+- **Discord tocando — NÃO FEITO.** **FEC de vídeo — NÃO FEITO** (retransmissão por NACK cobre a perda; FEC exigiria um canal
+  extra e ainda não foi avaliado).

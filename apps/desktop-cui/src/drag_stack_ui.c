@@ -217,7 +217,7 @@ static void art_voice(cui_ctx *ui, const app_state_t *s, cui_rect c) {
         cui_draw_rect(ui, (cui_rect){ t.x + 9, t.y + 1, t.w - 18, 1 }, CUI_CORNERS(0.5f), WHITE(0x40));   /* brilho interno de 1 px, longe dos cantos */
         char lab[12];
         if (plus) snprintf(lab, sizeof lab, "+%d", g.plus_n);
-        else { const char *nm = i == 0 ? ((s && s->user_name[0]) ? s->user_name : "Você") : (s && i - 1 < 8 && s->rtc_peers[i - 1].name[0]) ? s->rtc_peers[i - 1].name : "Convidado"; ini(nm, lab); if (i >= 3 && i > 2) { char b[3]; ini(i >= 3 ? "Convidado" : nm, b); (void)b; } }
+        else { const char *nm = i == 0 ? ((s && s->user_name[0]) ? s->user_name : "Você") : (s && i - 1 < BRIKS_MAX_PEERS && s->rtc_peers[i - 1].name[0]) ? s->rtc_peers[i - 1].name : "Convidado"; ini(nm, lab); if (i >= 3 && i > 2) { char b[3]; ini(i >= 3 ? "Convidado" : nm, b); (void)b; } }
         float sz = side * 0.36f; if (sz > 15) sz = 15;
         cui_draw_text(ui, CUI_FONT_MEDIUM, sz, (cui_vec2){ t.x + side * 0.5f - tw(sz, lab) * 0.5f, t.y + side * 0.5f - sz * 0.62f }, CUI_RGBA(0xffffffee), lab, -1);
     }

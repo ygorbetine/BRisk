@@ -30,6 +30,8 @@ argon2 = "0.5"
 chacha20poly1305 = "0.10"
 bip39 = { version = "2", default-features = false, features = ["std", "portuguese"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+livekit-protocol = "=0.8.2"
+prost = "0.14"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -41,5 +43,6 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gd
 windows-core = "0.61"
 [dev-dependencies]
 socket2 = "0.5"
+hmac = "0.12"
 
 [workspace]

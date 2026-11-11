@@ -496,7 +496,7 @@ static int roster_get(const app_state_t *s, const channel_t *c, rmem_t out[8], b
     if (s->in_room && !strcmp(s->room_name, rn)) {
         *mine = true;
         snprintf(out[n].name, sizeof out[n].name, "%s", s->user_name); out[n].live = s->sh.active; n++;
-        for (int q = 0; q < 8 && n < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) {
+        for (int q = 0; q < BRIKS_MAX_PEERS && n < 8; q++) if (s->rtc_peers[q].id[0] && s->rtc_peers[q].name[0] && !strcmp(s->rtc_peers[q].state, "autenticado")) {
             snprintf(out[n].name, sizeof out[n].name, "%s", s->rtc_peers[q].name); out[n].live = s->sh.remote[q].on; n++;
         }
         return n;

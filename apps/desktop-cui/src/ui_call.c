@@ -12,9 +12,10 @@
 call_ui_t g_call = { .focus = -1 };
 
 typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; } tile_t;
-enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH };
-#define SLOT_ME 9
-static struct { float lvl, d; } g_av[10];   /* nível de fala e diâmetro do avatar por tile (0..7 peers, 8 prévia, 9 eu), lidos pelo canvas ao pintar */
+enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TILE_ROOM_MUTE };
+#define SLOT_ME (BRIKS_MAX_PEERS + 1)
+static bool g_can_room_mute;   /* sou o dono e a chamada está no servidor de chamadas: posso silenciar alguém para todos */
+static struct { float lvl, d; } g_av[BRIKS_MAX_PEERS + 2];   /* nível de fala e diâmetro do avatar por tile (0..7 peers, 8 prévia, 9 eu), lidos pelo canvas ao pintar */
 static bool g_bar_visible = true, g_aud_open;
 
 /* ---------- chat da sala ---------- */
@@ -151,7 +152,7 @@ static bool in_rect(cui_rect r, cui_vec2 p) { return r.w > 0 && p.x >= r.x && p.
 static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     int act = TILE_NONE;
     const bool muted = t->muted || (t->me && !mic_on), speaking = t->level > 0;
-    const int gi = t->slot < 0 ? 0 : t->slot > 9 ? 9 : t->slot;
+    const int gi = t->slot < 0 ? 0 : t->slot > SLOT_ME ? SLOT_ME : t->slot;
     const bool sm = w < 260.0f || h < 200.0f;
     /* bloco pequeno: o avatar fica na área acima do rótulo (que cresce com o tamanho do texto), nunca atrás dele */
     const float lab_h = sm ? 12.0f * cui_theme_get(ui)->font_scale + 10.0f + 8.0f + 4.0f : 0.0f;
@@ -199,6 +200,8 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
+                    /* só o dono, só no servidor de chamadas: fecha (ou pede para reabrir) o microfone da pessoa para todos */
+                    if (g_can_room_mute && t->can_kick && cui_menu_item(ui, t->muted ? "Reabrir o microfone dele" : "Silenciar para todos", .icon = CUI_ICON_VOLUME_X)) act = TILE_ROOM_MUTE;
                     if (cui_menu_item(ui, "Destacar (modo Foco)", .icon = CUI_ICON_MAXIMIZE_2)) act = TILE_FOCUS;
                     if (t->live) { if (cui_menu_item(ui, "Ver a transmissão", .icon = CUI_ICON_MONITOR)) act = TILE_WATCH; }
                     else if (cui_menu_item(ui, "Pedir transmissão", .icon = CUI_ICON_MONITOR)) act = TILE_ASK;
@@ -285,7 +288,7 @@ static void info_row(cui_ctx *ui, const char *k, const char *v) {
 }
 static void net_chip(cui_ctx *ui, app_state_t *s, bool compact) {
     netdiag_t nd = netdiag_get();
-    int failed = 0; for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "falhou")) failed++;
+    int failed = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "falhou")) failed++;
     const netq_in_t in = { s->in_room ? (s->rtc_state[0] ? s->rtc_state : (getenv("BRIKS_DEMO_PEERS") ? "conectado" : "conectando")) : "", s->rtc_peer_count, s->rtc_authed_count, failed,
                            nd.done, nd.reachable, nd.st.avg_ms, nd.st.loss_pct };
     const int q = call_net_quality(&in);
@@ -423,8 +426,9 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
     if (act == TILE_FOCUS) {
         if (g_call.layout == 1 && g_call.focus == i) g_call.focus = -1;   /* clicar de novo em quem está fixado: volta a seguir quem fala */
         else { g_call.focus = i; g_call.layout = 1; }
-    } else if (i >= 0 && i < 8) {
+    } else if (i >= 0 && i < BRIKS_MAX_PEERS) {
         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
+        else if (act == TILE_ROOM_MUTE) rtc_room_mute(s, i, !(s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened));
         else if (act == TILE_KICK) { s->kick_slot = i; s->kick_open = true; }
         else if (act == TILE_WATCH) s->call_mode = 1;
         else if (act == TILE_ASK) {
@@ -437,10 +441,11 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
 
 static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
     const bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
-    tile_t T[10]; char names[8][64]; int n = 0;
+    tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = 0;
+    g_can_room_mute = s->rtc_owner_me && s->net_sfu;
     T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL };
-    if (!s->in_room && getenv("BRIKS_DEMO") && !getenv("BRIKS_DEMO_PEERS")) T[n++] = (tile_t){ "Marina Costa", false, false, 0, 8, false, false, false, "", NULL };   /* participante de exemplo: só nas capturas de demonstração */
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
+    if (!s->in_room && getenv("BRIKS_DEMO") && !getenv("BRIKS_DEMO_PEERS")) T[n++] = (tile_t){ "Marina Costa", false, false, 0, BRIKS_MAX_PEERS, false, false, false, "", NULL };   /* participante de exemplo: só nas capturas de demonstração */
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) {
         if (s->rtc_peers[i].name[0]) snprintf(names[i], sizeof names[i], "%s", s->rtc_peers[i].name); else snprintf(names[i], sizeof names[i], "Participante %d", i + 1);
         const bool live = share_peer_live(s, i);
         T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
@@ -583,7 +588,26 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
             }
             /* palco */
             const float pad = g_call.fullscreen ? 12.0f : 18.0f;
-            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = pad, .id = "stage") {
+            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = pad, .gap = 10, .id = "stage") {
+                if (s->net_failed) {
+                    /* o servidor de chamadas não deixou entrar e nenhuma chamada abriu: diz por quê e oferece o P2P de propósito */
+                    cui_box(ui, .dir = CUI_ROW, .gap = 12, .pad_x = 14, .pad_y = 10, .radius = 14, .bg = CUI_RGBA(0xf5a52422), .border = 1, .border_color = CUI_RGBA(0xf5a52466), .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                        cui_icon(ui, CUI_ICON_PHONE, 18, CUI_RGB(0xf5a524));
+                        cui_column(ui, .gap = 2, .width = CUI_FILL) {
+                            cui_text(ui, s->rtc_msg[0] ? s->rtc_msg : "Não foi possível entrar pelo servidor de chamadas.", .size = 14);
+                            cui_text(ui, "Você ainda não está na chamada. Em P2P você só fala com quem também entrar em P2P.", .size = 12, .color = B_MUTED);
+                        }
+                        if (cui_button(ui, "Tentar de novo")) { char room[sizeof s->room_name]; snprintf(room, sizeof room, "%s", s->room_name); s->net_failed = false; s->rtc_session_sent = s->rtc_session_ready; rtc_join_room(s, room); }
+                        if (cui_button(ui, "Entrar em modo P2P", .variant = CUI_BUTTON_PRIMARY)) rtc_join_p2p(s);
+                    }
+                }
+                if (s->in_room && s->rtc_overflow > 0 && s->call_view != 1) {
+                    /* mais gente na chamada do que quadros na grade: estão ouvindo e falando; sobem quando abrir vaga */
+                    cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 12, .pad_y = 6, .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                        char pn[64]; snprintf(pn, sizeof pn, "+%d %s na chamada, fora da grade", s->rtc_overflow, s->rtc_overflow == 1 ? "pessoa" : "pessoas");
+                        cui_text(ui, pn, .size = 13, .color = B_MUTED);
+                    }
+                }
                 if (s->call_view == 1) stage_chat(ui, s);
                 else if (s->call_mode == 1) {
                     if (!ui_share_stage(ui, s)) {
@@ -596,6 +620,8 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                        então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
                     const float rw = vp.x, rh = vp.y - 4.0f;
                     float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + bar_h) - pad * 2;
+                    if (s->net_failed) H -= 78.0f;                               /* faixa "não foi possível entrar pelo servidor" */
+                    if (s->in_room && s->rtc_overflow > 0) H -= 46.0f;           /* faixa "+N pessoas fora da grade" */
                     if (W < 120) W = 120; if (H < 90) H = 90;
                     stage_people(ui, s, W, H);
                 }
@@ -611,7 +637,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
     ui_share_dialog(ui, s);
     /* confirmação rápida antes de expulsar */
     if (s->kick_open) {
-        const char *who = (s->kick_slot >= 0 && s->kick_slot < 8 && s->rtc_peers[s->kick_slot].name[0]) ? s->rtc_peers[s->kick_slot].name : "esta pessoa";
+        const char *who = (s->kick_slot >= 0 && s->kick_slot < BRIKS_MAX_PEERS && s->rtc_peers[s->kick_slot].name[0]) ? s->rtc_peers[s->kick_slot].name : "esta pessoa";
         cui_dialog(ui, "Expulsar da chamada", &s->kick_open, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
             cui_textf(ui, "Expulsar %s da chamada?", who);
             cui_text(ui, "Ela será desconectada e não poderá voltar a esta sala nesta sessão até você permitir.", .size = 13, .color = B_MUTED);

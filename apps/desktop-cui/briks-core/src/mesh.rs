@@ -87,8 +87,12 @@ pub enum MeshCmd {
     KickUnchecked { fp: String },
     /// O dono permite a volta de alguém banido.
     Allow { fp: String },
+    /// O dono fecha/abre o microfone de outro (mensagem assinada). Só no modo SFU (camada de dados do LiveKit).
+    RemoteMute { fp: String, muted: bool },
     /// Reenvia o estado local (microfone/ensurdecido) a todos os peers autenticados.
     BroadcastState,
+    /// Só no modo híbrido: estado de mídia (mic aberto, ensurdecido) e identidade no SFU a anunciar; reenvia o estado.
+    SetHybrid { mic: bool, deaf: bool, sfu_id: String },
     /// Status (texto do balão) e presença (programa em uso) que os peers autenticados veem; vazio = nada.
     SetProfile { status: String, presence: String },
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
@@ -147,6 +151,8 @@ enum Internal {
     DcOpen { peer: String, gen: u32 },
     DcAttach { peer: String, gen: u32, dc: Arc<RTCDataChannel> },
     DcMsg { peer: String, gen: u32, text: String },
+    /// refaz a conexão de um par cuja conexão WebRTC falhou (depois de uma queda longa de rede)
+    Reconnect { peer: String },
 }
 
 struct Peer {
@@ -218,6 +224,8 @@ struct Actor {
     irx: Option<mpsc::Receiver<Internal>>,
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
+    /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
+    watch_intent: HashMap<String, std::path::PathBuf>,
     hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
     hist_reqs: HashMap<String, String>,        // peer -> requestId do pedido de histórico em andamento
     seen_msgs: HashSet<String>,
@@ -233,6 +241,9 @@ struct Actor {
     joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
     banned: HashSet<String>,        // fps expulsos nesta sessão
     profile: (String, String),      // (status, presença) anunciados aos peers autenticados
+    /// Modo híbrido (SFU + malha só de dados): estado de mic/ensurdecido e identidade no SFU que ESTA malha anuncia, já que ela não tem `Audio`.
+    media: Option<(bool, bool)>,
+    sfu_id: String,
     dead: bool,                     // fui expulso: encerra o ator
     blocked: HashSet<String>,       // peerIds de banidos: sinalização deles é ignorada
     share: Option<ActiveShare>,
@@ -252,7 +263,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -342,6 +353,9 @@ impl Actor {
         // mais de 100 pacotes para trás. 8192 cobre ~1 s a 50 Mbps e continua barrando replays antigos.
         let mut se = webrtc::api::setting_engine::SettingEngine::default();
         se.set_srtp_replay_protection_window(8192);
+        // desiste mais cedo de uma conexão sem resposta (padrão: ~30 s para falhar): a malha refaz o par sozinha (`Reconnect`), então
+        // depois de uma queda longa a transmissão volta em ~10 s em vez de ~30 s
+        se.set_ice_timeouts(Some(std::time::Duration::from_secs(4)), Some(std::time::Duration::from_secs(8)), Some(std::time::Duration::from_secs(2)));
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
         {
@@ -606,6 +620,11 @@ impl Actor {
                     for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "room.allow", "target_fp": fp, "timestamp": ts, "signature": sig })).await; }
                 }
             }
+            MeshCmd::SetHybrid { mic, deaf, sfu_id } => {
+                self.media = Some((mic, deaf)); self.sfu_id = sfu_id;
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.send_state(&id).await; }
+            }
             MeshCmd::BroadcastState => {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.send_state(&id).await; }
@@ -638,6 +657,7 @@ impl Actor {
                 let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv.clone()));
                 match found {
                     Some((id, r)) => {
+                        if on { self.watch_intent.insert(id.clone(), path.clone()); } else { self.watch_intent.remove(&id); }
                         if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.frames.store(0, std::sync::atomic::Ordering::Relaxed); }
                         r.watching.store(on, std::sync::atomic::Ordering::Relaxed);
                         self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
@@ -645,6 +665,7 @@ impl Actor {
                     None => self.emit(MeshEvent::Error("assistir: peer desconhecido".into())).await,
                 }
             }
+            MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto só existe no modo SFU".into())).await,
             MeshCmd::Close => {}
         }
     }
@@ -968,8 +989,8 @@ impl Actor {
     }
 
     async fn send_state(&self, peer: &str) {
-        let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).unwrap_or((true, false));
-        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1 })).await;
+        let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).or(self.media).unwrap_or((true, false));
+        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id })).await;
     }
 
     /// Pede ao peer recém-autenticado as mensagens desta DM que eu ainda não tenho (informa os ids que já tenho).
@@ -1033,7 +1054,22 @@ impl Actor {
             Internal::PcState { peer, gen, state } => {
                 if !self.gen_ok(&peer, gen) { return; }
                 let s = match state { RTCPeerConnectionState::Connected => "conectado", RTCPeerConnectionState::Failed => "falhou", RTCPeerConnectionState::Closed => "fechado", RTCPeerConnectionState::Disconnected => "falhou", _ => "negociando" };
-                self.emit(MeshEvent::Peer { peer_id: peer, state: s.into() }).await;
+                self.emit(MeshEvent::Peer { peer_id: peer.clone(), state: s.into() }).await;
+                // Conexão FALHA (o ICE desiste depois de ~30 s sem resposta): sem isto o par ficava morto para sempre mesmo com a rede de
+                // volta e os dois ainda na sala. Fecha, espera um pouco e refaz do zero (o lado iniciador oferece, o outro aceita a
+                // oferta na própria `on_signal`); a transmissão em curso é anexada de novo na reautenticação (`after_auth`).
+                if state == RTCPeerConnectionState::Failed {
+                    self.net.lock().unwrap().peers.remove(&peer);
+                    if let Some(a) = &self.audio { a.remove_peer(&peer); }
+                    if let Some(p) = self.peers.remove(&peer) { let _ = p.pc.close().await; }
+                    let (itx, id) = (self.itx.clone(), peer);
+                    tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1500)).await; let _ = itx.send(Internal::Reconnect { peer: id }).await; });
+                }
+            }
+            Internal::Reconnect { peer } => {
+                if !self.present.contains(&peer) || self.blocked.contains(&peer) || self.peers.contains_key(&peer) || self.peers.len() >= MAX_PEERS { return; }
+                if let Err(e) = self.add_peer(&peer).await { self.emit(MeshEvent::Error(format!("reconexão com {peer}: {e}"))).await; return; }
+                if is_initiator(&self.cfg.local_peer, &peer) { self.start_offer(&peer, true).await; }
             }
             Internal::DcAttach { peer, gen, dc } => {
                 if !self.gen_ok(&peer, gen) { return; }
@@ -1185,6 +1221,8 @@ impl Actor {
             }
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                // identidade do SFU anunciada por este peer (autenticado pela prova ECDSA): liga o peer da malha ao participante do SFU
+                if let Some(sid) = v["sfuId"].as_str().filter(|x| !x.is_empty() && x.len() <= 128) { self.emit(MeshEvent::Share(json!({ "ev": "sfu.link", "peer_id": peer, "identity": sid }))).await; }
                 self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
             }
             "share.reneg" => {
@@ -1208,8 +1246,20 @@ impl Actor {
                 for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
                 m["label"] = json!(v["label"].as_str().unwrap_or("").chars().take(64).collect::<String>());
                 m["audio"] = json!(v["audio"].as_bool().unwrap_or(false));
-                if !on { if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
+                if !on { self.watch_intent.remove(peer); if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
                 self.emit(MeshEvent::Share(m)).await;
+                // a conexão com o emissor foi refeita (queda longa) e o usuário estava assistindo: retoma sozinho, sem ele precisar fazer nada
+                if on {
+                    if let (Some(path), Some(p)) = (self.watch_intent.get(peer).cloned(), self.peers.get(peer)) {
+                        if !p.recv.watching.load(std::sync::atomic::Ordering::Relaxed) {
+                            *p.recv.sink_path.lock().unwrap() = Some(path.clone());
+                            p.recv.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            p.recv.frames.store(0, std::sync::atomic::Ordering::Relaxed);
+                            p.recv.watching.store(true, std::sync::atomic::Ordering::Relaxed);
+                            self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": peer, "state": "watch", "path": path.to_string_lossy() }))).await;
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -1241,13 +1291,13 @@ struct Ctl {
 }
 
 /// Onde o histórico fica guardado (um .jsonl por DM). Nos testes só em memória, a menos que BRIKS_HIST_DIR peça uma pasta.
-fn hist_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn hist_dir() -> Option<std::path::PathBuf> {
     if let Ok(d) = std::env::var("BRIKS_HIST_DIR") { return Some(d.into()); }
     if cfg!(test) { return None; }
     std::env::var("LOCALAPPDATA").ok().map(|b| std::path::PathBuf::from(b).join("Briks-CUI").join("historico"))
 }
 
-fn recv_dir() -> std::path::PathBuf {
+pub(crate) fn recv_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("BRIKS_RECV_DIR") { return d.into(); }
     let base = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
     base.join("Briks-CUI").join("recebidos")

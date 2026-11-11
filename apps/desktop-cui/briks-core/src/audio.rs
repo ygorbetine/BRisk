@@ -47,7 +47,8 @@ impl RxStat {
 }
 
 #[derive(Default)]
-struct Sink { buf: VecDeque<f32>, primed: bool }
+struct Sink { buf: VecDeque<f32>, primed: bool, gen: u64 }
+static SINK_GEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 struct Speaker { on: bool, quiet: u32, tick: u32 }
@@ -231,7 +232,9 @@ impl Audio {
         let stereo = peer.contains('#');
         let ch = if stereo { 2 } else { 1 };
         let Ok(mut dec) = Decoder::new(RATE, if stereo { Channels::Stereo } else { Channels::Mono }) else { return };
-        self.sinks.lock().unwrap().insert(peer.clone(), Sink::default());
+        // geração: numa reconexão a faixa nova do mesmo peer pode começar antes de a antiga terminar; a antiga não pode apagar o sink da nova
+        let gen = SINK_GEN.fetch_add(1, Ordering::Relaxed);
+        self.sinks.lock().unwrap().insert(peer.clone(), Sink { gen, ..Default::default() });
         let mut expect: Option<u16> = None;
         let mut spk = Speaker::default();
         let mut pcm = vec![0.0f32; FRAME * ch];
@@ -253,7 +256,7 @@ impl Audio {
             expect = Some(seq.wrapping_add(1));
             if let Ok(n) = dec.decode_float(&pkt.payload, &mut pcm, false) { self.deliver(&peer, &pcm[..n * ch], ch, &mut spk); }
         }
-        self.sinks.lock().unwrap().remove(&peer);
+        { let mut s = self.sinks.lock().unwrap(); if s.get(&peer).map(|k| k.gen == gen).unwrap_or(false) { s.remove(&peer); } else { return; } }
         if !peer.contains('#') { let _ = self.ev.try_send(AudioEvent::Speaking { peer, level: 0.0 }); }
     }
 

@@ -81,7 +81,7 @@ void history_tick(app_state_t *s) {
     if (cur.on && s->in_room) {
         if (connected && !cur.connected) { cur.connected = true; cur.start = now; }   /* a duração conta a partir da conexão */
         call_room_title(s, cur.rec.title, sizeof cur.rec.title);
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].name[0]) callhist_people_add(cur.rec.people, sizeof cur.rec.people, &cur.rec.npeople, s->rtc_peers[i].name);
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].name[0]) callhist_people_add(cur.rec.people, sizeof cur.rec.people, &cur.rec.npeople, s->rtc_peers[i].name);
         if (s->sh.active) cur.rec.shared = true;
         cur.rec.started = cur.start; cur.rec.duration = (int)(now - cur.start);
         /* a cada 30 s grava como se a chamada terminasse agora: fechar o app (ou cair) no meio não perde o registro */

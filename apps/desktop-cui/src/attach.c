@@ -136,7 +136,7 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
     if (!strcmp(ev, "chat.typing")) {
         const char *fp = json_str(j, "from_fp", "");
         char nm[96] = "";
-        for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].fp, fp)) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name);
+        for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].fp, fp)) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name);
         if (!nm[0]) snprintf(nm, sizeof nm, "Alguém");
         int slot = -1; for (int i = 0; i < NTY; i++) if (!strcmp(g_ty[i].name, nm)) slot = i;
         for (int i = 0; slot < 0 && i < NTY; i++) if ((int)(g_ty[i].until - GetTickCount()) <= 0) slot = i;
@@ -664,7 +664,7 @@ void attach_mentions(cui_ctx *ui, app_state_t *s) {
     char q[96]; int at;
     if (!rich_mention_query(s->draft, q, sizeof q, &at)) return;
     const char *cand[24]; int n = 0;
-    for (int i = 0; i < 8 && n < 24; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].name[0]) cand[n++] = s->rtc_peers[i].name;
+    for (int i = 0; i < BRIKS_MAX_PEERS && n < 24; i++) if (s->rtc_peers[i].id[0] && s->rtc_peers[i].name[0]) cand[n++] = s->rtc_peers[i].name;
     for (int i = 0; i < s->friend_count && n < 24; i++) cand[n++] = s->friends[i].name;
     const char *pick[6]; int k = 0;
     for (int i = 0; i < n && k < 6; i++) {

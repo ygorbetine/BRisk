@@ -35,6 +35,7 @@ typedef struct {
     int text_size;
 } settings_t;
 settings_t g_set;
+int settings_call_mode(void) { return g_set.call_mode; }
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
@@ -425,6 +426,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         char b[96]; cui_textf(ui, "Signaling: %s", s->rtc_state[0] ? s->rtc_state : "indisponível");
                         cui_textf(ui, "Canal: %s", s->in_room ? "na sala" : "indisponível");
                         cui_textf(ui, "Pessoas na sala: %d (autenticadas: %d)", s->rtc_peer_count, s->rtc_authed_count);
+                        cui_textf(ui, "Modo da chamada: %s", s->net_note[0] ? s->net_note : "ainda sem chamada nesta sessão");
                         if (s->rtc_msg[0]) sub(ui, s->rtc_msg);
                         (void)b; sub(ui, s->ice_note[0] ? s->ice_note : "Servidores: STUN público (TURN só se configurado)."); 
                     }

@@ -64,7 +64,8 @@ function Remove-Acentos([string]$t) {
     return ([regex]::Replace($n, "\p{Mn}", "")).ToLowerInvariant()
 }
 
-# macros do roteiro: snap <nome> (cursor no canto, espera, captura) e tap X Y (clique de verdade e espera)
+# macros do roteiro: snap <nome> (cursor no canto, espera, captura), tap X Y (clique de verdade e espera, coordenada do layout antigo + Dy),
+# mtap X Y (igual, coordenada absoluta: modais) e tap <ponto simbolico> (ex.: rel:chat:R-30:T+40, ver dock_script_point)
 function Expand-Roteiro([string]$origem, [string]$destino) {
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($l in (Get-Content -LiteralPath $origem -Encoding UTF8)) {
@@ -73,10 +74,16 @@ function Expand-Roteiro([string]$origem, [string]$destino) {
         $t = $s -split "\s+", 3
         switch ($t[0]) {
             "snap" { $out.Add("at 2 790"); $out.Add("waitms 450"); $out.Add("shot $($t[1])") }
-            "tap"  { $out.Add("click $($t[1]) $([int]$t[2] + $Dy)"); $out.Add("at 2 790"); $out.Add("waitms 500") }
+            "mtap" { $out.Add("click $($t[1]) $($t[2])"); $out.Add("at 2 790"); $out.Add("waitms 500") }   # clique em coordenada absoluta da janela (modais centralizados: sem o deslocamento Dy)
+            "mat"  { $out.Add("at $($t[1]) $($t[2])") }   # at/to absolutos (sem Dy): dentro de modais
+            "mto"  { $out.Add("to " + (($s -split "\s+", 2)[1])) }
+            "mclick" { $out.Add("click $($t[1]) $($t[2])") }   # click absoluto, sem Dy
+            "tap"  {
+                if ($t[1] -match '^-?\d+$') { $out.Add("click $($t[1]) $([int]$t[2] + $Dy)") } else { $out.Add("click $($t[1])") }   # tap rel:chat:R-30:T+40 (ancora simbolica: sem Dy)
+                $out.Add("at 2 790"); $out.Add("waitms 500") }
             default {
                 $s = $s.Replace("{ASSETS}", (Join-Path $dir "ativos"))
-                $m = [regex]::Match($s, '^(click|rclick|at)\s+(-?\d+)\s+(-?\d+)(.*)$')
+                $m = [regex]::Match($s, '^(click|rclick|at|to)\s+(-?\d+)\s+(-?\d+)(.*)$')
                 if ($m.Success -and -not ($m.Groups[1].Value -eq "at" -and $m.Groups[2].Value -eq "2" -and $m.Groups[3].Value -eq "790")) { $s = "$($m.Groups[1].Value) $($m.Groups[2].Value) $([int]$m.Groups[3].Value + $Dy)$($m.Groups[4].Value)" }
                 $out.Add($s)
             }

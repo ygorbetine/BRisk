@@ -1,4 +1,4 @@
 # Auth: criar conta com e-mail
 snap b0
-tap 695 601
+mtap 708 659
 snap b1

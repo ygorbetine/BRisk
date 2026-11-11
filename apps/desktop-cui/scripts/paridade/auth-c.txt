@@ -1,10 +1,10 @@
 # Auth: mostrar/ocultar senha e voltar para Google/Discord
 snap c0
-tap 570 601
-tap 630 417
+mtap 570 659
+mtap 620 473
 type abc12345
 snap c1
-tap 804 417
+mtap 812 473
 snap c2
-tap 640 569
+mtap 648 625
 snap c3

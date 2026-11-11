@@ -5,7 +5,7 @@ waitms 300
 rdown
 rup
 waitms 500
-click 1112 400
+mclick 1134 474   # "Editar mensagem" (o menu da própria mensagem abre ancorado na bolha)
 at 2 790
 waitms 500
 shot e1

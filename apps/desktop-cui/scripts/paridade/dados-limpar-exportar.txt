@@ -2,30 +2,30 @@
 # Precisa de BRIKS_RECV_DIR com 2 arquivos (~341 KB), BRIKS_HIST_DIR com 1 (~117 KB) e BRIKS_EXPORT_FILE (o paridade.ps1 e o roteiro de teste preparam)
 waitms 800
 tap 441 755
-tap 300 236
+mtap 300 236
 expect data_files_kb 341
 expect data_hist_kb 117
-tap 528 577
+mtap 528 577
 expect data_confirm 1
-tap 628 669
+mtap 628 669
 expect data_confirm 0
 expect data_files_kb 341
-tap 528 577
-tap 522 669
+mtap 528 577
+mtap 522 669
 expect data_confirm 0
 expect data_files_kb 0
 expect data_msg 1
 snap a2
-tap 729 577
+mtap 729 577
 expect data_confirm 2
-tap 628 669
+mtap 628 669
 expect data_hist_kb 117
-tap 729 577
+mtap 729 577
 snap a3
-tap 520 669
+mtap 520 669
 expect data_hist_kb 0
 expect data_msg 1
 snap a4
-tap 940 577
+mtap 940 577
 expect data_msg_bad 0
 snap a5

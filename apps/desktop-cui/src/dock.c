@@ -444,6 +444,16 @@ static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
 
 /* ---- ganchos do roteiro (BRIKS_SCRIPT): pontos e ações simbólicas, para o vídeo não depender de coordenadas fixas ---- */
 bool dock_script_point(const char *spec, float *x, float *y) {
+    if (!strncmp(spec, "rel:", 4)) {   /* rel:<painel>:<L|R><dx>:<T|B><dy>  ex.: rel:chat:R-30:T+40 = 30 px para dentro da borda direita, 40 px abaixo do topo (px da janela) */
+        char pn[32] = "", xs[24] = "", ys[24] = "";
+        if (sscanf(spec + 4, "%31[^:]:%23[^:]:%23s", pn, xs, ys) != 3) return false;
+        int k = panel_from_name(pn), i = layout_find(&L, k);
+        if (i < 0 || (xs[0] != 'L' && xs[0] != 'R') || (ys[0] != 'T' && ys[0] != 'B')) return false;
+        lrect r = last_r[i]; r.y += g_oy;
+        *x = (xs[0] == 'L' ? r.x : r.x + r.w) + (float)atof(xs + 1);
+        *y = (ys[0] == 'T' ? r.y : r.y + r.h) + (float)atof(ys + 1);
+        return true;
+    }
     char kind_s[32] = "", what[16] = "", zone_s[16] = "";
     if (sscanf(spec, "%15[^:]:%31[^:]:%15s", what, kind_s, zone_s) < 2) return false;
     int k = panel_from_name(kind_s), i = layout_find(&L, k);

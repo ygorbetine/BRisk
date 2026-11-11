@@ -19,14 +19,14 @@ rclick 900 366
 at 2 790
 waitms 500
 shot r2
-tap 1000 485
+mtap 1000 560
 waitms 400
 shot r3
 clip x
-at 474 389
+mat 487 409
 waitms 200
 down
-to 640 389 10
+mto 651 409 10
 up
 at 2 790
 waitms 300
@@ -35,7 +35,7 @@ key ctrl+c
 waitms 200
 expect clip_is:em+**negrito**,+`codigo 1
 # o trecho marcado vem cru (com o markdown); "Copiar tudo" copia a mensagem inteira
-tap 678 495
+mtap 686 514
 expect clip_is:Tem+**negrito**,+`codigo()`,+[um+link](https://exemplo.com)+e+menção+@Ygor.+#+isto+não+é+título 1
-tap 778 495
+mtap 786 514
 snap r5

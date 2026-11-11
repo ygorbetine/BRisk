@@ -1,6 +1,6 @@
 # Temas > Aparencia: tamanho do texto Maximo e depois Normal (demo social, Configuracoes na aba Temas)
 snap t0
-tap 976 158
+mtap 976 158
 snap t1
-tap 540 158
+mtap 540 158
 snap t2

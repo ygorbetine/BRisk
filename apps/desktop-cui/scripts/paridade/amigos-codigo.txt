@@ -3,13 +3,13 @@ waitms 800
 snap am0
 expect add_friend 1
 expect amg_code_len 0
-tap 535 525
+mtap 543 545
 waitms 9000
 snap am1
 expect amg_code_len 557
-tap 647 503
-tap 686 590
-tap 772 590
+mtap 655 523
+mtap 693 600
+mtap 781 600
 waitms 2500
 snap am2
 expect amg_in_len 557

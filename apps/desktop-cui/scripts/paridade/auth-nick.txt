@@ -1,8 +1,8 @@
 # Entrar digitando @nick desconhecido: mensagem clara (demo login)
 snap q0
-tap 640 371
+mtap 648 426
 type @fulano
-tap 600 444
+mtap 620 499   # com a dica do @nick aparecida, a senha desce para y=499
 type senha12345
 snap q1
 key enter

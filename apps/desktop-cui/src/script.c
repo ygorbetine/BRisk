@@ -100,7 +100,7 @@ void script_tick(cui_ctx *ui) {
         char *cmd = strtok(line, " ");
         if (!cmd) continue;
         if (!strcmp(cmd, "caption")) { char *r = strtok(NULL, ""); snprintf(caption, sizeof caption, "%s", r ? r : ""); }
-        else if (!strcmp(cmd, "at")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); } }
+        else if (!strcmp(cmd, "at")) { char *a = strtok(NULL, " "), *b = a && a[0] >= '0' && a[0] <= '9' ? strtok(NULL, " ") : NULL; float tx, ty; if (a && b) { cx = (float)atof(a); cy = (float)atof(b); cui_input_mouse_move(ui, cx, cy); } else if (a && dock_script_point(a, &tx, &ty)) { cx = tx; cy = ty; cui_input_mouse_move(ui, cx, cy); } }   /* at X Y | at <ponto simbólico> */
         else if (!strcmp(cmd, "click")) {   /* click X Y | click <ponto> (ex.: plus:chat, close:chat, header:nav) */
             char *a = strtok(NULL, " "), *b = a && a[0] >= '0' && a[0] <= '9' ? strtok(NULL, " ") : NULL;
             float tx, ty; bool ok = a && (b ? (tx = (float)atof(a), ty = (float)atof(b), true) : dock_script_point(a, &tx, &ty));

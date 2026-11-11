@@ -3,7 +3,7 @@ snap a0
 tap 1221 253
 tap 1147 361
 snap a1
-tap 777 473
+mtap 785 494   # botão Desconectar do diálogo
 snap a2
 tap 1221 253
 snap a3

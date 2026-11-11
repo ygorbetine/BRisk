@@ -1,10 +1,10 @@
 # Grupos: buscar mensagens do canal (lupa do cabeçalho). Antes do conserto do dock (canvas da alça cobrindo o painel) o clique da lupa nunca chegava. Demo group.
 waitms 600
-at 1178 44
+mat 1195 80
 waitms 400
-tap 1178 44
+mtap 1195 80
 snap gb0
 expect search_on 1
-tap 1058 44
+mtap 1060 80
 type Perfeito
 snap gb1

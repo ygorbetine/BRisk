@@ -18,7 +18,7 @@ tap 1160 443
 snap gm4
 expect grp_memrm_open 1
 expect grp_nm 4
-tap 750 475
+mtap 759 494
 snap gm5
 expect grp_nm 3
 expect grp_memrm_open 0

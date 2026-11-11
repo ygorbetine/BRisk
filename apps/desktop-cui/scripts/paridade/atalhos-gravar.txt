@@ -1,45 +1,47 @@
 # Configurações > Atalhos: gravar combinação, conflito, ocupado, cancelar, remover e apertar para falar (captura simulada por hkey; nada é registrado de verdade)
 waitms 800
 tap 441 755
-tap 300 310
+mtap 300 310
 expect keymods_mute 3
 snap h0
-tap 950 241
+mtap 950 241
 expect rec_slot 0
 snap h1
 hkey Ctrl+Shift+K
 waitms 300
 expect rec_slot -1
 expect keyvk_mute 75
-tap 950 349
+mtap 950 349
 hkey Ctrl+Shift+K
 waitms 300
 expect key_msg 1
 expect keyvk_deafen 68
 snap h2
-tap 950 349
+mtap 950 349
 hkey Esc
 waitms 300
 expect rec_slot -1
 expect keyvk_deafen 68
-tap 950 349
+mtap 950 349
 hkey Ctrl+Shift+J
 waitms 300
 expect key_msg 1
 expect keyvk_deafen 68
 snap h3
-tap 1021 457
+mtap 1021 457
 expect key_stream 0
-tap 481 615
+mtap 490 646
 snap h4
-tap 1019 714
+mtap 1027 745
+snap ptt1
 expect rec_slot 3
 hkey Ctrl+X
 waitms 300
 expect rec_slot -1
 expect keyvk_ptt 88
 expect keymods_ptt 0
-tap 950 714
+mtap 958 745
+snap ptt2
 expect rec_slot 3
 hkey Mouse4
 waitms 300

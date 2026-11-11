@@ -1,6 +1,6 @@
 # BAS-04: selecionar um trecho do texto dentro do balão (arrastando) e copiar (Ctrl+C e "Copiar seleção" do menu). Área de transferência FALSA.
 snap s0
-at 579 339
+at 582 337
 waitms 200
 down
 to 760 339 12
@@ -17,7 +17,7 @@ rclick 640 339
 at 2 790
 waitms 500
 shot s2
-tap 730 458
+mtap 730 533
 expect clip_is:Perfeito,+te+espero+lá. 1
 # clicar fora desmarca (o realce some)
 click 900 600

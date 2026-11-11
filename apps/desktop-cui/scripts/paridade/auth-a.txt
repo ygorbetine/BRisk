@@ -1,6 +1,6 @@
 # Auth: entrar com e-mail -> esqueci minha senha (demo login)
 snap a0
-tap 570 601
+mtap 570 659
 snap a1
-tap 640 521
+mtap 648 578
 snap a2

@@ -7,7 +7,7 @@ waitms 300
 rdown
 rup
 waitms 500
-click 863 149
+mclick 863 225   # "+" da linha de emojis do menu (abre a 1ª mensagem, menu a +213,+61 do clique direito)
 at 2 790
 waitms 500
 shot r2

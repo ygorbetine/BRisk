@@ -95,8 +95,8 @@ pub fn decide(mode: NetMode, sfu_ready: bool, sfu_failed: bool) -> (&'static str
         (NetMode::Sfu, true, false) => ("sfu", "escolhido: SFU".into()),
         (NetMode::Sfu, false, _) => ("p2p", "SFU escolhido, mas não configurado: usando P2P".into()),
         (NetMode::Sfu, true, true) => ("p2p", "SFU escolhido, mas indisponível: usando P2P".into()),
-        (NetMode::Auto, true, false) => ("sfu", "automático: SFU configurado".into()),
-        (NetMode::Auto, true, true) => ("p2p", "automático: SFU indisponível, reserva P2P".into()),
+        // Enquanto o chat/presença no modo SFU não estiver validado, o Automático NÃO escolhe SFU (só escolha manual ou "Sempre SFU").
+        (NetMode::Auto, true, _) => ("p2p", "automático: P2P (SFU só por escolha manual)".into()),
         (NetMode::Auto, false, _) => ("p2p", "automático: SFU não configurado".into()),
     }
 }
@@ -145,7 +145,7 @@ mod t {
         assert_eq!(load_mode(&env_of(vec![]), &d), NetMode::Sfu);
         assert_eq!(load_mode(&env_of(vec![("BRIKS_NET_MODE", "p2p")]), &d), NetMode::P2p);
         let _ = std::fs::remove_dir_all(&d);
-        assert_eq!(decide(NetMode::Auto, true, false).0, "sfu");
+        assert_eq!(decide(NetMode::Auto, true, false).0, "p2p", "Automático não escolhe SFU por padrão");
         assert_eq!(decide(NetMode::Auto, true, true).0, "p2p");
         assert_eq!(decide(NetMode::Auto, false, false).0, "p2p");
         assert_eq!(decide(NetMode::Sfu, false, false).0, "p2p");

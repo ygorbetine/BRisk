@@ -15,7 +15,8 @@ Complementa `paridade-integrado.md`. Vale para o branch integrado (cui-integraca
 | CHM-18 | Pílula "Áudio" na barra: nível do microfone, volume de entrada e saída, porta de ruído. Vale na hora e grava como a aba Voz. | `ui_call.c` (audio_popover), `settings.c` (settings_audio_set) |
 
 ## Decisões
-### Câmera (CHM-04) e vídeo remoto (CHM-24): NÃO entram agora
+### Câmera (CHM-04) e vídeo remoto (CHM-24): ENTRARAM NA 1.4.0 (a decisão abaixo foi superada)
+Implementado: captura por Media Foundation em `briks-core/src/camera.rs` (câmera falsa com `BRIKS_FAKE_CAMERA=1` para testes sem hardware), faixa `camera-video` própria na malha P2P e no LiveKit, mesmo pipeline de H264/adaptação da transmissão (640x360/30), vídeo no bloco da pessoa (`src/ui_cam.c`) com avatar quando desligada, escolha e teste em Configurações > Voz e vídeo. Câmera e tela coexistem (duas faixas). A câmera só abre enquanto ligada. Texto histórico:
 A pílula continua "Câmera · em breve", desligada, com a dica dizendo que o vídeo da câmera ainda não é enviado. Motivos:
 1. Enviar a câmera exige uma segunda faixa de vídeo por peer com renegociação e um destino para ela no palco. Isso mora em `mesh.rs`/`share.rs`/`video.rs`, que estão sendo alterados agora pelas frentes de transmissão e SFU; mexer ali em paralelo quebraria a integração deles.
 2. Não há como testar com segurança no modo oculto: ligar a webcam real do usuário durante um teste automatizado é invasivo (a luz da câmera acende) e a máquina de teste pode nem ter câmera.

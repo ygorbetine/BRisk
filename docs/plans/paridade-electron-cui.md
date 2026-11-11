@@ -7,13 +7,13 @@ Este arquivo é gerado a partir de `apps/desktop-cui/scripts/paridade/itens.csv`
 
 | Classe | Itens |
 |---|---|
-| PRESENTE-FUNCIONAL | 187 |
-| PRESENTE-SEM-EFEITO | 10 |
-| AUSENTE | 45 |
+| PRESENTE-FUNCIONAL | 204 |
+| PRESENTE-SEM-EFEITO | 9 |
+| AUSENTE | 28 |
 | VERIFICAR | 6 |
 | **Total** | **248** |
 
-Itens PRESENTE-FUNCIONAL com teste automático oculto: 97 de 187 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
+Itens PRESENTE-FUNCIONAL com teste automático oculto: 111 de 204 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
 
 Definição das classes: **PRESENTE-FUNCIONAL** = existe e o clique/fluxo produz o efeito; **PRESENTE-SEM-EFEITO** = existe na tela (ou no core) mas não faz nada de verdade (interruptor que só grava, botão desabilitado, texto "em breve", dado que nada consome); **AUSENTE** = não existe; **VERIFICAR** = não consegui concluir.
 
@@ -78,9 +78,6 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Prio | ID | Área | Item | Classe | No Electron | CUI hoje | Encaixe no CUI e adaptação ao layout novo |
 |---|---|---|---|---|---|---|---|
-| P0 | AMI-17 | Amigos | Entrar em grupo por convite/código | AUSENTE | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | (não existe) | Botão 'Entrar em grupo' no painel Servidores (tile tracejado ao lado de Criar grupo) e na barra lateral; diálogo de vidro com o campo do código |
-| P0 | GRP-16 | Grupos, canais e cargos | Convite para o grupo (código) | AUSENTE | components/GroupInvitePanel.tsx | (não existe) | Item 'Convidar' no cabeçalho do painel do grupo; diálogo de vidro com o código e botão Copiar |
-| P1 | AMI-04 | Amigos | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | AUSENTE | components/P2PInvitePanel.tsx; services/invites/service.ts | (não existe) | Abas 'Por @nick / Por código' no diálogo Adicionar amigo existente (ui_social.c), código em fonte mono 13 px e botão Copiar; sem janela nova |
 | P1 | AMI-06 | Amigos | Pedidos pendentes: recusar | SEM-EFEITO | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | Segundo ícone (X, secundario) ao lado do check em cada linha de PEDIDOS (ui_social.c), tooltip Recusar |
 | P1 | AMI-07 | Amigos | Desfazer amizade (com confirmacao) | AUSENTE | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | Item 'Desfazer amizade' no menu de contexto da linha do amigo (person_row) + diálogo de confirmacao no estilo Expulsar (ui_call.c) |
 | P1 | AMI-08 | Amigos | Abas Online / Todos / Pendentes com contadores | AUSENTE | views/FriendsView.tsx | ui_social.c: uma lista única AMIGOS e PEDIDOS, sem filtro | cui_segmented no topo do painel Amigos (mesmo componente do 'Limpar depois de'), contadores nos rotulos; pendentes sobem para a aba |
@@ -88,16 +85,6 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P1 | CFG-13 | Configurações | Cancelamento de eco | AUSENTE | components/VoiceVideoSettingsPanel.tsx | settings.c: interruptor desabilitado com a nota em breve (sem AEC no core) | Já existe; AEC no core |
 | P1 | CHM-04 | Chamada | Câmera (ligar e enviar vídeo) | SEM-EFEITO | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera · em breve' (decisão: sem captura nem envio nesta versão; ver docs/plans/chamada-pacote-c.md) | Pílula nova na barra flutuante de controles da chamada (pill() em ui_call.c, raio 28, vidro forte), com rótulo e estado ativo em violeta; captura e envio no core (Media Foundation + encoder já usados na transmissão) |
 | P1 | CHM-14 | Chamada | Volume por pessoa (slider) lembrado nas próximas chamadas | AUSENTE | services/áudio/person-áudio.ts | só liga/desliga mudo, sem volume e sem memória | Menu de contexto do bloco da pessoa na chamada (pmenu em ui_call.c, cui_menu_item), mais um item com ícone com cui_slider 0-200%; salvar por peerId em settings |
-| P1 | GRP-04 | Grupos, canais e cargos | Criar canal de texto | AUSENTE | views/HomeView.tsx (Criar canal) | chat.c carrega canais, mas não há UI para criar | Botão + ao lado do título CANAIS DE TEXTO na barra lateral do grupo (section_title), diálogo de vidro com nome e tipo em cui_segmented |
-| P1 | GRP-05 | Grupos, canais e cargos | Criar sala de voz do grupo | AUSENTE | views/HomeView.tsx | a sala de voz e uma única 'Sala geral' fixa, fora dos grupos | Mesmo diálogo do canal, tipo Voz; aparece sob SALAS DE VOZ da barra lateral do grupo |
-| P1 | GRP-08 | Grupos, canais e cargos | Personalizar grupo (nome e imagem, sincroniza aos membros) | AUSENTE | components/GroupEditor.tsx | (não existe) | Diálogo de vidro 'Personalizar grupo' aberto da engrenagem no topo do painel do grupo; avatar 96 px como no editor de perfil |
-| P1 | GRP-09 | Grupos, canais e cargos | Apagar ou sair do grupo | AUSENTE | views/HomeView.tsx (Apagar ou sair do grupo) | (não existe) | Item perigoso (vermelho) no menu de contexto do grupo no painel Servidores + confirmacao |
-| P1 | GRP-10 | Grupos, canais e cargos | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | SEM-EFEITO | views/HomeView.tsx (membros) | ui_social.c panel_members mostra você + seus amigos, não os membros do grupo | Painel Membros (já no dock): trocar a fonte para os membros do grupo ativo, com selos pequenos (pills 10,5 px) DONO/ADMIN/VOCÊ e @nick |
-| P1 | GRP-12 | Grupos, canais e cargos | Adicionar membro (amigo) ao grupo | AUSENTE | views/HomeView.tsx (Adicionar membro) | (não existe) | Menu de contexto da linha do membro/amigo e botão + no painel Membros; escolhe amigo em lista de vidro |
-| P1 | GRP-13 | Grupos, canais e cargos | Gerenciar membro: tornar/remover administrador | AUSENTE | views/HomeView.tsx (Gerenciar membro) | (não existe) | Menu de contexto da linha no painel Membros (só dono), itens com ícone escudo |
-| P1 | GRP-14 | Grupos, canais e cargos | Remover membro do grupo | AUSENTE | views/HomeView.tsx removeSelectedMember | (não existe) | Mesmo menu de contexto, item vermelho + diálogo de confirmacao |
-| P1 | GRP-17 | Grupos, canais e cargos | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | AUSENTE | views/HomeView.tsx | (não existe: Sala geral não mostra participantes) | Avatares empilhados 24 px sob a linha da sala na barra lateral (como a pilha do drag_stack_ui), chip Ao vivo violeta e botão Assistir |
-| P1 | LAY-04 | Layout novo (trilho, lista, conversa, hub) | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | AUSENTE | (padrão novo do usuário) | layout_default (layout.c) cria só trilho, lista e conversa; Membros e Sala de voz existem como painéis, mas só entram pelo botão + do dock e o de Membros lista amigos, não o grupo (GRP-10) | Quarto painel do layout_default, à direita da conversa (largura ~270 px, mesmo vidro e cantos), com abas Membros / Sala de voz / Fixadas; abre sozinho em grupos e fecha em DM; o usuário ainda pode fechar (X do dock) e o estado é salvo no layout.json |
 | P1 | LAY-05 | Layout novo (trilho, lista, conversa, hub) | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | AUSENTE | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | Painel central em vez do estado vazio: cabeçalho com abas em pílula (padrão do seletor Call/Transmissão da chamada), linhas largas de amigo com ações e a lista de pedidos; hub à direita mostra "Ativos agora" |
 | P1 | RDE-01 | Rede | Modo da chamada (Automático, Sempre P2P, Sempre SFU) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; passar o modo ao core ao entrar na sala |
 | P1 | RDE-02 | Rede | Preferência de conexão (Automático, Internet direta, VPN) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; filtrar interfaces/candidatos ICE no core (ice.rs) |
@@ -112,11 +99,6 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P2 | CHM-12 | Chamada | Zoom na transmissão (roda, pinca, arrastar, selo de %) | AUSENTE | components/vídeo-zoom.tsx | (não existe) | Selo de vidro 11 px no canto superior esquerdo do bloco (dica de zoom); arrastar move; sem painel |
 | P2 | CHM-16 | Chamada | Desconexao após 1 h sem falar, com aviso e Continuar | AUSENTE | CallWorkspace.tsx; release 1.1.0 | (não existe) | Banner de vidro no topo da chamada nos últimos 5 min com botão Continuar (update_banner), contagem 13 px |
 | P2 | CHM-24 | Chamada | Vídeo remoto, câmera dos outros e 2a tela | AUSENTE | components/CallWorkspace.tsx | (não existe; depende da câmera e do pacote de transmissão: ver docs/plans/chamada-pacote-c.md) | Tile de vídeo no palco da chamada no lugar do avatar; 2a tela como tile extra com selo |
-| P2 | GRP-06 | Grupos, canais e cargos | Renomear canal/sala | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de lapis ao passar o mouse na linha do canal (hover do nav_item) + diálogo curto |
-| P2 | GRP-07 | Grupos, canais e cargos | Apagar canal/sala | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de lixeira no hover do canal + confirmacao no estilo Expulsar |
-| P2 | GRP-11 | Grupos, canais e cargos | Recarregar lista de membros | AUSENTE | views/HomeView.tsx | (não existe) | Ícone de refresh no panel_shell do painel Membros |
-| P2 | GRP-15 | Grupos, canais e cargos | Reparar/limpar identidades duplicadas de membros | AUSENTE | views/HomeView.tsx removeDuplicateMembers | (não existe) | Botão secundario no rodape do painel Membros, visivel só quando há duplicados |
-| P2 | GRP-19 | Grupos, canais e cargos | Buscar mensagens do canal | AUSENTE | views/GroupView.tsx (Buscar) | (não existe) | Lupa no cabeçalho do chat (ao lado de Fixadas) abre cui_input embutido |
 | P2 | LAY-12 | Layout novo (trilho, lista, conversa, hub) | Dica "Sair" (tooltip) presa no topo da tela e círculo no canto inferior esquerdo em todas as capturas | AUSENTE | (padrão novo do usuário) | Nas capturas ocultas o tooltip do botão sair do rodapé aparece fixo em x=640 y=20; já listado em plano-pos-1.3.0 (frente D) | Corrigir a âncora do tooltip do rodapé (cui_tooltip) para o botão, e esconder o ponteiro do roteiro nas capturas |
 | P2 | MSG-08 | Mensagens | Indicador 'digitando...' | AUSENTE | components/ConversationTimeline.tsx | (não existe) | Linha de 12 px cor B_MUTED acima do compositor, com três pontos animados (respeita reduced motion) |
 | P2 | PRF-06 | Perfil | Limpar o status depois de 30 min/1 h/4 h/hoje | SEM-EFEITO | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | Aplicar a expiracao em profile.c (timer) e mostrar 'some em X' sob o campo, 11 px, cor B_MUTED |
@@ -189,7 +171,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AMI-01 | Lista de amigos na barra lateral | views/HomeView.tsx; FriendsView.tsx | ui_social.c (AMIGOS) | PRESENTE-FUNCIONAL | social-a |
 | AMI-02 | Abrir conversa direta ao clicar no amigo | views/HomeView.tsx | ui_social.c app_open_friend | PRESENTE-FUNCIONAL | social-a |
 | AMI-03 | Adicionar amigo pelo @nick | components/NickInvite.tsx | ui_social.c (Adicionar amigo) / account.c | PRESENTE-FUNCIONAL | social-a |
-| AMI-04 | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | components/P2PInvitePanel.tsx; services/invites/service.ts | (não existe) | AUSENTE | sonda |
+| AMI-04 | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | components/P2PInvitePanel.tsx; services/invites/service.ts | ui_friends.c friends_code_card (dialogo Adicionar amigo e aba Adicionar do hub): Gerar meu codigo, Copiar, Colar e Adicionar; core friend_invite.rs (friend.invite/friend.accept, codigo briks-amg1.*, assinado, vale 7 dias) [teste amigos-codigo + cargo friend_invite]. LIMITES: sem aba "Por @nick/Por codigo" (e um cartao abaixo do @nick); aceitar grava em friends-p2p.json do core e entra na lista so nesta sessao; o amigo P2P ainda nao e usado em chamadas; aceitar codigo de OUTRA pessoa so testado em Rust (o roteiro oculto aceita o proprio codigo e ve a recusa); convite nao e de uso unico (sem servidor) | PRESENTE-FUNCIONAL | amigos-codigo |
 | AMI-05 | Pedidos pendentes: aceitar | views/FriendsView.tsx (Aceitar) | ui_social.c (ícone check) | PRESENTE-FUNCIONAL | - |
 | AMI-06 | Pedidos pendentes: recusar | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | PRESENTE-SEM-EFEITO | sonda |
 | AMI-07 | Desfazer amizade (com confirmacao) | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | AUSENTE | sonda |
@@ -202,7 +184,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AMI-14 | Status e programa em uso visiveis na lista | components/StatusEditor.tsx | ui_social.c person_row | PRESENTE-FUNCIONAL | - |
 | AMI-15 | Sino para silenciar avisos de cada amigo | services/profile/use-friend-notifications.ts | (não existe) | AUSENTE | sonda |
 | AMI-16 | Desconectar só o chat privado (Desconectar P2P) | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| AMI-17 | Entrar em grupo por convite/código | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | (não existe) | AUSENTE | sonda |
+| AMI-17 | Entrar em grupo por convite/código | views/HomeView.tsx (Entrar em grupo); GroupInvitePanel.tsx | ui_social.c panel_servers: tile Entrar em grupo (+ item Entrar com convite da lateral) [teste grupos-menu] | PRESENTE-FUNCIONAL | grupos-menu |
 
 ### Grupos, canais e cargos
 
@@ -211,22 +193,22 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | GRP-01 | Criar grupo | views/HomeView.tsx (Criar grupo) | ui_social.c (create_group_open) | PRESENTE-FUNCIONAL | social-b |
 | GRP-02 | Lista de grupos e abrir o grupo | views/HomeView.tsx | ui_social.c / painel Servidores | PRESENTE-FUNCIONAL | social-b |
 | GRP-03 | Conversa do canal de texto geral do grupo | views/GroupView.tsx | ui_social.c (Grupo P2P canal geral) | PRESENTE-FUNCIONAL | social-b |
-| GRP-04 | Criar canal de texto | views/HomeView.tsx (Criar canal) | chat.c carrega canais, mas não há UI para criar | AUSENTE | sonda |
-| GRP-05 | Criar sala de voz do grupo | views/HomeView.tsx | a sala de voz e uma única 'Sala geral' fixa, fora dos grupos | AUSENTE | sonda |
-| GRP-06 | Renomear canal/sala | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-07 | Apagar canal/sala | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-08 | Personalizar grupo (nome e imagem, sincroniza aos membros) | components/GroupEditor.tsx | (não existe) | AUSENTE | sonda |
-| GRP-09 | Apagar ou sair do grupo | views/HomeView.tsx (Apagar ou sair do grupo) | (não existe) | AUSENTE | sonda |
-| GRP-10 | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | views/HomeView.tsx (membros) | ui_social.c panel_members mostra você + seus amigos, não os membros do grupo | PRESENTE-SEM-EFEITO | sonda |
-| GRP-11 | Recarregar lista de membros | views/HomeView.tsx | (não existe) | AUSENTE | sonda |
-| GRP-12 | Adicionar membro (amigo) ao grupo | views/HomeView.tsx (Adicionar membro) | (não existe) | AUSENTE | sonda |
-| GRP-13 | Gerenciar membro: tornar/remover administrador | views/HomeView.tsx (Gerenciar membro) | (não existe) | AUSENTE | sonda |
-| GRP-14 | Remover membro do grupo | views/HomeView.tsx removeSelectedMember | (não existe) | AUSENTE | sonda |
-| GRP-15 | Reparar/limpar identidades duplicadas de membros | views/HomeView.tsx removeDuplicateMembers | (não existe) | AUSENTE | sonda |
-| GRP-16 | Convite para o grupo (código) | components/GroupInvitePanel.tsx | (não existe) | AUSENTE | sonda |
-| GRP-17 | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | views/HomeView.tsx | (não existe: Sala geral não mostra participantes) | AUSENTE | sonda |
+| GRP-04 | Criar canal de texto | views/HomeView.tsx (Criar canal) | ui_groups.c groups_sidebar/groups_dialogs: Novo canal (texto) [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-05 | Criar sala de voz do grupo | views/HomeView.tsx | ui_groups.c: Novo canal aba Voz; sala de voz do grupo [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-06 | Renomear canal/sala | views/HomeView.tsx | ui_groups.c: lápis no hover do canal + diálogo Renomear canal [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-07 | Apagar canal/sala | views/HomeView.tsx | ui_groups.c: lixeira no hover + confirmação Apagar canal (sempre sobra um de texto) [teste grupos-canais] | PRESENTE-FUNCIONAL | grupos-canais |
+| GRP-08 | Personalizar grupo (nome e imagem, sincroniza aos membros) | components/GroupEditor.tsx | ui_groups.c: Personalizar grupo (nome, imagem, canais) pelo menu do grupo/cabeçalho [teste grupos-menu] | PRESENTE-FUNCIONAL | grupos-menu |
+| GRP-09 | Apagar ou sair do grupo | views/HomeView.tsx (Apagar ou sair do grupo) | ui_groups.c groups_overlay: menu de contexto (botão direito) da linha do grupo + Sair/Apagar com confirmação [testes grupos-canais, grupos-menu] | PRESENTE-FUNCIONAL | grupos-canais, grupos-menu |
+| GRP-10 | Lista de membros do grupo com marcas VOCÊ/DONO/Admin/@nick | views/HomeView.tsx (membros) | ui_groups.c groups_members_panel: painel Membros do dock mostra os membros do GRUPO aberto com DONO/ADMIN/VOCÊ [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros, grupos-comum |
+| GRP-11 | Recarregar lista de membros | views/HomeView.tsx | ui_groups.c: ícone recarregar no painel Membros (reload_groups); sem teste (precisa do backend) | PRESENTE-FUNCIONAL | - |
+| GRP-12 | Adicionar membro (amigo) ao grupo | views/HomeView.tsx (Adicionar membro) | ui_groups.c: botão + do painel Membros e diálogo Membros (amigos e @nick); sem teste de ponta a ponta (convite assinado precisa do core) | PRESENTE-FUNCIONAL | - |
+| GRP-13 | Gerenciar membro: tornar/remover administrador | views/HomeView.tsx (Gerenciar membro) | ui_groups.c: menu ... da linha no painel Membros (só o dono) [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-14 | Remover membro do grupo | views/HomeView.tsx removeSelectedMember | ui_groups.c: Remover do grupo + confirmação [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-15 | Reparar/limpar identidades duplicadas de membros | views/HomeView.tsx removeDuplicateMembers | ui_groups.c: botão Limpar duplicados no painel Membros (só aparece com duplicados) [teste grupos-membros] | PRESENTE-FUNCIONAL | grupos-membros |
+| GRP-16 | Convite para o grupo (código) | components/GroupInvitePanel.tsx | ui_groups.c: Convidar (gerar código) no cabeçalho e no menu do grupo; o código vem do core (group.sign/group.code); sem teste ponta a ponta | PRESENTE-FUNCIONAL | - |
+| GRP-17 | Sala de voz mostra quem está nela, 'Ao vivo' e Assistir | views/HomeView.tsx | ui_groups.c roster_get: lista, sob cada sala de voz do grupo, quem esta nela + AO VIVO e Assistir (abre a chamada no modo Transmissao) [teste grupos-voz]. LIMITE: o core ainda nao emite group.roster; so a sala em que EU estou tem dado real, as outras vem do demo (BRIKS_DEMO_GROSTER) | PRESENTE-FUNCIONAL | grupos-voz |
 | GRP-18 | Entrar na sala de voz pela barra lateral | views/HomeView.tsx | ui_social.c (Sala geral, voz-geral): sala única, não por grupo | PRESENTE-FUNCIONAL | social-b |
-| GRP-19 | Buscar mensagens do canal | views/GroupView.tsx (Buscar) | (não existe) | AUSENTE | sonda |
+| GRP-19 | Buscar mensagens do canal | views/GroupView.tsx (Buscar) | attach.c attach_search_button: lupa do cabecalho vale para grupo e DM; abre o campo (bug do dock corrigido) [teste grupos-busca] | PRESENTE-FUNCIONAL | grupos-busca |
 | GRP-20 | Estado vazio do canal | views/GroupView.tsx | ui_social.c | PRESENTE-FUNCIONAL | - |
 | GRP-21 | Permissões: dono/admin podem fixar e excluir de outros | chat/GroupChatService.ts | msgui.c can_pin / can_delete | PRESENTE-FUNCIONAL | - |
 | GRP-22 | Sincronização do manifesto do grupo, cargos e revogacoes entre pares | chat/GroupChatService.ts; SyncService.ts | briks-core: parte em chat_events.rs; trabalho em andamento no branch cui-ui-paridade (grupos-p2p-core.md); sem teste de interop | VERIFICAR | - |
@@ -249,7 +231,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | MSG-12 | Pré-visualização de link | components/SafeMessageContent.tsx | msg-rico.txt: cartão de prévia (site, título, descrição, miniatura) sob o balão; busca segura feita pelo núcleo (link.preview); sem rede mostra só o link | PRESENTE-FUNCIONAL | msg-rico |
 | MSG-13 | Links e formatacao Markdown seguros no texto | components/SafeMessageContent.tsx | msg-rico.txt: markdown (negrito, código, link, menção) na bolha; link só http(s) abre no navegador padrão; "Selecionar texto…" no menu para copiar trecho | PRESENTE-FUNCIONAL | msg-rico |
 | MSG-14 | Estados da mensagem: enviando, entregue, falhou e reenvio (outbox) | chat/OutboxService.ts | msg-estados.txt: relógio (enviando), check (gravada), check duplo (entregue: chat.ack do núcleo com o id da mensagem, DM com sala aberta), alerta (falhou; clique reenvia). Entrega ponta a ponta só testada no núcleo (teste Rust do id) | PRESENTE-FUNCIONAL | msg-estados |
-| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | lupa no cabeçalho + Ctrl+F (campos-busca.txt) filtra as mensagens | PRESENTE-FUNCIONAL | campos-busca |
+| MSG-15 | Buscar mensagens na conversa | views/HomeView.tsx (Buscar) | lupa no cabeçalho + Ctrl+F (campos-busca.txt) filtra as mensagens | PRESENTE-FUNCIONAL | grupos-busca, campos-busca |
 | MSG-16 | Mensagens ficam gravadas neste computador | services/offline/chat-storage.ts | msgui.c / backend local | PRESENTE-FUNCIONAL | - |
 | MSG-17 | Histórico sincronizado com o par (pedir/responder histórico) | chat/HistoryService.ts | briks-core chat_events.rs; sem teste de interop | VERIFICAR | - |
 | MSG-18 | Aba Chat da chamada mostra as mensagens da sala | components/CallWorkspace.tsx (Chat da chamada) | ui_call.c (call_view 1) | PRESENTE-FUNCIONAL | call |
@@ -462,7 +444,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | LAY-01 | Trilho à esquerda: Início e grupos como cartões arredondados, "Criar grupo" no fim | (padrão novo do usuário) | ui_social.c (P_SERVERS): cartões com avatar e texto; conforme | PRESENTE-FUNCIONAL | - |
 | LAY-02 | Lista ao lado do trilho: Amigos, Adicionar amigo, Histórico, salas de voz, grupos, amigos e cartão do usuário embaixo | (padrão novo do usuário) | ui_social.c (P_NAV): conforme; item ativo em vidro com acento | PRESENTE-FUNCIONAL | - |
 | LAY-03 | Conversa larga com cabeçalho (nome, tipo, Fixadas), mensagens e composer fixo embaixo | (padrão novo do usuário) | ui_social.c (P_CHAT) e msgui.c: conforme, com anexar, campo e enviar na mesma barra | PRESENTE-FUNCIONAL | - |
-| LAY-04 | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | (padrão novo do usuário) | layout_default (layout.c) cria só trilho, lista e conversa; Membros e Sala de voz existem como painéis, mas só entram pelo botão + do dock e o de Membros lista amigos, não o grupo (GRP-10) | AUSENTE | sonda |
+| LAY-04 | Hub à direita no layout padrão (membros do grupo, sala de voz, presença) | (padrão novo do usuário) | layout.c layout_app_default (cui-paineis, 895bc9c): grupos  |  menu  | - |
 | LAY-05 | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | AUSENTE | sonda |
 | LAY-06 | Histórico de chamadas como painel do layout (hoje cobre a janela inteira, sem trilho nem lista) | (padrão novo do usuário) | ui_history.c ui_history_panel: abre no painel central com trilho e menu à vista; tela inteira só sem painel de conversa | PRESENTE-FUNCIONAL | historico |
 | LAY-07 | Aba Chat da chamada no padrão de conversa (balões, avatares, horário, composer embaixo) | (padrão novo do usuário) | ui_call.c stage_chat: mesmo balão do painel de conversa (briks_bubble), horário, avatar e campo fixo embaixo | PRESENTE-FUNCIONAL | call-chat |
@@ -482,12 +464,12 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Resultado | Itens |
 |---|---|
-| AUSENTE | 32 |
-| PASSOU | 97 |
-| REVER | 16 |
-| SEM-EFEITO | 7 |
-| SEM-TESTE | 90 |
-| VERIFICAR | 6 |
+| AUSENTE | 19 |
+| PASSOU | 111 |
+| REVER | 12 |
+| SEM-EFEITO | 6 |
+| SEM-TESTE | 93 |
+| VERIFICAR | 7 |
 
 PASSOU = a ação teve o efeito visível esperado no app oculto; SEM-TESTE = item PRESENTE-FUNCIONAL sem roteiro automático (depende do core, da rede, de GPU ou de conferência manual); SEM-EFEITO/AUSENTE = confirmado pelo clique e/ou pela sonda; REVER = sonda ou clique indica que algo mudou; reclassifique.
 

@@ -297,6 +297,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         };
                         out(&mut wr, ev).await?;
                     }
+                    "group.code" => {
+                        let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
+                            Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),
+                            _ => json!({ "ev": "group.result", "op": "code", "ok": false, "message": "grupo inválido" }),
+                        };
+                        out(&mut wr, ev).await?;
+                    }
                     "group.send" => {
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::GroupSend { snapshot: v["snapshot"].clone() }).await; }
                     }

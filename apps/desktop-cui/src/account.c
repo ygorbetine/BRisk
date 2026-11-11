@@ -340,6 +340,9 @@ static void on_friends(app_state_t *s, const jval *j) {
         copy(d->request_id, sizeof d->request_id, json_str(p, "request_id", ""));
         copy(d->nick, sizeof d->nick, json_str(p, "nick", ""));
         copy(d->status, sizeof d->status, json_str(p, "status", ""));
+        copy(d->fp, sizeof d->fp, json_str(p, "fingerprint", ""));
+        const jval *pk = json_get(p, "public_key");
+        if (pk && json_str(pk, "x", "")[0] && json_str(pk, "y", "")[0]) snprintf(d->jwk, sizeof d->jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(pk, "x", ""), json_str(pk, "y", ""));
     }
     int idx = -1;
     for (int i = 0; i < s->friend_count; i++) if (keep[0] && !strcmp(s->friends[i].id, keep)) idx = i;
@@ -412,6 +415,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
     else if (!strcmp(ev, "presence.list")) on_presence(s, j);
+    else if (!strncmp(ev, "group.", 6)) groups_core_event(s, j, ev);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;

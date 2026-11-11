@@ -222,6 +222,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             section_title(ui, "GRUPOS");
             if (nav_item(ui, CUI_ICON_PLUS, "Criar grupo", false)) { s->create_group_open = true; s->new_group[0] = 0; }
+            if (nav_item(ui, CUI_ICON_LINK, "Entrar com convite", false)) { s->join_open = true; s->join_code[0] = 0; s->join_err[0] = 0; }
             for (int i = 0; i < s->group_count; i++) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
@@ -343,6 +344,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             attach_search_button(ui);
         }
         cui_separator(ui);
+        friends_notify_banner(ui, s);
         msgui_set_view(cui_get_rect(ui, cui_make_id(ui, "chat-scroll")));
         cui_scroll(ui, .id = "chat-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = g_th.chat_pad) {
             if (!s->msg_count) {
@@ -601,6 +603,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                 case 2:
                     PCARD(ui, "PRESENÇA") {
                         cui_switch(ui, "Aparecer offline para os amigos", &s->invisible);
+                        { bool on = !s->notify_off; cui_switch(ui, "Avisar quando um amigo ficar online", &on); s->notify_off = !on; }
                         cui_text(ui, s->invisible ? "Seus amigos não veem que você está online. Você continua usando tudo normalmente." : "Seus amigos veem um ponto verde quando você está com o Briks aberto.", .size = 12, .color = B_MUTED);
                     }
                     PCARD(ui, "PROGRAMA EM USO") {
@@ -684,7 +687,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     cui_dialog(ui, "Criar grupo", &s->create_group_open) {
-        cui_text(ui, "O grupo fica gravado neste computador; os convites por P2P chegam com o briks-core.", .color = B_MUTED);
+        cui_text(ui, "O grupo fica gravado neste computador. Para chamar alguém, abra “Membros” e convide um amigo: você recebe um código para mandar a ele.", .color = B_MUTED);
         int r = cui_input(ui, "new-group", s->new_group, sizeof s->new_group, .placeholder = "Nome do grupo", .autofocus = true);
         cui_dialog_footer(ui) {
             if ((cui_button(ui, "Criar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED))) app_create_group(s);

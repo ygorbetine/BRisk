@@ -487,7 +487,9 @@ impl Actor {
             }
             MeshCmd::GroupSend { snapshot } => {
                 let wire = json!({ "version": 1, "type": "group.snapshot", "snapshot": snapshot });
-                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                // só quem é membro do grupo recebe (a sala de voz pode ter gente de fora): nome, membros e chaves não vazam
+                let members: HashSet<String> = snapshot["members"].as_array().map(|a| a.iter().filter_map(|m| m["fp"].as_str().map(String::from)).collect()).unwrap_or_default();
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven && p.fp.as_ref().map_or(false, |f| members.contains(f))).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.dc_send(&id, wire.clone()).await; }
             }
             #[cfg(test)]

@@ -82,7 +82,7 @@ void friends_unblock(app_state_t *s, const char *id) {
 
 /* ---- apresentação ---- */
 static bool in_call(const app_state_t *s, const person_t *p) {   /* está na sua chamada agora */
-    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "connected") && !strcmp(s->rtc_peers[i].name, p->name)) return true;
+    for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && (!strcmp(s->rtc_peers[i].state, "autenticado") || !strcmp(s->rtc_peers[i].state, "conectado")) && !strcmp(s->rtc_peers[i].name, p->name)) return true;
     return false;
 }
 
@@ -91,6 +91,40 @@ bool friends_online(const app_state_t *s, const person_t *p) {
     if (in_call(s, p)) return true;
     if (s->pres_remote) for (int i = 0; i < s->pres_n; i++) if (s->pres[i].online && !strcmp(s->pres[i].id, p->id)) return true;
     return false;
+}
+
+/* ---- avisos de amigo (FriendNotifyPanel): quem ficou online ou entrou na chamada; a faixa aparece no topo da tela e some sozinha ---- */
+static char fn_text[100]; static ULONGLONG fn_until;
+void friends_notify_tick(app_state_t *s) {
+    static char prev_id[MAX_FRIENDS][48]; static bool prev_on[MAX_FRIENDS], prev_call[MAX_FRIENDS]; static int prev_n = -1;
+    if (!s->acct_user_id[0]) { prev_n = -1; return; }
+    if (prev_n < 0) {   /* primeira leitura: só memoriza, não avisa de quem já estava online */
+        if (!s->pres_remote && !s->friend_count) return;
+        if (s->pres_remote && !s->pres_n && !s->friend_count) return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    int n = s->friend_count < MAX_FRIENDS ? s->friend_count : MAX_FRIENDS;
+    bool nid[MAX_FRIENDS], ncall[MAX_FRIENDS];
+    for (int i = 0; i < n; i++) {
+        nid[i] = friends_online(s, &s->friends[i]); ncall[i] = in_call(s, &s->friends[i]);
+        if (prev_n < 0 || s->notify_off) continue;
+        int k = -1; for (int q = 0; q < prev_n; q++) if (!strcmp(prev_id[q], s->friends[i].id)) k = q;
+        if (k < 0) continue;
+        if (ncall[i] && !prev_call[k]) { snprintf(fn_text, sizeof fn_text, "%s entrou na sua chamada", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); }
+        else if (nid[i] && !prev_on[k]) { snprintf(fn_text, sizeof fn_text, "%s ficou online", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); }
+    }
+    for (int i = 0; i < n; i++) { snprintf(prev_id[i], sizeof prev_id[i], "%s", s->friends[i].id); prev_on[i] = nid[i]; prev_call[i] = ncall[i]; }
+    prev_n = n;
+    if (fn_until && now > fn_until) { fn_until = 0; fn_text[0] = 0; cui_request_redraw(cui_app_ui(s->app)); }
+}
+void friends_notify_banner(cui_ctx *ui, app_state_t *s) {
+    (void)s; if (!fn_until || !fn_text[0]) return;
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 18, .pad_y = 6) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 14, .pad_y = 7, .gap = 8, .radius = 14, .bg = B_A(B_ONLINE, 0x24), .border = 1, .border_color = B_A(B_ONLINE, 0x66), .align = CUI_ALIGN_CENTER) {
+            cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_ONLINE);
+            cui_text(ui, fn_text, .size = 13, .nowrap = true);
+        }
+    }
 }
 
 static bool matches(const app_state_t *s, const person_t *p) {
@@ -110,7 +144,7 @@ static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, 
     cui_column(ui, .gap = 1, .width = CUI_FILL) {
         cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, p->name, .nowrap = true);
-            if (online) cui_box(ui, .width = 8, .height = 8, .radius = 4, .bg = B_ONLINE);   /* ponto verde: online agora */
+            if (online) cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_ONLINE);   /* ponto verde: online agora */
         }
         char sub[130] = "";
         if (sub_override) snprintf(sub, sizeof sub, "%s", sub_override);
@@ -163,6 +197,26 @@ static void list_tab(cui_ctx *ui, app_state_t *s, bool only_online) {
             if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_LG, .icon = CUI_ICON_USER_PLUS)) s->friends_tab = 4;
         }
     }
+}
+
+/* Atividade: quem está online agora e o que está fazendo. O texto (status / programa em uso) só chega de quem está na sua chamada: é a única via em que o amigo o envia. */
+static void activity_tab(cui_ctx *ui, app_state_t *s) {
+    int shown = 0;
+    for (int i = 0; i < s->friend_count; i++) {
+        person_t *p = &s->friends[i];
+        if (!friends_online(s, p) || !matches(s, p)) continue;
+        const char *txt = "Online agora";
+        for (int q = 0; q < 8; q++) if (s->rtc_peers[q].id[0] && !strcmp(s->rtc_peers[q].name, p->name) && in_call(s, p)) {
+            txt = s->rtc_peers[q].status[0] ? s->rtc_peers[q].status : s->rtc_peers[q].presence[0] ? s->rtc_peers[q].presence : "Na sua chamada";
+        }
+        cui_push_id_int(ui, 9500 + i);
+        ROW_BEGIN(ui, p) {
+            row_ident(ui, p, txt, true);
+            if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
+        }
+        cui_pop_id(ui); shown++;
+    }
+    if (!shown) empty_state(ui, CUI_ICON_USERS, "Nada acontecendo por enquanto", "Quando um amigo ficar online ou entrar na sua chamada, ele aparece aqui com o que está fazendo.");
 }
 
 static void pending_tab(cui_ctx *ui, app_state_t *s) {
@@ -232,20 +286,21 @@ static void add_tab(cui_ctx *ui, app_state_t *s) {
 
 void friends_hub(cui_ctx *ui, app_state_t *s) {
     blocked_load(s);
-    static const char *const tabs[] = { "Todos", "Online", "Pendentes", "Bloqueados", "Adicionar" };
+    static const char *const tabs[] = { "Todos", "Online", "Pendentes", "Bloqueados", "Adicionar", "Atividade" };
     char pend[24]; snprintf(pend, sizeof pend, "Pendentes %d", s->pending_count);
-    const char *items[5] = { tabs[0], tabs[1], s->pending_count ? pend : tabs[2], tabs[3], tabs[4] };
+    const char *items[6] = { tabs[0], tabs[1], s->pending_count ? pend : tabs[2], tabs[3], tabs[4], tabs[5] };
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 14, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
             .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1) {
         cui_icon(ui, CUI_ICON_USERS, 18, B_MUTED);
         cui_text(ui, "Amigos", .font = CUI_FONT_MEDIUM);
-        cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL);
+        cui_tabs(ui, "friends-tabs", items, 6, &s->friends_tab, .variant = CUI_TABS_PILL);
     }
     cui_separator(ui);
     if (s->friends_tab != 4) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* botão sempre visível no topo da seção, em linha própria (não espreme as abas) */
         if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .full_width = true)) s->friends_tab = 4;
     }
-    if (s->friends_tab <= 3 && s->friends_tab != 2) {
+    friends_notify_banner(ui, s);
+    if ((s->friends_tab <= 3 && s->friends_tab != 2) || s->friends_tab == 5) {
         cui_box(ui, .width = CUI_FILL, .pad_x = 18, .pad_top = 12) {
             cui_input(ui, "friends-q", s->friends_q, sizeof s->friends_q, .placeholder = "Buscar amigo", .width = CUI_FILL);
         }
@@ -257,6 +312,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
             case 1: list_tab(ui, s, true); break;
             case 2: pending_tab(ui, s); break;
             case 3: blocked_tab(ui, s); break;
+            case 5: activity_tab(ui, s); break;
             default: add_tab(ui, s); break;
             }
         }
@@ -264,6 +320,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
 }
 
 void friends_dialogs(cui_ctx *ui, app_state_t *s) {
+    friends_notify_tick(s);
     cui_dialog(ui, "Desfazer amizade", &s->unfriend_open) {
         cui_textf(ui, "Remover %s dos seus amigos?", s->unfriend_name);
         cui_text(ui, "As conversas continuam gravadas neste computador. Para voltar a ser amigos, é preciso um novo pedido.", .size = 12.5f, .color = B_MUTED);

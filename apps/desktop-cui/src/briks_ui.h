@@ -9,15 +9,15 @@
 #include "perf.h"
 
 /* Paleta (--briks-*, --glass-*) */
-#define B_C1        CUI_RGB(0xb01fcf)
-#define B_C2        CUI_RGB(0x6d5cf6)
-#define B_C3        CUI_RGB(0x8b5cf6)
+#define B_C1        (g_th.c1)   /* acento: vem do gradiente do tema (themes.c) */
+#define B_C2        (g_th.c2)
+#define B_C3        (g_th.c3)
 #define B_BG        CUI_RGB(0x12041a)
 #define B_BG_DEEP   CUI_RGB(0x0f0316)
-#define B_PANEL     CUI_RGB(0x1a0a26)
-#define B_LINE      CUI_RGB(0x2f1745)
+#define B_PANEL     (g_th.field)   /* campos de texto: versao escura do matiz do tema */
+#define B_LINE      (g_th.line)
 #define B_TEXT      CUI_RGB(0xedf1f7)
-#define B_MUTED     CUI_RGB(0xa592b8)
+#define B_MUTED     (g_th.muted)
 #define B_DANGER    CUI_RGB(0xe95555)
 #define B_ONLINE    CUI_RGB(0x57d28b)
 #define B_GLASS_BORDER CUI_RGBA(0xffffff1c)  /* .11 */
@@ -28,15 +28,16 @@ typedef enum { SCREEN_AUTH, SCREEN_SOCIAL, SCREEN_CALL, SCREEN_HISTORY } screen_
 #define MAX_FRIENDS 128
 #define MAX_COMMUNITIES 32
 typedef struct { char id[48]; char name[96]; char request_id[48]; char status[64]; char presence[64]; } person_t;   /* status = texto do balão; presence = o que a pessoa está usando */
-typedef struct { char id[48]; char name[96]; } community_t;
+typedef struct { char id[48]; char name[96]; int members; } community_t;
 
 #define MAX_GROUPS 32
 #define MAX_MSGS 200
-typedef struct { char id[48]; char name[96]; char channel[64]; } group_t;
+typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate; } group_t;   /* can_moderate: sou dono ou administrador (apagar mensagens alheias, fixar) */
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+
 
 /* conta online (account.c): estado vindo do briks-core (eventos account.*) */
 enum { ACCT_UNKNOWN, ACCT_OUT, ACCT_BUSY, ACCT_EMAIL_SENT, ACCT_IN };
@@ -44,6 +45,34 @@ enum { AV_MAIN, AV_LOGIN, AV_SIGNUP, AV_RECOVER, AV_NEWPASS };   /* telas da ent
 enum { BRIDGE_NONE, BRIDGE_WAIT, BRIDGE_RUNNING, BRIDGE_FAILED };   /* ligação da conta com o banco local deste PC */
 #define MAX_LEGACY 64
 enum { BKP_UNKNOWN, BKP_NONE, BKP_OK, BKP_OTHER };   /* não consultado; sem cópia; cópia desta identidade; cópia de outra identidade */
+
+/* Transmissão de tela (ui_share.c): fontes do seletor, áudio por app, qualidade e estado local/remoto */
+#define SH_MAX_SRC 24
+#define SH_MAX_APPS 16
+typedef struct { char id[24]; char name[96]; char sub[64]; char thumb[280]; int w, h; cui_texture tex; bool tex_tried; } share_src_t;
+typedef struct { unsigned pid; char name[64]; bool playing, on; } share_app_t;
+typedef struct {
+    bool dialog_open, loading, quality_open;
+    int tab;                                   /* 0 telas, 1 janelas */
+    int sel[2];                                /* fonte escolhida em cada aba */
+    share_src_t src[2][SH_MAX_SRC]; int nsrc[2];
+    int audio_mode;                            /* 0 da fonte, 1 escolher apps, 2 sem áudio */
+    share_app_t apps[SH_MAX_APPS]; int napps;
+    int res, fps, br_mode;                     /* índices: 720p/1080p/1440p/4K; 15/30/60; automático/alto/máximo/personalizado */
+    float br_custom;                           /* Mbps (1..50) quando personalizado */
+    int content;                               /* prioridade no aperto: 0 nitidez (cede FPS), 1 fluidez (cede resolução) */
+    /* transmissão local */
+    bool active, starting, audio_on, hardware;
+    int w, h, cur_fps, kbps, cpu, audio_sources;
+    float stat_fps, enc_ms, audio_peak; int stat_kbps;
+    /* laço de adaptação ao vivo (share.stats) */
+    int live_h, target_fps, target_kbps, est_kbps, rtt_ms, rtx; float loss_pct;
+    bool black;                             /* a fonte está saindo preta (tela cheia exclusiva / conteúdo protegido) */
+    char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
+    char label[64], encoder[64], err[160], last_kind[12], last_id[24];
+    /* transmissões dos outros (índice = slot em rtc_peers) */
+    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; float volume; bool vol_set; char label[64], path[300]; } remote[8];
+} share_state_t;
 
 typedef struct {
     screen_t screen;
@@ -72,7 +101,9 @@ typedef struct {
     bool reload_msgs;
     msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
     char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
-    bool create_group_open, profile_open;
+    bool create_group_open, profile_open, logout_confirm_open;
+    char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     char new_group[96];
     /* social */
     int active_friend;             /* -1 = lista de amigos */
@@ -93,6 +124,8 @@ typedef struct {
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
     bool kick_open, kicked_open;   /* diálogo de confirmação; aviso "Você foi removido da chamada" */
+    bool import_open, import_done;   /* diálogo "Importar seus dados do Briks antigo?" (migrate.c) */
+    char import_info[200], import_result[200];
     /* conta online */
     int acct_state, acct_view, acct_bridge;
     bool acct_configured, acct_mock, acct_asked, acct_demo;
@@ -111,7 +144,16 @@ typedef struct {
     char import_msg[240];
     person_t legacy[MAX_LEGACY]; int legacy_count;             /* contatos do Briks antigo (só nome; sem conta) */
     bool reload_groups;
+    share_state_t sh;
+    char ice_note[120];   /* "Somente STUN" / "STUN + TURN" (evento ice.info do core) */
 } app_state_t;
+
+/* migrate.c: importação dos dados do Electron */
+void migrate_probe(app_state_t *s);
+void migrate_pump(app_state_t *s);
+void migrate_dialog(cui_ctx *ui, app_state_t *s);
+/* ui_update.c: aviso "pronto para instalar" (update.c baixa e verifica em segundo plano) */
+void update_banner(cui_ctx *ui, app_state_t *s);
 
 /* app.c: máquina de estados das chamadas ao backend */
 void app_submit_auth(app_state_t *s);
@@ -152,6 +194,7 @@ void app_open_group(app_state_t *s, int idx);
 void app_open_chat2(app_state_t *s, int friend_idx);
 void app_load_messages2(app_state_t *s, const char *body);
 void app_send_message(app_state_t *s);
+void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text);   /* encaminha o texto para outra conversa */
 void app_create_group(app_state_t *s);
 void app_load_messages(app_state_t *s, const char *body);
 void app_load_groups(app_state_t *s, const char *body);
@@ -160,13 +203,32 @@ void app_pump(app_state_t *s);
 /* rtc.c: ponte com o briks-core */
 void rtc_join_room(app_state_t *s, const char *room);   /* inicia o core se preciso, abre a sessão e entra na sala */
 void rtc_leave_room(app_state_t *s);
+void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
+void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
+void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+void settings_tick(void);                                  /* carrega/grava settings.cfg */
+void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
+void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
+void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
 void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
-void rtc_pump(app_state_t *s);                           /* a cada quadro: consome eventos do core */
+void rtc_pump(app_state_t *s);
+void rtc_chat_event(const char *fields);   /* assina e envia um chat.event (campos JSON sem chaves) a quem está na sala */                           /* a cada quadro: consome eventos do core */
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "Conectado · 2 pessoas" etc. */
+/* ui_share.c: transmissão de tela */
+struct jval;
+bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos share.* do core */
+void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
+void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */
+void share_stop(app_state_t *s);
+void share_reset(app_state_t *s);                             /* saiu da sala: esquece tudo */
+void ui_share_dialog(cui_ctx *ui, app_state_t *s);            /* "Compartilhar tela — Escolha a fonte e confirme" */
+void ui_share_bar(cui_ctx *ui, app_state_t *s);               /* botão Compartilhar + chips de áudio e qualidade */
+bool ui_share_stage(cui_ctx *ui, app_state_t *s);             /* palco do modo Transmissão; false = ninguém transmitindo */
+bool share_peer_live(const app_state_t *s, int slot);         /* esse participante está transmitindo? */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */
 
 /* Pilha levantada: grupos 0..2 = cartões (atrás, meio, frente), 3 = âncora de captura do vidro (alfa 0). O dock desenha cada grupo sem giro entre
@@ -186,10 +248,12 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
+void dock_script_menu(float x, float y);
 void dock_script_restore(void);
 void dock_restore_default(void);   /* configurações: reaplica o layout padrão (animado) e grava layout.json */
 /* script.c: BRIKS_SCRIPT injeta mouse e salva um PNG por quadro */
@@ -200,10 +264,20 @@ bool script_capture(cui_app *app);
 
 /* Clique de verdade num contêiner: cui_last_hovered não serve para caixas simples (o "último componente" é o canvas do fundo,
    que cobre a janela e deixava qualquer clique acionar todos os itens). `id` é o .id da caixa, no escopo de id atual. */
+/* cor do tema com alfa 0..255 (acentos, bordas, tintas): nada de roxo fixo fora do tema */
+static inline cui_color briks_acc(cui_color c, int a) { c.a = (uint8_t)a; return c; }
+#define B_A(c, a) briks_acc((c), (a))
+
+/* Balão de status: Cristal violeta (glass.c). Normal = translúcido, refração nas bordas e balão + bolinhas da cauda unidos (metaballs); Simplificado = sem refração, menos desfoque,
+   mesma forma unida; Mínimo = sem shader: violeta chapado, sem borda, e pescoços desenhados em CUI para manter a silhueta unida. */
+static inline cui_color briks_bubble_bg(void) { return g_perf < PERF_MIN ? B_GLASS_BUBBLE : CUI_RGBA(0x6a48d0ff); }
+static inline cui_color briks_bubble_border(void) { return g_perf >= PERF_MIN ? CUI_RGBA(0xdcc8ffb0) : CUI_RGBA(0x00000000); }
+static inline float briks_bubble_radius(float h) { return h * 0.5f; }
+
 /* pílula de status em linha (cabeçalho do chat, chip do tile): só existe se houver texto; vidro de bolha (Liquid Glass) */
 static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     if (!text || !text[0]) return;
-    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = 14, .bg = B_GLASS_BUBBLE, .border = 1, .border_color = CUI_RGBA(0xffffff30), .align = CUI_ALIGN_CENTER) {
+    cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = briks_bubble_radius(26), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(), .align = CUI_ALIGN_CENTER) {
         cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
     }
 }

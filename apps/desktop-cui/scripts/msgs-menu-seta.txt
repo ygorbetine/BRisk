@@ -1,0 +1,7 @@
+at 520 130
+wait 6
+at 658 108
+wait 4
+down
+up
+wait 14

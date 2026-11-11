@@ -1,0 +1,6 @@
+wait 3
+to plus:chat 15
+wait 2
+down
+up
+wait 6

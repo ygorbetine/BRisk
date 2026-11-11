@@ -1,0 +1,45 @@
+# Emissor, só com cliques: Chamada → Compartilhar → aba Janelas → janela de teste → áudio → Ajustar (24 FPS, Fluidez) → Transmitir
+waitms 5000
+click 710 748
+waitms 3000
+click 397 221
+waitms 1200
+click 395 255
+waitms 300
+click 952 542
+waitms 400
+click 752 542
+waitms 400
+click 967 641
+waitms 800
+click 846 401
+waitms 300
+click 962 446
+waitms 300
+shot b1-qualidade
+click 934 586
+waitms 7000
+shot b2-transmitindo
+click 950 748
+waitms 1200
+shot b3-popover
+waitms 500
+# troca de qualidade AO VIVO pelo popover do chip: 15 FPS → Aplicar na transmissão
+click 462 343
+waitms 400
+click 296 588
+waitms 5000
+shot b4-qualidade-ao-vivo
+# a janela transmitida muda de tamanho, é minimizada, restaurada e fechada (a janela de teste obedece aos sinais)
+signal resize
+waitms 4000
+shot b5-redimensionada
+signal min
+waitms 4000
+shot b6-minimizada
+signal restore
+waitms 3000
+signal close
+waitms 4000
+shot b7-janela-fechada
+waitms 500

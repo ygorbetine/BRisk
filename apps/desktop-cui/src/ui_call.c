@@ -52,8 +52,8 @@ static void paint_avatar(cui_ctx *ui, cui_rect r, void *user) {
     }
     cui_color sh = CUI_RGBA(0x00000066);
     cui_draw_shadow(ui, r, CUI_CORNERS(r.w * 0.5f), 18, 0, (cui_vec2){ 0, 6 }, sh);
-    cui_draw_rect(ui, r, CUI_CORNERS(r.w * 0.5f), CUI_RGBA(0x8b5cf6ff));
-    cui_draw_rect_gradient(ui, (cui_rect){ r.x + 3, r.y + 3, r.w - 6, r.h - 6 }, CUI_CORNERS((r.w - 6) * 0.5f), CUI_RGB(0x8f5cf6), CUI_RGB(0xa826d0));
+    cui_draw_rect(ui, r, CUI_CORNERS(r.w * 0.5f), B_C3);
+    cui_draw_rect_gradient(ui, (cui_rect){ r.x + 3, r.y + 3, r.w - 6, r.h - 6 }, CUI_CORNERS((r.w - 6) * 0.5f), B_C3, B_C2);
 }
 
 /* devolve a ação pedida: clicar no rótulo ou "Silenciar" no menu de contexto (botão direito) alterna o silêncio; "Expulsar" (só o dono) pede confirmação */
@@ -63,8 +63,8 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
     bool speaking = t->level > 0;
     int gi = t->slot < 0 ? 0 : t->slot > 9 ? 9 : t->slot;   /* 0..7 peers, 8 prévia, 9 eu */
     g_lvl[gi] = t->level;
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .clip = true,
-            .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : CUI_RGBA(0x6d5cf655),
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
+            .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55),
             .dir = CUI_STACK) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(300), .height = CUI_PX(300), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
@@ -116,7 +116,7 @@ static bool tab(cui_ctx *ui, int id, const char *icon, const char *label, bool a
     cui_box(ui, .id = "b", .dir = CUI_STACK, .height = CUI_PX(34), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         if (active) cui_canvas(ui, "tabbg", CUI_FILL, CUI_FILL, paint_grad, &rad, 0);
         cui_box(ui, .dir = CUI_ROW, .gap = 7, .pad_x = 16, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-            cui_color c = active ? CUI_RGB(0xffffff) : CUI_RGBA(0xa592b866);
+            cui_color c = active ? CUI_RGB(0xffffff) : B_A(B_MUTED, 0x66);
             if (icon) cui_icon(ui, icon, 15, c);
             cui_text(ui, label, .font = CUI_FONT_DISPLAY, .size = 15, .color = c);
         }
@@ -153,6 +153,7 @@ static void empty_state(cui_ctx *ui, const char *icon, const char *title, const 
 
 void ui_call(cui_ctx *ui, app_state_t *s) {
     (void)seg_begin_style;
+    share_tick(ui, s);
     const char *group = s->active_group >= 0 ? s->groups[s->active_group].name : (s->group_count ? s->groups[0].name : "Sala geral");
     char sub[200], st[160]; snprintf(sub, sizeof sub, "%s · %s", group, rtc_status_text(s, st, sizeof st));
     briks_ambient(ui, 0.85f);
@@ -176,12 +177,13 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 if (briks_clicked(ui, "b")) s->screen = SCREEN_SOCIAL;
                 cui_pop_id(ui);
                 cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
-                    if (tab(ui, 1, CUI_ICON_PHONE, "Call", s->call_mode == 0)) s->call_mode = 0;
-                    if (tab(ui, 2, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1)) s->call_mode = 1;
+                    /* ids 11..14: as pílulas da barra usam 1..5 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
+                    if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0)) s->call_mode = 0;
+                    if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1)) s->call_mode = 1;
                 }
                 cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
-                    if (tab(ui, 3, CUI_ICON_VIDEO, "Chamada", s->call_view == 0)) s->call_view = 0;
-                    if (tab(ui, 4, CUI_ICON_MESSAGE_SQUARE, "Chat", s->call_view == 1)) s->call_view = 1;
+                    if (tab(ui, 13, CUI_ICON_VIDEO, "Chamada", s->call_view == 0)) s->call_view = 0;
+                    if (tab(ui, 14, CUI_ICON_MESSAGE_SQUARE, "Chat", s->call_view == 1)) s->call_view = 1;
                 }
             }
         }
@@ -201,12 +203,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     }
                 }
             } else if (s->call_mode == 1) {
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
-                    empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui.");
+                if (!ui_share_stage(ui, s)) {
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55)) {
+                        empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui.");
+                    }
                 }
             } else {
                 bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
-                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false, s->user_status };
+                const tile_t me = { s->user_name[0] ? s->user_name : "Você", true, mic_eff, false, mic_eff ? s->me_level : 0, 9, false, false, s->sh.active ? "Transmitindo a tela" : s->user_status };
                 const tile_t other = { "Marina Costa", false, false, false, 0, 8, false, false, "" };
                 cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
                     tile(ui, &me, mic_eff);
@@ -214,7 +218,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0]) {
                         char nm[64]; if (s->rtc_peers[i].name[0]) snprintf(nm, sizeof nm, "%s", s->rtc_peers[i].name); else snprintf(nm, sizeof nm, "Participante %d", i + 1);
                         const tile_t t = { nm, false, false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, s->rtc_peers[i].status };
+                                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, share_peer_live(s, i) ? "Transmitindo a tela" : s->rtc_peers[i].status };
                         cui_push_id_int(ui, 700 + i);
                         int act = tile(ui, &t, true);
                         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
@@ -233,12 +237,13 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
                 }
                 if (pill(ui, 2, CUI_ICON_VOLUME_2, "Ensurdecer", s->deaf ? 1 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
-                if (pill(ui, 3, CUI_ICON_VIDEO, "Câmera", s->cam_on ? 1 : 0)) s->cam_on = !s->cam_on;
-                if (pill(ui, 4, CUI_ICON_MONITOR, "Compartilhar", s->sharing ? 1 : 0)) s->sharing = !s->sharing;
+                cui_push_disabled(ui, true); pill(ui, 3, CUI_ICON_VIDEO, "Câmera · em breve", 0); cui_pop_disabled(ui);   /* sem backend de vídeo da câmera nesta versão */
+                ui_share_bar(ui, s);
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
             }
         }
     }
+    ui_share_dialog(ui, s);
     /* confirmação rápida antes de expulsar */
     if (s->kick_open) {
         cui_vec2 vp = cui_viewport_size(ui);

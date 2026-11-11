@@ -51,7 +51,10 @@ pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, fallback: 
     }
     let from_env = env("BRIKS_SUPABASE_URL").zip(env("BRIKS_SUPABASE_ANON_KEY"));
     let from_file = || {
-        let t = std::fs::read_to_string(data_dir.join("supabase.json")).ok()?;
+        // 1) pasta de dados do usuário; 2) ao lado do executável (instalador leva a chave publishable para outros PCs)
+        let exe_side = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("supabase.json")));
+        let t = std::fs::read_to_string(data_dir.join("supabase.json")).ok()
+            .or_else(|| exe_side.and_then(|p| std::fs::read_to_string(p).ok()))?;
         let v: Value = serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()?;
         let key = v["anon_key"].as_str().or(v["publishable_key"].as_str()).or(v["key"].as_str())?;
         Some((v["url"].as_str()?.to_string(), key.to_string()))

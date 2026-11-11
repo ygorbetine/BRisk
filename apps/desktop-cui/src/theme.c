@@ -2,9 +2,47 @@
 #include <math.h>
 #include <stdlib.h>
 
+static cui_color with_a(cui_color c, uint8_t a) { c.a = a; return c; }
+
+/* HSL <-> RGB e contraste WCAG: as cores de campo, texto secundario e divisor saem do matiz do acento, sem valor fixo por tema */
+static void rgb2hsl(cui_color c, float *h, float *s, float *l) {
+    float r = c.r / 255.0f, g = c.g / 255.0f, b = c.b / 255.0f, mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), d = mx - mn;
+    *l = (mx + mn) * 0.5f; *s = d < 1e-4f ? 0 : d / (1 - fabsf(2 * *l - 1));
+    float hh = 0; if (d > 1e-4f) { if (mx == r) hh = fmodf((g - b) / d, 6.0f); else if (mx == g) hh = (b - r) / d + 2; else hh = (r - g) / d + 4; }
+    *h = hh * 60.0f; if (*h < 0) *h += 360.0f;
+}
+static cui_color hsl2rgb(float h, float s, float l, uint8_t a) {
+    float c = (1 - fabsf(2 * l - 1)) * s, x = c * (1 - fabsf(fmodf(h / 60.0f, 2.0f) - 1)), m = l - c / 2, r = 0, g = 0, b = 0;
+    int k = (int)(h / 60.0f) % 6;
+    switch (k) { case 0: r = c; g = x; break; case 1: r = x; g = c; break; case 2: g = c; b = x; break; case 3: g = x; b = c; break; case 4: r = x; b = c; break; default: r = c; b = x; }
+    cui_color o = { (uint8_t)((r + m) * 255.0f + 0.5f), (uint8_t)((g + m) * 255.0f + 0.5f), (uint8_t)((b + m) * 255.0f + 0.5f), a }; return o;
+}
+static float rlum(cui_color c) { float r = powf(c.r / 255.0f, 2.2f), g = powf(c.g / 255.0f, 2.2f), b = powf(c.b / 255.0f, 2.2f); return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
+static float contrast(cui_color a, cui_color b) { float x = rlum(a) + 0.05f, y = rlum(b) + 0.05f; return x > y ? x / y : y / x; }
+
+static void derive_field_colors(void) {
+    float h, s, l; rgb2hsl(g_th.c3, &h, &s, &l);
+    if (s < 0.15f) rgb2hsl(g_th.c1, &h, &s, &l);   /* acento quase cinza: usa o outro */
+    float fs = fminf(fmaxf(s, 0.35f), 0.65f);
+    float bgl, t1, t2; rgb2hsl(g_th.bg, &t1, &t2, &bgl);
+    float fl = fminf(0.085f, bgl * 0.7f);                 /* sempre mais escuro que o fundo ao redor */
+    cui_color fld = hsl2rgb(h, fs, fl, 0xc8);
+    g_th.field = fld;
+    cui_color under = cui_mix(g_th.bg, fld, 0.78f);       /* aproximacao do campo sobre o vidro */
+    g_th.line = hsl2rgb(h, fminf(fs, 0.45f), fminf(0.22f, fl + 0.12f), 255);
+    /* secundario e placeholder: claros no matiz do tema; sobe a luminosidade ate 4.5:1 sobre o campo e sobre o fundo */
+    float ml = 0.70f; cui_color m = hsl2rgb(h, 0.28f, ml, 255);
+    for (int k = 0; k < 20 && (contrast(m, under) < 4.5f || contrast(m, g_th.bg) < 4.5f); k++) { ml += 0.02f; m = hsl2rgb(h, 0.28f, fminf(ml, 0.95f), 255); }
+    g_th.muted = m;
+    float pl = 0.58f; cui_color p = hsl2rgb(h, 0.22f, pl, 255);
+    for (int k = 0; k < 25 && contrast(p, under) < 4.5f; k++) { pl += 0.02f; p = hsl2rgb(h, 0.22f, fminf(pl, 0.95f), 255); }
+    g_th.ph = p;
+}
+
 void briks_apply_theme(cui_ctx *ui) {
     cui_set_theme(ui, CUI_THEME_DARK);
     cui_set_accent(ui, CUI_ACCENT_VIOLET);
+    derive_field_colors();
     cui_theme *t = cui_theme_get(ui);
     t->colors[CUI_TOKEN_BACKGROUND]     = B_BG;
     t->colors[CUI_TOKEN_SURFACE]        = B_PANEL;
@@ -12,13 +50,13 @@ void briks_apply_theme(cui_ctx *ui) {
     t->colors[CUI_TOKEN_SURFACE_MUTED]  = B_LINE;
     t->colors[CUI_TOKEN_FOREGROUND]     = B_TEXT;
     t->colors[CUI_TOKEN_TEXT_SECONDARY] = B_MUTED;
-    t->colors[CUI_TOKEN_TEXT_MUTED]     = CUI_RGB(0x8472a0);
+    t->colors[CUI_TOKEN_TEXT_MUTED]     = g_th.ph;
     t->colors[CUI_TOKEN_BORDER]         = B_LINE;
     t->colors[CUI_TOKEN_BORDER_SUBTLE]  = CUI_RGBA(0xffffff12);
-    t->colors[CUI_TOKEN_BORDER_STRONG]  = CUI_RGBA(0x8b5cf666);
+    t->colors[CUI_TOKEN_BORDER_STRONG]  = with_a(cui_mix(B_C3, CUI_RGB(0xffffff), 0.15f), 0x90);   /* borda dos campos: cor do tema, mais clara que o fundo do campo */
     t->colors[CUI_TOKEN_ACCENT]         = B_C3;
     t->colors[CUI_TOKEN_ACCENT_STRONG]  = B_C2;
-    t->colors[CUI_TOKEN_ACCENT_SUBTLE]  = CUI_RGBA(0x8b5cf622);
+    t->colors[CUI_TOKEN_ACCENT_SUBTLE]  = with_a(B_C3, 0x22);
     t->colors[CUI_TOKEN_ACCENT_FOREGROUND] = CUI_RGB(0xffffff);
     t->colors[CUI_TOKEN_DANGER]         = B_DANGER;
     t->colors[CUI_TOKEN_SUCCESS]        = B_ONLINE;

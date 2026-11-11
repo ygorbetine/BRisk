@@ -18,8 +18,9 @@ use webrtc::track::track_remote::TrackRemote;
 
 pub const RATE: u32 = 48_000;
 pub const FRAME: usize = 960; // 20 ms
-const PRIME: usize = FRAME * 3; // 60 ms antes de começar a tocar
-const MAX_BUF: usize = FRAME * 10; // 200 ms; acima disso descarta o mais antigo
+// Os buffers por peer guardam ESTÉREO intercalado (E, D): a voz (mono) entra duplicada, o áudio da transmissão entra em estéreo.
+const PRIME: usize = FRAME * 3 * 2; // 60 ms antes de começar a tocar
+const MAX_BUF: usize = FRAME * 10 * 2; // 200 ms; acima disso descarta o mais antigo
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AudioEvent {
@@ -34,6 +35,11 @@ pub struct RxStat {
     pub samples: u64,
     pub zero_cross: u64,
     pub peak: f32,
+    /// maior diferença entre os canais (0 = mono): prova de que o estéreo chegou
+    pub stereo_diff: f32,
+    /// relógio (ms) de cada início de som detectado depois de silêncio (medição de sincronia A/V nos testes)
+    pub onsets: Vec<u64>,
+    quiet: bool,
 }
 impl RxStat {
     /// Frequência estimada (Hz) por cruzamentos de zero; boa para um tom puro.
@@ -66,6 +72,8 @@ pub struct Audio {
     stop: AtomicBool,
     fake: bool,
     muted_peers: Mutex<HashSet<String>>,
+    /// volume do espectador para o áudio de cada transmissão (chave "peer#screen"; padrão 1.0)
+    gains: Mutex<HashMap<String, f32>>,
     sinks: Mutex<HashMap<String, Sink>>,
     cap: Mutex<VecDeque<f32>>,
     pub stats: Mutex<HashMap<String, RxStat>>,
@@ -84,7 +92,7 @@ impl Audio {
             "briks".into(),
         ));
         let a = Arc::new(Audio { track, mic_muted: AtomicBool::new(false), deaf: AtomicBool::new(false), stop: AtomicBool::new(false), fake,
-            muted_peers: Default::default(), sinks: Default::default(), cap: Default::default(), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
+            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
         (a, rx)
     }
 
@@ -101,6 +109,8 @@ impl Audio {
         let mut s = self.muted_peers.lock().unwrap();
         if m { s.insert(peer.to_string()); } else { s.remove(peer); }
     }
+    /// Volume (0..2) do áudio da transmissão de um peer, só para este espectador.
+    pub fn set_screen_gain(&self, peer: &str, gain: f32) { self.gains.lock().unwrap().insert(format!("{peer}#screen"), gain.clamp(0.0, 2.0)); }
     pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
     pub fn rx_stat(&self, peer: &str) -> RxStat { self.stats.lock().unwrap().get(peer).cloned().unwrap_or_default() }
 
@@ -152,11 +162,14 @@ impl Audio {
 
     /// Chamado pelo `on_track` da conexão: decodifica o RTP do peer para o jitter buffer dele.
     pub async fn run_remote(self: Arc<Self>, peer: String, track: Arc<TrackRemote>) {
-        let Ok(mut dec) = Decoder::new(RATE, Channels::Mono) else { return };
+        // a faixa de áudio de uma transmissão ("peer#screen") é decodificada e tocada em estéreo; a voz, em mono
+        let stereo = peer.contains('#');
+        let ch = if stereo { 2 } else { 1 };
+        let Ok(mut dec) = Decoder::new(RATE, if stereo { Channels::Stereo } else { Channels::Mono }) else { return };
         self.sinks.lock().unwrap().insert(peer.clone(), Sink::default());
         let mut expect: Option<u16> = None;
         let mut spk = Speaker::default();
-        let mut pcm = vec![0.0f32; FRAME];
+        let mut pcm = vec![0.0f32; FRAME * ch];
         while let Ok((pkt, _)) = track.read_rtp().await {
             let seq = pkt.header.sequence_number;
             if let Some(e) = expect {
@@ -168,18 +181,21 @@ impl Audio {
                     for i in 0..lost {
                         let last = i == lost - 1;
                         let r = if last { dec.decode_float(&pkt.payload, &mut pcm, true) } else { dec.decode_float(&[], &mut pcm, false) };
-                        if r.is_ok() { self.deliver(&peer, &pcm, &mut spk); }
+                        if r.is_ok() { self.deliver(&peer, &pcm, ch, &mut spk); }
                     }
                 }
             }
             expect = Some(seq.wrapping_add(1));
-            if let Ok(n) = dec.decode_float(&pkt.payload, &mut pcm, false) { self.deliver(&peer, &pcm[..n], &mut spk); }
+            if let Ok(n) = dec.decode_float(&pkt.payload, &mut pcm, false) { self.deliver(&peer, &pcm[..n * ch], ch, &mut spk); }
         }
         self.sinks.lock().unwrap().remove(&peer);
-        let _ = self.ev.try_send(AudioEvent::Speaking { peer, level: 0.0 });
+        if !peer.contains('#') { let _ = self.ev.try_send(AudioEvent::Speaking { peer, level: 0.0 }); }
     }
 
-    fn deliver(&self, peer: &str, pcm: &[f32], spk: &mut Speaker) {
+    /// `ch` = 1 (voz, mono) ou 2 (áudio de transmissão, estéreo intercalado).
+    fn deliver(&self, peer: &str, pcm_in: &[f32], ch: usize, spk: &mut Speaker) {
+        let mono: Vec<f32>;
+        let pcm: &[f32] = if ch == 2 { mono = pcm_in.chunks_exact(2).map(|p| (p[0] + p[1]) * 0.5).collect(); &mono } else { pcm_in };
         {
             let mut st = self.stats.lock().unwrap();
             let s = st.entry(peer.to_string()).or_default();
@@ -187,31 +203,53 @@ impl Audio {
             s.samples += pcm.len() as u64;
             s.zero_cross += pcm.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as u64;
             s.peak = s.peak.max(pcm.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+            if ch == 2 { s.stereo_diff = s.stereo_diff.max(pcm_in.chunks_exact(2).fold(0.0f32, |m, p| m.max((p[0] - p[1]).abs()))); }
+            // início de som depois de silêncio: marca o relógio no ponto exato da amostra dentro do quadro
+            let level = rms(pcm);
+            if level < 0.004 { s.quiet = true; }
+            else if s.quiet && level > 0.02 {
+                s.quiet = false;
+                let first = pcm.iter().position(|v| v.abs() > 0.02).unwrap_or(0);
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                let back = ((pcm.len() - first) as u64 * 1000) / RATE as u64;
+                if s.onsets.len() < 64 { s.onsets.push(now.saturating_sub(back)); }
+            }
         }
-        if let Some(l) = spk.feed(rms(pcm)) { let _ = self.ev.try_send(AudioEvent::Speaking { peer: peer.to_string(), level: l }); }
+        // faixas de áudio de transmissão ("peer#screen") não contam como fala
+        if !peer.contains('#') { if let Some(l) = spk.feed(rms(pcm)) { let _ = self.ev.try_send(AudioEvent::Speaking { peer: peer.to_string(), level: l }); } }
         if let Some(s) = self.sinks.lock().unwrap().get_mut(peer) {
-            s.buf.extend(pcm.iter().copied());
+            if ch == 2 { s.buf.extend(pcm_in.iter().copied()); } else { s.buf.extend(pcm.iter().flat_map(|v| [*v, *v])); }
             if s.buf.len() > MAX_BUF { let drop = s.buf.len() - PRIME; s.buf.drain(..drop); }
         }
     }
 
     pub fn remove_peer(&self, peer: &str) {
         self.sinks.lock().unwrap().remove(peer);
+        self.sinks.lock().unwrap().remove(&format!("{peer}#screen"));
         self.muted_peers.lock().unwrap().remove(peer);
     }
 
     /// Mixa `out.len()` amostras de todos os peers (jitter buffer simples: espera 60 ms, depois toca; underrun reinicia).
     /// Ensurdecido ou peer silenciado = ganho zero (o buffer é consumido para não acumular atraso).
     pub fn mix_pull(&self, out: &mut [f32]) {
+        let mut st = vec![0.0f32; out.len() * 2];
+        self.mix_pull_stereo(&mut st);
+        for (o, p) in out.iter_mut().zip(st.chunks_exact(2)) { *o = (p[0] + p[1]) * 0.5; }
+    }
+
+    /// Igual, em estéreo intercalado (E, D): `out.len()` = 2 x nº de amostras. É o que vai para a placa de som.
+    pub fn mix_pull_stereo(&self, out: &mut [f32]) {
         out.iter_mut().for_each(|v| *v = 0.0);
         let deaf = self.deaf();
         let muted = self.muted_peers.lock().unwrap().clone();
+        let gains = self.gains.lock().unwrap().clone();
         let mut sinks = self.sinks.lock().unwrap();
         for (peer, s) in sinks.iter_mut() {
             if !s.primed { if s.buf.len() >= PRIME { s.primed = true; } else { continue; } }
-            let take = out.len().min(s.buf.len());
-            let silent = deaf || muted.contains(peer);
-            for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v; } }
+            let take = out.len().min(s.buf.len()) & !1;
+            let g = gains.get(peer).copied().unwrap_or(1.0);
+            let silent = deaf || muted.contains(peer) || muted.contains(peer.split('#').next().unwrap_or(""));
+            for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v * g; } }
             if take < out.len() { s.primed = false; }
         }
         out.iter_mut().for_each(|v| *v = v.clamp(-1.0, 1.0));
@@ -255,8 +293,9 @@ impl Audio {
             let mut up = Upsampler::new(rate as f64 / RATE as f64);
             let err = |e| eprintln!("áudio (saída): {e}");
             let st = match cfg.sample_format() {
-                SampleFormat::F32 => dev.build_output_stream(&cfg.config(), move |d: &mut [f32], _| { up.fill(&me, d.len() / ch, |i, v| for c in 0..ch { d[i * ch + c] = v; }); }, err, None),
-                SampleFormat::I16 => dev.build_output_stream(&cfg.config(), move |d: &mut [i16], _| { up.fill(&me, d.len() / ch, |i, v| for c in 0..ch { d[i * ch + c] = (v * 32767.0) as i16; }); }, err, None),
+                // 2+ canais: esquerda e direita nos dois primeiros (demais recebem a média); 1 canal: a média
+                SampleFormat::F32 => dev.build_output_stream(&cfg.config(), move |d: &mut [f32], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }; }); }, err, None),
+                SampleFormat::I16 => dev.build_output_stream(&cfg.config(), move |d: &mut [i16], _| { up.fill(&me, d.len() / ch, |i, l, r| for c in 0..ch { d[i * ch + c] = ((if ch == 1 { (l + r) * 0.5 } else if c == 0 { l } else if c == 1 { r } else { (l + r) * 0.5 }) * 32767.0) as i16; }); }, err, None),
                 f => return Err(format!("formato de saída não suportado: {f:?}")),
             }
             .map_err(|e| format!("saída: {e}"))?;
@@ -348,16 +387,16 @@ impl Resampler {
 }
 
 /// Saída: 48 kHz mono → taxa do dispositivo, puxando do mixer sob demanda.
-struct Upsampler { step: f64, pos: f64, pend: VecDeque<f32> }
+struct Upsampler { step: f64, pos: f64, pend: VecDeque<(f32, f32)> }
 impl Upsampler {
     fn new(dev_over_48k: f64) -> Self { Upsampler { step: 1.0 / dev_over_48k, pos: 0.0, pend: VecDeque::new() } }
-    fn fill(&mut self, a: &Audio, frames: usize, mut put: impl FnMut(usize, f32)) {
+    fn fill(&mut self, a: &Audio, frames: usize, mut put: impl FnMut(usize, f32, f32)) {
         for i in 0..frames {
             let idx = self.pos.floor() as usize;
-            while self.pend.len() < idx + 2 { let mut c = [0.0f32; 480]; a.mix_pull(&mut c); self.pend.extend(c); }
+            while self.pend.len() < idx + 2 { let mut c = [0.0f32; 960]; a.mix_pull_stereo(&mut c); self.pend.extend(c.chunks_exact(2).map(|p| (p[0], p[1]))); }
             let f = (self.pos - self.pos.floor()) as f32;
             let (x, y) = (self.pend[idx], self.pend[idx + 1]);
-            put(i, x + (y - x) * f);
+            put(i, x.0 + (y.0 - x.0) * f, x.1 + (y.1 - x.1) * f);
             self.pos += self.step;
         }
         let drop = (self.pos.floor() as usize).min(self.pend.len());

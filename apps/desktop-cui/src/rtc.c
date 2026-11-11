@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "core.h"
 #include "json.h"
+#include "msgui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,7 @@ void rtc_leave_room(app_state_t *s) {
     copy(s->rtc_state, sizeof s->rtc_state, "");
     s->rtc_owner_me = false; s->kick_open = false;
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
+    share_reset(s);
 }
 
 void rtc_kick_peer(app_state_t *s, int slot) {
@@ -110,6 +112,15 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "chat.event")) {
+        const jval *lc = json_get(j, "local");
+        changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
+    } else if (!strcmp(ev, "ice.info")) {
+        const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
+        snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
+        changed = true;
+    } else if (!strncmp(ev, "share.", 6)) {
+        changed = share_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
@@ -166,7 +177,7 @@ void rtc_pump(app_state_t *s) {
             s->rtc_want_room = false;
         }
     }
-    char line[8192];
+    static char line[65536];   /* a lista de fontes (share.sources) passa de 8 KB */
     bool any = false;
     while (core_next_event(line, sizeof line)) any |= rtc_handle_event(s, line);
     if (any || (s->in_room && (st == CORE_STARTING))) cui_request_redraw(cui_app_ui(s->app));
@@ -183,4 +194,11 @@ const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap) {
     else if (!strcmp(st, "desconectado")) snprintf(buf, cap, "Desconectado");
     else snprintf(buf, cap, "Conectando…");
     return buf;
+}
+
+void rtc_chat_event(const char *fields) {
+    if (core_state() != CORE_READY) return;
+    char line[2200];
+    snprintf(line, sizeof line, "{\"cmd\":\"chat.event.send\",%s}", fields);
+    core_send(line);
 }

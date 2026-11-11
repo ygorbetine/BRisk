@@ -1,0 +1,8 @@
+# exploração: abre o seletor e a aba Janelas (sem fotografar a aba Telas, que mostra a tela principal)
+waitms 5000
+click 710 748
+waitms 3000
+click 397 221
+waitms 1500
+shot a2-janelas
+waitms 500

@@ -153,7 +153,7 @@ void ui_auth(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 1.0f);   /* primeiro filho do STACK: fundo */
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad = 16) {
         cui_box(ui, .width = CUI_FILL, .max_width = 440, .pad = 36, .gap = 12, .radius = 26,
-                .bg = B_GLASS_STRONG, .border = 1, .border_color = CUI_RGBA(0x8b5cf633), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
+                .bg = B_GLASS_STRONG, .border = 1, .border_color = B_A(B_C3, 0x33), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
             briks_brand(ui, 26);
             cui_gap(ui, 12);
             if (s->acct_state == ACCT_UNKNOWN) {

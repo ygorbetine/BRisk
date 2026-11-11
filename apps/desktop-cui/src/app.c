@@ -118,6 +118,7 @@ static void load_communities(app_state_t *s, const char *body) {
         community_t *d = &s->communities[s->community_count++];
         copy(d->id, sizeof d->id, json_str(json_at(j, i), "id", ""));
         copy(d->name, sizeof d->name, json_str(json_at(j, i), "name", "?"));
+        d->members = atoi(json_str(json_at(j, i), "member_count", "0"));
     }
     json_free(j);
 }
@@ -205,6 +206,8 @@ void app_pump(app_state_t *s) {
         break;
     case OP_MSG_SEND:
         if (!ok) { snprintf(s->notice, sizeof s->notice, "Não foi possível gravar a mensagem."); if (s->msg_count) s->msg_count--; }
+        break;
+    case OP_EVENT_SAVE:   /* evento assinado gravado na API local (se falhar, fica só no estado local) */
         break;
     case OP_GROUP_SAVE:
         begin(s, OP_GROUPS, "GET", "/p2p/groups", NULL);

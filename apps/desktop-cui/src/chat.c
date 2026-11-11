@@ -3,6 +3,7 @@
 #include "briks_ui.h"
 #include "backend.h"
 #include "json.h"
+#include "msgui.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -60,8 +61,24 @@ void app_send_message(app_state_t *s) {
              id, s->chat_channel, a, c, iso);
     snprintf(path, sizeof path, "/p2p/messages/%s", s->chat_channel);
     add_msg(s, id, s->user_name, s->draft, iso, true);   /* otimista: some se a gravação falhar */
+    msgui_after_send(id);                                 /* liga a resposta pendente (citação) ao id novo */
     s->draft[0] = 0;
     app_begin(s, OP_MSG_SEND, "POST", path, b);
+}
+
+void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text) {
+    if (!text || !text[0]) return;
+    char ch[160];
+    if (to_group) { if (idx < 0 || idx >= s->group_count) return; snprintf(ch, sizeof ch, "%s", s->groups[idx].channel); }
+    else { if (idx < 0 || idx >= s->friend_count) return; dm_channel(s, s->friends[idx].id, ch, sizeof ch); }
+    char id[40], iso[40], a[200], c[1100], b[1800], path[256], body[600];
+    snprintf(body, sizeof body, "↪ Encaminhada: %.480s", text);
+    new_id(id, sizeof id); now_iso(iso, sizeof iso);
+    json_escape(s->user_name, a, sizeof a); json_escape(body, c, sizeof c);
+    snprintf(b, sizeof b, "{\"id\":\"%s\",\"channelId\":\"%s\",\"author\":\"%s\",\"content\":\"%s\",\"createdAt\":\"%s\",\"reactions\":{}}", id, ch, a, c, iso);
+    snprintf(path, sizeof path, "/p2p/messages/%s", ch);
+    if (!strcmp(ch, s->chat_channel)) add_msg(s, id, s->user_name, body, iso, true);
+    if (s->token[0] && !s->busy) app_begin(s, OP_MSG_SEND, "POST", path, b);
 }
 
 void app_load_messages(app_state_t *s, const char *body) {
@@ -145,17 +162,26 @@ void app_load_groups(app_state_t *s, const char *body) {
         snprintf(d->name, sizeof d->name, "%s", json_str(g, "name", "?"));
         const char *ch = json_str(json_at(json_get(g, "channels"), 0), "id", "");
         snprintf(d->channel, sizeof d->channel, "%s", ch[0] ? ch : d->id);
+        d->can_moderate = !strcmp(json_str(g, "ownerPeerId", ""), s->user_id);
+        const jval *adm = json_get(g, "administratorPeerIds");
+        for (int k = 0; adm && k < json_len(adm); k++) { const jval *a = json_at(adm, k); if (a && a->type == J_STR && !strcmp(a->str, s->user_id)) d->can_moderate = true; }
     }
     json_free(j);
 }
 
 /* BRIKS_DEMO=login|social|call|history|group: dados fixos, sem backend, para comparar o visual entre as versões. */
 void app_demo(app_state_t *s, const char *mode) {
+    msgui_demo(true);
     snprintf(s->user_name, sizeof s->user_name, "Ygor"); snprintf(s->user_email, sizeof s->user_email, "ygor@briks.app");
     const char *fn[] = { "Marina Costa", "Rafael Lima", "Bia Nogueira" };
     for (int i = 0; i < 3; i++) { snprintf(s->friends[i].name, sizeof s->friends[i].name, "%s", fn[i]); snprintf(s->friends[i].id, sizeof s->friends[i].id, "friend-demo-%d", i); }
     s->friend_count = 3;
-    snprintf(s->communities[0].name, sizeof s->communities[0].name, "Time Briks"); s->community_count = 1;
+    snprintf(s->communities[0].name, sizeof s->communities[0].name, "Time Briks"); s->community_count = 1; s->communities[0].members = 12;
+    if (getenv("BRIKS_DEMO_COMM")) {   /* nomes curtos e longos para testar a barra de grupos responsiva */
+        const char *cn[] = { "Noite de Domingo", "Devs", "Comunidade dos Jogadores Noturnos de Domingo" }; int cm[] = { 8, 1, 128 };
+        for (int i = 0; i < 3; i++) { snprintf(s->communities[1 + i].name, sizeof s->communities[1 + i].name, "%s", cn[i]); s->communities[1 + i].members = cm[i]; }
+        s->community_count = 4;
+    }
     snprintf(s->groups[0].name, sizeof s->groups[0].name, "Noite de jogos"); s->group_count = 1;
     s->active_group = -1; s->active_friend = -1; s->chat2_friend = 1; snprintf(s->chat2_channel, sizeof s->chat2_channel, "demo");
     s->screen = SCREEN_SOCIAL;
@@ -169,6 +195,9 @@ void app_demo(app_state_t *s, const char *mode) {
         snprintf(s->friends[0].status, sizeof s->friends[0].status, "Chego em 10 minutos");
         snprintf(s->friends[1].presence, sizeof s->friends[1].presence, "Jogando Valorant"); snprintf(s->friends[2].presence, sizeof s->friends[2].presence, "Ouvindo no Spotify");
     }
+    { const char *ds = getenv("BRIKS_DEMO_STATUS"); if (ds && ds[0] == '2') {   /* variante: textos de tamanhos diferentes (captura) */
+        snprintf(s->user_status, sizeof s->user_status, "Ok"); snprintf(s->friends[0].status, sizeof s->friends[0].status, "Chego em 10 minutos, pode começar sem mim"); } }
+    snprintf(s->rp_ignore[0], sizeof s->rp_ignore[0], "spotify"); snprintf(s->rp_ignore[1], sizeof s->rp_ignore[1], "discord"); s->rp_ignore_n = 2;
     if (!strcmp(mode, "login")) { s->screen = SCREEN_AUTH; return; }
     if (!strcmp(mode, "call") || !strcmp(mode, "call-chat") || !strcmp(mode, "call-broadcast")) {
         s->screen = SCREEN_CALL; s->mic_on = true;
@@ -179,7 +208,7 @@ void app_demo(app_state_t *s, const char *mode) {
         return;
     }
     if (!strcmp(mode, "history")) { s->screen = SCREEN_HISTORY; return; }
-    if (!strcmp(mode, "social") || !strcmp(mode, "group") || !strcmp(mode, "bubbles")) {
+    if (!strcmp(mode, "social") || !strcmp(mode, "group") || !strcmp(mode, "bubbles") || !strcmp(mode, "msgs")) {
         const char *who = !strcmp(mode, "group") ? "Noite de jogos" : "Marina Costa";
         if (!strcmp(mode, "group")) s->active_group = 0; else s->active_friend = 0;
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
@@ -192,6 +221,10 @@ void app_demo(app_state_t *s, const char *mode) {
             add_msg(s, "m4", "Marina Costa", "Consegui os ingressos.", "2026-11-09T23:44:00.000Z", false);
             add_msg(s, "m5", "Marina Costa", "Só falta combinar o horário, o local de encontro e quem leva o carro, porque a vaga na garagem do prédio é limitada e eu preciso avisar a portaria com antecedência para ninguém ficar de fora.", "2026-11-09T23:45:00.000Z", false);
             add_msg(s, "m6", "Ygor", "Combinado.", "2026-11-09T23:46:00.000Z", true);
+        }
+        if (!strcmp(mode, "msgs")) {   /* resposta, editada, reação, fixada (capturas de interação com mensagens) */
+            msgui_demo_seed();
+            if (getenv("BRIKS_DEMO_ADMIN")) { s->active_group = 0; s->active_friend = -1; s->groups[0].can_moderate = true; }
         }
         (void)who;
     }

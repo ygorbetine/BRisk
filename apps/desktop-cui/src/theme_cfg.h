@@ -6,6 +6,8 @@
 #include <stdbool.h>
 
 typedef struct {
+    /* acento (derivado do gradiente escolhido): c1 início, c2 meio (escuro, base do balão enviado), c3 destaque (legível sobre o fundo) */
+    cui_color c1, c2, c3;
     /* fundo */
     cui_color bg;                    /* base atrás das manchas */
     cui_color blob[3];               /* manchas: topo-esquerdo, topo-direito, base */
@@ -33,8 +35,13 @@ typedef struct {
     float bubble_disp;               /* dispersão cromática (abertura entre R/G/B), 0..0.6 */
     float bubble_spec;               /* realce especular (gota) e aro, 0..1 */
     float bubble_tint;               /* tinta lilás/rosa/azul do interior, 0..0.3 */
+    float bubble_tail_gap;           /* folga entre balão, 1ª bolinha e 2ª bolinha da cauda, px, 0..8 (padrão 3) */
+    float bubble_tail_r1, bubble_tail_r2;   /* raio da 1ª e da 2ª bolinha, px, 2..9 / 1.5..7 (padrão 5.5 / 3.5) */
+    float bubble_neck_k;             /* suavidade da união balão-bolinhas (smooth-min), px: 0 = totalmente separadas, ~3 = pescoço fino, 9 = fundidas (padrão 3) */
+    float bubble_tail_rim;           /* espessura do aro claro da cauda, px, 0.5..3 (padrão 1.2) */
     int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = pontinha (topo do balão) na altura do centro do avatar */
     /* derivados (briks_theme_apply) */
+    cui_color field, muted, line, ph;   /* campos de texto, texto secundario, divisores e placeholder: derivados do matiz do tema (theme.c), contraste >= 4.5:1 */
     cui_color glass, glass_soft, glass_strong, glass_popup, glass_card, glass_bubble;
 } briks_theme_t;
 

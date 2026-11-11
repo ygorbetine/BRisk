@@ -245,6 +245,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let mut l = cap.shared.latest.lock().unwrap();
                 if l.w == 0 { continue; }
                 let fresh = l.yuv.take();
+                if let (Some(d), Some(y)) = (&dump, l.raw_yuv.take()) { let mut rgba = vec![255u8; y.w * y.h * 4]; video::i420_to_rgba(&y.y, &y.u, &y.v, (y.w, y.w / 2, y.w / 2), y.w, y.h, &mut rgba); if let Some(img) = image::RgbaImage::from_raw(y.w as u32, y.h as u32, rgba) { let _ = img.save(d); } }
                 (fresh, l.preview.take(), l.raw.take(), (l.w, l.h))
             };
             if let (Some(p), Some((pw, ph, px))) = (pv.as_mut(), pvw) { p.write(pw, ph, &px); }

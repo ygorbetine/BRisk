@@ -40,6 +40,8 @@ pub struct Latest {
     pub preview: Option<(usize, usize, Vec<u8>)>,
     /// primeiro quadro BGRA cru (só quando pedido, para provas)
     pub raw: Option<Vec<u8>>,
+    /// idem, quando a conversão foi na GPU (não há BGRA na memória): o próprio I420 enviado
+    pub raw_yuv: Option<crate::video::Yuv>,
     pub counter: u64,
 }
 
@@ -67,15 +69,43 @@ impl Shared {
         self.target_h.store(h, Ordering::Relaxed);
     }
     /// Recebe um quadro BGRA (sem preenchimento de linha) da captura e guarda o I420 pronto para codificar.
+    /// Este quadro entra? (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado ANTES de converter)
+    pub fn accept(&self) -> bool {
+        let mut la = self.last_accept.lock().unwrap();
+        let now = std::time::Instant::now();
+        if let Some(t) = *la { if now.duration_since(t) < Duration::from_micros(self.min_interval_us.load(Ordering::Relaxed)) { self.dropped.fetch_add(1, Ordering::Relaxed); return false; } }
+        *la = Some(now);
+        true
+    }
+
+    /// Quadro já convertido na GPU (I420 no tamanho de envio). `conv` = tempo gasto na conversão.
+    pub fn push_yuv(&self, yuv: crate::video::Yuv, w: usize, h: usize, conv: Duration) {
+        self.conv_ns.fetch_add(conv.as_nanos() as u64, Ordering::Relaxed);
+        let n = self.frames.fetch_add(1, Ordering::Relaxed);
+        let preview = if self.want_preview && n % self.preview_every == 0 {
+            // prévia: metade do tamanho quando o envio passa de 1600 de largura
+            let k = if yuv.w > 1600 { 2 } else { 1 };
+            let (pw, ph) = ((yuv.w / k) & !1, (yuv.h / k) & !1);
+            let mut out = vec![255u8; pw * ph * 4];
+            if k == 1 { crate::video::i420_to_rgba(&yuv.y, &yuv.u, &yuv.v, (yuv.w, yuv.w / 2, yuv.w / 2), pw, ph, &mut out); }
+            else { for y in 0..ph { for x in 0..pw {
+                let (c, d, e) = ((yuv.y[y * 2 * yuv.w + x * 2] as i32 - 16).max(0) * 298, yuv.u[y * (yuv.w / 2) + x] as i32 - 128, yuv.v[y * (yuv.w / 2) + x] as i32 - 128);
+                let o = (y * pw + x) * 4;
+                out[o] = ((c + 409 * e + 128) >> 8).clamp(0, 255) as u8; out[o + 1] = ((c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255) as u8; out[o + 2] = ((c + 516 * d + 128) >> 8).clamp(0, 255) as u8;
+            } } }
+            Some((pw, ph, out))
+        } else { None };
+        let raw_yuv = if self.want_raw.swap(false, Ordering::Relaxed) { Some(crate::video::Yuv { w: yuv.w, h: yuv.h, y: yuv.y.clone(), u: yuv.u.clone(), v: yuv.v.clone() }) } else { None };
+        let mut l = self.latest.lock().unwrap();
+        l.w = w; l.h = h; l.counter += 1; l.yuv = Some(yuv);
+        if preview.is_some() { l.preview = preview; }
+        if raw_yuv.is_some() { l.raw_yuv = raw_yuv; }
+    }
+
     /// `stride` = bytes por linha na origem (>= w*4).
     pub fn push_bgra(&self, data: &[u8], w: usize, h: usize, stride: usize) {
         if w < 2 || h < 2 || stride < w * 4 || data.len() < stride * (h - 1) + w * 4 { return; }
-        {
-            let mut la = self.last_accept.lock().unwrap();
-            let now = std::time::Instant::now();
-            if let Some(t) = *la { if now.duration_since(t) < Duration::from_micros(self.min_interval_us.load(Ordering::Relaxed)) { self.dropped.fetch_add(1, Ordering::Relaxed); return; } }
-            *la = Some(now);
-        }
+        if !self.accept() { return; }
         let t0 = std::time::Instant::now();
         let (tw, th) = crate::video::fit_size(w, h, self.target_h.load(Ordering::Relaxed));
         let yuv = crate::video::bgra_to_i420_stride(data, stride, w, h, tw, th);
@@ -114,17 +144,30 @@ pub struct Capture {
     handle: Option<Handle>,
 }
 
-struct Handler { shared: Arc<Shared>, staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)> }
+struct Handler { shared: Arc<Shared>, gpu: Option<crate::gpuconv::GpuConv>, staging: Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, u32)> }
 
 impl GraphicsCaptureApiHandler for Handler {
     type Flags = Arc<Shared>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
-    fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> { Ok(Handler { shared: ctx.flags, staging: None }) }
+    fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> { // conversão na GPU por padrão; BRIKS_CONVERT=cpu força o caminho antigo (diagnóstico / isolar problema de driver)
+        let gpu = if std::env::var("BRIKS_CONVERT").as_deref() == Ok("cpu") { None } else { Some(crate::gpuconv::GpuConv::default()) };
+        Ok(Handler { shared: ctx.flags, gpu, staging: None }) }
     fn on_frame_arrived(&mut self, frame: &mut Frame, _c: InternalCaptureControl) -> Result<(), Self::Error> {
         use windows::Win32::Graphics::Direct3D11::*;
         let (w, h) = (frame.width(), frame.height());
         // Uma única textura de leitura reaproveitada entre quadros (a biblioteca criaria uma nova de dezenas de MB a cada quadro);
         // a conversão de cor lê direto da memória mapeada, respeitando o passo de linha.
+        if let Some(g) = self.gpu.as_mut() {
+            // GPU: escala + BGRA→NV12 no processador de vídeo; só o quadro reduzido volta para a memória
+            let (tw, th) = crate::video::fit_size(w as usize, h as usize, self.shared.target_h.load(Ordering::Relaxed));
+            if !self.shared.accept() { return Ok(()); }
+            let t0 = std::time::Instant::now();
+            let tex = unsafe { frame.as_raw_texture().clone() };
+            match g.convert(&tex, w, h, tw as u32, th as u32) {
+                Ok(yuv) => { self.shared.push_yuv(yuv, w as usize, h as usize, t0.elapsed()); return Ok(()); }
+                Err(e) => { eprintln!("conversão na GPU indisponível ({e}); usando a CPU"); self.gpu = None; *self.shared.last_accept.lock().unwrap() = None; }
+            }
+        }
         unsafe {
             let tex = frame.as_raw_texture().clone();
             let dev = tex.GetDevice()?;
@@ -366,8 +409,10 @@ mod tests {
         let screens = v["screens"].as_array().unwrap();
         eprintln!("telas: {} janelas: {}", screens.len(), v["windows"].as_array().unwrap().len());
         assert!(!screens.is_empty(), "sem telas");
-        let id: isize = screens[0]["id"].as_str().unwrap().parse().unwrap();
-        assert!(std::path::Path::new(screens[0]["thumb"].as_str().unwrap()).exists());
+        // captura de verdade só na 2ª tela (nunca o monitor principal do usuário); sem ela, o teste fica só na enumeração
+        let Some(scr) = screens.iter().find(|s| s["primary"] != true) else { eprintln!("sem 2ª tela: captura real pulada"); return };
+        let id: isize = scr["id"].as_str().unwrap().parse().unwrap();
+        assert!(std::path::Path::new(scr["thumb"].as_str().unwrap()).exists());
         let mut c = Capture::start(SourceKind::Screen(id), 30, 1080, true, false).unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         let n = c.shared.frames.load(Ordering::Relaxed);

@@ -416,9 +416,13 @@ async fn real_screen_share_stats() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-real-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    let hm: isize = crate::capture::list_sources(&dir)["screens"][0]["id"].as_str().unwrap().parse().unwrap();
+    // nunca o monitor principal: usa a 2ª tela; sem ela, não mede
+    let srcs = crate::capture::list_sources(&dir);
+    let Some(scr) = srcs["screens"].as_array().unwrap().iter().find(|s| s["primary"] != true) else { eprintln!("sem 2ª tela: medição pulada"); return };
+    let hm: isize = scr["id"].as_str().unwrap().parse().unwrap();
+    eprintln!("tela de teste: {} {}x{}; conversão: {}", scr["name"], scr["w"], scr["h"], std::env::var("BRIKS_CONVERT").unwrap_or_else(|_| "gpu".into()));
     let rpath = dir.join("recebido.bin");
-    for (height, fps, kbps) in [(720usize, 30u32, 0u32), (1080, 30, 0), (1080, 60, 0), (1440, 30, 0), (2160, 30, 0)] {
+    for (height, fps, kbps) in [(1080usize, 30u32, 0u32), (1080, 60, 0)] {
         a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
         b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();

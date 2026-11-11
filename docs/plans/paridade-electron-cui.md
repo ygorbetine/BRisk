@@ -455,7 +455,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | Resultado | Itens |
 |---|---|
 | AUSENTE | 20 |
-| FALHOU | 1 |
+| FALHOU | 1 (PRF-03, falha de tempo: o caso `perfil-fotos` passou nas duas repetições isoladas) |
 | PASSOU | 113 |
 | SEM-EFEITO | 6 |
 | SEM-TESTE | 100 |

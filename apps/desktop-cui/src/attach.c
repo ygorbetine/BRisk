@@ -37,17 +37,17 @@ static cui_texture thumb_tex(cui_ctx *ui, thumb_t *t) {
 
 /* ---------- transferências ---------- */
 #define NXF 8
-typedef enum { XF_OFFER, XF_RUN, XF_DONE, XF_CANCELLED, XF_FAILED } xf_state;
+typedef enum { XF_OFFER, XF_RUN, XF_DONE, XF_CANCELLED, XF_FAILED, XF_WAIT, XF_PAUSED } xf_state;   /* OFFER: oferta recebida (Baixar/Recusar); WAIT: aguardando o aceite do outro lado */
 typedef struct { bool used; char id[48]; char name[104]; double size, done; xf_state st; bool mine; char path[MAX_PATH]; char err[120]; thumb_t th; } xf_t;
 static xf_t g_xf[NXF];
-static char g_open_path[MAX_PATH]; static bool g_open_dlg;
+static char g_open_path[MAX_PATH]; static bool g_open_dlg, g_gal_dlg;
 
 static xf_t *xf_find(const char *id, bool create) {
     for (int i = 0; i < NXF; i++) if (g_xf[i].used && !strcmp(g_xf[i].id, id)) return &g_xf[i];
     if (!create) return NULL;
     int pick = -1;
     for (int i = 0; i < NXF; i++) if (!g_xf[i].used) { pick = i; break; }
-    if (pick < 0) for (int i = 0; i < NXF; i++) if (g_xf[i].st != XF_RUN && g_xf[i].st != XF_OFFER) { pick = i; break; }
+    if (pick < 0) for (int i = 0; i < NXF; i++) if (g_xf[i].st != XF_RUN && g_xf[i].st != XF_OFFER && g_xf[i].st != XF_WAIT && g_xf[i].st != XF_PAUSED) { pick = i; break; }
     if (pick < 0) return NULL;
     free(g_xf[pick].th.rgba); memset(&g_xf[pick], 0, sizeof g_xf[pick]); g_xf[pick].used = true; snprintf(g_xf[pick].id, sizeof g_xf[pick].id, "%s", id);
     return &g_xf[pick];
@@ -104,8 +104,10 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
         const jval *mn = json_get(j, "mine"); if (mn && mn->type == J_BOOL) x->mine = mn->b;
         if (json_str(j, "name", "")[0]) snprintf(x->name, sizeof x->name, "%s", json_str(j, "name", ""));
         if (json_get(j, "size")) x->size = json_num(j, "size", x->size);
-        if (!strcmp(kind, "offer")) { x->st = x->mine ? XF_RUN : XF_RUN; if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", "")); }
-        else if (!strcmp(kind, "progress")) { x->done = json_num(j, "done", x->done); x->st = XF_RUN; }
+        if (!strcmp(kind, "offer")) { x->st = x->mine ? XF_WAIT : XF_OFFER; if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", "")); }
+        else if (!strcmp(kind, "accepted") || !strcmp(kind, "resumed")) x->st = XF_RUN;
+        else if (!strcmp(kind, "paused")) x->st = XF_PAUSED;
+        else if (!strcmp(kind, "progress")) { x->done = json_num(j, "done", x->done); if (x->st != XF_PAUSED) x->st = XF_RUN; }
         else if (!strcmp(kind, "done")) {
             x->st = XF_DONE; x->done = x->size;
             if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", ""));
@@ -168,6 +170,8 @@ void attach_strip(cui_ctx *ui, app_state_t *s) {
     (void)s;
     bool any = false; for (int i = 0; i < NXF; i++) if (g_xf[i].used) any = true;
     if (!any) return;
+    int imgs = 0; for (int i = 0; i < NXF; i++) if (g_xf[i].used && g_xf[i].st == XF_DONE && (g_xf[i].th.tex || g_xf[i].th.rgba)) imgs++;
+    if (imgs) { cui_push_id(ui, "gal"); if (cui_button(ui, "Galeria de imagens", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) g_gal_dlg = true; cui_pop_id(ui); }
     cui_box(ui, .width = CUI_FILL, .max_height = 150, .scroll_y = true, .gap = 6) {   /* no máximo ~2 linhas visíveis; o resto rola */
         for (int i = 0; i < NXF; i++) {
             xf_t *x = &g_xf[i]; if (!x->used) continue;
@@ -179,9 +183,11 @@ void attach_strip(cui_ctx *ui, app_state_t *s) {
                 else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 20, B_C3); }
                 cui_box(ui, .width = CUI_FILL, .gap = 3) {
                     cui_text(ui, x->name[0] ? x->name : "arquivo", .font = CUI_FONT_MEDIUM, .size = 13);
-                    if (x->st == XF_RUN) {
+                    if (x->st == XF_OFFER) cui_textf(ui, "%s quer enviar · %s · nada foi baixado", "Alguém da sala", fmt_size(x->size, a, sizeof a));
+                    else if (x->st == XF_WAIT) cui_textf(ui, "Aguardando o aceite · %s", fmt_size(x->size, a, sizeof a));
+                    else if (x->st == XF_RUN || x->st == XF_PAUSED) {
                         float f = x->size > 0 ? (float)(x->done / x->size) : 0;
-                        snprintf(line, sizeof line, "%s %s de %s", x->mine ? "Enviando" : "Recebendo", fmt_size(x->done, a, sizeof a), fmt_size(x->size, b, sizeof b));
+                        snprintf(line, sizeof line, "%s %s de %s%s", x->mine ? "Enviando" : "Recebendo", fmt_size(x->done, a, sizeof a), fmt_size(x->size, b, sizeof b), x->st == XF_PAUSED ? " · pausado" : "");
                         cui_text(ui, line, .size = 11, .color = B_MUTED);
                         cui_progress(ui, f, .height = 5);
                     } else if (x->st == XF_DONE) {
@@ -190,8 +196,20 @@ void attach_strip(cui_ctx *ui, app_state_t *s) {
                     } else if (x->st == XF_CANCELLED) cui_text(ui, "Cancelado", .size = 11, .color = B_MUTED);
                     else cui_textf(ui, "Falhou: %s", x->err);
                 }
-                if (x->st == XF_RUN) { if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { xf_cancel(x); x->st = XF_CANCELLED; } }
-                else {
+                if (x->st == XF_OFFER) {
+                    if (cui_button(ui, "Baixar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) { char l[160]; snprintf(l, sizeof l, "{\"cmd\":\"file.accept\",\"id\":\"%s\"}", x->id); core_send(l); x->st = XF_RUN; }
+                    if (cui_button(ui, "Recusar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { xf_cancel(x); x->st = XF_CANCELLED; }
+                } else if (x->st == XF_RUN || x->st == XF_PAUSED || x->st == XF_WAIT) {
+                    if (x->st != XF_WAIT && cui_button(ui, x->st == XF_PAUSED ? "Retomar" : "Pausar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+                        char l[160]; snprintf(l, sizeof l, "{\"cmd\":\"file.pause\",\"id\":\"%s\",\"paused\":%s}", x->id, x->st == XF_PAUSED ? "false" : "true"); core_send(l);
+                        x->st = x->st == XF_PAUSED ? XF_RUN : XF_PAUSED;
+                    }
+                    if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { xf_cancel(x); x->st = XF_CANCELLED; }
+                } else {
+                    if (x->st == XF_FAILED && x->mine && x->path[0] && cui_button(ui, "Tentar de novo", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+                        char esc[2 * MAX_PATH + 8], l[2 * MAX_PATH + 48]; json_escape(x->path, esc, sizeof esc); snprintf(l, sizeof l, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc); core_send(l);
+                        free(x->th.rgba); if (x->th.tex) cui_image_destroy(ui, x->th.tex); memset(x, 0, sizeof *x);
+                    }
                     if (x->st == XF_DONE && !x->mine) {
                         if (cui_button(ui, "Abrir…", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { snprintf(g_open_path, sizeof g_open_path, "%s", x->path); g_open_dlg = true; }
                         if (cui_icon_button(ui, CUI_ICON_FOLDER, .size = CUI_SIZE_SM, .tooltip = "Mostrar na pasta")) {
@@ -210,6 +228,23 @@ void attach_overlay(cui_ctx *ui, app_state_t *s) {
     (void)s;
     cui_vec2 vp = cui_viewport_size(ui);
     float dw = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f));
+    cui_dialog(ui, "Galeria de imagens", &g_gal_dlg, .width = fminf(520.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 8, .wrap = true, .max_height = fmaxf(vp.y - 240.0f, 120.0f), .scroll_y = true) {
+            for (int i = 0; i < NXF; i++) {
+                xf_t *x = &g_xf[i]; if (!x->used || x->st != XF_DONE || !(x->th.tex || x->th.rgba)) continue;
+                cui_push_id_int(ui, 8700 + i);
+                cui_texture tx = thumb_tex(ui, &x->th);
+                cui_box(ui, .pad = 6, .gap = 4, .radius = 12, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                    cui_image(ui, tx, .width = CUI_PX((float)x->th.w * 1.4f), .height = CUI_PX((float)x->th.h * 1.4f), .radius = 8);
+                    cui_text(ui, x->name, .size = 11, .color = B_MUTED, .nowrap = true, .width = CUI_PX(130));
+                    if (x->path[0] && cui_button(ui, "Mostrar na pasta", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+                        char arg[MAX_PATH + 16]; snprintf(arg, sizeof arg, "/select,\"%s\"", x->path); ShellExecuteA(NULL, "open", "explorer.exe", arg, NULL, SW_SHOWNORMAL);
+                    }
+                }
+                cui_pop_id(ui);
+            }
+        }
+    }
     cui_dialog(ui, "Abrir arquivo recebido?", &g_open_dlg, .width = dw) {
         bool risky = risky_ext(g_open_path);
         const char *nm = strrchr(g_open_path, '\\'); nm = nm ? nm + 1 : g_open_path;
@@ -307,6 +342,7 @@ void attach_demo(app_state_t *s) {
     for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++) { unsigned char *p = l->th.rgba + (y * 64 + x) * 4; p[0] = (unsigned char)(80 + x * 2); p[1] = (unsigned char)(60 + y); p[2] = 220; p[3] = 255; }
     xf_t *a = xf_find("demo-a", true); snprintf(a->name, sizeof a->name, "relatorio-final.pdf"); a->size = 8.4 * 1048576; a->done = 3.5 * 1048576; a->st = XF_RUN; a->mine = false;
     xf_t *b = xf_find("demo-b", true); snprintf(b->name, sizeof b->name, "planilha.xlsx"); b->size = 220 * 1024; b->done = b->size; b->st = XF_DONE; b->mine = false; snprintf(b->path, sizeof b->path, "C:\\Users\\demo\\planilha.xlsx");
+    xf_t *d = xf_find("demo-d", true); snprintf(d->name, sizeof d->name, "video-ferias.mp4"); d->size = 310.0 * 1048576; d->st = XF_OFFER; d->mine = false;
     xf_t *c = xf_find("demo-c", true); snprintf(c->name, sizeof c->name, "foto.png"); c->size = 540 * 1024; c->st = XF_FAILED; snprintf(c->err, sizeof c->err, "conexão encerrada");
     snprintf(g_ty[0].name, sizeof g_ty[0].name, "Marina Costa"); g_ty[0].until = GetTickCount() + 600000;
 }

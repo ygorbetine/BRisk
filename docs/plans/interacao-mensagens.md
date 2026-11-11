@@ -70,3 +70,28 @@ Mesmo formato do web (`chat.event` v3, JSON canônico idêntico, assinatura ECDS
 - **Estados**: "enviando…" e "não enviada · reenviar" (a mensagem não some mais se a gravação falhar); "digitando" via `chat.typing` (limitado a 1 aviso/3 s). **Busca**: lupa no cabeçalho filtra as mensagens carregadas da conversa pelo texto (sem índice). Fixadas: botão "Fixadas" já existente.
 - **Testes**: `cargo test linkpreview` (6: bloqueios de URL, metatags, redirecionamentos, limites, miniatura), `cargo test filetransfer` (4: nomes, assinatura/relógio/limites, hash e fluxo inválido, limites do arquivo) e `file_attachments_travel_with_progress_integrity_limits_and_cancel` (dois nós em loopback: arquivo de 600 KB íntegro e na quarentena, progresso, miniatura de imagem, oferta forjada rejeitada, arquivo inexistente, cancelamento pelo receptor, `Ack` e `Typing`). Captura: `scripts/capturas-mensagens.ps1 -Cenarios anexos` (`BRIKS_HIDDEN=1`, `BRIKS_DEMO_ATTACH`).
 - **Não feito / não testado**: nada disso foi testado entre dois apps reais nem com um servidor https real (a busca foi testada contra servidor HTTP local com política permissiva; a política estrita foi testada só nas validações e no resolvedor); anexos só vão a quem está na mesma sala de voz e aparecem na faixa acima do campo, não dentro da conversa gravada; transferência em grupo vai a todos da sala; sem retomada; confirmação de entrega ao peer não existe na UI; a busca não olha o histórico não carregado; a faixa de anexos e o diálogo "Abrir" não foram capturados em clique.
+
+## Paridade com o chat do Electron (apps/web, só leitura) — situação
+
+Comparado com `ConversationTimeline.tsx`, `MessageComposer.tsx`, `SafeMessageContent.tsx`, `AttachmentCard.tsx` e `chat/*`:
+
+| Função do Electron | CUI agora |
+|---|---|
+| Responder, editar, excluir, reagir, fixar | feito (eventos assinados `chat.event`) |
+| Lista de fixadas | botão "Fixadas" (lista no diálogo); **sem** "ir até a mensagem" |
+| Texto: **negrito**, `código`, `[texto](url)`, links, quebras de linha | feito (`richtext.c` + `cui_markdown`; títulos/listas/itálico viram texto, como no Electron); link abre no navegador só se http(s) |
+| Menções `@nome` / `@[Nome]` com sugestões e destaque | feito (sugestões: peers da sala + amigos; destaque em negrito, não em marca colorida) |
+| Prévia de links | **melhor** que o Electron: título, descrição e miniatura buscados com segurança no core |
+| "Digitando" (1, 2 ou várias pessoas) | feito |
+| Agrupamento de mensagens consecutivas (mesmo autor, < 5 min, sem resposta) | feito (sem avatar nem nome) |
+| Anexos: oferta, **Baixar**/Recusar, pausar/retomar, cancelar, tentar de novo, verificação SHA-256, abrir/salvar | feito no core e na faixa; limite de 20 GiB igual ao Electron; recebido só abre com confirmação |
+| Galeria de imagens | feito para as imagens da sessão (diálogo com miniaturas); o Electron também inclui vídeos |
+| Outbox (mensagem espera a conexão) / confirmação de entrega (`ack`) | core: a outbox de DM e o `ack` existem e o ack agora limpa a outbox; **UI não usa** (mensagens vão pelo backend local) |
+| Histórico/sincronização entre peers (`history.request/chunk`) | **não feito** |
+| Anexos como itens da linha do tempo, persistidos por canal | **não**: faixa acima do campo, só da sessão |
+| Arrastar e soltar arquivos / vários arquivos de uma vez | **não** (um por vez pelo seletor) |
+| @nick verificado ao lado do autor | **não** |
+| Data e hora completas no cabeçalho da mensagem | só hora (HH:MM) |
+| Pré-visualização de vídeo/áudio/PDF no cartão do anexo | **não** (só miniatura de PNG/JPEG) |
+
+Testes ocultos: `briks_richtext_test` (texto, menções, URLs, agrupamento, sem janela), `cargo test linkpreview filetransfer file_attachments signed_chat` e capturas com `BRIKS_HIDDEN=1`.

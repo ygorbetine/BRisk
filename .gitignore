@@ -12,3 +12,4 @@ release/
 apps/desktop-cui/backend/
 .briks/
 .DS_Store
+apps/desktop-cui/portable-teste/

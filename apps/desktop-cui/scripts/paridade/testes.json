@@ -1,4 +1,4 @@
-﻿{
+{
   "_ajuda": "Cada caso abre o app OCULTO no modo demo, roda o roteiro e compara capturas: esperado 'muda' = a tela mudou (a ação teve efeito visível); 'igual' = não mudou (voltou ao estado anterior ou o controle é inerte). Itens PRESENTE-SEM-EFEITO só usam 'igual'.",
   "casos": [
     { "id": "auth-a", "demo": "login", "roteiro": "auth-a.txt", "checagens": [

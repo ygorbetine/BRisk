@@ -20,4 +20,6 @@ bool rich_apply_mention(char *draft, size_t cap, const char *name);
 bool rich_group_with_prev(const char *prev_author, long long prev_ms, const char *author, long long ms, bool has_reply);
 /* "2026-11-09T23:41:00.000Z" -> milissegundos desde 1970 (UTC); -1 se inválido. */
 long long rich_iso_ms(const char *iso);
+/* O texto menciona esta pessoa? "@nick", "@nome" ou "@[Nome com espaço]" (sem diferenciar maiúsculas); null/vazio é ignorado. */
+bool rich_mentions_me(const char *text, const char *name, const char *nick);
 #endif

@@ -142,14 +142,42 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
 }
 
 /* ---------- enviar anexo ---------- */
-void attach_pick(app_state_t *s) {
-    if (core_state() != CORE_READY || !s->in_room) { snprintf(s->notice, sizeof s->notice, "Entre numa sala de voz para enviar anexos aos participantes."); return; }
-    char path[MAX_PATH] = "";
-    cui_file_dialog_opts o = { .kind = CUI_FILE_OPEN, .title = "Enviar arquivo" };
-    if (!cui_app_file_dialog(s->app, &o, path, sizeof path) || !path[0]) return;
-    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 48]; json_escape(path, esc, sizeof esc);
+#define MAX_SEND_BATCH 10   /* arquivos por seleção/soltura; o resto é ignorado com aviso */
+static void send_path(app_state_t *s, const char *path) {
+    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 48]; (void)s;
+    json_escape(path, esc, sizeof esc);
     snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc);
     core_send(line);
+}
+static bool can_send(app_state_t *s) {
+    if (core_state() != CORE_READY || !s->in_room) { snprintf(s->notice, sizeof s->notice, "Entre numa sala de voz para enviar anexos aos participantes."); return false; }
+    return true;
+}
+/* seletor nativo com seleção múltipla (o Electron aceitava vários arquivos de uma vez) */
+void attach_pick(app_state_t *s) {
+    if (!can_send(s)) return;
+    static char buf[32768]; buf[0] = 0;
+    OPENFILENAMEA o; memset(&o, 0, sizeof o);
+    o.lStructSize = sizeof o; o.hwndOwner = GetActiveWindow(); o.lpstrFile = buf; o.nMaxFile = sizeof buf;
+    o.lpstrTitle = "Enviar arquivos"; o.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameA(&o)) return;
+    const char *dir = buf, *p = buf + strlen(buf) + 1; int n = 0;
+    if (!*p) { send_path(s, dir); return; }                        /* um arquivo só: buf já é o caminho completo */
+    for (; *p; p += strlen(p) + 1) {
+        if (n++ >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; envie o resto em outra seleção.", MAX_SEND_BATCH); break; }
+        char full[MAX_PATH]; snprintf(full, sizeof full, "%s/%s", dir, p); send_path(s, full);
+    }
+}
+/* arquivos soltos na janela (WM_DROPFILES → cui_dropped_file); pastas são ignoradas */
+static void take_drops(cui_ctx *ui, app_state_t *s) {
+    int n = cui_dropped_file_count(ui); if (n <= 0 || !can_send(s)) return;
+    int sent = 0;
+    for (int i = 0; i < n; i++) {
+        const char *p = cui_dropped_file(ui, i); if (!p || !*p) continue;
+        DWORD at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (sent >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; solte o resto de novo.", MAX_SEND_BATCH); break; }
+        send_path(s, p); sent++;
+    }
 }
 
 static void xf_cancel(const xf_t *x) { char line[160]; snprintf(line, sizeof line, "{\"cmd\":\"file.cancel\",\"id\":\"%s\"}", x->id); core_send(line); }
@@ -167,7 +195,7 @@ static bool risky_ext(const char *p) {
 }
 
 void attach_strip(cui_ctx *ui, app_state_t *s) {
-    (void)s;
+    take_drops(ui, s);
     bool any = false; for (int i = 0; i < NXF; i++) if (g_xf[i].used) any = true;
     if (!any) return;
     int imgs = 0; for (int i = 0; i < NXF; i++) if (g_xf[i].used && g_xf[i].st == XF_DONE && (g_xf[i].th.tex || g_xf[i].th.rgba)) imgs++;

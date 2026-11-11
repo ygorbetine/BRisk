@@ -389,6 +389,11 @@ void settings_text_step(cui_ctx *ui, int delta);   /* settings.c: Ctrl+mais/meno
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
+/* Microfone riscado: a fonte de ícones do CUI é um subconjunto sem o glifo mic-off, então briks_icon desenha o microfone e um traço diagonal por cima.
+   BRIKS_ICON_MIC_OFF é só um marcador para briks_icon (não é um glifo). */
+#define BRIKS_ICON_MIC_OFF "briks:mic-off"
+void briks_icon(cui_ctx *ui, const char *icon, float size, cui_color color);   /* cui_icon + ícones compostos do Briks */
+float titlebar_height(void);   /* titlebar.c: 36 px, ou 0 em tela cheia */
 bool dock_has_panel(int kind);   /* o painel está no layout atual? */
 int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
 int script_probe(const char *name);

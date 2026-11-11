@@ -44,6 +44,7 @@ void titlebar_action(int a) {
 static bool g_fullscreen;
 void titlebar_set_fullscreen(bool on) { g_fullscreen = on; }
 bool titlebar_fullscreen(void) { return g_fullscreen; }
+float titlebar_height(void) { return g_fullscreen ? 0.0f : (float)TB_H; }   /* altura (lógica) que a barra ocupa no topo do quadro: quem posiciona por coordenada absoluta desconta isto */
 
 /* Resultado do WM_NCHITTEST para um ponto em pixels de tela relativos ao canto da janela (cx, cy) numa janela w x h. Puro: serve ao roteiro de teste. */
 int titlebar_hit(int cx, int cy, int w, int h, bool maximized, float sc) {

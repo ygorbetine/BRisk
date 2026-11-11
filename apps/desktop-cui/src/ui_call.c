@@ -189,7 +189,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .hoverable = true, .dir = CUI_ROW, .gap = sm ? 5 : 7, .pad_x = sm ? 9 : 12, .pad_y = sm ? 5 : 8, .align = CUI_ALIGN_CENTER });
             {
                 const float ts = sm ? 12.0f : 14.0f;
-                if (muted) cui_icon(ui, CUI_ICON_VOLUME_X, ts, B_DANGER);
+                if (muted) briks_icon(ui, BRIKS_ICON_MIC_OFF, ts, B_DANGER);
                 if (t->by_me) cui_icon(ui, CUI_ICON_VOLUME_X, ts, B_MUTED);
                 if (t->live) cui_icon(ui, CUI_ICON_MONITOR, ts, B_ONLINE);
                 char lab[160];
@@ -256,7 +256,7 @@ static bool pill(cui_ctx *ui, int id, const char *icon, const char *label, int k
     cui_color fg = kind == 2 ? CUI_RGB(0xffffff) : kind == 1 ? CUI_RGB(0x7be8a8) : B_TEXT;
     cui_box(ui, .id = "b", .dir = CUI_ROW, .gap = 8, .pad_x = label ? 18 : 0, .width = label ? CUI_FIT : CUI_PX(50), .height = CUI_PX(50), .radius = 25, .bg = bg, .border = 1, .border_color = bd,
             .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-        cui_icon(ui, icon, 18, fg);
+        briks_icon(ui, icon, 18, fg);
         if (label) cui_text(ui, label, .font = CUI_FONT_DISPLAY, .size = 15, .color = fg, .nowrap = true);
     }
     if (tip && briks_hover(ui, "b")) briks_tip(tip);
@@ -524,7 +524,7 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
     cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = compact ? 8 : 10, .pad = compact ? 10 : 14, .radius = compact ? 30 : 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
             .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .wrap = true, .max_width = vw - 16.0f) {
         const bool mic_eff = s->mic_on && !s->deaf;
-        if (pill(ui, 1, CUI_ICON_MIC, compact ? NULL : "Microfone", mic_eff ? 1 : 0, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {
+        if (pill(ui, 1, mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, compact ? NULL : "Microfone", mic_eff ? 1 : 2, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {   /* desligado: vermelho e riscado */
             if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); }   /* ligar o mic sai do modo ensurdecido */
             else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
         }
@@ -640,7 +640,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 } else {
                     /* tamanho do palco a partir da janela (menos a faixa de 3 px do topo), nunca de uma caixa medida: os blocos têm tamanho fixo em px,
                        então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
-                    const float rw = vp.x, rh = vp.y - 4.0f;
+                    const float rw = vp.x, rh = vp.y - 4.0f - titlebar_height();   /* desconta a barra de título própria: sem isto o palco passava da base da janela e a barra de controles saía cortada */
                     float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + bar_h) - pad * 2;
                     if (s->net_failed) H -= 78.0f;                               /* faixa "não foi possível entrar pelo servidor" */
                     if (s->in_room && s->rtc_overflow > 0) H -= 46.0f;           /* faixa "+N pessoas fora da grade" */

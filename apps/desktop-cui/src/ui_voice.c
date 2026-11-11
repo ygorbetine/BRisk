@@ -46,7 +46,7 @@ static void person_card(cui_ctx *ui, app_state_t *s, int slot, bool me) {
                 else if (level > 0) cui_text(ui, "Falando", .size = 11, .color = B_ONLINE, .nowrap = true);
             }
             if (deaf) cui_icon(ui, CUI_ICON_VOLUME_X, 15, B_DANGER);
-            else if (mic_off) cui_icon(ui, CUI_ICON_MIC, 15, B_DANGER);
+            else if (mic_off) briks_icon(ui, BRIKS_ICON_MIC_OFF, 15, B_DANGER);
         }
         if (!me) {
             if (!P.vol_set) { P.vol_set = true; P.volume = 100.0f; }
@@ -90,8 +90,12 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
     }
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 10, .gap = 8, .justify = CUI_JUSTIFY_CENTER, .align = CUI_ALIGN_CENTER) {
         bool mic_eff = s->mic_on && !s->deaf;
-        if (cui_icon_button(ui, CUI_ICON_MIC, .variant = mic_eff ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .tooltip = mic_eff ? "Silenciar microfone" : "Ligar microfone")) {
-            if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
+        {   /* botão do microfone: ligado = primário; desligado = vermelho com o ícone riscado (caixa própria: o botão do CUI só aceita glifo) */
+            cui_box(ui, .id = "vmic", .width = CUI_PX(36), .height = CUI_PX(36), .radius = 12, .bg = mic_eff ? B_C3 : CUI_RGB(0xe95555), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                briks_icon(ui, mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, 16, CUI_RGB(0xffffff));
+            }
+            if (briks_hover(ui, "vmic")) briks_tip(mic_eff ? "Silenciar microfone" : "Ligar microfone");
+            if (briks_clicked_r(ui, "vmic", 12.0f)) { if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); } }
         }
         if (cui_icon_button(ui, CUI_ICON_VOLUME_X, .variant = s->deaf ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .tooltip = s->deaf ? "Voltar a ouvir" : "Ensurdecer")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
         if (cui_button(ui, "Abrir chamada", .variant = CUI_BUTTON_SECONDARY)) s->screen = SCREEN_CALL;
@@ -102,9 +106,9 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
 /* Mini-painel "Voz conectada" (rodapé do menu lateral): aparece só dentro de uma sala. Clicar no texto abre a chamada;
    os três ícones são microfone, fone (ensurdecer) e desligar. Painel estreito: ficam só os ícones. */
 static bool mini_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip, int kind /*0 normal 1 ligado 2 desligado/perigo*/) {
-    cui_color bg = kind == 2 ? CUI_RGBA(0xe9555530) : kind == 1 ? CUI_RGBA(0x57d28b26) : CUI_RGBA(0xffffff12);
-    cui_color fg = kind == 2 ? CUI_RGB(0xff9a9a) : kind == 1 ? CUI_RGB(0x7be8a8) : B_TEXT;
-    cui_box(ui, .id = id, .width = CUI_PX(30), .height = CUI_PX(30), .radius = 15, .bg = bg, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, icon, 15, fg); }
+    cui_color bg = kind == 2 ? CUI_RGB(0xe95555) : kind == 1 ? CUI_RGBA(0x57d28b26) : CUI_RGBA(0xffffff12);   /* 2 = vermelho de perigo cheio (microfone desligado, ensurdecido, sair) */
+    cui_color fg = kind == 2 ? CUI_RGB(0xffffff) : kind == 1 ? CUI_RGB(0x7be8a8) : B_TEXT;
+    cui_box(ui, .id = id, .width = CUI_PX(30), .height = CUI_PX(30), .radius = 15, .bg = bg, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { briks_icon(ui, icon, 15, fg); }
     if (briks_hover(ui, id)) briks_tip(tip);
     return briks_clicked_r(ui, id, 15.0f);   /* círculo de 30 px */
 }
@@ -134,7 +138,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
                 if (briks_hover(ui, "open")) briks_tip((bad || reconn) && s->rtc_msg[0] ? s->rtc_msg : "Abrir a chamada");
                 if (briks_clicked_r(ui, "open", 10.0f)) s->screen = SCREEN_CALL;
             }
-            if (mini_icon(ui, "mic", CUI_ICON_MIC, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {
+            if (mini_icon(ui, "mic", mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {
                 if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
             }
             if (mini_icon(ui, "deaf", s->deaf ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala", s->deaf ? 2 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }

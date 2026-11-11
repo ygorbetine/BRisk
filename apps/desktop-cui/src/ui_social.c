@@ -22,6 +22,20 @@ static void initials(const char *name, char *out) {
  * g_panel_w é a largura atual do painel (dock.c). Texto sempre medido com a fonte real e cortado com reticências antes da borda. */
 float g_panel_w = 76, g_tools_w;
 char g_tip[160];
+typedef struct { cui_color c; } slash_t;
+static void slash_paint(cui_ctx *ui, cui_rect r, void *user) {   /* traço diagonal do canto de cima-esquerda ao de baixo-direita, com as pontas recuadas */
+    const slash_t *q = (const slash_t *)user; float m = r.w * 0.10f, t = fmaxf(1.6f, r.w * 0.105f);
+    cui_draw_line(ui, (cui_vec2){ r.x + m, r.y + m }, (cui_vec2){ r.x + r.w - m, r.y + r.h - m }, t, q->c);
+}
+void briks_icon(cui_ctx *ui, const char *icon, float size, cui_color color) {
+    if (icon && !strcmp(icon, BRIKS_ICON_MIC_OFF)) {
+        slash_t q = { color };
+        cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(size), .height = CUI_PX(size), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+            cui_icon(ui, CUI_ICON_MIC, size, color);
+            cui_canvas(ui, "slash", CUI_PX(size), CUI_PX(size), slash_paint, &q, sizeof q);
+        }
+    } else cui_icon(ui, icon, size, color);
+}
 static void hot_paint(cui_ctx *ui, cui_rect r, void *user) {
     (void)r; const float *q = (const float *)user;
     if (q[2] <= 0) return;
@@ -460,7 +474,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
 
 static void panel_servers(cui_ctx *ui, app_state_t *s) {
     bool wide = g_panel_w >= 110.0f;
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad_x = 10, .pad_y = 12, .gap = 10, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .pad_x = 10, .pad_top = 24, .pad_bottom = 12, .gap = 10, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,   /* 24 px no topo: faixa para arrastar o painel */
                 .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = wide ? CUI_ALIGN_START : CUI_ALIGN_CENTER) {
             int click = -1;
             space_button(ui, "B", "Briks", "Início", s->active_space == 0, false, &click, 0);

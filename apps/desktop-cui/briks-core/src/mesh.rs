@@ -46,6 +46,8 @@ pub enum MeshEvent {
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
     /// Evento de chat assinado (reação, edição, exclusão, resposta, fixação) já verificado; `local` = criado por mim.
     ChatEvent { from_fp: String, wire: Value, local: bool },
+    /// Snapshot de grupo assinado recebido de um peer autenticado (estrutura e assinatura conferidas; a autorização é de `group.verify`).
+    GroupSnapshot { from_fp: String, snapshot: Value },
     /// `peer_id` = "me" para o microfone local; `level` 0..1 (0 = parou).
     Speaking { peer_id: String, level: f32 },
     /// Estado de microfone/ensurdecido anunciado pelo peer (autenticado).
@@ -81,6 +83,8 @@ pub enum MeshCmd {
     Chat { to_fp: String, text: String },
     /// Assina e envia um evento de chat (`chat.event` v3) a todos os peers autenticados da sala.
     Event { channel: String, target: String, action: String, content: Option<String>, reference: Option<String>, emoji: Option<String> },
+    /// Envia um snapshot de grupo (já assinado) a todos os peers autenticados da sala.
+    GroupSend { snapshot: Value },
     /// Só para testes: envia JSON cru a todos os peers autenticados (para provar rejeições).
     #[cfg(test)]
     RawDc { text: String },
@@ -178,6 +182,7 @@ struct Actor {
     seen_msgs: HashSet<String>,
     ev_last_ts: u64,                // relógio monotônico dos meus eventos de chat
     seen_events: HashSet<String>,
+    seen_groups: HashSet<String>,
     audio: Option<Arc<Audio>>,
     audio_rx: Option<mpsc::Receiver<AudioEvent>>,
     joined: HashMap<String, u64>,   // peerId -> joinedAt da presença
@@ -202,7 +207,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), ev_last_ts: 0, seen_events: HashSet::new(), seen_groups: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -457,6 +462,11 @@ impl Actor {
                     }
                     Err(er) => self.emit(MeshEvent::Error(format!("evento inválido: {er}"))).await,
                 }
+            }
+            MeshCmd::GroupSend { snapshot } => {
+                let wire = json!({ "version": 1, "type": "group.snapshot", "snapshot": snapshot });
+                let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
+                for id in ids { self.dc_send(&id, wire.clone()).await; }
             }
             #[cfg(test)]
             MeshCmd::RawDc { text } => {
@@ -787,6 +797,16 @@ impl Actor {
                             self.emit(MeshEvent::ChatEvent { from_fp: fp, wire: crate::chat_events::to_wire(&e), local: false }).await;
                         }
                     }
+                }
+            }
+            "group.snapshot" => {
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+                let Ok(s) = serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) else { return };   // formato desconhecido: ignora
+                if let Err(why) = crate::group_sync::verify_wire(&s, &fp) { self.emit(MeshEvent::Error(format!("grupo rejeitado: {why}"))).await; return; }
+                if self.seen_groups.len() > 1024 { self.seen_groups.clear(); }
+                if self.seen_groups.insert(s.signature.clone()) {
+                    self.emit(MeshEvent::GroupSnapshot { from_fp: fp, snapshot: v["snapshot"].clone() }).await;
                 }
             }
             "room.kick" | "room.allow" => {

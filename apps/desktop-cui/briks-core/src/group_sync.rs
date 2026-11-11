@@ -173,6 +173,16 @@ pub fn accept(trusted: Option<&Snapshot>, incoming: &Snapshot, my_fp: &str) -> R
     Ok(Decision::Update)
 }
 
+/// Checagem que o mesh faz ao receber um snapshot pelo DataChannel: estrutura + assinatura + o signatário é quem está do outro lado (já autenticado).
+/// A autorização de verdade (versão, administrador, dono) é de `accept`, que precisa do estado já confiado e roda quando a UI chama `group.verify`.
+pub fn verify_wire(s: &Snapshot, peer_fp: &str) -> Result<()> {
+    check_structure(s)?;
+    if s.signer_fp != peer_fp { return Err(anyhow!("o snapshot não foi assinado por quem o enviou")); }
+    let signer = s.members.iter().find(|m| m.fp == s.signer_fp).and_then(|m| m.jwk.clone()).ok_or_else(|| anyhow!("assinatura sem chave"))?;
+    if !verify(&signer, &canonical(s), &s.signature) { return Err(anyhow!("assinatura inválida")); }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

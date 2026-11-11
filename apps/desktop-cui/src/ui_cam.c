@@ -164,14 +164,21 @@ void cam_tick(cui_ctx *ui, app_state_t *s) {
     }
     if (!s->in_room && (C.active || C.starting)) { C.active = C.starting = false; fv_close(&g_fv[FV_ME]); }
     /* teste das Configurações: só com a tela aberta na aba Voz e vídeo; ao sair, para (a luz apaga) */
-    if (C.prev_want && !settings_cam_tab_visible(s)) cam_preview_set(false);
+    /* gancho de captura: BRIKS_DEV_CAM=preview (teste em Configurações) | tile (a prévia aparece no meu bloco da chamada) */
+    static const char *dev; static bool dev_init; if (!dev_init) { dev_init = true; dev = getenv("BRIKS_DEV_CAM"); }
+    if (dev && !C.prev_want) { static int once; if (!once) { once = 1; cam_preview_set(true); } }
+    if (C.prev_want && !settings_cam_tab_visible(s) && !dev) cam_preview_set(false);
     if (C.active || C.prev_on) cui_request_redraw(ui);
 }
 
 /* Textura do vídeo de um bloco: slot de peer (0..7) ou SLOT_ME (eu). false = sem imagem (mostra o avatar). */
 bool cam_frame(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h) {
     if (slot == BRIKS_MAX_PEERS + 1) {   /* SLOT_ME */
-        if (!C.active) return false;
+        if (!C.active) {   /* só para capturas de tela: BRIKS_DEV_CAM=tile mostra a prévia do teste no meu bloco */
+            const char *d = getenv("BRIKS_DEV_CAM");
+            if (!(d && !strcmp(d, "tile") && C.prev_on && fv_update(ui, s, &g_fv[FV_TEST], C.prev_path))) return false;
+            *tex = g_fv[FV_TEST].tex; *w = g_fv[FV_TEST].w; *h = g_fv[FV_TEST].h; return true;
+        }
         char p[320]; video_dir(p, sizeof p); strcat(p, "\\cam-preview.bin");
         if (!fv_update(ui, s, &g_fv[FV_ME], p)) return false;
         *tex = g_fv[FV_ME].tex; *w = g_fv[FV_ME].w; *h = g_fv[FV_ME].h; return true;

@@ -336,18 +336,10 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_slider(ui, "##cfg-invol", &g_set.in_vol, 0, 100);
                         sub(ui, "O ganho vale na hora, na sua voz que sai para a sala.");
                     }
-                    SCARD(ui, "SAÍDA") {
-                        cui_text(ui, "Saída de som", .size = 12, .color = B_MUTED);
-                        cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
-                        sub(ui, "Vale na hora para as vozes da sala. Se o aparelho sumir, volta ao padrão do sistema.");
-                        cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
-                        cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
-                        sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
-                    }
                     SCARD(ui, "CÂMERA") {
                         static const char *cam_ptr[9]; static int cam_sel;
                         const int nd = cam_dev_count();
-                        cam_ptr[0] = nd ? "Câmera padrão do sistema" : cam_devs_loaded() ? "Nenhuma câmera encontrada" : "Procurando câmeras…";
+                        cam_ptr[0] = nd ? "Câmera padrão" : cam_devs_loaded() ? "Nenhuma câmera encontrada" : "Procurando câmeras…";
                         for (int i = 0; i < nd && i < 8; i++) cam_ptr[i + 1] = cam_dev_name(i);
                         cam_sel = 0; for (int i = 0; g_set.cam_name[0] && i < nd; i++) if (!strcmp(cam_dev_name(i), g_set.cam_name)) cam_sel = i + 1;
                         const int before_sel = cam_sel;
@@ -366,6 +358,14 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         else if (nd == 0 && cam_devs_loaded()) cui_text(ui, "Não encontramos uma câmera neste computador.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
                         else sub(ui, cam_active() ? "Sua câmera já está ligada na chamada: esta é a imagem que sai." : "A imagem aparece só para você. Nada é gravado nem enviado; para sozinho ao sair desta tela.");
                         if (cam_preview_wanted()) cui_request_wakeup(ui, 0.05f);
+                    }
+                    SCARD(ui, "SAÍDA") {
+                        cui_text(ui, "Saída de som", .size = 12, .color = B_MUTED);
+                        cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
+                        sub(ui, "Vale na hora para as vozes da sala. Se o aparelho sumir, volta ao padrão do sistema.");
+                        cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
+                        cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
+                        sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
                     }
                     SCARD(ui, "PROCESSAMENTO") {
                         static const char *NZ[] = { "Padrão", "Desligada" };

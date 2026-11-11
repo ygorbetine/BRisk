@@ -531,7 +531,7 @@ impl Actor {
                         for pk in pkts {
                             let any = pk.as_any();
                             let mut n = net.lock().unwrap();
-                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0 });
+                            let e = n.peers.entry(pid.clone()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0, rx: None });
                             if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
                                 e.plis += 1; idr2.store(true, std::sync::atomic::Ordering::Relaxed);
                             } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
@@ -594,6 +594,12 @@ impl Actor {
 
     /// Eventos do emissor (thread de captura/codificação) e do receptor.
     async fn on_share_event(&mut self, mut v: Value) {
+        // retorno do receptor local para o emissor remoto: segue pelo DataChannel e não vai para a UI
+        if v["ev"] == "share.fb" {
+            let peer = v["peer_id"].as_str().unwrap_or("").to_string();
+            if self.peers.get(&peer).map(|p| p.proven && p.sent_proof) == Some(true) { self.dc_send(&peer, json!({ "version": 2, "type": "share.fb", "kbps": v["kbps"] })).await; }
+            return;
+        }
         // eventos de um emissor antigo (já parado) chegam atrasados: ignora
         if let Some(g) = v["gen"].as_u64() { if self.share.as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share.is_none()) { return; } }
         if let Some(sh) = &self.share {
@@ -766,6 +772,12 @@ impl Actor {
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
+            }
+            "share.fb" => {
+                // o espectador informa quanto está recebendo: piso para os cortes do laço de adaptação
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                let kbps = v["kbps"].as_f64().unwrap_or(0.0).clamp(0.0, 100_000.0);
+                if let Some(e) = self.net.lock().unwrap().peers.get_mut(peer) { e.rx = Some((kbps * 1000.0, std::time::Instant::now())); }
             }
             "share.reneg" => {
                 // o outro lado ligou faixas novas e precisa que eu (o iniciador) faça a offer. Sem faixa minha para aquele tipo de

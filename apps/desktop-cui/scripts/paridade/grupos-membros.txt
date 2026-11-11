@@ -1,0 +1,24 @@
+# Grupos: painel Membros do dock (BRIKS_DOCK=added, BRIKS_DEMO_GDUP=1, demo group; dono). Cargos, tornar admin, remover com confirmação, limpar duplicados.
+waitms 600
+expect grp_nm 5
+expect grp_dups 1
+expect grp_nadmin 2
+snap gm0
+tap 985 423
+snap gm1
+expect grp_dups 0
+expect grp_nm 4
+tap 1234 277
+snap gm2
+tap 1160 353
+snap gm3
+expect grp_nadmin 2
+tap 1234 335
+tap 1160 443
+snap gm4
+expect grp_memrm_open 1
+expect grp_nm 4
+tap 750 475
+snap gm5
+expect grp_nm 3
+expect grp_memrm_open 0

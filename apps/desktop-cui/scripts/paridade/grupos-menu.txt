@@ -1,0 +1,30 @@
+# Grupos: entrar por convite (tile da barra de grupos), Personalizar e Sair/Apagar pelo menu de contexto. Demo group (dono).
+waitms 600
+tap 60 262
+snap gn0
+expect grp_join_open 1
+key esc
+waitms 400
+at 380 432
+rdown
+rup
+at 380 432
+waitms 500
+tap 490 581
+snap gn1
+expect grp_gren_open 1
+tap 640 329
+type X
+tap 800 633
+snap gn2
+expect grp_gren_open 0
+expect grp_namelen 15
+at 380 279
+rdown
+rup
+at 380 279
+waitms 500
+shot gn2b
+tap 480 474
+snap gn3
+expect grp_leave_open 1

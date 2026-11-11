@@ -92,4 +92,6 @@ mod tests_sfurede;
 #[cfg(test)]
 mod tests_sfuipc;
 #[cfg(test)]
+mod tests_sfuproc;
+#[cfg(test)]
 mod tests_sfu;

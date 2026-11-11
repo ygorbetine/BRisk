@@ -26,7 +26,7 @@ static void hot_paint(cui_ctx *ui, cui_rect r, void *user) {
     (void)r; const float *q = (const float *)user;
     if (q[2] <= 0) return;
     cui_rect z = { q[0], q[1], q[2], q[3] };
-    cui_draw_rect(ui, z, CUI_CORNERS(fminf(12.0f, q[3] * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
+    cui_draw_rect(ui, z, CUI_CORNERS(fminf(q[5], fminf(q[2], q[3]) * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
 }
 /* Dentro de diálogo/menu a camada de baixo fica coberta: aqui só o cursor de mão; o realce é do próprio item (menus de Configurações e Perfil). */
 void briks_hot_modal_draw(cui_ctx *ui) { if (g_hot_on) { cui_set_cursor(ui, CUI_CURSOR_HAND); g_hot_on = false; } }
@@ -35,16 +35,17 @@ void briks_tip_draw(cui_ctx *ui) {
         g_hot_on = false;
         cui_set_cursor(ui, CUI_CURSOR_HAND);
         if (g_hot[2] * g_hot[3] < 70000.0f) {   /* cartões/áreas grandes: só o cursor */
-            float q[5] = { g_hot[0], g_hot[1], g_hot[2], g_hot[3], cui_mouse_down(ui, CUI_MOUSE_LEFT) ? 1.0f : 0.0f };
+            float q[6] = { g_hot[0], g_hot[1], g_hot[2], g_hot[3], cui_mouse_down(ui, CUI_MOUSE_LEFT) ? 1.0f : 0.0f, g_hot[4] };
             cui_canvas(ui, "briks-hot", CUI_FILL, CUI_FILL, hot_paint, q, sizeof q);
         }
     }
     if (!g_tip[0]) return;
     cui_vec2 vp = cui_viewport_size(ui), m = cui_mouse_pos(ui);
     cui_text_metrics tm = cui_measure_text(ui, CUI_FONT_BODY, 12.0f, g_tip, (int)strlen(g_tip));
-    float w = fminf(tm.width, 320.0f) + 24, h = 28, x = m.x + 14, y = m.y + 20;
+    /* folga na medida: a largura medida ficava um pouco menor que a desenhada e o fim da dica virava reticências */
+    float w = fminf(tm.width * 1.05f + 4.0f, 360.0f) + 26, h = 28, x = m.x + 14, y = m.y + 20;
     if (x + w + 6 > vp.x) x = m.x - w - 8;
-    if (y + h + 6 > vp.y) y = m.y - h - 10;
+    if (y + h + 6 > vp.y || m.y > vp.y * 0.72f) y = m.y - h - 12;   /* perto do rodapé (painel de voz, barra de mensagem): a dica sobe em vez de cobrir o que está embaixo */
     x = fmaxf(x, 6); y = fmaxf(y, 6);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
         cui_box(ui, .width = CUI_PX(w), .height = CUI_PX(h), .radius = 14, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xffffff30), .clip = true,

@@ -335,7 +335,7 @@ impl Actor {
     }
 
     fn rtc_config(&self) -> RTCConfiguration {
-        RTCConfiguration { ice_servers: self.cfg.ice_servers.clone(), ..Default::default() }
+        RTCConfiguration { ice_servers: crate::netmode::ice_servers(&self.cfg.ice_servers), ..Default::default() }
     }
 
     async fn new_pc(&mut self, peer_id: &str, gen: u32, recv: Arc<RecvState>) -> Result<Arc<RTCPeerConnection>> {
@@ -356,6 +356,7 @@ impl Actor {
         // desiste mais cedo de uma conexão sem resposta (padrão: ~30 s para falhar): a malha refaz o par sozinha (`Reconnect`), então
         // depois de uma queda longa a transmissão volta em ~10 s em vez de ~30 s
         se.set_ice_timeouts(Some(std::time::Duration::from_secs(4)), Some(std::time::Duration::from_secs(8)), Some(std::time::Duration::from_secs(2)));
+        crate::netmode::apply(&mut se);
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
         {

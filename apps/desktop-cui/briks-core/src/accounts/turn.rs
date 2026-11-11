@@ -38,6 +38,7 @@ impl TurnCache {
 
 /// Pede as credenciais. Erro = frase curta sem dados sensíveis (só diagnóstico; a UI não a mostra).
 pub fn fetch(base: &str, anon_key: &str, access_token: &str) -> Result<(Vec<RTCIceServer>, u64, u64), String> {
+    if let Some(m) = crate::netmode::deny_url(base) { return Err(m); }
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout(Duration::from_secs(10)).redirects(0).build();
     let r = agent.get(&format!("{}/functions/v1/turn-credentials", base.trim_end_matches('/')))
         .set("apikey", anon_key).set("Authorization", &format!("Bearer {access_token}")).set("Accept", "application/json")

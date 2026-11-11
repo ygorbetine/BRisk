@@ -26,7 +26,7 @@ foreach ($d in $Demos) { foreach ($t in $Tamanhos) { foreach ($p in $Perfs) { fo
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $exe; $psi.WorkingDirectory = (Split-Path $exe); $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $e = $psi.EnvironmentVariables
-    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = $d; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = $t
+    $e["BRIKS_NET_LOOPBACK_ONLY"] = "1"; $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = $d; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = $t
     $e["BRIKS_PERF"] = $p; $e["BRIKS_TEXT_SIZE"] = "$x"
     $e["CUI_SCREENSHOT"] = (Join-Path $Out "$nome.png"); $e["CUI_SCREENSHOT_FRAMES"] = "30"
     $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"

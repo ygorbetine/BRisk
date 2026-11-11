@@ -21,7 +21,7 @@ function Novo-Psi($w, $roteiro, $extra) {
     $psi.FileName = $Exe; $psi.WorkingDirectory = $buildDir; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardError = $true
     $e = $psi.EnvironmentVariables
-    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "social"; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
+    $e["BRIKS_NET_LOOPBACK_ONLY"] = "1"; $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "social"; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
     $e["BRIKS_SCRIPT_SHOTS"] = "1"; $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"
     $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")
     $e["BRIKS_SETTINGS_FILE"] = (Join-Path $w "settings.cfg"); $e["BRIKS_GRADIENTS_FILE"] = (Join-Path $w "grad.json")

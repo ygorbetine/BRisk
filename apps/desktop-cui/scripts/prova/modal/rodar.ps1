@@ -3,7 +3,7 @@ param([switch]$SemRegra)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $exe = Join-Path $root 'build\briks_cui.exe'
-$env:BRIKS_HIDDEN = '1'; $env:BRIKS_SCRIPT_SHOTS = '1'; $env:BRIKS_DEV_AUTH = '1'; $env:BRIKS_DEMO = 'social'; $env:BRIKS_DOCK = 'default'
+$env:BRIKS_NET_LOOPBACK_ONLY = "1"; $env:BRIKS_HIDDEN = '1'; $env:BRIKS_SCRIPT_SHOTS = '1'; $env:BRIKS_DEV_AUTH = '1'; $env:BRIKS_DEMO = 'social'; $env:BRIKS_DOCK = 'default'
 if ($SemRegra) { $env:BRIKS_TEST_NO_MODAL = '1' } else { Remove-Item Env:BRIKS_TEST_NO_MODAL -ErrorAction SilentlyContinue }
 $fail = 0
 foreach ($t in @(@('perfil','profile','social'), @('config','settings:2','social'), @('seletor','','social'), @('contexto','','call'))) {

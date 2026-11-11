@@ -63,7 +63,7 @@ fn big_socket() -> Option<UdpSocket> {
     let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).ok()?;
     let _ = s.set_recv_buffer_size(4 << 20);
     let _ = s.set_send_buffer_size(4 << 20);
-    s.bind(&"0.0.0.0:0".parse::<SocketAddr>().ok()?.into()).ok()?;
+    s.bind(&(if crate::netmode::loopback_only() { "127.0.0.1:0" } else { "0.0.0.0:0" }).parse::<SocketAddr>().ok()?.into()).ok()?;
     s.set_nonblocking(true).ok()?;
     UdpSocket::from_std(s.into()).ok()
 }

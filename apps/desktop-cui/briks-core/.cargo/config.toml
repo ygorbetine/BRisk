@@ -1,0 +1,4 @@
+# Testes e execucoes via cargo: so loopback, sem aviso do Firewall do Windows (docs/plans/testes-rede-local.md).
+# Para rede real: BRIKS_NET_LOOPBACK_ONLY=0 (ou BRIKS_TEST_REAL_NET=1 nos testes marcados). Nao afeta o exe instalado.
+[env]
+BRIKS_NET_LOOPBACK_ONLY = "1"

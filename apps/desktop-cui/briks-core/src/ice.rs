@@ -176,8 +176,10 @@ pub async fn probe(servers: Vec<RTCIceServer>, timeout: Duration) -> Value {
     let counts = std::sync::Arc::new(std::sync::Mutex::new([0u32; 3]));   // host, srflx, relay
     let done = std::sync::Arc::new(tokio::sync::Notify::new());
     let run = async {
-        let api = webrtc::api::APIBuilder::new().build();
-        let pc = api.new_peer_connection(webrtc::peer_connection::configuration::RTCConfiguration { ice_servers: servers, ..Default::default() }).await?;
+        let mut se = webrtc::api::setting_engine::SettingEngine::default();
+        crate::netmode::apply(&mut se);
+        let api = webrtc::api::APIBuilder::new().with_setting_engine(se).build();
+        let pc = api.new_peer_connection(webrtc::peer_connection::configuration::RTCConfiguration { ice_servers: crate::netmode::ice_servers(&servers), ..Default::default() }).await?;
         let (c2, d2) = (counts.clone(), done.clone());
         pc.on_ice_candidate(Box::new(move |c| {
             match c {
@@ -297,6 +299,8 @@ mod tests {
     #[tokio::test]
     async fn probe_reports_a_dead_turn_without_hanging_or_leaking_the_password() {
         // porta 9 em loopback: ninguém responde. O teste termina no prazo e diz que o TURN não respondeu.
+        // Coletar relay abre UDP em 0.0.0.0 (aviso do firewall): no modo local o TURN é descartado, então este teste só vale com BRIKS_TEST_REAL_NET=1.
+        if !crate::netmode::real_net_wanted() { return; }
         let dead = vec![RTCIceServer { urls: vec!["turn:127.0.0.1:9?transport=udp".into()], username: "u".into(), credential: "segredo-do-teste".into(), ..Default::default() }];
         let t0 = std::time::Instant::now();
         let v = probe(dead, Duration::from_millis(1500)).await;

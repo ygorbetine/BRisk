@@ -1,6 +1,7 @@
 ﻿# Compila o spike com MSVC + CMake do Visual Studio. Uso: powershell -File build.ps1
 # VSLANG=1033: o Ninja só lê as dependências de cabeçalho quando o MSVC fala inglês ("Note: including file:"); em pt-BR o rebuild incremental ficava com objetos velhos (tamanho de struct divergente = pilha corrompida)
 $env:VSLANG = "1033"
+$env:BRIKS_NET_LOOPBACK_ONLY = "1"   # testes/roteiros so em loopback (docs/plans/testes-rede-local.md)
 # Com o MSVC em pt-BR o Ninja não entende "Observação: incluindo arquivo:" e perde as dependências de cabeçalho: sempre recompila os .obj do app (poucos segundos)
 Remove-Item "$PSScriptRoot\build\CMakeFiles\briks_cui.dir\src\*.obj" -ErrorAction SilentlyContinue
 $vs = "C:\Program Files\Microsoft Visual Studio\18\Community"

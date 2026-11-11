@@ -248,9 +248,18 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
     }
     cui_box(ui, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .bg = CUI_RGBA(0xffffff0a)) {   /* abas em linha própria: ocupam a largura toda, sem corte nem degradê */
         static const char *const tab_icons[5] = { CUI_ICON_USERS, CUI_ICON_WIFI, CUI_ICON_CLOCK, CUI_ICON_SHIELD, CUI_ICON_USER_PLUS };
-        static const char *const no_text[5] = { " ", "  ", "   ", "    ", "     " };
-        if (tiny) {   /* muito estreito: só ícones (o nome completo fica na dica) */
-            cui_tabs(ui, "friends-tabs-i", no_text, 5, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true, .icons = tab_icons);
+        if (tiny) {   /* muito estreito: só ícones, cada um um botão próprio (hover, clique e dica com o nome) */
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 4) {
+                for (int i = 0; i < 5; i++) {
+                    cui_push_id_int(ui, 9700 + i);
+                    bool on = s->friends_tab == i;
+                    cui_box(ui, .id = "t", .width = CUI_FILL, .height = CUI_PX(32), .radius = 12, .bg = on ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000),
+                            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, tab_icons[i], 16, on ? B_TEXT : B_MUTED); }
+                    if (briks_hover(ui, "t")) briks_tip(i == 2 && s->pending_count ? pend : tabs[i]);
+                    if (briks_clicked(ui, "t")) s->friends_tab = i;
+                    cui_pop_id(ui);
+                }
+            }
         } else cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true);
     }
     cui_separator(ui);

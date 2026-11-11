@@ -138,7 +138,7 @@ static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
 typedef struct { bool hot; } grip_t;
 static void paint_grip(cui_ctx *ui, cui_rect r, void *user) {
     const grip_t *g = (const grip_t *)user;
-    cui_rect b = { r.x + r.w * 0.5f - 17.0f, r.y + 8.0f, 34.0f, 4.0f };
+    float bw = fminf(34.0f, r.w - 24.0f); cui_rect b = { r.x + r.w * 0.5f - bw * 0.5f, r.y + (r.w < 110.0f ? 4.0f : 8.0f), bw, 4.0f };
     cui_draw_rect(ui, b, CUI_CORNERS(2), g->hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24));
 }
 
@@ -163,8 +163,8 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
             g_panel_w = r.w;
             { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); g_tools_w = (kind == P_SERVERS || !nb) ? 0.0f : 28.0f * (float)nb; }   /* reserva o canto dos botões + e × */
             ui_panel(ui, c->s, kind);
-            if (kind != P_SERVERS) {   /* alça de arrasto: pintada em coordenadas do painel (sempre centralizada no topo, nunca no meio do conteúdo) */
-                grip_t gp = { hot };
+            if (hot) {   /* alça de arrasto: só aparece com o mouse sobre a faixa que move o painel, em QUALQUER painel; pintada em coordenadas do painel (não mexe no layout) */
+                grip_t gp = { true };
                 cui_canvas(ui, "grip", CUI_FILL, CUI_FILL, paint_grip, &gp, sizeof gp);
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {

@@ -20,7 +20,20 @@ static void initials(const char *name, char *out) {
  * g_panel_w é a largura atual do painel (dock.c). Texto sempre medido com a fonte real e cortado com reticências antes da borda. */
 float g_panel_w = 76, g_tools_w;
 char g_tip[160];
+static void hot_paint(cui_ctx *ui, cui_rect r, void *user) {
+    (void)r; const float *q = (const float *)user;
+    cui_rect z = { q[0], q[1], q[2], q[3] };
+    cui_draw_rect(ui, z, CUI_CORNERS(fminf(12.0f, q[3] * 0.5f)), q[4] > 0.5f ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12));
+}
 void briks_tip_draw(cui_ctx *ui) {
+    if (g_hot_on) {   /* realce do controle sob o mouse (hover) e apertado (clique) */
+        g_hot_on = false;
+        cui_set_cursor(ui, CUI_CURSOR_HAND);
+        if (g_hot[2] * g_hot[3] < 70000.0f) {   /* cartões/áreas grandes: só o cursor */
+            float q[5] = { g_hot[0], g_hot[1], g_hot[2], g_hot[3], cui_mouse_down(ui, CUI_MOUSE_LEFT) ? 1.0f : 0.0f };
+            cui_canvas(ui, "briks-hot", CUI_FILL, CUI_FILL, hot_paint, q, sizeof q);
+        }
+    }
     if (!g_tip[0]) return;
     cui_vec2 vp = cui_viewport_size(ui), m = cui_mouse_pos(ui);
     cui_text_metrics tm = cui_measure_text(ui, CUI_FONT_BODY, 12.0f, g_tip, (int)strlen(g_tip));
@@ -133,11 +146,12 @@ static void bubbles_draw(cui_ctx *ui) {
         cui_rect a = g_bub[i].av; const char *t = g_bub[i].text;
         cui_text_metrics m = cui_measure_text(ui, CUI_FONT_BODY, 13, t, (int)strlen(t));
         float w = fminf(m.width, 190.0f) + 30, h = 32;
-        float bx = a.x + 8, by = a.y - 17 - h;
+        const float up = 8.0f;   /* balão e bolinhas sobem juntos: respiro entre a cauda e o avatar */
+        float bx = a.x + 8, by = a.y - 17 - up - h;
         if (by < 6) by = 6;
         /* bolinhas de pensamento (theme.json: bubble_tail_gap/r1/r2): a 1ª fica a "gap" px da borda de baixo do balão, a 2ª a "gap" px da 1ª, rumo ao avatar; glass.c as une com o pescoço bubble_neck_k */
         float r1 = g_th.bubble_tail_r1, r2 = g_th.bubble_tail_r2, gp = g_th.bubble_tail_gap;
-        float c1x = a.x + 38, c1y = a.y - 17 + gp + r1;
+        float c1x = a.x + 38, c1y = a.y - 17 - up + gp + r1;
         float ux = (a.x + 31) - c1x, uy = a.y - c1y, ul = sqrtf(ux * ux + uy * uy); if (ul < 1) ul = 1;
         float c2x = c1x + ux / ul * (r1 + r2 + gp), c2y = c1y + uy / ul * (r1 + r2 + gp);
         abs_glass(ui, c2x - r2, c2y - r2, r2 * 2, r2 * 2, r2, false);
@@ -249,10 +263,11 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);
                 cui_pop_id(ui);
             }
+            if (s->user_status[0]) cui_gap(ui, 40);   /* folga no fim da lista: o balão de status do rodapé não fica por cima do último item */
         }
         /* rodapé do usuário (paridade com o .account-bar do Electron): foto, nome + status/@nick, e três ícones: @ (Perfil e conta), configurações, sair */
         cui_box(ui, .width = CUI_FILL, .pad = 10) {
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .gap = 2, .radius = 16, .bg = B_GLASS_CARD,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .pad_right = 8, .gap = 8, .radius = 16, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
                 if (briks_clicked(ui, "avatar")) { s->profile_open = true; s->profile_tab = 0; }

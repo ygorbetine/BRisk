@@ -382,9 +382,14 @@ static inline bool briks_hover(cui_ctx *ui, const char *id) {
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
 }
+/* Realce de hover/clique para TODO controle feito de caixa simples: quem chama briks_clicked registra o retângulo sob o mouse (o menor vence);
+   briks_tip_draw pinta um véu claro por cima no fim do quadro (mais forte com o botão apertado) e põe o cursor de mão. Não mexe no layout. */
+__declspec(selectany) float g_hot[4]; __declspec(selectany) bool g_hot_on;
 static inline bool briks_clicked(cui_ctx *ui, const char *id) {
     if (briks_blocked() || briks_covered(ui)) return false;
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
-    return cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+    bool in = r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+    if (in && (!g_hot_on || r.w * r.h < g_hot[2] * g_hot[3])) { g_hot[0] = r.x; g_hot[1] = r.y; g_hot[2] = r.w; g_hot[3] = r.h; g_hot_on = true; }
+    return in && cui_mouse_clicked(ui, CUI_MOUSE_LEFT);
 }
 #endif

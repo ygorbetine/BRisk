@@ -88,7 +88,7 @@ pub enum MeshCmd {
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
     MutePeer { key: String, muted: bool },
     PeerVolume { key: String, gain: f32 },
-    AudioCfg { in_gain: f32, out_gain: f32, gate_db: Option<f32> },
+    AudioCfg(crate::audio::AudioCfg),
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
     Chat { to_fp: String, text: String },
     /// como `Chat`, mas com o id da mensagem escolhido pela UI (o `chat.ack` volta com o mesmo id: estado "entregue")
@@ -592,7 +592,7 @@ impl Actor {
                     a.mute_peer(&id, muted);
                 }
             }
-            MeshCmd::AudioCfg { in_gain, out_gain, gate_db } => { if let Some(a) = &self.audio { a.set_audio_cfg(in_gain, out_gain, gate_db); } }
+            MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
             MeshCmd::PeerVolume { key, gain } => {
                 if let Some(a) = &self.audio {
                     let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);

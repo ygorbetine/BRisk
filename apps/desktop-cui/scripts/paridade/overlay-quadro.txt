@@ -1,0 +1,10 @@
+# Sobreposição: com a opção ligada (BRIKS_OVERLAY_FORCE=1) numa chamada de demonstração, o app monta o quadro certo para o overlay.
+# Teste oculto: o briks_overlay.exe NÃO é aberto (só se monta e confere o quadro). Demo "call" + BRIKS_DEMO_PEERS=1 (2 participantes; Rafael falando).
+waitms 1500
+expect overlay_state 1
+expect overlay_has_room 1
+expect overlay_people 3
+expect overlay_speaking 1
+expect overlay_opacity 92
+expect overlay_corner 0
+snap o0

@@ -165,6 +165,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let (link_tx, mut link_rx) = mpsc::channel::<Value>(16);   // respostas de pré-visualização de links (busca em threads)
     let mut rt_status: Option<mpsc::Receiver<String>> = None;
     let mut audio: Option<Arc<Audio>> = None;
+    let mut audio_cfg = crate::audio::AudioCfg::default();   // última Configurações > Voz; vale também para a sala que ainda vai nascer
+    let mut mic_test: Option<crate::audio::MicTest> = None;
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
@@ -221,7 +223,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         });
                         let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
                         let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
-                        if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                        if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); a.apply_cfg(&audio_cfg); }
                         audio = au.clone();
                         let (ice_list, ice_warn) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
                         out(&mut wr, json!({ "ev": "ice.info", "servers": ice_list.len(), "turn": crate::ice::has_turn(&ice_list), "warn": ice_warn.unwrap_or_default() })).await?;
@@ -358,10 +360,15 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
                     }
                     "audio.cfg" => {
-                        // Configurações > Voz: ganho de entrada/saída (1.0 = normal) e porta de ruído (gate_db ausente = desligada)
-                        if let Some(c) = &mesh_cmd {
-                            let _ = c.send(MeshCmd::AudioCfg { in_gain: v["in_gain"].as_f64().unwrap_or(1.0) as f32, out_gain: v["out_gain"].as_f64().unwrap_or(1.0) as f32, gate_db: v["gate_db"].as_f64().map(|d| d as f32) }).await;
-                        }
+                        // Configurações > Voz: ganhos (1.0 = normal), porta de ruído (gate_db ausente = desligada), supressão (0 padrão, 1 desligada) e dispositivos (nome; vazio = padrão)
+                        audio_cfg = crate::audio::AudioCfg { in_gain: v["in_gain"].as_f64().unwrap_or(1.0) as f32, out_gain: v["out_gain"].as_f64().unwrap_or(1.0) as f32, gate_db: v["gate_db"].as_f64().map(|d| d as f32),
+                            noise: v["noise"].as_u64().unwrap_or(0).min(1) as u8, mic: v["mic"].as_str().unwrap_or("").chars().take(120).collect(), out: v["out"].as_str().unwrap_or("").chars().take(120).collect() };
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::AudioCfg(audio_cfg.clone())).await; }
+                    }
+                    "mic.test" => {
+                        // Teste do microfone fora da chamada: on=true começa (eventos `mic.test` com o nível), on=false para.
+                        if let Some(t) = mic_test.take() { t.stop(); }
+                        if v["on"].as_bool().unwrap_or(false) { mic_test = Some(crate::audio::MicTest::start(audio_cfg.clone(), Audio::fake_from_env(), link_tx.clone())); }
                     }
                     "peer.volume" => {
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();

@@ -22,12 +22,14 @@
  *   hover on|off           simula o arraste de arquivos passando pela janela (cui_input_file_hover)
  *   clip <texto>           põe o texto na área de transferência FALSA (só com BRIKS_FAKE_CLIPBOARD; nunca toca na do usuário); sem texto, esvazia
  *   clipimg <png>          imagem "copiada" na área de transferência falsa (idem); sem argumento, remove
+ *   hkey <combinação>      finge a tecla apertada na captura da tela de Atalhos (ex.: hkey Ctrl+Shift+K, hkey Esc)
  *   signal <nome>          cria o arquivo <nome>.flag na pasta de saída (um roteiro externo espera por ele para agir) */
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
 #include "layout.h"
 #include "sysint.h"
 #include "attach.h"
+#include "hotkeys.h"
 static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdio.h>
 #include <string.h>
@@ -147,6 +149,7 @@ void script_tick(cui_ctx *ui) {
             }
             if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, mods); key_up = kc; if (mods) mods_reset = true; }
         }
+        else if (!strcmp(cmd, "hkey")) { char *r = strtok(NULL, ""); if (r) hkw_capture_inject(r); }   /* hkey <combinação>: finge que a tecla foi apertada na captura de atalhos */
         else if (!strcmp(cmd, "restore")) dock_script_restore();
         else if (!strcmp(cmd, "art")) { char *n = strtok(NULL, " "); drag_stack_set_art(n ? panel_from_name(n) : -1); }
         else if (!strcmp(cmd, "voice")) { char *n = strtok(NULL, " "); demo_voice_n = n ? atoi(n) : -1; drag_stack_set_demo(demo_voice_n, demo_servers_n); }

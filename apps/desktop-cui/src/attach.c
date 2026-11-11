@@ -1,4 +1,5 @@
 #include "attach.h"
+#include "storage.h"
 #include "core.h"
 #include "richtext.h"
 #include "msgui.h"
@@ -744,4 +745,13 @@ int attach_probe(const char *n) {
     }
     if (!strcmp(n, "pal_len")) return (int)strlen(g_pal_q);
     return -1;
+}
+
+/* Configurações > Armazenamento > Limpar anexos: tira das conversas os cartões dos arquivos que estavam na pasta apagada (os que o usuário salvou em outro lugar ficam). */
+int attach_forget_under(const char *dir) {
+    tl_load();
+    int n = 0;
+    for (int i = 0; i < NTL; i++) if (g_tl[i].used && storage_inside(dir, g_tl[i].path)) { g_tl[i].used = false; n++; }
+    if (n) tl_save();
+    return n;
 }

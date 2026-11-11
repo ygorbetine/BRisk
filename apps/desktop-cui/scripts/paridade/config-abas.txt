@@ -12,19 +12,19 @@ tap 300 273
 snap k5
 tap 300 310
 snap k6
-tap 300 348
+tap 300 347
 snap k7
-tap 300 385
+tap 300 384
 snap k8
-tap 300 422
+tap 300 421
 snap k9
-tap 300 459
+tap 300 458
 snap k10
-tap 300 496
+tap 300 495
 snap k11
-tap 300 533
+tap 300 532
 snap k12
-tap 300 570
+tap 300 569
 snap k13
 key esc
 waitms 500

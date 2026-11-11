@@ -114,7 +114,9 @@ if (-not $SoInventario) {
         $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")
         $e["BRIKS_SETTINGS_FILE"] = (Join-Path $w "settings.cfg"); $e["BRIKS_GRADIENTS_FILE"] = (Join-Path $w "grad.json")
         $e["BRIKS_CORE_DATA"] = (Join-Path $w "dados"); $e["BRIKS_CUI_DATA"] = (Join-Path $w "dados")
-        if ($c.env) { foreach ($p in $c.env.PSObject.Properties) { $e[$p.Name] = [string]$p.Value } }
+        if ($c.env) { foreach ($p in $c.env.PSObject.Properties) { $e[$p.Name] = ([string]$p.Value).Replace("{w}", $w) } }
+        # "preparar": arquivos de teste a criar na pasta do caso, como "pasta\nome.bin:KB" (o caso os consome; nada fora da pasta do caso)
+        if ($c.preparar) { foreach ($pr in $c.preparar) { $pp = ($pr -split ":", 2); $alvo = Join-Path $w $pp[0]; New-Item -ItemType Directory -Force (Split-Path -Parent $alvo) | Out-Null; [IO.File]::WriteAllBytes($alvo, (New-Object byte[] ([int]$pp[1] * 1024))) } }
         # até 2 tentativas: o app já saiu com código 1 de forma intermitente ao clicar em Sair (anotado na página de paridade)
         for ($tent = 1; $tent -le 2; $tent++) {
             $proc = $null; $motivo = ""

@@ -6,6 +6,11 @@
 #include "update.h"
 #include "core.h"
 #include "sysint.h"
+#include "hotkeys.h"
+#include "storage.h"
+#include "json.h"
+int overlay_state(void); int overlay_probe(const char *n);   /* overlay_host.c */
+void data_refresh(void); void data_ui(cui_ctx *ui, app_state_t *s); int data_probe(const char *n);   /* settings_data.c */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,11 +23,11 @@ typedef struct {
     int mic, out;                 /* índices nas listas de dispositivos (0 = padrão do sistema) */
     char mic_name[64], out_name[64];
     float in_vol, out_vol;        /* 0..100 */
-    int noise;                    /* 0 Padrão, 1 RNNoise, 2 Desligada */
+    int noise_off;                /* 0 filtro leve de ruído ligado (Padrão), 1 desligado */
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
     bool echo, excl_audio;
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
-    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute;
+    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
     char key_mute[24], key_deafen[24], key_stream[24], key_ptt[24];
     bool ptt_on; float ptt_delay;
     bool nt_online, nt_stream;
@@ -33,10 +38,10 @@ settings_t g_set;
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
-    { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise", 'i', &g_set.noise }, { "gate_on", 'b', &g_set.gate_on },
+    { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
     { "call_mode", 'i', &g_set.call_mode }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
-    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute },
+    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
@@ -105,22 +110,6 @@ static void enum_devices(void) {
     if (g_set.out >= out_n || strcmp(g_set.out ? out_names[g_set.out] : "", g_set.out ? g_set.out_name : "")) g_set.out = 0;
 }
 
-/* ---- armazenamento: tamanho real da pasta de dados ---- */
-static unsigned long long dir_size(const char *dir, int depth) {
-    char pat[MAX_PATH]; snprintf(pat, sizeof pat, "%s\\*", dir);
-    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd); if (h == INVALID_HANDLE_VALUE) return 0;
-    unsigned long long t = 0;
-    do {
-        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (depth < 4) { char sub[MAX_PATH]; snprintf(sub, sizeof sub, "%s\\%s", dir, fd.cFileName); t += dir_size(sub, depth + 1); } }
-        else t += ((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-    } while (FindNextFileA(h, &fd));
-    FindClose(h); return t;
-}
-static void fmt_bytes(unsigned long long b, char *o, size_t cap) {
-    if (b < 1024) snprintf(o, cap, "%llu B", b); else if (b < 1048576) snprintf(o, cap, "%.1f KB", b / 1024.0); else snprintf(o, cap, "%.1f MB", b / 1048576.0);
-}
-
 /* ---- avisos (erros/avisos do app) ---- */
 static char notices[8][120]; static int notice_n;
 void settings_notice(const char *text) {
@@ -138,6 +127,13 @@ static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efei
     cui_text(ui, b, .size = 11, .color = g_th.ph);
 }
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay) { *mute = g_set.key_mute; *deafen = g_set.key_deafen; *stream = g_set.key_stream; *ptt = g_set.key_ptt; *ptt_on = g_set.ptt_on; *delay = g_set.ptt_delay; }
+void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off) {
+    snprintf(mic, mic_cap, "%s", g_set.mic ? g_set.mic_name : ""); snprintf(out, out_cap, "%s", g_set.out ? g_set.out_name : ""); *noise_off = g_set.noise_off != 0;
+}
+void settings_overlay(bool *on, float *opacity, int *flags, int *corner) {
+    *on = g_set.ov_on; *opacity = g_set.ov_opacity; *corner = g_set.ov_corner < 0 || g_set.ov_corner > 3 ? 0 : g_set.ov_corner;
+    *flags = (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
+}
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 bool settings_nt_online(void) { return g_set.nt_online; }
 bool settings_nt_stream(void) { return g_set.nt_stream; }
@@ -168,6 +164,77 @@ void settings_text_step(cui_ctx *ui, int delta) {
     if (v < 0) v = 0; if (v > 3) v = 3;
     if (v == g_set.text_size && v == g_text_size) return;
     g_set.text_size = v; g_text_size = v; briks_text_scale_apply(ui);
+}
+
+/* ---- atalhos: gravar a combinação apertada, remover, avisar de conflito ---- */
+static int rec_slot = -1;                 /* 0..2 globais, 3 apertar para falar */
+static char key_msg[160]; static int key_msg_slot = -1;
+static char *key_field(int i) { return i == 0 ? g_set.key_mute : i == 1 ? g_set.key_deafen : i == 2 ? g_set.key_stream : g_set.key_ptt; }
+static const char *const KEY_LABEL[4] = { "Mutar / desmutar microfone", "Ensurdecer", "Iniciar / parar transmissão", "Tecla de apertar para falar" };
+static void key_apply(int i, const char *t) {   /* aceita a combinação gravada ou explica por que não */
+    unsigned m; int v; char fin[48];
+    if (!hk_parse(t, &m, &v)) return;
+    if (i == 3) { m = 0; if (!hk_format(0, v, fin, sizeof fin)) return; t = fin; }   /* apertar para falar segue só a tecla */
+    key_msg_slot = i; key_msg[0] = 0;
+    for (int j = 0; j < 4; j++) if (j != i && hk_same(key_field(j), t)) { snprintf(key_msg, sizeof key_msg, "%s já usa %s. Escolha outra combinação.", KEY_LABEL[j], t); return; }
+    if (i < 3 && !hk_is_mouse(v) && !hk_same(key_field(i), t)) {
+        const char *busy = getenv("BRIKS_HK_BUSY");   /* testes: finge que outro programa usa este combo */
+        const bool hidden = getenv("BRIKS_HIDDEN") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_DEMO");
+        if ((busy && hk_same(busy, t)) || (!busy && !hidden && !hkw_probe(m, v))) { snprintf(key_msg, sizeof key_msg, "Outro programa já usa %s. Escolha outra combinação.", t); return; }
+    }
+    snprintf(key_field(i), 24, "%s", t);
+}
+static void key_row(cui_ctx *ui, app_state_t *s, int i) {
+    char *f = key_field(i); const bool rec = rec_slot == i;
+    cui_text(ui, KEY_LABEL[i], .size = 12, .color = B_MUTED);
+    cui_row(ui, .width = CUI_FILL, .gap = 8, .align = CUI_ALIGN_CENTER) {
+        cui_box(ui, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .radius = 12, .bg = B_PANEL, .border = rec ? 2 : 1, .border_color = rec ? B_C3 : B_LINE) {
+            cui_text(ui, rec ? "Aperte a combinação… (Esc cancela)" : f[0] ? f : "Sem atalho", .size = 13, .color = rec ? B_C3 : f[0] ? B_TEXT : g_th.ph, .nowrap = true);
+        }
+        cui_push_id_int(ui, 6000 + i);
+        if (cui_button(ui, rec ? "Cancelar" : f[0] ? "Alterar" : "Gravar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+            if (rec) rec_slot = -1; else { rec_slot = i; hkw_capture_begin(true); key_msg[0] = 0; }
+        }
+        if (f[0] && !rec && cui_button(ui, "Remover", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM)) { f[0] = 0; key_msg_slot = -1; }
+        cui_pop_id(ui);
+    }
+    if (key_msg_slot == i && key_msg[0]) cui_text(ui, key_msg, .size = 12, .color = B_DANGER, .width = CUI_FILL);
+    else if (i < 3 && f[0]) {
+        if (!s->in_room) sub(ui, "Passa a valer quando você entra numa chamada.");
+        else if (s->hk_status[i] == HKS_BUSY) cui_text(ui, "Outro programa já usa esta combinação: ela não vai funcionar. Escolha outra.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+        else if (s->hk_status[i] == HKS_OK || s->hk_status[i] == HKS_POLLED) cui_text(ui, "Ativo agora, mesmo com o Briks em segundo plano.", .size = 12, .color = B_ONLINE);
+    }
+}
+
+/* ajustes para a exportação de dados: só preferências, nunca senha, token ou chave */
+void settings_export_json(FILE *f) {
+    for (int i = 0; i < NF; i++) {
+        fprintf(f, "%s\"%s\": ", i ? ", " : "", F[i].k);
+        if (F[i].t == 'i') fprintf(f, "%d", *(int *)F[i].p); else if (F[i].t == 'f') fprintf(f, "%.2f", *(float *)F[i].p);
+        else if (F[i].t == 'b') fputs(*(bool *)F[i].p ? "true" : "false", f);
+        else { char b[200]; json_escape((char *)F[i].p, b, sizeof b); fprintf(f, "\"%s\"", b); }
+    }
+}
+
+/* sondas dos roteiros de teste (script.c: expect <nome> <valor>); -9999 = nome desconhecido */
+int settings_probe(const char *n, app_state_t *s) {
+    unsigned m; int v;
+    { int dp = data_probe(n); if (dp != -9999) return dp; }
+    { int op = overlay_probe(n); if (op != -9999) return op; }
+    if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
+    if (!strcmp(n, "rec_slot")) return rec_slot;
+    if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
+    if (!strcmp(n, "mic_test_on")) return s->mic_test_on;
+    if (!strcmp(n, "mic_test_level")) return (int)(s->mic_test_level * 100.0f + 0.5f);
+    if (!strncmp(n, "mic_test_ge", 11)) return s->mic_test_level * 100.0f >= (float)atoi(n + 11);   /* nível do teste >= N % */
+    if (!strcmp(n, "mic_test_err")) return s->mic_test_msg[0] != 0;
+    if (!strncmp(n, "hk_status", 9)) return s->hk_status[n[9] - '0' < 3 && n[9] >= '0' ? n[9] - '0' : 0];
+    if (!strncmp(n, "key_", 4) && (!strcmp(n + 4, "mute") || !strcmp(n + 4, "deafen") || !strcmp(n + 4, "stream") || !strcmp(n + 4, "ptt"))) return key_field(n[4] == 'm' ? 0 : n[4] == 'd' ? 1 : n[4] == 's' ? 2 : 3)[0] != 0;
+    if (!strncmp(n, "keyvk_", 6)) { const char *w = n + 6; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? v : 0; }
+    if (!strncmp(n, "keymods_", 8)) { const char *w = n + 8; int i = !strcmp(w, "mute") ? 0 : !strcmp(w, "deafen") ? 1 : !strcmp(w, "stream") ? 2 : 3; return hk_parse(key_field(i), &m, &v) ? (int)m : 0; }
+    if (!strcmp(n, "cfg_mic")) return g_set.mic;
+    if (!strcmp(n, "cfg_noise_off")) return g_set.noise_off;
+    return -9999;
 }
 
 void settings_tick(void) {
@@ -212,12 +279,18 @@ static void lic_dialog(cui_ctx *ui) {
 
 void settings_dialog(cui_ctx *ui, app_state_t *s) {
     static float restored_at = -10, cleared_at = -10; static bool was_open, confirm_hist, confirm_all;
-    static unsigned long long store_bytes; static float level_sim;
+    static float level_sim;
     if (s->settings_open && !was_open) {
-        char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) == S_OK) { strcat(ad, "\\Briks-CUI"); store_bytes = dir_size(ad, 0); }
-        enum_devices(); confirm_hist = confirm_all = false;
+        data_refresh();
+        enum_devices(); confirm_hist = confirm_all = false; rec_slot = -1; key_msg[0] = 0; key_msg_slot = -1;
     }
     was_open = s->settings_open;
+    if (rec_slot >= 0 && (!s->settings_open || s->settings_tab != 5)) rec_slot = -1;
+    if (rec_slot >= 0) {   /* captura da tecla apertada: o laço de atalhos reais fica parado enquanto isso */
+        char t[48]; g_hk_recording = true; cui_request_wakeup(ui, 0.03f);
+        int r = hkw_capture_poll(t, sizeof t);
+        if (r == 1) { key_apply(rec_slot, t); rec_slot = -1; } else if (r == 2) rec_slot = -1;
+    }
     cui_vec2 vp = cui_viewport_size(ui);
     const float dw = fminf(900.0f, fmaxf(vp.x - 48.0f, 340.0f)), dh = fminf(900.0f, fmaxf(vp.y - 150.0f, 260.0f));
     cui_dialog(ui, "Configurações", &s->settings_open, .width = dw) {
@@ -236,34 +309,48 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                 switch (s->settings_tab) {
                 case 0: /* Voz e vídeo */
                     SCARD(ui, "ENTRADA") {
+                        cui_text(ui, "Microfone", .size = 12, .color = B_MUTED);
                         cui_select(ui, "cfg-mic", in_ptr, in_n, &g_set.mic);
+                        sub(ui, "Vale na hora, inclusive numa chamada em andamento. Se o aparelho sumir, volta ao padrão do sistema.");
                         cui_text(ui, "Nível do microfone", .size = 12, .color = B_MUTED);
-                        level_sim += (s->me_level - level_sim) * 0.3f;
+                        level_sim += ((s->in_room ? s->me_level : s->mic_test_level) - level_sim) * 0.3f;
                         cui_progress(ui, level_sim);
-                        sub(ui, s->in_room ? "A barra mostra o que o Briks está ouvindo na chamada." : "Entre numa sala para ver o nível; o teste fora da chamada chega com o áudio nativo.");
+                        if (s->in_room) sub(ui, "A barra mostra o que o Briks está ouvindo na chamada.");
+                        else {
+                            cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .wrap = true) {
+                                if (cui_button(ui, s->mic_test_on ? "Parar teste" : "Testar microfone", .variant = s->mic_test_on ? CUI_BUTTON_SECONDARY : CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) {
+                                    s->mic_test_on = !s->mic_test_on; s->mic_test_msg[0] = 0; if (!s->mic_test_on) s->mic_test_level = 0;
+                                }
+                            }
+                            if (s->mic_test_msg[0]) cui_text(ui, s->mic_test_msg, .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                            else sub(ui, s->mic_test_on ? "Fale: a barra mostra o que sai com o seu ganho, a porta e a supressão. Nada é gravado nem enviado." : "Mede o microfone sem entrar numa chamada. Nada é gravado nem enviado; para sozinho ao sair desta tela.");
+                            if (s->mic_test_on) cui_request_wakeup(ui, 0.05f);
+                        }
                         cui_text(ui, "Volume de entrada (ganho)", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-invol", &g_set.in_vol, 0, 100);
                         sub(ui, "O ganho vale na hora, na sua voz que sai para a sala.");
-                        soon(ui, "escolher o microfone (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "SAÍDA") {
+                        cui_text(ui, "Saída de som", .size = 12, .color = B_MUTED);
                         cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
+                        sub(ui, "Vale na hora para as vozes da sala. Se o aparelho sumir, volta ao padrão do sistema.");
                         cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
                         sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
-                        soon(ui, "escolher a saída de som (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "PROCESSAMENTO") {
-                        static const char *NZ[] = { "Padrão", "RNNoise", "Desligada" };
+                        static const char *NZ[] = { "Padrão", "Desligada" };
                         cui_text(ui, "Supressão de ruído", .size = 12, .color = B_MUTED);
-                        seg(ui, "cfg-nz", NZ, 3, &g_set.noise);
-                        sub(ui, g_set.noise == 0 ? "O mais compatível. Recomendado." : g_set.noise == 1 ? "Experimental. Processa a voz no seu computador." : "Sem filtro algum.");
+                        seg(ui, "cfg-nz", NZ, 2, &g_set.noise_off);
+                        sub(ui, g_set.noise_off ? "Sem filtro algum: a voz sai como o microfone captou." : "Filtro leve no seu computador: corta ronco grave e abaixa chiado constante (ventilador). Não é a redução por rede neural (RNNoise), que chega depois.");
                         sw(ui, "Porta de ruído", "Silencia o microfone abaixo do limite (teclado, ventilador).", &g_set.gate_on);
                         if (g_set.gate_on) { cui_textf(ui, "Limite: %d dB", (int)g_set.gate_db); cui_slider(ui, "##cfg-gate", &g_set.gate_db, -70, -20); }
-                        sw(ui, "Cancelamento de eco", "Evita que o áudio dos alto-falantes volte pelo microfone.", &g_set.echo);
-                        sw(ui, "Excluir áudio do Briks da transmissão", "Ao compartilhar a tela, não retransmite as vozes tocadas pelo próprio Briks.", &g_set.excl_audio);
-                        sub(ui, "A porta de ruído vale na hora.");
-                        soon(ui, "supressão de ruído, cancelamento de eco e excluir áudio do Briks");
+                        sub(ui, "A porta de ruído e a supressão valem na hora.");
+                        cui_push_disabled(ui, true);
+                        cui_switch(ui, "Cancelamento de eco", &g_set.echo);
+                        cui_switch(ui, "Excluir áudio do Briks da transmissão", &g_set.excl_audio);
+                        cui_pop_disabled(ui);
+                        soon(ui, "cancelamento de eco e excluir o áudio do Briks da transmissão (os interruptores ficam desligados até lá). Dica: use fones para evitar eco");
                     }
                     break;
                 case 1: { /* Rede */
@@ -351,51 +438,45 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     themes_tab(ui);
                     break;
-                case 3: { /* Armazenamento */
-                    SCARD(ui, "USO NESTE COMPUTADOR") {
-                        char b[32]; fmt_bytes(store_bytes, b, sizeof b);
-                        cui_row(ui, .width = CUI_FILL) { cui_text(ui, "Dados do Briks", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, b); }
-                        sub(ui, "Tudo fica neste dispositivo: mensagens, grupos e anexos permanecem somente neste computador.");
-                        sub(ui, "O detalhe por tipo (mensagens, grupos, anexos) ainda não está disponível.");
-                    }
-                    SCARD(ui, "LIMPEZA") {
-                        cui_push_disabled(ui, true);
-                        cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
-                            cui_button(ui, "Limpar anexos", .variant = CUI_BUTTON_SECONDARY);
-                            cui_button(ui, "Apagar histórico de mensagens", .variant = CUI_BUTTON_SECONDARY);
-                            cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY);
-                        }
-                        cui_pop_disabled(ui);
-                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados; os botões ficam desligados até lá");
-                    }
-                    break; }
+                case 3: /* Armazenamento */
+                    data_ui(ui, s);
+                    break;
                 case 4: /* Sobreposição */
                     SCARD(ui, "SOBREPOSIÇÃO EM JOGOS") {
-                        sw(ui, "Mostrar sobreposição em jogos", "Mostra a live e quem está na sala por cima do jogo, sem tirar você dele.", &g_set.ov_on);
+                        sw(ui, "Mostrar sobreposição em jogos", "Mostra quem está na sala por cima do jogo, sem tirar você dele. Só aparece enquanto você está numa chamada.", &g_set.ov_on);
+                        { const int os = overlay_state();
+                          if (g_set.ov_on && os == 1) cui_text(ui, "Ativa agora.", .size = 12, .color = B_ONLINE);
+                          else if (g_set.ov_on && os == 2) cui_text(ui, "Não encontrei o briks_overlay.exe ao lado do Briks: reinstale o app para usar a sobreposição.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                          else if (g_set.ov_on && os == 3) cui_text(ui, "A sobreposição fechou sozinha. O Briks tenta abrir de novo em instantes.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                          else if (g_set.ov_on) sub(ui, "Aparece quando você entra numa chamada."); }
                         cui_text(ui, "O que aparece", .size = 12, .color = B_MUTED);
-                        cui_switch(ui, "Transmissão", &g_set.ov_live); cui_switch(ui, "Quem está na sala", &g_set.ov_voice);
-                        cui_switch(ui, "Sala conectada", &g_set.ov_status); cui_switch(ui, "Aviso de mudo", &g_set.ov_mute);
-                        cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 0, 100);
-                        cui_button(ui, "Editar posições", .variant = CUI_BUTTON_SECONDARY);
-                        tag_nofx(ui);
+                        sw(ui, "Quem está na sala", "Você e as pessoas da chamada; quem fala fica destacado.", &g_set.ov_voice);
+                        sw(ui, "Sala conectada", "Uma linha dizendo que a sala está conectada.", &g_set.ov_status);
+                        sw(ui, "Transmissão", "Avisa que você está transmitindo a tela.", &g_set.ov_live);
+                        sw(ui, "Aviso de mudo", "Mostra quando seu microfone está mudo ou você está ensurdecido.", &g_set.ov_mute);
+                        cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 10, 100);
+                        static const char *COR[] = { "Sup. direito", "Sup. esquerdo", "Inf. direito", "Inf. esquerdo" };
+                        cui_text(ui, "Canto da tela", .size = 12, .color = B_MUTED);
+                        seg(ui, "cfg-ovc", COR, 4, &g_set.ov_corner);
+                        sub(ui, "A sobreposição ocupa o canto escolhido do monitor principal e deixa os cliques passarem para o jogo.");
+                        sub(ui, "Jogos em tela cheia exclusiva cobrem qualquer sobreposição: use o modo janela ou janela sem bordas.");
+                        soon(ui, "arrastar e redimensionar a sobreposição (por enquanto só os quatro cantos)");
                     }
                     break;
                 case 5: /* Atalhos */
                     SCARD(ui, "ATALHOS GLOBAIS") {
-                        sub(ui, "Funcionam com o Briks em segundo plano, só numa chamada. Se outro programa usar a combinação, escolha outra.");
-                        cui_text(ui, "Mutar / desmutar microfone", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-mute", g_set.key_mute, sizeof g_set.key_mute, .placeholder = "Ex.: Ctrl+Shift+M");
-                        cui_text(ui, "Ensurdecer", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-deaf", g_set.key_deafen, sizeof g_set.key_deafen, .placeholder = "Ex.: Ctrl+Shift+D");
-                        cui_text(ui, "Iniciar / parar transmissão", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-str", g_set.key_stream, sizeof g_set.key_stream, .placeholder = "Ex.: Ctrl+Shift+S");
-                        tag_nofx(ui);
+                        sub(ui, "Funcionam numa chamada, mesmo com o Briks em segundo plano. Clique em Gravar e aperte a combinação; o botão do meio e os laterais do mouse também servem.");
+                        key_row(ui, s, 0); key_row(ui, s, 1); key_row(ui, s, 2);
+                        sub(ui, "Se outro programa já usa a combinação, o Briks avisa e não a grava.");
+                        soon(ui, "editar as posições da sobreposição por atalho (Ctrl+Shift+O)");
                     }
                     SCARD(ui, "APERTAR PARA FALAR") {
-                        sw(ui, "Apertar para falar", "O microfone fica mudo e só abre enquanto você segura a tecla.", &g_set.ptt_on);
+                        sw(ui, "Apertar para falar", "O microfone fica mudo e só abre enquanto você segura a tecla (numa chamada).", &g_set.ptt_on);
                         if (g_set.ptt_on) {
-                            cui_text(ui, "Tecla (teclado, botão do meio ou laterais do mouse)", .size = 12, .color = B_MUTED);
-                            cui_input(ui, "cfg-k-ptt", g_set.key_ptt, sizeof g_set.key_ptt, .placeholder = "Escolher tecla");
+                            key_row(ui, s, 3);
                             cui_textf(ui, "Atraso ao soltar: %d ms", (int)g_set.ptt_delay); cui_slider(ui, "##cfg-ptt", &g_set.ptt_delay, 0, 1000);
+                            if (!g_set.key_ptt[0]) cui_text(ui, "Escolha uma tecla: sem ela o apertar para falar não faz nada.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
                         }
-                        tag_nofx(ui);
                     }
                     break;
                 case 6: /* Notificações */

@@ -1,6 +1,7 @@
 #include "msgui.h"
 #include "json.h"
 #include "attach.h"
+#include "richtext.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -268,7 +269,7 @@ static msg_t g_menu_m;               /* mensagem alvo do menu/diálogos */
 static char g_menu_sel[1100];         /* trecho de texto marcado com o mouse na mensagem alvo (BAS-04); vazio = sem seleção */
 static bool g_menu_live;
 static bool g_menu_open, g_emo_open, g_drag_on;
-static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic;
+static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic, g_dlg_select;
 static float g_emo_x, g_emo_y;
 static char g_recent[160];
 static int g_tone;
@@ -459,6 +460,7 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     if (mrow(ui, 3, CUI_ICON_MESSAGE_SQUARE, "Responder", NULL, false)) { start_reply(m); act_close_menu(ui); }
     if (mrow(ui, 4, CUI_ICON_SHARE_2, "Encaminhar", NULL, false)) { g_dlg_forward = true; act_close_menu(ui); }
     if (g_menu_sel[0] && mrow(ui, 14, CUI_ICON_TYPE, "Copiar seleção", NULL, false)) { briks_clip_set(g_menu_sel); act_close_menu(ui); }
+    if (!rich_is_plain(msgui_text(m)) && mrow(ui, 15, CUI_ICON_TYPE, "Selecionar texto…", NULL, false)) { g_dlg_select = true; act_close_menu(ui); }   /* mensagem com formatação: texto cru selecionável num quadro */
     if (mrow(ui, 6, CUI_ICON_COPY, "Copiar texto", NULL, false)) { briks_clip_set(msgui_text(m)); act_close_menu(ui); }
     msep(ui);
     if (is_mine(m) && mrow(ui, 2, CUI_ICON_PENCIL, "Editar mensagem", NULL, false)) { start_edit(s, m); act_close_menu(ui); }
@@ -472,7 +474,7 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     if (can_delete(s, m)) { msep(ui); if (mrow(ui, 12, CUI_ICON_TRASH_2, "Excluir mensagem", NULL, true)) { g_dlg_delete = true; act_close_menu(ui); } }
 }
 
-static float menu_height(const app_state_t *s, const msg_t *m) { return 8.0f + (3.0f + (can_delete(s, m) ? 1 : 0)) * 9.0f + 30.0f * (float)(8 + (g_menu_sel[0] ? 1 : 0) + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
+static float menu_height(const app_state_t *s, const msg_t *m) { return 8.0f + (3.0f + (can_delete(s, m) ? 1 : 0)) * 9.0f + 30.0f * (float)(8 + (g_menu_sel[0] ? 1 : 0) + (rich_is_plain(msgui_text(m)) ? 0 : 1) + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
 
 void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     int n = 0;
@@ -480,7 +482,7 @@ void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     cui_push_id(ui, "pinsbtn");
     cui_box(ui, .id = "b", .dir = CUI_ROW, .gap = 5, .pad_x = 9, .pad_y = 5, .radius = 12, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff12)) {
         cui_icon(ui, CUI_ICON_MAP_PIN, 13, n ? CUI_RGB(0xc4b5fd) : B_MUTED);
-        cui_textf(ui, "Fixadas %d", n);
+        { char t[24]; if (g_view.w > 0 && g_view.w < 560) snprintf(t, sizeof t, "%d", n); else snprintf(t, sizeof t, "Fixadas %d", n); cui_text(ui, t, .nowrap = true); }   /* painel estreito (janela mínima, texto grande): só o número, sem quebrar em duas linhas */
     }
     if (briks_clicked(ui, "b")) g_dlg_pins = true;
     cui_pop_id(ui);
@@ -589,6 +591,16 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) g_dlg_delete = false;
             if (cui_button(ui, "Excluir", .variant = CUI_BUTTON_DANGER)) { mstate_t *w = st_find(g_menu_m.id, true); if (w) { w->deleted = true; st_save(); emit_ev(g_menu_m.id, "delete", NULL, NULL, NULL); } g_dlg_delete = false; }
+        }
+    }
+    cui_dialog(ui, "Selecionar texto", &g_dlg_select, .width = dw) {
+        cui_text(ui, "Arraste para marcar um trecho e use Ctrl+C.", .color = B_MUTED, .size = 12);
+        cui_box(ui, .width = CUI_FILL, .pad = 10, .radius = 12, .bg = CUI_RGBA(0x00000030), .max_height = fmaxf(vp.y - 260.0f, 120.0f), .scroll_y = true) {
+            cui_push_id(ui, "seltxt"); cui_selectable_text(ui, "sel", msgui_text(&g_menu_m)); cui_pop_id(ui);
+        }
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Copiar tudo", .variant = CUI_BUTTON_SECONDARY)) briks_clip_set(msgui_text(&g_menu_m));
+            if (cui_button(ui, "Fechar", .variant = CUI_BUTTON_PRIMARY)) g_dlg_select = false;
         }
     }
     cui_dialog(ui, "Encaminhar para…", &g_dlg_forward, .width = dw) {

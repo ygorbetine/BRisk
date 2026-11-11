@@ -16,10 +16,11 @@ void attach_typing_ping(app_state_t *s);                           /* o rascunho
 const char *attach_typing_label(const app_state_t *s);             /* "Nome está digitando…" ou NULL */
 void attach_search_button(cui_ctx *ui);                            /* cabeçalho do chat: botão e campo de busca */
 bool attach_search_match(const char *text);                        /* true se não há busca ou o texto contém o termo */
-enum { ATT_SENDING = 1, ATT_SENT, ATT_FAILED };
+enum { ATT_SENDING = 1, ATT_SENT, ATT_FAILED, ATT_DELIVERED };   /* relógio, check, alerta, check duplo */
 void attach_mark(const char *msg_id, int state);                   /* estado de envio de uma mensagem minha */
 int  attach_state(const char *msg_id);
-void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m);   /* "enviando…" / "não enviada · reenviar" */
+void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m);   /* ícone de 12 px: relógio (enviando), check (enviada), check duplo (entregue), alerta (falhou; clique reenvia) */
+void attach_script_state(app_state_t *s_or_null, int n, const char *state);   /* teste: força o estado da n-ésima mensagem minha, de trás para a frente ("ack" simula o chat.ack do core) */
 void attach_rich(cui_ctx *ui, const char *id, const char *text);   /* texto da mensagem: **negrito**, `código`, links clicáveis, menções */
 void attach_mentions(cui_ctx *ui, app_state_t *s);                 /* sugestões de @menção acima do campo de texto */
 bool attach_grouped(const app_state_t *s, int idx);                /* a mensagem idx continua a anterior (mesmo autor, < 5 min, sem resposta) */
@@ -35,6 +36,7 @@ bool attach_selected_text(cui_ctx *ui, const char *msg_id, const char *text, cha
 bool attach_paste_image(cui_ctx *ui);                              /* há imagem na área de transferência (e nenhum texto)? vira anexo preparado; true se pegou */
 void attach_paste_key(cui_ctx *ui, cui_id field);                  /* Ctrl+V com o campo em foco: imagem vira anexo (o texto o próprio campo cola) */
 void attach_dropzone(cui_ctx *ui, cui_rect panel);                 /* "Solte para enviar" sobre o painel enquanto arrastam arquivos pela janela */
+const char *attach_last_open(void);                                /* último link aberto por clique (teste) */
 int  attach_probe(const char *name);                               /* roteiro de teste: pending, staged_img, search_on... */
 void attach_fake_image(const char *path);                          /* testes: imagem "na área de transferência" (só com BRIKS_FAKE_CLIPBOARD) */
 /* BAS-08: Ctrl+F busca na conversa; Ctrl+K paleta (amigos, grupos e mensagens) */

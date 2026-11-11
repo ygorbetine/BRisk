@@ -78,6 +78,7 @@ static bool first_url(const char *t, char *out, size_t cap) {
 #define NST 64
 static struct { char id[48]; int st; } g_stt[NST]; static int g_stt_n;
 static char g_inflight[48];
+static app_state_t *g_ps;   /* para os probes e comandos dos testes */
 #define NTY 4
 static struct { char name[96]; DWORD until; } g_ty[NTY];
 static DWORD g_typing_sent;
@@ -141,7 +142,11 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
         if (slot < 0) slot = 0;
         snprintf(g_ty[slot].name, sizeof g_ty[slot].name, "%s", nm); g_ty[slot].until = GetTickCount() + 5000; return true;
     }
-    if (!strcmp(ev, "chat.ack")) return false;   /* confirmação de entrega do canal de DM do core: a UI ainda não envia mensagens por ele */
+    if (!strcmp(ev, "chat.ack")) {   /* o peer recebeu a mensagem (o core devolve o id que a UI mandou em chat.send): check duplo */
+        const char *id = json_str(j, "id", ""); int st = attach_state(id);
+        if (!id[0] || st == 0 || st == ATT_FAILED || st == ATT_DELIVERED) return false;
+        attach_mark(id, ATT_DELIVERED); return true;
+    }
     return false;
 }
 
@@ -565,13 +570,14 @@ bool attach_search_match(const char *text) {
 }
 
 /* ---------- etiqueta de estado ---------- */
-void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) {
-    (void)s;
+void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) { g_ps = s;
     int st = attach_state(m->id);
-    if (st == ATT_SENDING) cui_text(ui, "enviando…", .size = 10, .color = CUI_RGBA(0xffffffb0));
+    if (st == ATT_SENDING) cui_icon(ui, CUI_ICON_CLOCK, 12, CUI_RGBA(0xffffffb0));
+    else if (st == ATT_SENT) cui_icon(ui, CUI_ICON_CHECK, 12, CUI_RGBA(0xffffffb0));
+    else if (st == ATT_DELIVERED) cui_icon(ui, CUI_ICON_CHECK_CHECK, 12, CUI_RGB(0x7dd3fc));
     else if (st == ATT_FAILED) {
         cui_push_id(ui, "fail");
-        if (cui_button(ui, "não enviada · reenviar", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) {
+        if (cui_icon_button(ui, CUI_ICON_CIRCLE_ALERT, .size = CUI_SIZE_SM, .tooltip = "Não enviada · clique para reenviar")) {
             for (int i = 0; i < s->msg_count; i++) if (!strcmp(s->msgs[i].id, m->id)) {
                 snprintf(s->draft, sizeof s->draft, "%s", m->content);
                 memmove(&s->msgs[i], &s->msgs[i + 1], sizeof(msg_t) * (size_t)(s->msg_count - i - 1)); s->msg_count--;
@@ -579,6 +585,17 @@ void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) {
             }
         }
         cui_pop_id(ui);
+    }
+}
+
+void attach_script_state(app_state_t *s, int n, const char *state) {
+    if (!s) s = g_ps; if (!s) return;
+    for (int i = s->msg_count - 1, k = 0; i >= 0; i--) if (s->msgs[i].mine) {
+        if (k++ != n) continue;
+        const char *id = s->msgs[i].id;
+        if (!strcmp(state, "ack")) { char b[160]; snprintf(b, sizeof b, "{\"ev\":\"chat.ack\",\"id\":\"%s\"}", id); jval *j = json_parse(b); attach_event(s, "chat.ack", j); json_free(j); }
+        else attach_mark(id, !strcmp(state, "sending") ? ATT_SENDING : !strcmp(state, "failed") ? ATT_FAILED : !strcmp(state, "delivered") ? ATT_DELIVERED : ATT_SENT);
+        return;
     }
 }
 
@@ -594,6 +611,11 @@ void attach_demo(app_state_t *s) {
     xf_t *b = xf_find("demo-b", true); snprintf(b->name, sizeof b->name, "planilha.xlsx"); b->size = 220 * 1024; b->done = b->size; b->st = XF_DONE; b->mine = false; snprintf(b->path, sizeof b->path, "C:\\Users\\demo\\planilha.xlsx");
     xf_t *d = xf_find("demo-d", true); snprintf(d->name, sizeof d->name, "video-ferias.mp4"); d->size = 310.0 * 1048576; d->st = XF_OFFER; d->mine = false;
     xf_t *c = xf_find("demo-c", true); snprintf(c->name, sizeof c->name, "foto.png"); c->size = 540 * 1024; c->st = XF_FAILED; snprintf(c->err, sizeof c->err, "conexão encerrada");
+    if (getenv("BRIKS_DEMO_GALERIA")) {   /* imagem recebida: habilita a galeria */
+    xf_t *e = xf_find("demo-e", true); snprintf(e->name, sizeof e->name, "paisagem.png"); e->size = 410 * 1024; e->done = e->size; e->st = XF_DONE; e->mine = false;   /* imagem recebida: habilita a galeria */
+    e->th.w = 96; e->th.h = 64; e->th.rgba = malloc(96 * 64 * 4);
+    for (int y = 0; y < 64; y++) for (int x = 0; x < 96; x++) { unsigned char *p = e->th.rgba + (y * 96 + x) * 4; p[0] = (unsigned char)(40 + y * 2); p[1] = (unsigned char)(90 + x); p[2] = 200; p[3] = 255; }
+    }
     g_demo_tl = true; g_tl_loaded = true;
     tl_t *t0 = &g_tl[0]; memset(t0, 0, sizeof *t0); t0->used = true; snprintf(t0->xid, sizeof t0->xid, "d1"); snprintf(t0->conv, sizeof t0->conv, "*"); snprintf(t0->when, sizeof t0->when, "2000-01-01T00:00:00.000Z");
     snprintf(t0->name, sizeof t0->name, "contrato-assinado.pdf"); t0->size = 1.2 * 1048576; snprintf(t0->path, sizeof t0->path, "C:/Users/demo/contrato-assinado.pdf");
@@ -602,6 +624,13 @@ void attach_demo(app_state_t *s) {
 }
 
 /* ---------- texto rico, menções, agrupamento (paridade com SafeMessageContent/MessageComposer do Electron) ---------- */
+static char g_last_open[220];
+const char *attach_last_open(void) { return g_last_open; }
+static void open_url(const char *u) {
+    snprintf(g_last_open, sizeof g_last_open, "%s", u);
+    if (briks_clip_fake()) return;   /* roteiros de teste (área de transferência falsa): não abre o navegador de verdade */
+    ShellExecuteA(NULL, "open", u, NULL, NULL, SW_SHOWNORMAL);
+}
 void attach_rich(cui_ctx *ui, const char *id, const char *text) {
     if (rich_is_plain(text)) {   /* sem formatação: texto selecionável com o mouse (BAS-04); com link/negrito/código segue em markdown */
         cui_push_id(ui, id); cui_selectable_text(ui, "sel", text); cui_pop_id(ui);
@@ -611,7 +640,7 @@ void attach_rich(cui_ctx *ui, const char *id, const char *text) {
     static char ring[256][1700]; static unsigned ri;
     char *md = ring[ri++ % 256]; rich_prepare(text, md, sizeof ring[0]);
     cui_markdown_result r = cui_markdown(ui, id, md, .fit_content = true, .compact = true);
-    if (r.link && rich_safe_url(r.link)) ShellExecuteA(NULL, "open", r.link, NULL, NULL, SW_SHOWNORMAL);   /* só http(s), como o openExternal do Electron */
+    if (r.link && rich_safe_url(r.link)) open_url(r.link);   /* só http(s), como o openExternal do Electron */
 }
 
 cui_id attach_text_id(cui_ctx *ui, const char *msg_id) {
@@ -709,6 +738,10 @@ int attach_probe(const char *n) {
     if (!strcmp(n, "search_on")) return g_search_on;
     if (!strcmp(n, "search_len")) return (int)strlen(g_search);
     if (!strcmp(n, "palette")) return g_pal_open;
+    if (!strncmp(n, "mine_state", 10) && g_ps) {   /* mine_state<N>: estado da N-ésima mensagem minha, de trás para a frente (1 enviando, 2 enviada, 3 falhou, 4 entregue) */
+        for (int i = g_ps->msg_count - 1, k = 0; i >= 0; i--) if (g_ps->msgs[i].mine && k++ == atoi(n + 10)) return attach_state(g_ps->msgs[i].id);
+        return 0;
+    }
     if (!strcmp(n, "pal_len")) return (int)strlen(g_pal_q);
     return -1;
 }

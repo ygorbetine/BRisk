@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "update.h"
 #include "msgui.h"
+#include "attach.h"
 #include "backend.h"
 #include "core.h"
 #include <stdlib.h>
@@ -50,6 +51,7 @@ int script_probe(const char *n) {
         want[i] = 0;
         return !strcmp(n[0] == 'd' ? state.draft : briks_clip_probe(), want);
     }
+    if (!strncmp(n, "open_is:", 8)) return strstr(attach_last_open(), n + 8) != NULL;   /* link aberto por clique contém o texto (teste) */
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     return dock_probe(n);
 }

@@ -111,6 +111,8 @@ void script_tick(cui_ctx *ui) {
         else if (!strcmp(cmd, "drop")) { char *r = strtok(NULL, ""); if (r) { const char *ps[1] = { r }; cui_input_file_drop(ui, ps, 1, cx, cy); } }
         else if (!strcmp(cmd, "hover")) { char *r = strtok(NULL, " "); cui_input_file_hover(ui, r && !strcmp(r, "on"), cx, cy); }
         else if (!strcmp(cmd, "clip")) { char *r = strtok(NULL, ""); if (briks_clip_fake()) briks_clip_set(r ? r : ""); else fputs("roteiro: clip ignorado (sem BRIKS_FAKE_CLIPBOARD)\n", stderr); }
+        else if (!strcmp(cmd, "wheel")) { char *a = strtok(NULL, " "); cui_input_mouse_move(ui, cx, cy); cui_input_scroll(ui, 0, a ? (float)atof(a) : -3); }   /* wheel <linhas> sobre o ponto atual (negativo desce) */
+        else if (!strcmp(cmd, "msgstate")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) attach_script_state(NULL, atoi(a), b); }   /* msgstate <n> sending|sent|failed|delivered|ack */
         else if (!strcmp(cmd, "clipimg")) { char *r = strtok(NULL, ""); if (briks_clip_fake()) attach_fake_image(r); else fputs("roteiro: clipimg ignorado (sem BRIKS_FAKE_CLIPBOARD)\n", stderr); }
         else if (!strcmp(cmd, "expect")) {   /* expect <estado> <valor>: confere e conta falha (o processo sai com código 1) */
             char *n = strtok(NULL, " "), *v = strtok(NULL, " ");

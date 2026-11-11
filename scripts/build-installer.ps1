@@ -3,18 +3,23 @@
 #   -Test  usa outro GUID e outra pasta de instalacao ("@briksdesktop-test"), para testar sem tocar na instalacao real do Briks.
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
 # So compila e grava em disco: nao publica, nao cria tag/release e nao executa o instalador.
-param([string]$Version = "1.3.0", [switch]$Test, [string]$SupabaseJson = "")
+#   -StageOnly    compila e monta a pasta apps/desktop-cui/stage, mas para antes do NSIS (a CI assina os .exe de la com a SignPath).
+#   -PackageOnly  pula a compilacao e empacota o stage que ja existe (com os .exe assinados). O latest.yml sai do instalador sem assinatura:
+#                 depois de assinar o instalador, rode scripts/make-latest-yml.ps1.
+param([string]$Version = "1.3.0", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"
 $num = ($Version -replace '[-+].*$', '')
 if ($num -notmatch '^\d+\.\d+\.\d+$') { throw "Versao invalida: $Version" }
 
+$stage = "$cui\stage"
 function Find-VsDir {
     foreach ($y in "18", "2022", "2019") { foreach ($e in "Community", "Professional", "Enterprise", "BuildTools") {
         $p = "C:\Program Files\Microsoft Visual Studio\$y\$e"; if (Test-Path "$p\VC\Auxiliary\Build\vcvars64.bat") { return $p } } }
     throw "Visual Studio (MSVC) nao encontrado."
 }
+if (-not $PackageOnly) {
 $vs = Find-VsDir
 $cmakeBin = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
 if (Test-Path $cmakeBin) { $env:PATH = "$cmakeBin;$env:PATH" }
@@ -35,7 +40,6 @@ Pop-Location
 if ($rc) { throw "cmake falhou" }
 
 Write-Host "== pasta de empacotamento =="
-$stage = "$cui\stage"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory "$stage\backend" | Out-Null
 Copy-Item "$bd\briks_cui.exe" "$stage\Briks.exe"          # mesmo nome do executavel do Electron: atalhos fixados e entradas de inicio continuam validos
@@ -59,6 +63,10 @@ if (Test-Path $SupabaseJson) {
 } else { Write-Warning "supabase.json nao encontrado: o instalador sai sem login online." }
 foreach ($f in "LICENSE", "THIRD_PARTY_NOTICES.md") { if (Test-Path "$root\$f") { Copy-Item "$root\$f" $stage } }
 if (Test-Path "$root\LICENSES") { Copy-Item "$root\LICENSES" "$stage\LICENSES" -Recurse }
+
+}   # fim de -not $PackageOnly
+if ($StageOnly) { Write-Host "Stage pronto em $stage (sem NSIS)."; return }
+if (-not (Test-Path "$stage\Briks.exe")) { throw "stage ausente: rode antes com -StageOnly (ou sem -PackageOnly)." }
 
 Write-Host "== NSIS =="
 $mk = @(

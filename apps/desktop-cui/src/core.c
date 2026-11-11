@@ -81,6 +81,9 @@ static unsigned __stdcall start_thread(void *unused) {
     if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) { fail("briks-core.exe não encontrado ao lado do executável."); return 0; }
 
     SetEnvironmentVariableA("BRIKS_CORE_TOKEN", token);
+    /* segunda trava contra core órfão (além do Job Object, que falha se a UI já roda dentro de um job sem aninhamento):
+       o core vigia este processo e sai quando ele morre, por qualquer motivo */
+    { char pid[24]; snprintf(pid, sizeof pid, "%lu", (unsigned long)GetCurrentProcessId()); SetEnvironmentVariableA("BRIKS_PARENT_PID", pid); }
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     HANDLE rd = NULL, wr = NULL, in_rd = NULL, in_wr = NULL;
     if (!CreatePipe(&rd, &wr, &sa, 0) || !CreatePipe(&in_rd, &in_wr, &sa, 0)) { fail("Falha ao criar os pipes do core."); return 0; }

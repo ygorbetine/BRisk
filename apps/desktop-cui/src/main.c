@@ -9,6 +9,7 @@
 #include <windows.h>
 #endif
 
+static void *g_prev_fg;   /* janela que tinha o foco antes de uma janela de teste abrir */
 static app_state_t state = { .screen = SCREEN_AUTH, .active_friend = -1, .active_group = -1, .mic_on = true };
 
 /* Gancho só para teste automatizado: BRIKS_DEV_AUTH="modo|nome|email|senha" (modo 0 login, 1 cadastro). */
@@ -59,11 +60,24 @@ int main(void) {
 #endif
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 900 && h >= 560) { win_w = a; win_h = h; } }
+#ifdef _WIN32
+    g_prev_fg = getenv("BRIKS_TEST_WINDOW") ? (void *)GetForegroundWindow() : NULL;
+#endif
     cui_app *app = cui_app_create(&(cui_app_desc){
         .title = "Briks", .width = win_w, .height = win_h, .min_width = 900, .min_height = 560,
         .theme = CUI_THEME_DARK, .accent = CUI_ACCENT_VIOLET, .continuous = getenv("BRIKS_SCRIPT") != NULL });
     if (!app) return 1;
     state.app = app;
+#ifdef _WIN32
+    {   /* BRIKS_TEST_WINDOW="x,y": janela de teste noutra tela (ou fora da área visível), sem ficar com o foco de quem está usando o PC */
+        const char *tw = getenv("BRIKS_TEST_WINDOW"); int x, y;
+        if (tw && sscanf(tw, "%d,%d", &x, &y) == 2) {
+            HWND prev = (HWND)g_prev_fg, me = (HWND)cui_app_native_window(app);
+            SetWindowPos(me, HWND_BOTTOM, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            if (prev && prev != me) SetForegroundWindow(prev);
+        }
+    }
+#endif
     bk_start();
     briks_perf_init();
     briks_theme_poll();   /* lê theme.json (ou os padrões) antes de montar o tema */

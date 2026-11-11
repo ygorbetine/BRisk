@@ -18,8 +18,6 @@
       { "item": "GRP-01", "de": "g0", "para": "g1", "esperado": "muda" },
       { "item": ["GRP-02", "GRP-03"], "de": "g0", "para": "g2", "esperado": "muda" },
       { "item": "GRP-01", "de": "g2", "para": "g3", "esperado": "muda" },
-      { "item": "CHM-21", "de": "g2", "para": "h1", "esperado": "muda" },
-      { "item": "CHM-21", "de": "g2", "para": "h2", "esperado": "igual" },
       { "item": ["CHM-01", "GRP-18"], "de": "h2", "para": "v1", "esperado": "muda" } ] },
     { "id": "perfil", "demo": "social", "roteiro": "perfil.txt", "checagens": [
       { "item": "PRF-10", "de": "p0", "para": "p1", "esperado": "muda" },
@@ -55,6 +53,27 @@
       { "item": "CHM-06", "de": "c7", "para": "c8", "esperado": "muda" } ] },
     { "id": "call-sair", "demo": "call", "roteiro": "call-sair.txt", "checagens": [
       { "item": "CHM-05", "de": "x0", "para": "x1", "esperado": "muda" } ] },
+    { "id": "call-grade", "demo": "call", "roteiro": "call-grade.txt", "env": { "BRIKS_DEMO_PEERS": "5" }, "checagens": [
+      { "item": "CHM-10", "de": "g0", "para": "g1", "esperado": "muda" },
+      { "item": "CHM-10", "de": "g1", "para": "g2", "esperado": "muda" },
+      { "item": "CHM-10", "de": "g0", "para": "g3", "esperado": "igual" },
+      { "item": ["CHM-11", "LAY-08"], "de": "g3", "para": "f1", "esperado": "muda" },
+      { "item": "CHM-11", "de": "g3", "para": "f2", "esperado": "igual" } ] },
+    { "id": "call-chat", "demo": "call-chat", "roteiro": "call-chat.txt", "env": { "BRIKS_DEMO_PEERS": "2" }, "checagens": [
+      { "item": ["MSG-19", "LAY-07"], "de": "k0", "para": "k1", "esperado": "muda" },
+      { "item": "MSG-19", "de": "k1", "para": "k2", "esperado": "muda" } ] },
+    { "id": "call-pedir", "demo": "call", "roteiro": "call-pedir.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEMO_REQ": "1" }, "checagens": [
+      { "item": ["CHM-15", "NOT-04"], "de": "p0", "para": "p1", "esperado": "muda" },
+      { "item": "CHM-15", "de": "p1", "para": "p2", "esperado": "muda" },
+      { "item": "CHM-15", "de": "p1", "para": "p3", "esperado": "muda" } ] },
+    { "id": "call-rede", "demo": "call", "roteiro": "call-rede.txt", "env": { "BRIKS_DEMO_PEERS": "2" }, "checagens": [
+      { "item": "CHM-17", "de": "n0", "para": "n1", "esperado": "muda" },
+      { "item": "CHM-18", "de": "n0", "para": "n2", "esperado": "muda" } ] },
+    { "id": "historico", "demo": "social", "roteiro": "historico.txt", "env": { "BRIKS_DEMO_PEERS": "2" }, "checagens": [
+      { "item": ["CHM-21", "LAY-06"], "de": "h0", "para": "h1", "esperado": "muda" },
+      { "item": "CHM-21", "de": "h0", "para": "h2", "esperado": "igual" },
+      { "item": ["CHM-22", "CHM-07"], "de": "h1", "para": "h3", "esperado": "muda" },
+      { "item": "CHM-23", "de": "h3", "para": "h4", "esperado": "muda" } ] },
     { "id": "dock", "demo": "social", "roteiro": "dock.txt", "checagens": [
       { "item": "EXT-01", "de": "d0", "para": "d1", "esperado": "muda" },
       { "item": "EXT-02", "de": "d1", "para": "d2", "esperado": "muda" } ] },

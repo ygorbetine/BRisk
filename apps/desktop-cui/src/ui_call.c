@@ -156,7 +156,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     const bool muted = t->muted || (t->me && !mic_on), speaking = t->level > 0;
     const int gi = t->slot < 0 ? 0 : t->slot > 9 ? 9 : t->slot;
     const float side = fminf(w, h), d = fminf(fmaxf(side * 0.40f, 40.0f), 128.0f), cv = fminf(d * 2.34f, side - 4.0f);
-    const bool sm = w < 230.0f || h < 170.0f;
+    const bool sm = w < 260.0f || h < 200.0f;
     g_av[gi].lvl = t->level; g_av[gi].d = d;
     cui_box(ui, .id = "tile", .width = CUI_PX(w), .height = CUI_PX(h), .radius = sm ? 16 : 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
@@ -178,7 +178,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = sm ? 8 : 14, .gap = 6) {
-            if (!sm) briks_status_pill(ui, t->status);   /* chip de status acima do rótulo: só com status e com espaço */
+            if (!sm && h >= 300.0f) briks_status_pill(ui, t->status);   /* chip de status acima do rótulo: só com status e com espaço */
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .hoverable = true, .dir = CUI_ROW, .gap = sm ? 5 : 7, .pad_x = sm ? 9 : 12, .pad_y = sm ? 5 : 8, .align = CUI_ALIGN_CENTER });
             {
                 const float ts = sm ? 12.0f : 14.0f;
@@ -364,7 +364,7 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
     cui_push_id_int(ui, 9400);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad = 14, .pad_top = s->screen == SCREEN_CALL && !g_call.fullscreen ? 84 : 14, .gap = 8) {
         if (g_call.req.open) {
-            cui_box(ui, .dir = CUI_ROW, .gap = 12, .pad_x = 16, .pad_y = 10, .radius = 18, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_A(B_C3, 0x77),
+            cui_box(ui, .id = "reqbox", .dir = CUI_ROW, .gap = 12, .pad_x = 16, .pad_y = 10, .radius = 18, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_A(B_C3, 0x77),
                     .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER, .max_width = 720, .wrap = true, .justify = CUI_JUSTIFY_CENTER) {
                 cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(34), .radius = 17, .bg = B_A(B_C3, 0x38), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, 16, B_TEXT); }
                 char t[140]; snprintf(t, sizeof t, "%s pediu para você transmitir a tela", g_call.req.name);
@@ -374,6 +374,7 @@ void call_banner(cui_ctx *ui, app_state_t *s) {
                     if (cui_button(ui, "Agora não", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { rtc_stream_reply(g_call.req.peer_id, false); g_call.req.open = false; }
                 }
             }
+            { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "reqbox")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* o clique no aviso não vale para o bloco que está por baixo */
         }
         if (g_call.toast[0]) {
             cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 16, .pad_y = 9, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .max_width = 560) {
@@ -495,7 +496,8 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
 
 /* ---------- barra de controles ---------- */
 static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
-    cui_box(ui, .dir = CUI_ROW, .gap = 10, .pad = 14, .radius = 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
+    if (g_call.fullscreen) { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "ctlbar")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }   /* flutuando sobre o palco: o clique na barra não destaca o bloco de baixo */
+    cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = 10, .pad = 14, .radius = 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
             .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER) {
         const bool mic_eff = s->mic_on && !s->deaf;
         if (pill(ui, 1, CUI_ICON_MIC, compact ? NULL : "Microfone", mic_eff ? 1 : 0, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {
@@ -537,7 +539,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
     char title[120], st[160]; call_room_title(s, title, sizeof title); rtc_status_text(s, st, sizeof st);
     const bool compact = vp.x < 1240.0f, tiny = vp.x < 820.0f, bar_compact = vp.x < 1000.0f;
     briks_ambient(ui, 0.85f);
-    cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
+    cui_box(ui, .id = "callroot", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
         cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0) {
             if (!g_call.fullscreen) {
                 /* cabeçalho */
@@ -558,9 +560,12 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
                             if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1, compact, 0)) s->call_mode = 1;
                         }
-                        if (s->call_mode == 0 && s->call_view == 0) cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
-                            if (tab(ui, 15, CUI_ICON_GRID_3X3, "Grade", g_call.layout == 0, compact, 0)) g_call.layout = 0;
-                            if (tab(ui, 16, CUI_ICON_LAYOUT_DASHBOARD, "Foco", g_call.layout == 1, compact, 0)) g_call.layout = 1;
+                        {   /* Grade/Foco vale para os participantes: fora da aba Call fica esmaecido (o cabeçalho não muda de lugar) e clicar leva para lá */
+                            const bool people = s->call_mode == 0 && s->call_view == 0;
+                            cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER, .opacity = people ? 0.0f : 0.5f) {
+                                if (tab(ui, 15, CUI_ICON_GRID_3X3, "Grade", people && g_call.layout == 0, compact, 0)) { g_call.layout = 0; s->call_mode = 0; s->call_view = 0; }
+                                if (tab(ui, 16, CUI_ICON_LAYOUT_DASHBOARD, "Foco", people && g_call.layout == 1, compact, 0)) { g_call.layout = 1; s->call_mode = 0; s->call_view = 0; }
+                            }
                         }
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
                             if (tab(ui, 13, CUI_ICON_VIDEO, "Chamada", s->call_view == 0, compact, 0)) s->call_view = 0;
@@ -582,8 +587,10 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                         }
                     }
                 } else {
-                    cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "stage"));
-                    float W = sr.w > 0 ? sr.w - pad * 2 : vp.x - pad * 2, H = sr.h > 0 ? sr.h - pad * 2 : vp.y - 180.0f - pad * 2;
+                    /* tamanho do palco a partir da janela (menos a faixa de 3 px do topo), nunca de uma caixa medida: os blocos têm tamanho fixo em px,
+                       então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
+                    const float rw = vp.x, rh = vp.y - 4.0f;
+                    float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + 104.0f) - pad * 2;
                     if (W < 120) W = 120; if (H < 90) H = 90;
                     stage_people(ui, s, W, H);
                 }

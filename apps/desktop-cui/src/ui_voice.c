@@ -101,28 +101,28 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
 static bool mini_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip, int kind /*0 normal 1 ligado 2 desligado/perigo*/) {
     cui_color bg = kind == 2 ? CUI_RGBA(0xe9555530) : kind == 1 ? CUI_RGBA(0x57d28b26) : CUI_RGBA(0xffffff12);
     cui_color fg = kind == 2 ? CUI_RGB(0xff9a9a) : kind == 1 ? CUI_RGB(0x7be8a8) : B_TEXT;
-    cui_box(ui, .id = id, .width = CUI_PX(32), .height = CUI_PX(32), .radius = 16, .bg = bg, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, icon, 15, fg); }
+    cui_box(ui, .id = id, .width = CUI_PX(30), .height = CUI_PX(30), .radius = 15, .bg = bg, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, icon, 15, fg); }
     if (briks_hover(ui, id)) briks_tip(tip);
     return briks_clicked(ui, id);
 }
 void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
     if (!s->in_room) return;
-    const bool narrow = g_panel_w < 236.0f, mic_eff = s->mic_on && !s->deaf;
+    const bool narrow = g_panel_w < 212.0f, mic_eff = s->mic_on && !s->deaf;
     const bool ok = !strcmp(s->rtc_state, "conectado") || getenv("BRIKS_DEMO_PEERS");
     char title[120]; call_room_title(s, title, sizeof title);
     cui_push_id_int(ui, 6400);
     cui_box(ui, .width = CUI_FILL, .pad_x = 10, .pad_top = 8) {
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 10, .gap = 6, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 9, .gap = 4, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
                 .border = 1, .border_color = ok ? CUI_RGBA(0x57d28b66) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = narrow ? CUI_JUSTIFY_CENTER : CUI_JUSTIFY_START) {
             if (!narrow) {
                 cui_box(ui, .id = "open", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 2, .clip = true) {
-                    cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
+                    cui_text(ui, title, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);   /* nome da sala: o que pode ser cortado é ele, não o estado */
+                    cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
                         cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = ok ? B_ONLINE : CUI_RGB(0xf5b942)) {}
-                        cui_text(ui, ok ? "Voz conectada" : "Conectando…", .font = CUI_FONT_MEDIUM, .size = 13, .color = ok ? B_ONLINE : CUI_RGB(0xf5d9a0), .nowrap = true);
+                        cui_text(ui, ok ? (g_panel_w >= 262.0f ? "Voz conectada" : "Conectada") : "Conectando…", .size = 11.5f, .color = ok ? B_ONLINE : CUI_RGB(0xf5d9a0), .nowrap = true);
                     }
-                    cui_text(ui, title, .size = 11.5f, .color = B_MUTED, .nowrap = true);
                 }
-                if (briks_hover(ui, "open")) briks_tip("Abrir a chamada");
+                if (briks_hover(ui, "open")) briks_tip("Voz conectada: clique para abrir a chamada");
                 if (briks_clicked(ui, "open")) s->screen = SCREEN_CALL;
             }
             if (mini_icon(ui, "mic", CUI_ICON_MIC, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {

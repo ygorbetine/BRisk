@@ -156,7 +156,7 @@ void ui_history_panel(cui_ctx *ui, app_state_t *s, int mode) {
     const bool full = mode == HIST_FULL;
     const float width = full ? cui_viewport_size(ui).x - 20.0f : g_panel_w;
     const float tools = full ? 0.0f : g_tools_w;
-    const bool tight = width < 560.0f;   /* painel estreito: os controles descem para uma segunda linha */
+    const bool tight = width < 420.0f;   /* painel estreito: textos mais curtos */
     cui_push_id_int(ui, 9300 + mode);
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 0, .bg = B_GLASS, .radius = (int)g_th.panel_radius, .clip = true,
             .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
@@ -167,16 +167,12 @@ void ui_history_panel(cui_ctx *ui, app_state_t *s, int mode) {
             cui_icon(ui, CUI_ICON_HISTORY, 18, B_MUTED);
             cui_text(ui, "Histórico de chamadas", .font = CUI_FONT_MEDIUM, .nowrap = true);
             if (H.n && !tight) { char c[40]; snprintf(c, sizeof c, H.n == 1 ? "1 chamada" : "%d chamadas", H.n); cui_text(ui, c, .size = 12, .color = B_MUTED, .nowrap = true); }
-            cui_spacer(ui);
-            if (!tight) {
-                cui_switch(ui, "Guardar histórico", &keep);
-                if (cui_button(ui, "Apagar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_TRASH_2, .disabled = H.n == 0)) wipe = true;
-            }
         }
         cui_separator(ui);
-        if (tight) cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 16, .pad_y = 10, .gap = 10, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_BETWEEN, .wrap = true) {
+        /* opções numa faixa própria, abaixo do cabeçalho: o cabeçalho é a alça de arrasto do painel (dock.c) e não recebe cliques de botões */
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 18, .pad_y = 10, .gap = 10, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_BETWEEN, .wrap = true) {
             cui_switch(ui, "Guardar histórico", &keep);
-            if (cui_button(ui, "Apagar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_TRASH_2, .disabled = H.n == 0)) wipe = true;
+            if (cui_button(ui, tight ? "Apagar" : "Apagar histórico", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_TRASH_2, .disabled = H.n == 0)) wipe = true;
         }
         if (keep != H.keep) { H.keep = keep; hist_save(); }
         if (wipe) h_confirm = true;
@@ -185,10 +181,10 @@ void ui_history_panel(cui_ctx *ui, app_state_t *s, int mode) {
                 cui_box(ui, .width = CUI_PX(56), .height = CUI_PX(56), .radius = 28, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
                         .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_HISTORY, 24, B_C3); }
                 cui_text(ui, "Nenhuma chamada ainda", .font = CUI_FONT_DISPLAY, .size = 18, .nowrap = true);
-                cui_box(ui, .max_width = 380, .align = CUI_ALIGN_CENTER) {
-                    cui_text(ui, H.keep ? "Quando você sair de uma chamada, ela aparece aqui com a duração e quem estava. Fica só neste computador."
-                                        : "O histórico está desligado: as próximas chamadas não serão guardadas.", .size = 13, .color = B_MUTED);
-                }
+                if (width >= 440.0f) {   /* linhas curtas, centralizadas */
+                    cui_text(ui, H.keep ? "Quando você sair de uma chamada, ela aparece aqui" : "O histórico está desligado:", .size = 13, .color = B_MUTED, .nowrap = true);
+                    cui_text(ui, H.keep ? "com a duração e quem estava. Fica só neste computador." : "as próximas chamadas não serão guardadas.", .size = 13, .color = B_MUTED, .nowrap = true);
+                } else cui_text(ui, H.keep ? "As chamadas aparecem aqui ao sair. Ficam só neste computador." : "O histórico está desligado.", .size = 12.5f, .color = B_MUTED);
             }
         } else {
             cui_scroll(ui, .id = "hist-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 14) {

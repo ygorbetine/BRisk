@@ -48,8 +48,8 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
 
     // 1b) chat da chamada (para todos, autor = identidade provada) e pedido de transmissão com resposta
     b.cmd.send(MeshCmd::RoomChat { id: "sala-msg-0001".into(), text: "alguém me ouve?".into() }).await.unwrap();
-    for c in [&a, &d] { assert!(c.wait(10, &format!("roomchat:{B}:{}:Beto:sala-msg-0001:alguém me ouve?", b.fp)).await, "{}: chat da chamada não chegou", c.ident); }
-    assert_eq!(b.count("roomchat:"), 0, "eco do próprio chat da chamada");
+    for c in [&a, &d] { assert!(c.wait(10, &format!("salamsg:{B}:{}:Beto:sala-msg-0001:alguém me ouve?", b.fp)).await, "{}: chat da chamada não chegou", c.ident); }
+    assert_eq!(b.count("salamsg:"), 0, "eco do próprio chat da chamada");
     a.cmd.send(MeshCmd::StreamRequest { key: b.fp.clone() }).await.unwrap();
     assert!(b.wait(10, &format!("streamreq:{A}:Ana")).await, "pedido de transmissão não chegou");
     b.cmd.send(MeshCmd::StreamReply { key: a.fp.clone(), accepted: true }).await.unwrap();

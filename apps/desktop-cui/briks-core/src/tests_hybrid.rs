@@ -21,10 +21,10 @@ impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = s
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
-    let child = Command::new(bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+    let child = Command::new(bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {
-        if std::net::TcpStream::connect(("127.0.0.1", 7880)).is_ok() { return Some(Server { child }); }
+        if std::net::TcpStream::connect(("127.0.0.1", crate::tests_sfu::lk_port())).is_ok() { return Some(Server { child }); }
         std::thread::sleep(Duration::from_millis(100));
     }
     let mut s = Server { child }; let _ = s.child.kill(); None
@@ -41,7 +41,7 @@ async fn node(rt_port: u16, room: &str, peer: &str, sfu_ident: &str, name: &str,
     let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": joined, "clientVersion": "teste" }));
     let lk_room = format!("room:{}", &secure_room_id("room", room)[..32]);
     let (au, au_rx) = Audio::new(true);
-    let sh = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token(sfu_ident, &lk_room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
+    let sh = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token(sfu_ident, &lk_room), audio: Some((au.clone(), au_rx)), data: None, renew: None }).await.expect("entrar no SFU");
     let m = mesh::spawn(MeshCfg { namespace: "room".into(), room: room.into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: None, joined_at: joined }, id, rt, rx);
     let h = crate::hybrid::spawn(m, sh, Some(au.clone())).await;
     Node { h, audio: au, fp }

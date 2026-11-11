@@ -22,11 +22,11 @@ pub fn start_server() -> Option<Server> {
     if !std::path::Path::new(&bin).exists() { return None; }
     // a porta do servidor anterior pode demorar um instante para ser liberada
     for _ in 0..3 {
-        let mut child = Command::new(&bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+        let mut child = Command::new(&bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(10) {
             if let Ok(Some(_)) = child.try_wait() { break; }   // morreu (porta ocupada): tenta de novo
-            if std::net::TcpStream::connect(("127.0.0.1", 7880)).is_ok() { return Some(Server { child }); }
+            if std::net::TcpStream::connect(("127.0.0.1", crate::tests_sfu::lk_port())).is_ok() { return Some(Server { child }); }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = child.kill(); let _ = child.wait();
@@ -65,7 +65,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
     let renewals = Arc::new(AtomicU64::new(0));
     let (r2, i2, k2) = (renewals.clone(), ident.to_string(), lk_room.clone());
     let renew: TokenFn = Arc::new(move || { let (r, i, k) = (r2.clone(), i2.clone(), k2.clone()); Box::pin(async move { r.fetch_add(1, Ordering::Relaxed); Ok(dev_token_ttl(&i, &k, 3600)) }) });
-    let h = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
+    let h = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token_ttl(ident, &lk_room, ttl), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id.clone(), name: name.into(), room_hash: rh, owner_fp: None, joined_at: joined }), renew: Some(renew) }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);
@@ -80,7 +80,7 @@ pub async fn client(room: &str, ident: &str, name: &str, joined: u64, ttl: u64) 
                 MeshEvent::ChatEvent { local: false, from_fp, .. } => format!("event:{from_fp}"),
                 MeshEvent::Banned { fp } => format!("banned:{fp}"),
                 MeshEvent::Typing { from_fp } => format!("typing:{from_fp}"),
-                MeshEvent::RoomChat { peer_id, from_fp, author, content, id, .. } => format!("roomchat:{peer_id}:{from_fp}:{author}:{id}:{content}"),
+                MeshEvent::RoomChat { peer_id, from_fp, author, content, id, .. } => format!("salamsg:{peer_id}:{from_fp}:{author}:{id}:{content}"),
                 MeshEvent::StreamRequest { peer_id, name } => format!("streamreq:{peer_id}:{name}"),
                 MeshEvent::StreamReply { peer_id, name, accepted } => format!("streamreply:{peer_id}:{name}:{accepted}"),
                 MeshEvent::GroupSnapshot { from_fp, snapshot } => format!("group:{from_fp}:{}", snapshot["name"].as_str().unwrap_or("")),
@@ -131,7 +131,8 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
     b.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: rpath.clone() }).await.unwrap();
     assert!(b.wait(25, r#""state":"frame""#).await, "nenhum quadro chegou ao B antes da queda");
     let src = FrameSource::open(&rpath).unwrap();
-    let frame_n = || src.read().map(|x| x.2).unwrap_or(0);
+    // o leitor devolve None enquanto o quadro está sendo gravado: tenta de novo em vez de ler isso como "quadro 0"
+    let frame_n = || { for _ in 0..200 { if let Some(x) = src.read() { return x.2; } std::thread::sleep(Duration::from_millis(1)); } 0 };
     let before = (voice(&b, A, 2).await, d.audio.rx_stat(B).frames, frame_n());
     assert!(before.0 > 40 && before.1 > 20 && before.2 > 0, "mídia antes da queda: {before:?}");
 
@@ -165,7 +166,8 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
         // a transmissão volta para quem assistia, sem novo share.watch
         let end = Instant::now() + Duration::from_secs(25);
         while Instant::now() < end && frame_n() < n_before + 20 { tokio::time::sleep(Duration::from_millis(100)).await; }
-        let got = frame_n() - n_before;
+        let n_after = frame_n(); let got = n_after.saturating_sub(n_before);
+        eprintln!("rodada {round}: contador de quadros do espectador {n_before} -> {n_after}");
         assert!(got >= 20, "rodada {round}: vídeo não voltou para o espectador ({got} quadros novos)");
         // o que foi enviado durante a queda chega
         assert!(d.wait(20, &format!("chat:{}:durante a queda {round}", b.fp)).await, "rodada {round}: DM enviada durante a queda não chegou");
@@ -180,8 +182,8 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
         assert_eq!(c.count(r#""state":"lost""#), 0);
     }
     assert_eq!(b.count(r#""ev":"share.remote","peer_id":"aaaaaaaa-1111-4111-8111-000000000001","state":"off""#), 0, "a transmissão piscou para o espectador");
-    let n1 = frame_n(); tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(frame_n() > n1 + 10, "vídeo parou depois do prazo");
+    let n1 = frame_n(); tokio::time::sleep(Duration::from_secs(2)).await; let n2 = frame_n();
+    assert!(n2 > n1 + 10, "vídeo parou depois do prazo (contador {n1} -> {n2} em 2 s)");
     // saída de verdade continua sendo vista
     d.cmd.send(MeshCmd::Close).await.unwrap();
     assert!(a.wait(15, &format!("peer:{D}:fechado")).await && b.wait(15, &format!("peer:{D}:fechado")).await, "saída real não foi vista depois das reconexões");

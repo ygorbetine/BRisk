@@ -19,10 +19,10 @@ impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = s
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
-    let child = Command::new(bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(match std::env::var("BRIKS_LIVEKIT_LOG").ok().and_then(|p| std::fs::File::create(p).ok()) { Some(f) => Stdio::from(f), None => Stdio::null() }).spawn().ok()?;
+    let child = Command::new(bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(match std::env::var("BRIKS_LIVEKIT_LOG").ok().and_then(|p| std::fs::File::create(p).ok()) { Some(f) => Stdio::from(f), None => Stdio::null() }).spawn().ok()?;
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {
-        if std::net::TcpStream::connect(("127.0.0.1", 7880)).is_ok() { return Some(Server { child }); }
+        if std::net::TcpStream::connect(("127.0.0.1", crate::tests_sfu::lk_port())).is_ok() { return Some(Server { child }); }
         std::thread::sleep(Duration::from_millis(100));
     }
     let mut s = Server { child }; let _ = s.child.kill(); None
@@ -65,7 +65,7 @@ async fn client(room: &str, ident: &str, name: &str, joined: u64, owner_fp: Opti
     let rh = secure_room_id("room", room);
     let lk_room = format!("room:{}", &rh[..32]);
     let (au, au_rx) = Audio::new(true);
-    let h: SfuHandle = sfu::connect(SfuJoin { url: "ws://127.0.0.1:7880".into(), token: dev_token(ident, &lk_room), audio: Some((au.clone(), au_rx)),
+    let h: SfuHandle = sfu::connect(SfuJoin { url: crate::tests_sfu::lk_ws(), token: dev_token(ident, &lk_room), audio: Some((au.clone(), au_rx)),
         data: Some(DataCfg { identity: id, name: name.into(), room_hash: rh, owner_fp, joined_at: joined }), renew: None }).await.expect("entrar no SFU");
     let log = Arc::new(Mutex::new(vec![]));
     let (l2, mut ev) = (log.clone(), h.events);

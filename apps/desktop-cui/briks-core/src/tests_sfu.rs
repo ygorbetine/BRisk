@@ -19,11 +19,22 @@ use crate::sfu::{self, SfuHandle, SfuJoin};
 struct Server { child: Child, port: u16 }
 impl Drop for Server { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
+/// Porta HTTP/WS do `livekit-server` dos testes. `BRIKS_LIVEKIT_TEST_PORT` troca (padrão 7880) quando a 7880 já está ocupada.
+pub fn lk_port() -> u16 { std::env::var("BRIKS_LIVEKIT_TEST_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(7880) }
+pub fn lk_ws() -> String { format!("ws://127.0.0.1:{}", lk_port()) }
+/// Argumentos do servidor: fora da porta padrão, a TCP de mídia vai em porta+1 e a UDP em porta+2 (como 7880/7881/7882).
+pub fn lk_args() -> Vec<String> {
+    let mut a: Vec<String> = ["--dev", "--bind", "127.0.0.1"].iter().map(|s| s.to_string()).collect();
+    let p = lk_port();
+    if p != 7880 { a.push("--config-body".into()); a.push(format!("port: {p}\nrtc:\n  tcp_port: {}\n  udp_port: {}\n", p + 1, p + 2)); }
+    a
+}
+
 fn start_server() -> Option<Server> {
     let bin = std::env::var("BRIKS_LIVEKIT_SERVER_BIN").ok()?;
     if !std::path::Path::new(&bin).exists() { return None; }
-    let child = Command::new(bin).args(["--dev", "--bind", "127.0.0.1"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
-    let port = 7880;
+    let child = Command::new(bin).args(crate::tests_sfu::lk_args()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+    let port = lk_port();
     // espera a porta HTTP abrir
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {

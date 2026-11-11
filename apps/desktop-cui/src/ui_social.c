@@ -313,6 +313,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             msgui_pinned_button(ui, s);
         }
         cui_separator(ui);
+        friends_notify_banner(ui, s);
         msgui_set_view(cui_get_rect(ui, cui_make_id(ui, "chat-scroll")));
         cui_scroll(ui, .id = "chat-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = g_th.chat_pad) {
             if (!s->msg_count) {
@@ -567,6 +568,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                 case 2:
                     PCARD(ui, "PRESENÇA") {
                         cui_switch(ui, "Aparecer offline para os amigos", &s->invisible);
+                        { bool on = !s->notify_off; cui_switch(ui, "Avisar quando um amigo ficar online", &on); s->notify_off = !on; }
                         cui_text(ui, s->invisible ? "Seus amigos não veem que você está online. Você continua usando tudo normalmente." : "Seus amigos veem um ponto verde quando você está com o Briks aberto.", .size = 12, .color = B_MUTED);
                     }
                     PCARD(ui, "PROGRAMA EM USO") {

@@ -82,6 +82,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "peer")) {
         set_peer(s, json_str(j, "peer_id", ""), json_str(j, "state", ""));
+        if (!strcmp(json_str(j, "state", ""), "autenticado")) groups_resend(s);
     } else if (!strcmp(ev, "speaking")) {
         const jval *lv = json_get(j, "level");
         float l = lv && lv->type == J_NUM ? (float)lv->num : 0;

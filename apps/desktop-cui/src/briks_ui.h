@@ -106,6 +106,7 @@ typedef struct {
     struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
     char my_jwk[260];                                                                         /* minha chave pública (session.ready), compacta */
     bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768];   /* convite de grupo: colar e entrar / mostrar o código */
+    bool notify_off; char ginv_q[48];                                                         /* avisos de amigo online (desligável) · busca na lista de convite do grupo */
     bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
@@ -194,6 +195,7 @@ void friends_dialogs(cui_ctx *ui, app_state_t *s);
 /* ui_groups.c: canais, cargos, membros e convites dos grupos */
 void groups_load(app_state_t *s, const char *body);
 void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   /* group.result / group.snapshot do core */
+void groups_resend(app_state_t *s);                                            /* reenvia snapshots aos membros presentes (peer novo na sala) */
 void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */
 void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 void groups_header(cui_ctx *ui, app_state_t *s);
@@ -244,6 +246,8 @@ void briks_theme_reset(void);                              /* restaura o tema Br
 long long profile_expiry_for(int clear, long long now);   /* epoch de expiração do status; 0 = nunca */
 bool profile_ignored(const app_state_t *s, const char *exe, const char *text);
 void profile_tick(app_state_t *s);
+void friends_notify_tick(app_state_t *s);                       /* detecta amigo que ficou online / entrou na chamada */
+void friends_notify_banner(cui_ctx *ui, app_state_t *s);        /* faixa de aviso (some sozinha em ~7 s) */
 bool friends_online(const app_state_t *s, const person_t *p);   /* online de verdade (batimento) ou na sua chamada agora */
 void account_presence_tick(app_state_t *s);                      /* batimento de ~60 s (account.c) */                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);

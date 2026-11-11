@@ -329,6 +329,11 @@ void groups_core_event(app_state_t *s, const jval *j, const char *ev) {
     }
 }
 
+/* um peer acabou de autenticar na sala: reenvia os snapshots que eu confio (o core só entrega a quem é membro de cada grupo) */
+void groups_resend(app_state_t *s) {
+    for (int i = 0; i < s->group_count; i++) { char *sn = stored_snap(&s->groups[i], NULL); if (sn) { send_obj("group.send", sn, NULL, NULL); free(sn); } }
+}
+
 static void leave_or_delete(app_state_t *s, int gi);
 void groups_tick(app_state_t *s) {
     if (s->busy) return;
@@ -508,7 +513,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
             cui_push_id_int(ui, 2700 + i);
             cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                 cui_icon(ui, g->ch[i].voice ? CUI_ICON_VOLUME_2 : CUI_ICON_HASH, 14, B_MUTED);
-                cui_text(ui, g->ch[i].name, .width = CUI_FILL, .nowrap = true);
+                cui_input(ui, "chn", g->ch[i].name, sizeof g->ch[i].name, .width = CUI_FILL);   /* renomear: vale ao salvar */
                 if (cui_icon_button(ui, CUI_ICON_X, .tooltip = "Remover canal", .size = CUI_SIZE_SM)) rm_ch = i;
             }
             cui_pop_id(ui);
@@ -557,9 +562,14 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         }
         if (g->can_moderate) {
             cui_text(ui, "Convidar amigos", .font = CUI_FONT_MEDIUM, .size = 13);
+            cui_input(ui, "ginv-q", s->ginv_q, sizeof s->ginv_q, .placeholder = "Buscar por @nick ou nome", .width = CUI_FILL);
             int shown = 0;
             for (int i = 0; i < s->friend_count; i++) {
                 if (is_member(g, s->friends[i].id)) continue;
+                if (s->ginv_q[0]) { char hay[160], q[48]; snprintf(hay, sizeof hay, "%s %s", s->friends[i].name, s->friends[i].nick); snprintf(q, sizeof q, "%s", s->ginv_q[0] == '@' ? s->ginv_q + 1 : s->ginv_q);
+                    for (char *c = hay; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+                    for (char *c = q; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+                    if (!strstr(hay, q)) continue; }
                 cui_push_id_int(ui, 2900 + i);
                 cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                     cui_avatar(ui, s->friends[i].name, .size = 24);

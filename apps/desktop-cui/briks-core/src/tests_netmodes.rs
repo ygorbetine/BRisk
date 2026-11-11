@@ -53,8 +53,11 @@ async fn call_modes_p2p_auto_sfu_with_and_without_the_server() {
 
     // Sempre SFU: igual, e também não volta ao P2P
     let before = hits.load(Ordering::SeqCst);
+    let is_err = |v: &serde_json::Value| v["ev"] == "error" && v["where"] == "room.join" && v["message"].as_str().map(|m| m.contains("servidor de chamadas")).unwrap_or(false);
+    let errs0 = a.count(is_err);
     a.send(join("sala-sfu", "sfu")).await;
-    a.wait(20, "erro do Sempre SFU", |v| v["ev"] == "error" && v["where"] == "room.join" && v["message"].as_str().map(|m| m.contains("servidor de chamadas")).unwrap_or(false)).await;
+    for _ in 0..200 { if a.count(is_err) > errs0 { break; } tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+    assert!(a.count(is_err) > errs0, "Sempre SFU não deu erro");
     assert!(hits.load(Ordering::SeqCst) > before);
     assert_eq!(a.count(|v| v["ev"] == "net.mode" && v["mode"] == "p2p"), 0, "nenhum modo caiu em P2P sozinho");
 

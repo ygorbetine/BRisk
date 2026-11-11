@@ -3,6 +3,7 @@
 #include "layout.h"
 #include "msgui.h"
 #include "attach.h"
+#include "richtext.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -296,17 +297,27 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
     }
 }
 
-/* "2026-11-09T23:41:00.000Z" (UTC) -> "20:41" no fuso local */
-static void hhmm_local(const char *iso, char *out, size_t cap) {
-    SYSTEMTIME u = { 0 }, l;
+/* "2026-11-09T23:41:00.000Z" (UTC) -> "20:41" no fuso local; de outro dia: "09/11 20:41"; full: "09/11/2026 20:41:00" (dica ao passar o mouse) */
+static void hhmm_local_ex(const char *iso, char *out, size_t cap, bool full) {
+    SYSTEMTIME u = { 0 }, l, now;
     if (sscanf(iso, "%hd-%hd-%hdT%hd:%hd:%hd", &u.wYear, &u.wMonth, &u.wDay, &u.wHour, &u.wMinute, &u.wSecond) == 6 &&
-        SystemTimeToTzSpecificLocalTime(NULL, &u, &l)) snprintf(out, cap, "%02d:%02d", l.wHour, l.wMinute);
-    else snprintf(out, cap, "--:--");
+        SystemTimeToTzSpecificLocalTime(NULL, &u, &l)) {
+        GetLocalTime(&now);
+        if (full) snprintf(out, cap, "%02d/%02d/%04d %02d:%02d:%02d", l.wDay, l.wMonth, l.wYear, l.wHour, l.wMinute, l.wSecond);
+        else if (l.wDay != now.wDay || l.wMonth != now.wMonth || l.wYear != now.wYear) snprintf(out, cap, "%02d/%02d %02d:%02d", l.wDay, l.wMonth, l.wHour, l.wMinute);
+        else snprintf(out, cap, "%02d:%02d", l.wHour, l.wMinute);
+    } else snprintf(out, cap, "--:--");
+}
+static void hhmm_local(const char *iso, char *out, size_t cap) { hhmm_local_ex(iso, out, cap, false); }
+/* hora da mensagem; passar o mouse mostra data e hora completas */
+static void time_label(cui_ctx *ui, const char *iso, const char *short_s, cui_color col) {
+    cui_text(ui, short_s, .size = 10, .color = col);
+    { char f[32]; hhmm_local_ex(iso, f, sizeof f, true); cui_tooltip(ui, f); }
 }
 
 static bool g_grouped;   /* mensagem consecutiva do mesmo autor: sem avatar nem nome (como o .grouped do Electron) */
 static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive) {
-    char hm[8]; hhmm_local(m->created, hm, sizeof hm);
+    char hm[16]; hhmm_local(m->created, hm, sizeof hm);
     const char *text = interactive ? msgui_text(m) : m->content;
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
     cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
@@ -320,7 +331,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     .bg = g_th.bubble_own, .border = 1, .border_color = CUI_RGBA(0xffffff26)) {
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     if (!g_grouped) cui_text(ui, "Você", .size = 12, .color = B_TEXT);
-                    cui_text(ui, hm, .size = 10, .color = CUI_RGBA(0xffffffb0));
+                    time_label(ui, m->created, hm, CUI_RGBA(0xffffffb0));
                     if (interactive) msgui_tags(ui, m);
                     if (interactive) attach_state_tag(ui, s, m);
                 }
@@ -334,10 +345,10 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
             cui_box(ui, .pad_top = g_th.bubble_align ? 16 : 0) {   /* middle: o topo (a pontinha) do balão sai da altura do centro do avatar (32/2) */
             cui_box(ui, .id = "bub", .max_width = 520, .pad_x = 14, .pad_y = 9, .gap = 3,
                     .radius_tl = g_th.bubble_small, .radius_tr = g_th.bubble_big, .radius_br = g_th.bubble_big, .radius_bl = g_th.bubble_big, .bg = B_GLASS_CARD,
-                    .border = 1, .border_color = B_GLASS_BORDER) {
+                    .border = 1, .border_color = text && rich_mentions_me(text, s->user_name, s->user_nick) ? B_C3 : B_GLASS_BORDER) {   /* borda de destaque: mencionaram você */
                 cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER) {
                     if (!g_grouped) cui_text(ui, m->author, .size = 12, .color = B_C3);
-                    cui_text(ui, hm, .size = 10, .color = g_th.ph);
+                    time_label(ui, m->created, hm, g_th.ph);
                     if (interactive) msgui_tags(ui, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
@@ -411,7 +422,9 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); g_grouped = attach_grouped(s, i); bubble(ui, s, &s->msgs[i], true); g_grouped = false; cui_pop_id(ui); }
+                int tcur = 0;   /* anexos concluídos entram na linha do tempo, na posição do horário */
+                for (int i = 0; i < s->msg_count; i++) { attach_timeline(ui, s, &tcur, s->msgs[i].created); if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); g_grouped = attach_grouped(s, i); bubble(ui, s, &s->msgs[i], true); g_grouped = false; cui_pop_id(ui); }
+                attach_timeline(ui, s, &tcur, NULL);
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {

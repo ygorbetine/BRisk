@@ -44,6 +44,8 @@ pub enum MeshEvent {
     /// Estado de um peer: "negociando" | "conectado" | "autenticado" | "falhou" | "fechado".
     Peer { peer_id: String, state: String },
     Chat { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
+    /// Mensagem antiga recebida na sincronização de histórico (assinatura do autor já verificada); `mine` = eu escrevi (em outro aparelho/sessão).
+    History { channel: String, from_fp: String, author: String, content: String, id: String, ts: u64, mine: bool },
     /// Evento de chat assinado (reação, edição, exclusão, resposta, fixação) já verificado; `local` = criado por mim.
     ChatEvent { from_fp: String, wire: Value, local: bool },
     /// Anexo: `kind` = offer | progress | done | cancelled | failed (campos no JSON). Nada é aberto; o arquivo recebido fica em quarentena.
@@ -106,6 +108,11 @@ pub enum MeshCmd {
     /// Só para testes: envia JSON cru a todos os peers autenticados (para provar rejeições).
     #[cfg(test)]
     RawDc { text: String },
+    /// Só para testes: põe uma mensagem (já assinada) no histórico daqui, sem enviá-la, e pede o histórico a todos os peers autenticados.
+    #[cfg(test)]
+    HistSeed { msgs: Vec<ChatWire> },
+    #[cfg(test)]
+    HistAsk,
     /// Só para testes: força um offer agora (colisão).
     ForceOffer { peer_id: String },
     /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
@@ -197,6 +204,8 @@ struct Actor {
     irx: Option<mpsc::Receiver<Internal>>,
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
+    hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
+    hist_reqs: HashMap<String, String>,        // peer -> requestId do pedido de histórico em andamento
     seen_msgs: HashSet<String>,
     incoming: HashMap<String, (String, crate::filetransfer::Incoming, u64)>,   // id -> (peer, estado, último progresso emitido)
     outgoing: HashMap<String, Arc<Ctl>>,                                   // id -> controle (aceitar, pausar, cancelar)
@@ -229,7 +238,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -469,6 +478,7 @@ impl Actor {
                 let m = identity::sign_message(&self.identity, ChatWire {
                     version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id: uuid::Uuid::new_v4().to_string(),
                     author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
+                self.hist.add(&m);
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 self.flush_outbox(&to_fp).await;
             }
@@ -491,6 +501,13 @@ impl Actor {
                 let members: HashSet<String> = snapshot["members"].as_array().map(|a| a.iter().filter_map(|m| m["fp"].as_str().map(String::from)).collect()).unwrap_or_default();
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven && p.fp.as_ref().map_or(false, |f| members.contains(f))).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.dc_send(&id, wire.clone()).await; }
+            }
+            #[cfg(test)]
+            MeshCmd::HistSeed { msgs } => { for m in msgs { self.hist.add(&m); } }
+            #[cfg(test)]
+            MeshCmd::HistAsk => {
+                let ps: Vec<(String, String)> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).filter_map(|(k, p)| p.fp.clone().map(|f| (k.clone(), f))).collect();
+                for (id, fp) in ps { self.request_history(&id, &fp).await; }
             }
             #[cfg(test)]
             MeshCmd::RawDc { text } => {
@@ -921,6 +938,49 @@ impl Actor {
         self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1 })).await;
     }
 
+    /// Pede ao peer recém-autenticado as mensagens desta DM que eu ainda não tenho (informa os ids que já tenho).
+    async fn request_history(&mut self, peer: &str, fp: &str) {
+        let ch = identity::dm_channel(&self.identity.fingerprint(), fp);
+        let rid = uuid::Uuid::new_v4().to_string();
+        self.hist_reqs.insert(peer.to_string(), rid.clone());
+        self.dc_send(peer, json!({ "version": 2, "type": "chat.history.request", "channelId": ch, "requestId": rid, "knownIds": self.hist.known_ids(&ch) })).await;
+    }
+
+    async fn on_history_request(&mut self, peer: &str, v: &Value) {
+        let Some(p) = self.peers.get(peer) else { return };
+        let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
+        let ch = identity::dm_channel(&self.identity.fingerprint(), &fp);
+        if v["channelId"].as_str() != Some(&ch) { return; }   // só a DM entre nós dois; nunca o histórico de outro canal
+        let Some(rid) = v["requestId"].as_str().filter(|r| !r.is_empty() && r.len() <= 64) else { return };
+        let known: HashSet<String> = v["knownIds"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(crate::history::MAX_KNOWN).map(String::from).collect()).unwrap_or_default();
+        for chunk in crate::history::chunks(self.hist.missing(&ch, &known)) {
+            self.dc_send(peer, json!({ "version": 2, "type": "chat.history.chunk", "channelId": ch, "requestId": rid, "messages": chunk })).await;
+        }
+        self.dc_send(peer, json!({ "version": 2, "type": "chat.history.complete", "channelId": ch, "requestId": rid })).await;
+    }
+
+    async fn on_history_chunk(&mut self, peer: &str, v: &Value) {
+        let Some(p) = self.peers.get(peer) else { return };
+        let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
+        if v["requestId"].as_str() != self.hist_reqs.get(peer).map(String::as_str) { return; }   // só o que eu pedi, deste peer
+        let me = self.identity.fingerprint();
+        let ch = identity::dm_channel(&me, &fp);
+        if v["channelId"].as_str() != Some(&ch) { return; }
+        let Some(arr) = v["messages"].as_array() else { return };
+        let my_jwk = self.identity.public_jwk();
+        for raw in arr.iter().take(crate::history::MAX_CHUNK_MESSAGES) {
+            let Ok(m) = serde_json::from_value::<ChatWire>(raw.clone()) else { continue };
+            if self.hist.has(&m.id) { continue; }
+            // o autor tem de ser um dos dois lados desta DM, e a assinatura tem de ser dele (o peer não pode forjar o que "eu" disse)
+            let mine = m.author_peer_id == me;
+            let key = if mine { &my_jwk } else if m.author_peer_id == fp { &jwk } else { continue };
+            if identity::verify_message(key, &m, &ch).is_err() { continue; }
+            if self.hist.add(&m) {
+                self.emit(MeshEvent::History { channel: m.channel_id, from_fp: m.author_peer_id, author: m.author, content: m.content, id: m.id, ts: m.timestamp, mine }).await;
+            }
+        }
+    }
+
     async fn flush_outbox(&mut self, fp: &str) {
         let Some(list) = self.outbox.get(fp) else { return };
         let Some(peer) = self.peers.values().find(|p| p.fp.as_deref() == Some(fp) && p.sent_proof && p.proven) else { return };
@@ -992,10 +1052,16 @@ impl Actor {
                 let expected = identity::dm_channel(&self.identity.fingerprint(), &fp);
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { self.emit(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into())).await; return; }
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
+                self.hist.add(&m);
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }   // dedupe só precisa cobrir as reenvios recentes; sem teto crescia para sempre
                 if self.seen_msgs.insert(m.id.clone()) {
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
                 }
+            }
+            "chat.history.request" => self.on_history_request(peer, &v).await,
+            "chat.history.chunk" => self.on_history_chunk(peer, &v).await,
+            "chat.history.complete" => {
+                if v["requestId"].as_str() == self.hist_reqs.get(peer).map(String::as_str) { self.hist_reqs.remove(peer); }
             }
             "chat.message.ack" => {
                 let Some(p) = self.peers.get(peer) else { return };
@@ -1099,7 +1165,7 @@ impl Actor {
             let me = self.identity.fingerprint();
             if let Some(o) = self.owner() { let mine = o == me; self.emit(MeshEvent::Owner { fp: o, me: mine }).await; }
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
-            if let Some(fp) = fp { self.flush_outbox(&fp).await; }
+            if let Some(fp) = fp { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; }
             self.send_state(peer).await;
             if self.share.is_some() { self.attach_share(peer).await; }
         }
@@ -1114,6 +1180,13 @@ struct Ctl {
     accepted: std::sync::Mutex<HashSet<String>>,   // fps que aceitaram
     paused: std::sync::Mutex<HashSet<String>>,     // fps que pausaram
     paused_all: std::sync::atomic::AtomicBool,     // eu pausei
+}
+
+/// Onde o histórico fica guardado (um .jsonl por DM). Nos testes só em memória, a menos que BRIKS_HIST_DIR peça uma pasta.
+fn hist_dir() -> Option<std::path::PathBuf> {
+    if let Ok(d) = std::env::var("BRIKS_HIST_DIR") { return Some(d.into()); }
+    if cfg!(test) { return None; }
+    std::env::var("LOCALAPPDATA").ok().map(|b| std::path::PathBuf::from(b).join("Briks-CUI").join("historico"))
 }
 
 fn recv_dir() -> std::path::PathBuf {

@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 static double json_num(const jval *o, const char *k, double fb) { const jval *v = json_get(o, k); return v && v->type == J_NUM ? v->num : fb; }
 
@@ -40,7 +41,8 @@ static cui_texture thumb_tex(cui_ctx *ui, thumb_t *t) {
 typedef enum { XF_OFFER, XF_RUN, XF_DONE, XF_CANCELLED, XF_FAILED, XF_WAIT, XF_PAUSED } xf_state;   /* OFFER: oferta recebida (Baixar/Recusar); WAIT: aguardando o aceite do outro lado */
 typedef struct { bool used; char id[48]; char name[104]; double size, done; xf_state st; bool mine; char path[MAX_PATH]; char err[120]; thumb_t th; } xf_t;
 static xf_t g_xf[NXF];
-static char g_open_path[MAX_PATH]; static bool g_open_dlg, g_gal_dlg;
+static char g_open_path[MAX_PATH]; static bool g_open_dlg, g_gal_dlg, g_demo_tl;
+static void tl_add(const app_state_t *s, const char *xid, const xf_t *x);
 
 static xf_t *xf_find(const char *id, bool create) {
     for (int i = 0; i < NXF; i++) if (g_xf[i].used && !strcmp(g_xf[i].id, id)) return &g_xf[i];
@@ -112,6 +114,7 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
             x->st = XF_DONE; x->done = x->size;
             if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", ""));
             thumb_from_json(&x->th, json_get(j, "thumb"));
+            tl_add(s, id, x);
         } else if (!strcmp(kind, "cancelled")) x->st = XF_CANCELLED;
         else if (!strcmp(kind, "failed")) { x->st = XF_FAILED; snprintf(x->err, sizeof x->err, "%s", json_str(j, "error", "falhou")); }
         return true;
@@ -142,14 +145,42 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
 }
 
 /* ---------- enviar anexo ---------- */
-void attach_pick(app_state_t *s) {
-    if (core_state() != CORE_READY || !s->in_room) { snprintf(s->notice, sizeof s->notice, "Entre numa sala de voz para enviar anexos aos participantes."); return; }
-    char path[MAX_PATH] = "";
-    cui_file_dialog_opts o = { .kind = CUI_FILE_OPEN, .title = "Enviar arquivo" };
-    if (!cui_app_file_dialog(s->app, &o, path, sizeof path) || !path[0]) return;
-    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 48]; json_escape(path, esc, sizeof esc);
+#define MAX_SEND_BATCH 10   /* arquivos por seleção/soltura; o resto é ignorado com aviso */
+static void send_path(app_state_t *s, const char *path) {
+    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 48]; (void)s;
+    json_escape(path, esc, sizeof esc);
     snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc);
     core_send(line);
+}
+static bool can_send(app_state_t *s) {
+    if (core_state() != CORE_READY || !s->in_room) { snprintf(s->notice, sizeof s->notice, "Entre numa sala de voz para enviar anexos aos participantes."); return false; }
+    return true;
+}
+/* seletor nativo com seleção múltipla (o Electron aceitava vários arquivos de uma vez) */
+void attach_pick(app_state_t *s) {
+    if (!can_send(s)) return;
+    static char buf[32768]; buf[0] = 0;
+    OPENFILENAMEA o; memset(&o, 0, sizeof o);
+    o.lStructSize = sizeof o; o.hwndOwner = GetActiveWindow(); o.lpstrFile = buf; o.nMaxFile = sizeof buf;
+    o.lpstrTitle = "Enviar arquivos"; o.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameA(&o)) return;
+    const char *dir = buf, *p = buf + strlen(buf) + 1; int n = 0;
+    if (!*p) { send_path(s, dir); return; }                        /* um arquivo só: buf já é o caminho completo */
+    for (; *p; p += strlen(p) + 1) {
+        if (n++ >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; envie o resto em outra seleção.", MAX_SEND_BATCH); break; }
+        char full[MAX_PATH]; snprintf(full, sizeof full, "%s/%s", dir, p); send_path(s, full);
+    }
+}
+/* arquivos soltos na janela (WM_DROPFILES → cui_dropped_file); pastas são ignoradas */
+static void take_drops(cui_ctx *ui, app_state_t *s) {
+    int n = cui_dropped_file_count(ui); if (n <= 0 || !can_send(s)) return;
+    int sent = 0;
+    for (int i = 0; i < n; i++) {
+        const char *p = cui_dropped_file(ui, i); if (!p || !*p) continue;
+        DWORD at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (sent >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; solte o resto de novo.", MAX_SEND_BATCH); break; }
+        send_path(s, p); sent++;
+    }
 }
 
 static void xf_cancel(const xf_t *x) { char line[160]; snprintf(line, sizeof line, "{\"cmd\":\"file.cancel\",\"id\":\"%s\"}", x->id); core_send(line); }
@@ -166,8 +197,89 @@ static bool risky_ext(const char *p) {
     return false;
 }
 
+/* ---------- anexos na conversa: itens da linha do tempo, guardados neste computador (anexos.tsv) ----------
+ * Cada transferência concluída vira um cartão na conversa aberta, na posição do horário, e continua lá depois de reiniciar. */
+#define NTL 200
+typedef struct { bool used; char xid[48], conv[48], when[40], name[104], path[MAX_PATH]; double size; bool mine; } tl_t;
+static tl_t g_tl[NTL]; static bool g_tl_loaded;
+static bool tl_path(char *out, size_t cap) {
+    char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) != S_OK) return false;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\\anexos.tsv", dir); return true;
+}
+static void tl_clean(char *s) { for (; *s; s++) if (*s == '\t' || *s == '\n' || *s == '\r') *s = ' '; }
+static void tl_save(void) {
+    char p[MAX_PATH]; if (g_demo_tl || !tl_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "wb"); if (!f) return;
+    for (int i = 0; i < NTL; i++) if (g_tl[i].used)
+        fprintf(f, "%s\t%s\t%s\t%s\t%d\t%.0f\t%s\n", g_tl[i].xid, g_tl[i].conv, g_tl[i].when, g_tl[i].name, g_tl[i].mine ? 1 : 0, g_tl[i].size, g_tl[i].path);
+    fclose(f);
+}
+static void tl_load(void) {
+    if (g_tl_loaded) return; g_tl_loaded = true;
+    char p[MAX_PATH]; if (g_demo_tl || !tl_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "rb"); if (!f) return;
+    char ln[1400]; int n = 0;
+    while (n < NTL && fgets(ln, sizeof ln, f)) {
+        char *fld[7]; int k = 0; char *q = ln; ln[strcspn(ln, "\r\n")] = 0;
+        while (k < 7) { fld[k++] = q; char *t = strchr(q, '\t'); if (!t) break; *t = 0; q = t + 1; }
+        if (k < 7) continue;
+        tl_t *t = &g_tl[n++]; memset(t, 0, sizeof *t); t->used = true;
+        snprintf(t->xid, sizeof t->xid, "%s", fld[0]); snprintf(t->conv, sizeof t->conv, "%s", fld[1]); snprintf(t->when, sizeof t->when, "%s", fld[2]);
+        snprintf(t->name, sizeof t->name, "%s", fld[3]); t->mine = fld[4][0] == '1'; t->size = atof(fld[5]); snprintf(t->path, sizeof t->path, "%s", fld[6]);
+    }
+    fclose(f);
+}
+static const char *tl_conv(const app_state_t *s) {
+    if (s->active_group >= 0 && s->active_group < s->group_count) return s->groups[s->active_group].id;
+    if (s->active_friend >= 0 && s->active_friend < s->friend_count) return s->friends[s->active_friend].id;
+    return "";
+}
+static void tl_add(const app_state_t *s, const char *xid, const xf_t *x) {
+    tl_load();
+    for (int i = 0; i < NTL; i++) if (g_tl[i].used && !strcmp(g_tl[i].xid, xid)) return;   /* já registrado */
+    int slot = -1; for (int i = 0; i < NTL; i++) if (!g_tl[i].used) { slot = i; break; }
+    if (slot < 0) { memmove(&g_tl[0], &g_tl[1], sizeof g_tl[0] * (NTL - 1)); slot = NTL - 1; }   /* cheio: descarta o mais antigo */
+    tl_t *t = &g_tl[slot]; memset(t, 0, sizeof *t); t->used = true;
+    snprintf(t->xid, sizeof t->xid, "%s", xid); snprintf(t->conv, sizeof t->conv, "%s", tl_conv(s));
+    SYSTEMTIME u; GetSystemTime(&u);
+    snprintf(t->when, sizeof t->when, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", u.wYear, u.wMonth, u.wDay, u.wHour, u.wMinute, u.wSecond, u.wMilliseconds);
+    snprintf(t->name, sizeof t->name, "%s", x->name[0] ? x->name : "arquivo"); tl_clean(t->name);
+    snprintf(t->path, sizeof t->path, "%s", x->path); tl_clean(t->path);
+    t->size = x->size; t->mine = x->mine; tl_save();
+}
+/* ordena por horário (ISO UTC compara como texto): desenha os itens desta conversa com horário < until (NULL = todos) a partir de *cur */
+void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
+    tl_load();
+    const char *cv = tl_conv(s);
+    for (; *cur < NTL; (*cur)++) {
+        tl_t *t = &g_tl[*cur]; if (!t->used || (strcmp(t->conv, cv) && t->conv[0] != '*')) continue;   /* "*" = demonstração: aparece em qualquer conversa */
+        if (until && strcmp(t->when, until) >= 0) break;
+        if (!attach_search_match(t->name)) continue;
+        char a[24]; cui_push_id_int(ui, 9000 + *cur);
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = t->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START) {
+            cui_box(ui, .dir = CUI_ROW, .max_width = 420, .pad = 10, .gap = 10, .radius = 16, .bg = t->mine ? g_th.bubble_own : B_GLASS_CARD, .border = 1,
+                    .border_color = t->mine ? CUI_RGBA(0xffffff26) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                cui_box(ui, .width = CUI_PX(40), .height = CUI_PX(40), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 18, B_C3); }
+                cui_box(ui, .gap = 2, .max_width = 250) {
+                    cui_text(ui, t->name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
+                    char l[80]; snprintf(l, sizeof l, "%s · %s", t->mine ? "Enviado" : "Recebido", fmt_size(t->size, a, sizeof a));
+                    cui_text(ui, l, .size = 11, .color = t->mine ? CUI_RGBA(0xffffffb0) : B_MUTED);
+                }
+                if (t->path[0]) {
+                    if (!t->mine && cui_button(ui, "Abrir…", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { snprintf(g_open_path, sizeof g_open_path, "%s", t->path); g_open_dlg = true; }
+                    if (cui_icon_button(ui, CUI_ICON_FOLDER, .size = CUI_SIZE_SM, .tooltip = "Mostrar na pasta")) {
+                        char arg[MAX_PATH + 16]; snprintf(arg, sizeof arg, "/select,\"%s\"", t->path); ShellExecuteA(NULL, "open", "explorer.exe", arg, NULL, SW_SHOWNORMAL);
+                    }
+                }
+            }
+        }
+        cui_pop_id(ui);
+    }
+}
+
 void attach_strip(cui_ctx *ui, app_state_t *s) {
-    (void)s;
+    take_drops(ui, s);
     bool any = false; for (int i = 0; i < NXF; i++) if (g_xf[i].used) any = true;
     if (!any) return;
     int imgs = 0; for (int i = 0; i < NXF; i++) if (g_xf[i].used && g_xf[i].st == XF_DONE && (g_xf[i].th.tex || g_xf[i].th.rgba)) imgs++;
@@ -344,6 +456,10 @@ void attach_demo(app_state_t *s) {
     xf_t *b = xf_find("demo-b", true); snprintf(b->name, sizeof b->name, "planilha.xlsx"); b->size = 220 * 1024; b->done = b->size; b->st = XF_DONE; b->mine = false; snprintf(b->path, sizeof b->path, "C:\\Users\\demo\\planilha.xlsx");
     xf_t *d = xf_find("demo-d", true); snprintf(d->name, sizeof d->name, "video-ferias.mp4"); d->size = 310.0 * 1048576; d->st = XF_OFFER; d->mine = false;
     xf_t *c = xf_find("demo-c", true); snprintf(c->name, sizeof c->name, "foto.png"); c->size = 540 * 1024; c->st = XF_FAILED; snprintf(c->err, sizeof c->err, "conexão encerrada");
+    g_demo_tl = true; g_tl_loaded = true;
+    tl_t *t0 = &g_tl[0]; memset(t0, 0, sizeof *t0); t0->used = true; snprintf(t0->xid, sizeof t0->xid, "d1"); snprintf(t0->conv, sizeof t0->conv, "*"); snprintf(t0->when, sizeof t0->when, "2000-01-01T00:00:00.000Z");
+    snprintf(t0->name, sizeof t0->name, "contrato-assinado.pdf"); t0->size = 1.2 * 1048576; snprintf(t0->path, sizeof t0->path, "C:/Users/demo/contrato-assinado.pdf");
+    tl_t *t1 = &g_tl[1]; *t1 = *t0; snprintf(t1->xid, sizeof t1->xid, "d2"); snprintf(t1->name, sizeof t1->name, "capturas-da-tela.zip"); t1->size = 14.5 * 1048576; t1->mine = true;
     snprintf(g_ty[0].name, sizeof g_ty[0].name, "Marina Costa"); g_ty[0].until = GetTickCount() + 600000;
 }
 

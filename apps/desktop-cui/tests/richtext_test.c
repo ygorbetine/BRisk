@@ -37,6 +37,8 @@ int main(void) {
     long long t0 = rich_iso_ms("2026-11-09T23:41:00.000Z"), t1 = rich_iso_ms("2026-11-09T23:44:30.000Z"), t2 = rich_iso_ms("2026-11-09T23:47:00.000Z");
     OK(t1 - t0 == 210000 && rich_iso_ms("lixo") == -1 && rich_iso_ms("1970-01-01T00:00:01.500Z") == 1500, "rich_iso_ms");
     OK(rich_group_with_prev("A", t0, "A", t1, false) && !rich_group_with_prev("A", t0, "A", t2, false) && !rich_group_with_prev("A", t0, "B", t1, false) && !rich_group_with_prev("A", t0, "A", t1, true), "agrupamento (autor, 5 min, sem resposta)");
+    OK(rich_mentions_me("oi @Ana tudo bem", "Ana", NULL) && rich_mentions_me("@[Ana Lima] veja", "Ana Lima", "ana") && rich_mentions_me("e @ANA", "x", "ana"), "menciona a mim (nome, nome com espaço, @nick)");
+    OK(!rich_mentions_me("mail a@ana.com", "ana", "ana") && !rich_mentions_me("oi @Anabela", "Ana", "ana") && !rich_mentions_me("oi", "Ana", "ana") && !rich_mentions_me(NULL, "Ana", "ana"), "não confunde e-mail, prefixo nem texto vazio");
     printf(fails ? "\n%d FALHA(S)\n" : "\ntudo certo\n", fails);
     return fails ? 1 : 0;
 }

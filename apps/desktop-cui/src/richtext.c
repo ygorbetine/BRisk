@@ -147,3 +147,18 @@ long long rich_iso_ms(const char *s) {
     long long days = era * 146097 + doe - 719468;
     return ((days * 24 + h) * 60 + m) * 60000 + sec * 1000LL + ms;
 }
+
+static bool ieq_n(const char *a, const char *b, size_t n) { for (size_t i = 0; i < n; i++) if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return false; return true; }
+bool rich_mentions_me(const char *text, const char *name, const char *nick) {
+    if (!text) return false;
+    for (const char *p = text; *p; p++) {
+        if (*p != '@' || (p != text && !isspace((unsigned char)p[-1]))) continue;
+        const char *w = p + 1, *e; size_t n;
+        if (*w == '[') { w++; e = strchr(w, ']'); if (!e) continue; n = (size_t)(e - w); }
+        else { n = 0; while (name_ch((unsigned char)w[n]) && n < 80) n++; }
+        if (n < 2) continue;
+        const char *c[2] = { nick, name };
+        for (int k = 0; k < 2; k++) if (c[k] && c[k][0] && strlen(c[k]) == n && ieq_n(w, c[k], n)) return true;
+    }
+    return false;
+}

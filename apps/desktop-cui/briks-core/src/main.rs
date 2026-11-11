@@ -13,6 +13,7 @@ mod video;
 mod gpuconv;
 mod group_sync;
 mod ice;
+mod history;
 mod identity;
 mod filetransfer;
 mod import;

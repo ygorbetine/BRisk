@@ -66,6 +66,14 @@ pub struct VideoOut {
     pub nack_unique: Arc<AtomicU64>,
 }
 impl VideoOut {
+    /// API interna de publicação (ver docs/plans/transmissao-api-interna.md): entrega UMA unidade de acesso H264 (Annex-B, já com
+    /// SPS/PPS no quadro-chave) ao pacer, que empacota (RTP, MTU 1180), espaça e guarda para retransmissão. `samples` = intervalo desde
+    /// o quadro anterior em ticks de 90 kHz; `pace_bps` = ritmo de saída (convenção: 2,5 × bitrate, piso de 600 kbps).
+    /// É o ponto em que um SFU/LiveKit pode receber o MESMO codificador: troque o consumidor do canal, não o laço de captura/codificação.
+    pub fn publish(&self, au: Vec<u8>, samples: u32, pace_bps: u32) {
+        self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
+        let _ = self.tx.send((au, samples.max(1), pace_bps));
+    }
     pub fn new() -> Self {
         let track = new_video_track();
         let (tx, rx) = mpsc::unbounded_channel();

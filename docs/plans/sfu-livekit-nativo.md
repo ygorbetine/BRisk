@@ -57,3 +57,13 @@ WebSocket `/rtc` + protobuf; dois PeerConnections (subscriber: o servidor oferec
 2. `supabase secrets set LIVEKIT_API_KEY=… LIVEKIT_API_SECRET=… LIVEKIT_URL=wss://…` e `supabase functions deploy livekit-token` (JWT do gateway ligado).
 3. No app: `BRIKS_LIVEKIT_URL` e `BRIKS_LIVEKIT_TOKEN_URL=https://<ref>.supabase.co/functions/v1/livekit-token` (ou `livekit.json` na pasta de dados / o `.env` com `VITE_LIVEKIT_*`).
 4. Entrar na conta Briks no app e escolher Configurações > Rede > Modo da chamada. Conferir o diagnóstico ("SFU · servidor …").
+
+## Próximos marcos (pedidos pelo coordenador; ainda NÃO FEITOS)
+Estado em 01:47: o lock de GPU pertence à sessão da transmissão; nada de GPU foi rodado depois do primeiro relatório.
+1. NVENC/MFT sobre o SFU (`BRIKS_SFU_TEST_GPU=1`), conferindo o perfil H264 contra o SDP: aguarda o lock.
+2. Reconexão automática com backoff e token renovado: não feito.
+3. Adaptação sob perda/atraso (merge de `cui-transmissao` + netsim) e TWCC/REMB: não feito.
+4. Hello assinado por DataChannel (nome e fingerprint reais): não feito.
+5. Regra proposta para o Automático sem salas divididas: SFU só se há configuração válida E o token foi obtido; qualquer falha no token = P2P para aquela pessoa. Para ninguém ficar sozinho em outra sala, o ideal é o dono/primeiro a entrar anunciar o modo no Realtime e os demais seguirem: não implementado.
+6. **Risco achado por inspeção:** a UI manda `chat.send`/`chat.event.send` pela mesma sala `room` e, no modo SFU, o core responde "chat não disponível no modo SFU". Ou seja, hoje o SFU quebra o chat da sala. Correção prevista: no modo SFU manter também uma malha só de DataChannel (sem mídia) para chat, status, presença e expulsão, e rotear mídia ao SFU; precisa reconciliar `peer_id` (UUID da malha x identidade do SFU). Até lá, o Automático com SFU configurado não deve ser ligado para usuários.
+7. Expulsar/mudo remoto por mensagens assinadas do dono: NÃO FEITO.

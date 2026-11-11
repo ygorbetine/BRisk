@@ -147,6 +147,12 @@ static void pv_remember(const char *fp, float gain) {
     pv_save();
 }
 
+/* quem entra na sala volta com o volume que a pessoa escolheu da última vez (identidade conhecida pelo peer.info) */
+static void peer_volume_restore(app_state_t *s, int slot) {
+    float g = rtc_saved_volume(s->rtc_peers[slot].fp);
+    if (fabsf(g - 1.0f) > 0.004f) { s->rtc_peers[slot].volume = g * 100.0f; s->rtc_peers[slot].vol_set = true; rtc_set_peer_volume(s, slot, g); }
+}
+
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
     pv_remember(s->rtc_peers[slot].fp, gain);
@@ -239,7 +245,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
             copy(s->rtc_peers[i].fp, sizeof s->rtc_peers[i].fp, json_str(j, "fp", ""));
             copy(s->rtc_peers[i].name, sizeof s->rtc_peers[i].name, json_str(j, "name", ""));
-            { float g = rtc_saved_volume(s->rtc_peers[i].fp); if (fabsf(g - 1.0f) > 0.004f) { s->rtc_peers[i].volume = g * 100.0f; s->rtc_peers[i].vol_set = true; rtc_set_peer_volume(s, i, g); } }   /* CHM-14 */
+            peer_volume_restore(s, i);   /* CHM-14 */
         }
     } else if (!strcmp(ev, "room.owner")) {
         const jval *m = json_get(j, "me");
@@ -353,6 +359,12 @@ void rtc_pump(app_state_t *s) {
             jval *jj = json_parse(line); if (jj) { over_note(jj, "peer.info"); json_free(jj); }
         }
         if (getenv("BRIKS_DEMO_LEAVE")) for (int i = 0; i < atoi(getenv("BRIKS_DEMO_LEAVE")) && i < BRIKS_MAX_PEERS; i++) { char id[48]; snprintf(id, sizeof id, "demo-%d", i); set_peer(s, id, "fechado"); }
+        if (getenv("BRIKS_DEMO_PEERVOL")) {   /* prova do CHM-14: muda o volume de um, "volta à chamada" lendo o arquivo de novo */
+            rtc_set_peer_volume(s, 0, (float)atof(getenv("BRIKS_DEMO_PEERVOL")));
+            s->rtc_peers[0].volume = 100.0f; s->rtc_peers[0].vol_set = false;
+            g_pv_loaded = false; g_pv_n = 0;
+            peer_volume_restore(s, 0);
+        }
         if (getenv("BRIKS_DEMO_NETFAIL")) { s->net_failed = true; copy(s->rtc_state, sizeof s->rtc_state, "erro"); copy(s->rtc_msg, sizeof s->rtc_msg, "Não foi possível entrar pelo servidor de chamadas: serviço de tokens inacessível"); }
         s->rtc_peers[1].level = 0.6f; if (getenv("BRIKS_DEMO_STATUS")) { copy(s->rtc_peers[0].status, sizeof s->rtc_peers[0].status, "Chego em 10 minutos"); copy(s->rtc_peers[1].presence, sizeof s->rtc_peers[1].presence, "Jogando Valorant"); } s->rtc_owner_me = true; s->in_room = true;
         copy(s->rtc_state, sizeof s->rtc_state, "conectado"); s->rtc_peer_count = s->rtc_authed_count = dn;   /* a demonstração mostra a sala como conectada */

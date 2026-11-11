@@ -1,0 +1,9 @@
+# CHM-16: sem falar -> aviso com contagem e Continuar -> some; sem Continuar -> sai da chamada. Prazos curtos por BRIKS_IDLE_LIMIT_S/WARN_S. Demo call com 2 pessoas
+waitms 800
+snap i0
+waitms 3500
+snap i1
+tap 906 107
+snap i2
+waitms 14000
+snap i3

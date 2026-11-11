@@ -166,7 +166,6 @@ async fn signed_in_ex(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, re
             if let Err(e) = r {
                 if e.code == "key_revoked" { let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await; }
             }
-            let _ = tx.send(devices_event(rt, acc).await).await;
         }
         Err(e) => {
             let _ = tx.send(json!({ "ev": "account.notice", "error_code": e.code, "message": e.message })).await;

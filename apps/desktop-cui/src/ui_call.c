@@ -666,7 +666,7 @@ void idle_banner(cui_ctx *ui, app_state_t *s) {
     char t[160]; snprintf(t, sizeof t, "Você está há muito tempo sem falar. A chamada será encerrada em %lld:%02lld.", sec / 60, sec % 60);
     cui_rect pr = cui_get_rect(ui, cui_make_id(ui, "idle-pill"));
     if (pr.w > 0) briks_cover(pr.x, pr.y, pr.w, pr.h);
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 44, .pad_x = 8) {
+    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 82, .pad_x = 8) {
         cui_box(ui, .id = "idle-pill", .dir = CUI_ROW, .pad_x = 14, .pad_y = 7, .gap = 10, .radius = 18, .bg = CUI_RGBA(0x4a3a10f4), .border = 1, .border_color = B_GLASS_BORDER,
                 .align = CUI_ALIGN_CENTER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
             cui_icon(ui, CUI_ICON_CLOCK, 16, CUI_RGB(0xffe6a8));

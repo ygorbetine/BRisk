@@ -1,0 +1,4 @@
+# CHM-14: o volume de uma pessoa (50%) é gravado e volta quando ela entra de novo na chamada (relido do arquivo). BRIKS_DEMO_PEERVOL=0.5 faz a "chamada anterior"
+waitms 800
+expect peer_vol_0 50
+snap v0

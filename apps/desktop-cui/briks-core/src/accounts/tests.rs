@@ -1344,3 +1344,37 @@ async fn devices_list_register_revoke_and_livekit_refuses_the_revoked_peer() {
     assert_eq!(a.keys_list().await.unwrap_err().code, "server_not_ready");
     assert_eq!(a.key_revoke(pc1).await.unwrap_err().code, "server_not_ready");
 }
+
+#[tokio::test]
+async fn declining_a_request_removes_it_and_unfriending_and_cancelling_work() {
+    // AMI-06 (recusar), AMI-07 (desfazer amizade) e o cancelamento de um pedido enviado: o core já faz, a tela só liga
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("dc-a")), accounts(&f, &tmpdir("dc-b")));
+    let SignUpOutcome::SignedIn(ua) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(ub) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    for (acc, nick) in [(&a, "ana_01"), (&b, "bia_01")] {
+        let id = crate::identity::Identity::generate();
+        acc.publish_identity(serde_json::to_value(id.public_jwk()).unwrap(), &id.fingerprint()).await.unwrap();
+        acc.set_nick(nick).await.unwrap();
+    }
+    // recusar: o pedido some dos dois lados e dá para pedir de novo
+    a.friend_request("bia_01").await.unwrap();
+    let rid = b.friends().await.unwrap()[0].request_id.clone().unwrap();
+    b.friend_respond(&rid, false).await.unwrap();
+    assert!(b.friends().await.unwrap().is_empty() && a.friends().await.unwrap().is_empty());
+    assert_eq!(b.friend_respond(&rid, false).await.unwrap_err().code, "not_found", "pedido já respondido");
+    // cancelar um pedido enviado = friend_remove do destinatário
+    a.friend_request("bia_01").await.unwrap();
+    assert_eq!(a.friends().await.unwrap()[0].state, "outgoing");
+    a.friend_remove(&ub.id).await.unwrap();
+    assert!(a.friends().await.unwrap().is_empty() && b.friends().await.unwrap().is_empty());
+    // desfazer amizade aceita: some para os dois
+    a.friend_request("bia_01").await.unwrap();
+    let rid = b.friends().await.unwrap()[0].request_id.clone().unwrap();
+    b.friend_respond(&rid, true).await.unwrap();
+    assert_eq!(a.friends().await.unwrap()[0].state, "friend");
+    b.friend_remove(&ua.id).await.unwrap();
+    assert!(a.friends().await.unwrap().is_empty() && b.friends().await.unwrap().is_empty());
+}

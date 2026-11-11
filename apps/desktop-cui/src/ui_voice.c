@@ -126,7 +126,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
                 cui_box(ui, .id = "open", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 2, .clip = true) {
                     cui_text(ui, title, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);   /* nome da sala: o que pode ser cortado é ele, não o estado */
                     cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
-                        if (!ok && !bad) cui_spinner(ui, 11);   /* BAS-30: conectando/reconectando */
+                        if (!ok && !bad) cui_spinner(ui, 9);   /* BAS-30: conectando/reconectando */
                         else cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = ok ? B_ONLINE : CUI_RGB(0xe95555)) {}
                         cui_text(ui, state_txt, .size = 11.5f, .color = state_col, .nowrap = true);
                     }

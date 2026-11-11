@@ -1,0 +1,16 @@
+# Hub de Amigos: abas Todos/Online/Pendentes com contador (AMI-08), indicador online (AMI-10), buscar (AMI-09), Atividade (AMI-11). Demo social + BRIKS_DEMO_FTAB=0
+waitms 600
+snap h0
+tap 703 92
+expect friends_tab 1
+snap h1
+tap 826 92
+expect friends_tab 2
+snap h2
+tap 580 92
+tap 888 188
+type raf
+snap h3
+tap 1198 92
+expect friends_tab 5
+snap h4

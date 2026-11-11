@@ -1,0 +1,5 @@
+# BAS-30: esqueleto + spinner enquanto a lista de amigos não chegou (BRIKS_DEMO_LOADING); a aba Pendentes não usa o esqueleto, então a tela muda
+waitms 800
+snap l0
+tap 826 92
+snap l1

@@ -55,12 +55,19 @@ fn check(u: &str, secure: &str, plain: &str, what: &str) -> Result<(), String> {
 pub fn check_server_url(u: &str) -> Result<(), String> { check(u, "wss://", "ws://", "URL do servidor LiveKit") }
 pub fn check_token_url(u: &str) -> Result<(), String> { check(u, "https://", "http://", "URL do serviço de tokens") }
 
+/// `livekit.json`: primeiro o da pasta de dados do usuário (o que a pessoa editou vence); sem ele, o que o instalador deixou ao lado do
+/// executável (só URLs públicas, sem segredo; mesmo esquema do `supabase.json`).
+fn read_file(data_dir: &Path) -> serde_json::Value {
+    let exe_side = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("livekit.json")));
+    [Some(data_dir.join("livekit.json")), exe_side].into_iter().flatten()
+        .find_map(|p| std::fs::read_to_string(p).ok().and_then(|t| if t.len() <= 8 * 1024 { serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok() } else { None }))
+        .unwrap_or(serde_json::Value::Null)
+}
+
 /// `Ok(None)` = não configurado (modo P2P puro); `Err` = configurado mas inválido (aparece no diagnóstico, não derruba nada).
 pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Result<Option<SfuConfig>, String> {
     let get = |k: &str| env(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    let file: serde_json::Value = std::fs::read_to_string(data_dir.join("livekit.json")).ok()
-        .and_then(|t| if t.len() <= 8 * 1024 { serde_json::from_str(t.trim_start_matches('\u{feff}')).ok() } else { None })
-        .unwrap_or(serde_json::Value::Null);
+    let file = read_file(data_dir);
     let fget = |k: &str| file[k].as_str().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let url = get("BRIKS_LIVEKIT_URL").or_else(|| get("VITE_LIVEKIT_URL")).or_else(|| fget("url"));
     let token_url = get("BRIKS_LIVEKIT_TOKEN_URL").or_else(|| get("VITE_LIVEKIT_TOKEN_URL")).or_else(|| fget("token_url"));
@@ -77,8 +84,7 @@ pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Result<
 /// aviso assinado pela camada de dados). Mesmas regras de esquema da URL de tokens.
 pub fn kick_url(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, token_url: &str) -> Option<String> {
     let explicit = env("BRIKS_LIVEKIT_KICK_URL").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
-        std::fs::read_to_string(data_dir.join("livekit.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok())
-            .and_then(|v| v["kick_url"].as_str().map(|s| s.trim().to_string())).filter(|v| !v.is_empty())
+        Some(read_file(data_dir)).and_then(|v| v["kick_url"].as_str().map(|s| s.trim().to_string())).filter(|v| !v.is_empty())
     });
     let u = match explicit { Some(u) => u, None => format!("{}/livekit-kick", token_url.strip_suffix("/livekit-token")?) };
     check_token_url(&u).ok().map(|_| u)

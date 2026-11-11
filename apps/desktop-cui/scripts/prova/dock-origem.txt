@@ -1,0 +1,22 @@
+# Dock abaixo da barra de título: painéis não passam da base; arrastar pelo cabeçalho (inclusive a barra de grupos) funciona; contorno segue o painel.
+wait 12
+shot a-parado
+to header:servers 4
+wait 6
+shot b-hover-grupos
+down
+to zone:chat:right 12
+wait 14
+expect drag 1
+shot c-arrasto-grupos
+up
+wait 14
+shot d-solto
+to header:nav 4
+down
+to zone:chat:bottom 12
+wait 14
+expect drag 1
+shot e-arrasto-menu
+esc
+wait 10

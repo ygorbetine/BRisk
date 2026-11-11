@@ -1,0 +1,12 @@
+# Microfone ligado x desligado na barra da chamada (clique no botão do microfone). Rodar com BRIKS_DEMO=call BRIKS_DEMO_PEERS=1 BRIKS_WINDOW=1280x800.
+waitms 600
+expect mic 1
+at 640 300
+waitms 200
+shot mic-ligado
+click 180 780
+waitms 400
+expect mic 0
+at 640 300
+waitms 300
+shot mic-desligado

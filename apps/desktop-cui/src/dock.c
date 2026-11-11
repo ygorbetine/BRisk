@@ -100,6 +100,9 @@ static float last_vp_h = 800;
 #define ANIM_TAU 0.055f     /* 95% em ~165 ms */
 #define HOLD_S   0.10f      /* histerese: tempo na nova zona antes de trocar a prévia */
 
+/* Origem do dock dentro da janela: abaixo da barra de título própria e do filete (3 px). Os retângulos dos painéis são relativos a ela;
+   o mouse e o que é pintado em tela (contorno, pilha, cobertura) são absolutos, então somam/descontam este deslocamento. */
+static float g_oy = 3.0f;
 typedef struct { bool slot; lrect slot_r; } over_t;
 
 static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
@@ -107,7 +110,7 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     const over_t *o = (const over_t *)user;
     if (!o->slot) return;
     /* só um contorno sutil, com o MESMO retângulo e raio (22) do painel: segue a curva, sem cantos retos */
-    cui_rect z = { o->slot_r.x, o->slot_r.y, o->slot_r.w, o->slot_r.h };
+    cui_rect z = { o->slot_r.x, o->slot_r.y + g_oy, o->slot_r.w, o->slot_r.h };
     /* halo azul (3 anéis que somem para fora) + contorno azul nítido: o encaixe fica evidente, sempre com o raio do painel */
     for (int i = 3; i >= 1; i--) {
         float g = (float)i * 3.0f; cui_rect h = { z.x - g, z.y - g, z.w + 2 * g, z.h + 2 * g };
@@ -145,7 +148,7 @@ typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float m
 
 /* Painel na posição absoluta r dentro do contêiner de pilha. */
 /* Faixa do cabeçalho (arrastável como a barra de título de uma janela). A rail de comunidades não tem título: só a folga do topo. */
-static float header_h(int kind) { return kind == P_SERVERS ? 12.0f : 56.0f; }
+static float header_h(int kind) { return kind == P_SERVERS ? 24.0f : 62.0f; }   /* o cabeçalho inteiro arrasta; a barra de grupos tem uma faixa própria no topo */
 static bool in_header(int kind, lrect r, float x, float y) {
     if (!inside(r, x, y) || y > r.y + header_h(kind)) return false;
     int n = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0);
@@ -170,7 +173,7 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
                 }
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {
-                { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + 8, 28 * nb, 28); }
+                { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + g_oy + 8, 28 * nb, 28); }
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 10) {
                     cui_box(ui, .dir = CUI_ROW, .gap = 4) {
                         bool p = false, x = false;
@@ -202,10 +205,13 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     if (dt > 0.05f) dt = 0.05f;
     bool snap_all = g_perf >= PERF_MIN || (demo_mode && !scripted) || vp.x != last_vp_w || vp.y != last_vp_h;
 
-    cui_vec2 mp = fake_mouse ? fake_pos : cui_mouse_pos(ui);
+    g_oy = titlebar_height() + 3.0f;
+    const cui_vec2 mabs = cui_mouse_pos(ui);
+    const float H = vp.y - g_oy;   /* altura útil do dock */
+    cui_vec2 mp = fake_mouse ? fake_pos : (cui_vec2){ mabs.x, mabs.y - g_oy };   /* mouse nas coordenadas do dock */
     bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
     rc_t c = { ui, s, {{0}}, mp.x, mp.y, down };
-    lrect area = { 10, 10, vp.x - 20, vp.y - 3 - 20 };
+    lrect area = { 10, 10, vp.x - 20, H - 20 };
     layout_compute(&L, area, c.r);
     /* barra de grupos responsiva: a largura acompanha a janela (ícones 36..56 px; larga, ~180..270 px com nome) */
     { int si = layout_find(&L, P_SERVERS), sp = si >= 0 ? L.n[si].parent : -1;
@@ -259,13 +265,13 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
         stack_card_size(drag.kind, src.w, src.h, &pile_w, &pile_h);
         pile_kind = drag.kind;
         pile_ox = fminf(fmaxf(mp.x + 16 + pile_w * 0.5f, pile_w * 0.5f + 8), vp.x - pile_w * 0.5f - 8);
-        pile_oy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), vp.y - pile_h * 0.5f - 8);
+        pile_oy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), H - pile_h * 0.5f - 8);
         pile_grab(&pile, pile_ox, pile_oy);
     }
     prev_drag_active = drag.active;
     if (drag.active) {
         float fx = fminf(fmaxf(mp.x + 16 + pile_w * 0.5f, pile_w * 0.5f + 8), vp.x - pile_w * 0.5f - 8);
-        float fy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), vp.y - pile_h * 0.5f - 8);
+        float fy = fminf(fmaxf(mp.y + 16 + pile_h * 0.5f, pile_h * 0.5f + 8), H - pile_h * 0.5f - 8);
         pile_follow(&pile, fx, fy, dt);
     }
     if (getenv("BRIKS_DBG")) { static int fr; fprintf(stderr, "f%d mp=%.0f,%.0f down=%d drag=%d prev=%d prv=%d\n", fr++, mp.x, mp.y, down, drag.active, prev_down, previewing); }
@@ -344,12 +350,12 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
             drag_stack_draw pd; memset(&pd, 0, sizeof pd); pd.s = s;
             float sc = pile_scale(&pile), ax = pile.x[PILE_LAYERS - 1].x, ay = pile.y[PILE_LAYERS - 1].x;
             for (int i = 0; i < PILE_LAYERS; i++) {   /* afastamentos entre os cartões escalam com a pilha */
-                pd.cx[i] = ax + (pile.x[i].x - ax) * sc; pd.cy[i] = ay + (pile.y[i].x - ay) * sc; pd.ang[i] = pile.rot[i].x;
+                pd.cx[i] = ax + (pile.x[i].x - ax) * sc; pd.cy[i] = ay + (pile.y[i].x - ay) * sc + g_oy; pd.ang[i] = pile.rot[i].x;
             }
             pd.scale = sc; pd.alpha = pile_alpha(&pile); pd.lift = pile.lift.x; pd.w = pile_w; pd.h = pile_h; pd.kind = pile_kind;
             cui_canvas(ui, "dock-pile", CUI_FILL, CUI_FILL, drag_stack_paint, &pd, sizeof pd);
         }
-        add_menu(ui, vp, mp);
+        add_menu(ui, (cui_vec2){ vp.x, H }, mabs);
     }
 }
 
@@ -434,7 +440,7 @@ bool dock_script_point(const char *spec, float *x, float *y) {
     if (sscanf(spec, "%15[^:]:%31[^:]:%15s", what, kind_s, zone_s) < 2) return false;
     int k = panel_from_name(kind_s), i = layout_find(&L, k);
     if (i < 0) return false;
-    lrect r = last_r[i];
+    lrect r = last_r[i]; r.y += g_oy;   /* o roteiro trabalha em coordenadas da janela */
     int cnt = layout_count(&L);
     bool has_plus = r.w >= 120, has_x = cnt > 1;
     float right = r.x + r.w - 10, cy = r.y + 22;
@@ -443,11 +449,11 @@ bool dock_script_point(const char *spec, float *x, float *y) {
         if (!strcmp(what, "grip")) { *x = r.x + r.w * 0.35f; *y = r.y + 28; return true; }   /* a alça é o próprio cabeçalho */
     if (!strcmp(what, "plus") && has_plus) { *x = x_plus; *y = cy; return true; }
     if (!strcmp(what, "close") && has_x) { *x = x_close; *y = cy; return true; }
-    if (!strcmp(what, "header")) { *x = r.x + r.w * 0.35f; *y = r.y + 28; return true; }
+    if (!strcmp(what, "header")) { *x = r.x + r.w * 0.35f; *y = r.y + (k == P_SERVERS ? 12 : 28); return true; }
     if (!strcmp(what, "panel")) { *x = r.x + r.w * 0.5f; *y = r.y + r.h * 0.5f; return true; }
     if (!strcmp(what, "divider")) {          /* vão entre este painel e o irmão (ou o lado de dentro) */
         int p = L.n[i].parent; if (p < 0) return false;
-        lrect a = last_r[L.n[p].a];
+        lrect a = last_r[L.n[p].a]; a.y += g_oy;
         if (L.n[p].vertical) { *x = r.x + r.w * 0.5f; *y = a.y + a.h + LAYOUT_GAP * 0.5f; }
         else { *x = a.x + a.w + LAYOUT_GAP * 0.5f; *y = r.y + r.h * 0.5f; }
         return true;
@@ -463,7 +469,7 @@ bool dock_script_point(const char *spec, float *x, float *y) {
     return false;
 }
 void dock_script_pick(const char *kind) { int k = panel_from_name(kind); if (k >= 0) { drag = (drag_t){ true, k, true }; menu_open = false; } }
-void dock_script_menu(float x, float y) { menu_open = true; menu_age = 0; menu_ax = x; menu_ay = y; }
+void dock_script_menu(float x, float y) { menu_open = true; menu_age = 0; menu_ax = x; menu_ay = y - g_oy; }
 int dock_probe(const char *n) {
     if (!strcmp(n, "menu")) return menu_open;
     if (!strcmp(n, "drag")) return drag.active;

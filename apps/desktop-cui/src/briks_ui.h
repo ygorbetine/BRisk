@@ -391,6 +391,11 @@ void settings_text_step(cui_ctx *ui, int delta);   /* settings.c: Ctrl+mais/meno
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
+/* Microfone riscado: a fonte de ícones do CUI é um subconjunto sem o glifo mic-off, então briks_icon desenha o microfone e um traço diagonal por cima.
+   BRIKS_ICON_MIC_OFF é só um marcador para briks_icon (não é um glifo). */
+#define BRIKS_ICON_MIC_OFF "briks:mic-off"
+void briks_icon(cui_ctx *ui, const char *icon, float size, cui_color color);   /* cui_icon + ícones compostos do Briks */
+float titlebar_height(void);   /* titlebar.c: 36 px, ou 0 em tela cheia */
 bool dock_has_panel(int kind);   /* o painel está no layout atual? */
 int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
 int script_probe(const char *name);
@@ -436,7 +441,10 @@ __declspec(selectany) bool g_modal_now, g_modal_prev; __declspec(selectany) int 
 /* Controles sobrepostos (ex.: botões + e × do painel) registram o retângulo para o próximo quadro: o que está por baixo não recebe hover/clique ali. */
 __declspec(selectany) float g_cov_now[8][4], g_cov_prev[8][4]; __declspec(selectany) int g_cov_n_now, g_cov_n_prev;
 static inline void briks_cover(float x, float y, float w, float h) { if (g_cov_n_now < 8) { g_cov_now[g_cov_n_now][0] = x; g_cov_now[g_cov_n_now][1] = y; g_cov_now[g_cov_n_now][2] = w; g_cov_now[g_cov_n_now][3] = h; g_cov_n_now++; } }
+/* g_cov_own > 0: quem está desenhando É o controle sobreposto (o dono da cobertura); a cobertura vale só para o que está por baixo dele. */
+__declspec(selectany) int g_cov_own;
 static inline bool briks_covered(cui_ctx *ui) {
+    if (g_cov_own > 0) return false;
     cui_vec2 m = cui_mouse_pos(ui);
     for (int i = 0; i < g_cov_n_prev; i++) if (m.x >= g_cov_prev[i][0] && m.y >= g_cov_prev[i][1] && m.x < g_cov_prev[i][0] + g_cov_prev[i][2] && m.y < g_cov_prev[i][1] + g_cov_prev[i][3]) return true;
     return false;

@@ -601,3 +601,44 @@ rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agor
   conteúdo protegido real foi testado.
 - **Discord tocando — NÃO FEITO.** **FEC de vídeo — NÃO FEITO** (retransmissão por NACK cobre a perda; FEC exigiria um canal
   extra e ainda não foi avaliado).
+
+## 19. Perda aleatória × congestionamento (pedido do SFU) — 2026-11-11
+
+**Problema medido pelo agente do SFU e reproduzido na malha** (`mesh_adaptive_under_random_loss`, codecs de software, adaptação
+ligada, perda aleatória sem limite de banda): o estimador tratava perda como congestionamento e descia sem parar.
+
+**Mudança (`adapt.rs`):** perda só corta na hora com evidência de congestionamento (RTT acima da base em 25 ms/25%, ou perda acima
+de 25%). Sem evidência, faz UM corte de sondagem de 20% e avalia pela MÉDIA da perda nos 2 s seguintes: se não caiu, a perda é
+aleatória — devolve o bitrate e passa a tolerar essa perda (`loss_tol`, volta devagar a 10%); se caiu, era policiamento sem fila
+e o corte fica. O atraso que não responde a dois cortes vira tolerância de atraso (`delay_tol`) em vez de trocar a base. Piso de
+bitrate 150 → 250 kbps. 13 testes unitários do estimador (5 novos: perda aleatória 5/10/15%, perda oscilando no limite,
+policiamento sem fila, congestionamento por cima de perda aleatória, atraso alheio).
+
+| Fase (malha, 720p, alvo 3000 kbps) | Antes: estimativa / qps / maior intervalo | Depois: estimativa / qps / maior intervalo |
+|---|---|---|
+| perda 5%: 10–20 s | 3000 kbps / 13,0 / 281 ms | 2680 kbps / 12,7 / 329 ms |
+| perda 10%: 0–10 s | 951 kbps (360p) / 10,4 / 616 ms | 3000 kbps (720p) / 10,7 / 382 ms |
+| perda 10%: 10–20 s | 329 kbps (360p) / 9,7 / 555 ms | 3000 kbps (720p) / 13,6 / 399 ms |
+| perda 10%: 20–30 s | 207 kbps (360p) / 5,8 / **4449 ms** | 3000 kbps (720p) / 13,4 / **307 ms** |
+| livre de novo | 2657 kbps (540p) / 9,4 | 3000 kbps (720p) / 13,2 |
+
+(O codificador de software não passa de ~13–14 qps em 720p nesta máquina: o teto de qps é do teste, não da rede.)
+CSV: `provas/transmissao/malha-perda-aleatoria-adaptativo.csv`.
+
+**Sem regressão no congestionamento real** (`adaptation_follows_the_network`, NVENC): 6 Mbps → 4,4 / 4,0 Mbps; 2 Mbps+2% → 0,96 /
+0,72; 0,8 Mbps+5% → 0,29 / 0,40; volta a 6 Mbps → 3,9 / 4,3 (Nitidez / Fluidez). Queda de 4 s: 1º quadro em 1,15–1,24 s.
+**"Preso em ~150 kbps"** (`BRIKS_G2G_CASE=5`: 4 Mbps, 2% de perda, 80 ms por sentido, jitter 0–40 ms): agora estimativa de 1,6 Mbps
+a 720p (antes ~150 kbps a 360p); ainda limitado por "atraso" (8,2 qps, p95 271 ms).
+Matriz de bitrate fixo (`network_impairment_matrix`): perda 1/2/5% = 30,0/29,9/29,9 qps; 10% = 24,2 qps (3 congelamentos > 250 ms,
+maior intervalo 782 ms); quedas de 3 e 5 s voltam em ~1,5 s.
+
+**NÃO FEITO / em aberto:**
+- **Matriz sobre o SFU não foi repetida:** o `livekit-server.exe` não está nesta máquina (procurei em A:\ e no perfil) e baixar
+  exige autorização. O estimador é o mesmo código nos dois transportes; falta rodar `tests_sfurede.rs` com `BRIKS_LIVEKIT_SERVER_BIN`.
+- **Congelamento longo em queda brusca de banda continua:** 11,3 s (Nitidez) e 14,2 s (Fluidez) nesta rodada; o teste
+  `adaptation_follows_the_network` FALHOU por isso (limite de 14 s). Limitar o ritmo do pacer à capacidade estimada foi testado e
+  piorou (24 s, revertido). FEC de vídeo não foi feito.
+- Latência de 1080p (+44 ms medidos; causa não isolada) e 4+ espectadores: sem mudança desde a seção 16/17.
+- **Disco:** cada execução da suíte deixa ~760 MB em `%TEMP%` (pastas `briks-*`, hoje ~41 GB somando todas as sessões) e o C:
+  chegou a 0 MB, derrubando a suíte com violação de acesso. Rodei com `TMP`/`TEMP` apontados para `target/tmp-test` (apagado
+  depois). A limpeza do `%TEMP%` compartilhado precisa do ok do usuário; os testes deveriam apagar o que criam.

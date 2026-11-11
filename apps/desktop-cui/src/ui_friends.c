@@ -81,8 +81,15 @@ void friends_unblock(app_state_t *s, const char *id) {
 }
 
 /* ---- apresentação ---- */
-static bool in_call(const app_state_t *s, const person_t *p) {   /* "online" por enquanto = está na sua chamada agora (ainda não há canal de presença) */
+static bool in_call(const app_state_t *s, const person_t *p) {   /* está na sua chamada agora */
     for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].state, "connected") && !strcmp(s->rtc_peers[i].name, p->name)) return true;
+    return false;
+}
+
+/* online = batimento recente no servidor (0007) ou está na sua chamada agora (vale mesmo se o servidor ainda não tem a 0007) */
+bool friends_online(const app_state_t *s, const person_t *p) {
+    if (in_call(s, p)) return true;
+    if (s->pres_remote) for (int i = 0; i < s->pres_n; i++) if (s->pres[i].online && !strcmp(s->pres[i].id, p->id)) return true;
     return false;
 }
 
@@ -98,10 +105,13 @@ static bool matches(const app_state_t *s, const person_t *p) {
 /* linha de pessoa: avatar, nome + @nick/status, e os botões do chamador; devolve o cartão para os botões irem dentro */
 #define ROW_BEGIN(ui, p) \
     cui_box((ui), .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .gap = 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER)
-static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override) {
+static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, bool online) {
     cui_avatar(ui, p->name, .size = 36);
     cui_column(ui, .gap = 1, .width = CUI_FILL) {
-        cui_text(ui, p->name, .nowrap = true);
+        cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
+            cui_text(ui, p->name, .nowrap = true);
+            if (online) cui_box(ui, .width = 8, .height = 8, .radius = 4, .bg = B_ONLINE);   /* ponto verde: online agora */
+        }
         char sub[130] = "";
         if (sub_override) snprintf(sub, sizeof sub, "%s", sub_override);
         else if (p->status[0]) snprintf(sub, sizeof sub, "%s", p->status);
@@ -122,7 +132,7 @@ static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
     person_t *p = &s->friends[i];
     cui_push_id_int(ui, 9000 + i);
     ROW_BEGIN(ui, p) {
-        row_ident(ui, p, NULL);
+        row_ident(ui, p, NULL, friends_online(s, p));
         if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
         cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
             cui_menu_label(ui, p->name);
@@ -140,13 +150,13 @@ static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
 static void list_tab(cui_ctx *ui, app_state_t *s, bool only_online) {
     int shown = 0;
     for (int i = 0; i < s->friend_count; i++) {
-        if (only_online && !in_call(s, &s->friends[i])) continue;
+        if (only_online && !friends_online(s, &s->friends[i])) continue;
         if (!matches(s, &s->friends[i])) continue;
         friend_row(ui, s, i); shown++;
     }
     if (shown) return;
     if (s->friends_q[0]) empty_state(ui, CUI_ICON_SEARCH, "Ninguém encontrado", "Tente outro nome ou @nick.");
-    else if (only_online) empty_state(ui, CUI_ICON_USERS, "Ninguém na sua chamada agora", "Por enquanto “Online” mostra quem está na sua chamada; a presença em tempo real vem depois.");
+    else if (only_online) empty_state(ui, CUI_ICON_USERS, "Ninguém online agora", s->pres_remote ? "Quem estiver com o Briks aberto aparece aqui (e quem está invisível não aparece)." : "Por enquanto “Online” mostra quem está na sua chamada; a presença em tempo real depende de uma atualização do servidor.");
     else empty_state(ui, CUI_ICON_USER_PLUS, "Nenhum amigo ainda", "Use a aba Adicionar e digite o @nick de quem você quer ter por perto.");
 }
 
@@ -158,7 +168,7 @@ static void pending_tab(cui_ctx *ui, app_state_t *s) {
             person_t *p = &s->pending[i];
             cui_push_id_int(ui, 9300 + i);
             ROW_BEGIN(ui, p) {
-                row_ident(ui, p, p->nick[0] ? NULL : "quer ser seu amigo");
+                row_ident(ui, p, p->nick[0] ? NULL : "quer ser seu amigo", false);
                 if (cui_icon_button(ui, CUI_ICON_CHECK, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Aceitar")) app_accept_friend(s, p->request_id);
                 if (cui_icon_button(ui, CUI_ICON_X, .tooltip = "Recusar")) account_respond_friend(s, p->request_id, false);
                 if (cui_icon_button(ui, CUI_ICON_SHIELD, .tooltip = "Bloquear")) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); account_respond_friend(s, p->request_id, false); }
@@ -173,7 +183,7 @@ static void pending_tab(cui_ctx *ui, app_state_t *s) {
             person_t *p = &s->outgoing[i];
             cui_push_id_int(ui, 9400 + i);
             ROW_BEGIN(ui, p) {
-                row_ident(ui, p, p->nick[0] ? NULL : "aguardando resposta");
+                row_ident(ui, p, p->nick[0] ? NULL : "aguardando resposta", false);
                 cui_text(ui, "Aguardando", .size = 11.5f, .color = B_MUTED);
                 if (cui_icon_button(ui, CUI_ICON_UNDO_2, .tooltip = "Cancelar pedido")) account_remove_friend(s, p->id);
             }
@@ -191,7 +201,7 @@ static void blocked_tab(cui_ctx *ui, app_state_t *s) {
         if (!matches(s, &p)) continue;
         cui_push_id_int(ui, 9500 + i);
         ROW_BEGIN(ui, &p) {
-            row_ident(ui, &p, "bloqueado");
+            row_ident(ui, &p, "bloqueado", false);
             if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) unb = i;
         }
         cui_pop_id(ui);

@@ -92,7 +92,7 @@ void account_cancel(app_state_t *s) {
 void account_retry(app_state_t *s) { s->acct_asked = false; s->acct_state = ACCT_UNKNOWN; s->acct_error[0] = 0; }
 
 void account_logout(app_state_t *s) {
-    if (core_state() == CORE_READY) core_send("{\"cmd\":\"account.logout\"}");
+    if (core_state() == CORE_READY) { core_send("{\"cmd\":\"presence.clear\"}"); core_send("{\"cmd\":\"account.logout\"}"); s->pres_n = 0; }
     s->acct_state = ACCT_OUT; s->acct_view = AV_MAIN; s->acct_bridge = BRIDGE_NONE;
     s->acct_user_id[0] = s->acct_nick[0] = s->acct_error[0] = s->acct_info[0] = 0;
     s->user_nick[0] = 0; set_photo(s, NULL);
@@ -277,6 +277,30 @@ static void on_blocks(app_state_t *s, const jval *j) {
     }
 }
 
+static void on_presence(app_state_t *s, const jval *j) {
+    const jval *f = json_get(j, "friends");
+    s->pres_remote = jbool(j, "remote"); s->pres_n = 0;
+    for (int i = 0; i < json_len(f) && s->pres_n < MAX_FRIENDS; i++) {
+        const jval *p = json_at(f, i);
+        copy(s->pres[s->pres_n].id, sizeof s->pres[0].id, json_str(p, "user_id", ""));
+        s->pres[s->pres_n].online = jbool(p, "online"); s->pres_n++;
+    }
+    cui_request_redraw(cui_app_ui(s->app));
+}
+
+/* batimento: ao entrar na conta, a cada 60 s, e na hora quando "Aparecer offline" muda. Sem a 0007 o core responde remote=false e nada mais é tentado com frequência */
+void account_presence_tick(app_state_t *s) {
+    static ULONGLONG last; static bool inv_sent; static char who[48];
+    if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo) { last = 0; who[0] = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    const bool changed = strcmp(who, s->acct_user_id) != 0 || inv_sent != s->invisible;
+    if (!changed && last && now - last < 60000) return;
+    if (!changed && !s->pres_remote && last && now - last < 300000) return;   /* servidor sem a 0007: só tenta de novo a cada 5 min */
+    last = now; inv_sent = s->invisible; copy(who, sizeof who, s->acct_user_id);
+    char line[96]; snprintf(line, sizeof line, "{\"cmd\":\"presence.beat\",\"invisible\":%s}", s->invisible ? "true" : "false");
+    core_send(line);
+}
+
 static void on_friends(app_state_t *s, const jval *j) {
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
@@ -354,6 +378,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         /* account_tick conclui quando o backend local estiver pronto */
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
+    else if (!strcmp(ev, "presence.list")) on_presence(s, j);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;
@@ -403,6 +428,7 @@ void account_tick(app_state_t *s) {
     }
     if (cs != CORE_READY) { cui_request_redraw(cui_app_ui(s->app)); return; }
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
+    account_presence_tick(s);
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */

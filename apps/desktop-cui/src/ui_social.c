@@ -564,6 +564,10 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break;
                 case 2:
+                    PCARD(ui, "PRESENÇA") {
+                        cui_switch(ui, "Aparecer offline para os amigos", &s->invisible);
+                        cui_text(ui, s->invisible ? "Seus amigos não veem que você está online. Você continua usando tudo normalmente." : "Seus amigos veem um ponto verde quando você está com o Briks aberto.", .size = 12, .color = B_MUTED);
+                    }
                     PCARD(ui, "PROGRAMA EM USO") {
                         cui_switch(ui, "Mostrar o programa que estou usando", &s->rp_enabled);
                         if (s->rp_enabled) {

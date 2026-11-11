@@ -18,13 +18,13 @@ int main(void) {
     _putenv_s("BRIKS_PROFILE_FILE", path);
     memset(&s, 0, sizeof s);
     profile_tick(&s);                                      /* 1º quadro: só carrega */
-    snprintf(s.user_status, sizeof s.user_status, "Reunião"); snprintf(s.user_emoji, sizeof s.user_emoji, "X"); s.status_clear = 1;
+    snprintf(s.user_status, sizeof s.user_status, "Reunião"); snprintf(s.user_emoji, sizeof s.user_emoji, "X"); s.status_clear = 1; s.invisible = true;
     snprintf(s.rp_ignore[0], sizeof s.rp_ignore[0], "discord"); s.rp_ignore_n = 1;
     profile_tick(&s);                                      /* mudou: grava e calcula o prazo */
     long long t = (long long)time(NULL);
     CHECK(s.status_expires >= t + 3590 && s.status_expires <= t + 3610);
     FILE *f = fopen(path, "rb"); char buf[1024] = ""; if (f) { size_t n = fread(buf, 1, sizeof buf - 1, f); buf[n] = 0; fclose(f); }
-    CHECK(strstr(buf, "\"status\":\"Reunião\"") && strstr(buf, "\"clear\":1") && strstr(buf, "\"ignore\":[\"discord\"]") && strstr(buf, "\"emoji\":\"X\""));
+    CHECK(strstr(buf, "\"status\":\"Reunião\"") && strstr(buf, "\"clear\":1") && strstr(buf, "\"invisible\":true") && strstr(buf, "\"ignore\":[\"discord\"]") && strstr(buf, "\"emoji\":\"X\""));
     if (fails) printf("arquivo: %s\n", buf);
     s.status_expires = t - 5;                              /* venceu */
     profile_tick(&s);

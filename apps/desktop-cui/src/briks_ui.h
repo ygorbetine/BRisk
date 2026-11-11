@@ -103,6 +103,8 @@ typedef struct {
     int friends_tab; char friends_q[64];                            /* aba do hub de Amigos (0 todos, 1 online, 2 pendentes, 3 bloqueados, 4 adicionar) e a busca */
     bool chan_open, members_open, gren_open, gleave_open; char chan_name[48], grp_name_edit[96], gchan_id[48]; int chan_kind;   /* grupos (ui_groups.c) */
     bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
+    struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
+    bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
     community_t communities[MAX_COMMUNITIES]; int community_count;
     group_t groups[MAX_GROUPS]; int group_count;
     int active_group;              /* -1 = nenhum */
@@ -237,7 +239,9 @@ void briks_theme_editor_open(void);                        /* abre o editor de t
 void briks_theme_reset(void);                              /* restaura o tema Briks e grava */
 long long profile_expiry_for(int clear, long long now);   /* epoch de expiração do status; 0 = nunca */
 bool profile_ignored(const app_state_t *s, const char *exe, const char *text);
-void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
+void profile_tick(app_state_t *s);
+bool friends_online(const app_state_t *s, const person_t *p);   /* online de verdade (batimento) ou na sua chamada agora */
+void account_presence_tick(app_state_t *s);                      /* batimento de ~60 s (account.c) */                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */

@@ -59,6 +59,7 @@ static void profile_load(app_state_t *s) {
     s->rp_enabled = rp && rp->type == J_BOOL && rp->b;
     s->rp_audience = au && au->type == J_NUM && au->num >= 1 ? 1 : 0;
     snprintf(s->user_emoji, sizeof s->user_emoji, "%s", json_str(j, "emoji", ""));
+    { const jval *iv = json_get(j, "invisible"); s->invisible = iv && iv->type == J_BOOL && iv->b; }
     const jval *cl = json_get(j, "clear"), *ex = json_get(j, "expires"), *ig = json_get(j, "ignore");
     s->status_clear = cl && cl->type == J_NUM ? (int)cl->num : 0; if (s->status_clear < 0 || s->status_clear > 3) s->status_clear = 0;
     s->status_expires = ex && ex->type == J_NUM ? (long long)ex->num : 0;
@@ -72,7 +73,7 @@ static void profile_save(const app_state_t *s) {
     char st[200]; json_escape(s->user_status, st, sizeof st);
     FILE *f = fopen(p, "wb"); if (!f) return;
     char em[40]; json_escape(s->user_emoji, em, sizeof em);
-    fprintf(f, "{\"status\":\"%s\",\"emoji\":\"%s\",\"clear\":%d,\"expires\":%lld,\"rich_presence\":%s,\"audience\":%d,\"ignore\":[", st, em, s->status_clear, s->status_expires, s->rp_enabled ? "true" : "false", s->rp_audience);
+    fprintf(f, "{\"status\":\"%s\",\"emoji\":\"%s\",\"clear\":%d,\"expires\":%lld,\"rich_presence\":%s,\"audience\":%d,\"invisible\":%s,\"ignore\":[", st, em, s->status_clear, s->status_expires, s->rp_enabled ? "true" : "false", s->rp_audience, s->invisible ? "true" : "false");
     for (int i = 0; i < s->rp_ignore_n; i++) { char ig[80]; json_escape(s->rp_ignore[i], ig, sizeof ig); fprintf(f, "%s\"%s\"", i ? "," : "", ig); }
     fprintf(f, "]}\n");
     fclose(f);
@@ -127,21 +128,21 @@ void profile_tick(app_state_t *s) {
         if (foreground_text(s, t, sizeof t) && strcmp(t, s->user_presence)) { snprintf(s->user_presence, sizeof s->user_presence, "%s", t); cui_request_redraw(cui_app_ui(s->app)); }
     }
     if (!s->rp_enabled && s->user_presence[0] && !demo) s->user_presence[0] = 0;
-    static char saved_status[64], saved_emoji[8], saved_ign[6 * 32 + 8]; static bool saved_rp; static int saved_aud = -1, saved_clear;
+    static char saved_status[64], saved_emoji[8], saved_ign[6 * 32 + 8]; static bool saved_rp, saved_inv; static int saved_aud = -1, saved_clear;
     char ign[6 * 32 + 8] = ""; for (int i = 0; i < s->rp_ignore_n; i++) { strncat(ign, s->rp_ignore[i], 31); strcat(ign, "|"); }
     if (saved_aud < 0) {
         snprintf(saved_status, sizeof saved_status, "%s", s->user_status); snprintf(saved_emoji, sizeof saved_emoji, "%s", s->user_emoji); snprintf(saved_ign, sizeof saved_ign, "%s", ign);
-        saved_rp = s->rp_enabled; saved_aud = s->rp_audience; saved_clear = s->status_clear; return;
+        saved_rp = s->rp_enabled; saved_aud = s->rp_audience; saved_clear = s->status_clear; saved_inv = s->invisible; return;
     }
     const long long nowt = (long long)time(NULL);
     if (s->status_expires && nowt >= s->status_expires && !demo) {   /* o status venceu: some, como no Electron */
         s->user_status[0] = 0; s->user_emoji[0] = 0; s->status_expires = 0; if (s->app) cui_request_redraw(cui_app_ui(s->app));
     }
-    if (strcmp(saved_status, s->user_status) || strcmp(saved_emoji, s->user_emoji) || saved_rp != s->rp_enabled || saved_aud != s->rp_audience || strcmp(saved_ign, ign) || saved_clear != s->status_clear) {
+    if (strcmp(saved_status, s->user_status) || strcmp(saved_emoji, s->user_emoji) || saved_rp != s->rp_enabled || saved_aud != s->rp_audience || strcmp(saved_ign, ign) || saved_clear != s->status_clear || saved_inv != s->invisible) {
         const bool status_changed = strcmp(saved_status, s->user_status) != 0 || saved_clear != s->status_clear;
         if (status_changed) s->status_expires = s->user_status[0] ? profile_expiry_for(s->status_clear, nowt) : 0;   /* novo status: conta o prazo escolhido */
         snprintf(saved_status, sizeof saved_status, "%s", s->user_status); snprintf(saved_emoji, sizeof saved_emoji, "%s", s->user_emoji); snprintf(saved_ign, sizeof saved_ign, "%s", ign);
-        saved_rp = s->rp_enabled; saved_aud = s->rp_audience; saved_clear = s->status_clear;
+        saved_rp = s->rp_enabled; saved_aud = s->rp_audience; saved_clear = s->status_clear; saved_inv = s->invisible;
         if (!demo) profile_save(s);
     }
 }

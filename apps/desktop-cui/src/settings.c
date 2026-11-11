@@ -21,7 +21,7 @@ void data_refresh(void); void data_ui(cui_ctx *ui, app_state_t *s); int data_pro
 
 typedef struct {
     int mic, out;                 /* índices nas listas de dispositivos (0 = padrão do sistema) */
-    char mic_name[64], out_name[64];
+    char mic_name[64], out_name[64], cam_name[96];   /* cam_name vazio = câmera padrão */
     float in_vol, out_vol;        /* 0..100 */
     int noise_off;                /* 0 filtro leve de ruído ligado (Padrão), 1 desligado */
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
@@ -36,9 +36,11 @@ typedef struct {
 } settings_t;
 settings_t g_set;
 int settings_call_mode(void) { return g_set.call_mode; }
+const char *settings_cam_name(void) { return g_set.cam_name; }
+bool settings_cam_tab_visible(const app_state_t *s) { return s->settings_open && s->settings_tab == 0; }
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
-    { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
+    { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 }, { "cam_name", 's', g_set.cam_name, 96 },
     { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
     { "call_mode", 'i', &g_set.call_mode }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
@@ -223,6 +225,7 @@ int settings_probe(const char *n, app_state_t *s) {
     unsigned m; int v;
     { int dp = data_probe(n); if (dp != -9999) return dp; }
     { int op = overlay_probe(n); if (op != -9999) return op; }
+    { int cp = cam_probe(n); if (cp != -9999) return cp; }
     if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
     if (!strcmp(n, "rec_slot")) return rec_slot;
     if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
@@ -287,6 +290,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
         enum_devices(); confirm_hist = confirm_all = false; rec_slot = -1; key_msg[0] = 0; key_msg_slot = -1;
     }
     was_open = s->settings_open;
+    cam_tick(ui, s);   /* lista as câmeras e solta o teste ao sair desta aba */
     if (rec_slot >= 0 && (!s->settings_open || s->settings_tab != 5)) rec_slot = -1;
     if (rec_slot >= 0) {   /* captura da tecla apertada: o laço de atalhos reais fica parado enquanto isso */
         char t[48]; g_hk_recording = true; cui_request_wakeup(ui, 0.03f);
@@ -339,6 +343,29 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
                         sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
+                    }
+                    SCARD(ui, "CÂMERA") {
+                        static const char *cam_ptr[9]; static int cam_sel;
+                        const int nd = cam_dev_count();
+                        cam_ptr[0] = nd ? "Câmera padrão do sistema" : cam_devs_loaded() ? "Nenhuma câmera encontrada" : "Procurando câmeras…";
+                        for (int i = 0; i < nd && i < 8; i++) cam_ptr[i + 1] = cam_dev_name(i);
+                        cam_sel = 0; for (int i = 0; g_set.cam_name[0] && i < nd; i++) if (!strcmp(cam_dev_name(i), g_set.cam_name)) cam_sel = i + 1;
+                        const int before_sel = cam_sel;
+                        cui_text(ui, "Câmera", .size = 12, .color = B_MUTED);
+                        cui_select(ui, "cfg-cam", cam_ptr, nd + 1, &cam_sel);
+                        if (cam_sel != before_sel) { snprintf(g_set.cam_name, sizeof g_set.cam_name, "%s", cam_sel ? cam_dev_name(cam_sel - 1) : ""); if (cam_preview_wanted()) { cam_preview_set(false); cam_preview_set(true); } }
+                        sub(ui, "Vale na próxima vez que você ligar a câmera. A câmera só abre quando você liga; a luz apaga ao desligar.");
+                        cam_settings_view(ui, s, 288.0f, 162.0f);
+                        cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .wrap = true) {
+                            const bool on = cam_preview_wanted() || cam_active();
+                            cui_push_disabled(ui, cam_active() || (nd == 0));
+                            if (cui_button(ui, cam_preview_wanted() ? "Parar teste" : "Testar câmera", .variant = on ? CUI_BUTTON_SECONDARY : CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) cam_preview_set(!cam_preview_wanted());
+                            cui_pop_disabled(ui);
+                        }
+                        if (cam_preview_error()[0]) cui_text(ui, cam_preview_error(), .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                        else if (nd == 0 && cam_devs_loaded()) cui_text(ui, "Não encontramos uma câmera neste computador.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                        else sub(ui, cam_active() ? "Sua câmera já está ligada na chamada: esta é a imagem que sai." : "A imagem aparece só para você. Nada é gravado nem enviado; para sozinho ao sair desta tela.");
+                        if (cam_preview_wanted()) cui_request_wakeup(ui, 0.05f);
                     }
                     SCARD(ui, "PROCESSAMENTO") {
                         static const char *NZ[] = { "Padrão", "Desligada" };

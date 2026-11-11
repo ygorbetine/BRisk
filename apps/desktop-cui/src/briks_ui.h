@@ -315,7 +315,19 @@ void share_reset(app_state_t *s);                             /* saiu da sala: e
 void ui_share_dialog(cui_ctx *ui, app_state_t *s);            /* "Compartilhar tela — Escolha a fonte e confirme" */
 void ui_share_bar(cui_ctx *ui, app_state_t *s);               /* botão Compartilhar + chips de áudio e qualidade */
 bool ui_share_stage(cui_ctx *ui, app_state_t *s);             /* palco do modo Transmissão; false = ninguém transmitindo */
-bool share_peer_live(const app_state_t *s, int slot);         /* esse participante está transmitindo? */
+bool share_peer_live(const app_state_t *s, int slot);
+/* ui_cam.c: câmera na chamada */
+bool cam_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos cam.* do core */
+void cam_tick(cui_ctx *ui, app_state_t *s);                   /* a cada quadro: lista câmeras, assiste só quem aparece, solta a câmera ao sair da sala */
+void cam_toggle(app_state_t *s);                              /* botão da barra: liga ou desliga */
+void cam_reset(void);                                         /* saiu da sala */
+bool cam_active(void); bool cam_starting(void); bool cam_remote_on(int slot);
+bool cam_frame(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h);   /* vídeo do bloco; false = mostra o avatar */
+int cam_dev_count(void); const char *cam_dev_name(int i);
+void cam_preview_set(bool on); bool cam_preview_wanted(void); bool cam_preview_on(void); const char *cam_preview_error(void);
+void cam_settings_view(cui_ctx *ui, app_state_t *s, float w, float h);
+int cam_probe(const char *name); bool cam_devs_loaded(void);
+const char *settings_cam_name(void); bool settings_cam_tab_visible(const app_state_t *s);         /* esse participante está transmitindo? */
 bool rtc_handle_event(app_state_t *s, const char *line);                    /* exposto para o smoke */                 /* chamar uma vez por quadro */
 
 /* Pilha levantada: grupos 0..2 = cartões (atrás, meio, frente), 3 = âncora de captura do vidro (alfa 0). O dock desenha cada grupo sem giro entre

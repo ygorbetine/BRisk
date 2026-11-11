@@ -11,7 +11,7 @@
 
 call_ui_t g_call = { .focus = -1 };
 
-typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; } tile_t;
+typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; } tile_t;
 enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TILE_ROOM_MUTE };
 #define SLOT_ME (BRIKS_MAX_PEERS + 1)
 static bool g_can_room_mute;   /* sou o dono e a chamada está no servidor de chamadas: posso silenciar alguém para todos */
@@ -161,6 +161,10 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     cui_box(ui, .id = "tile", .width = CUI_PX(w), .height = CUI_PX(h), .radius = sm ? 16 : 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad_bottom = lab_h) {
+            if (t->vtex && t->vw > 0 && t->vh > 0) {   /* câmera ligada: o vídeo ocupa o bloco (inteiro, sem cortar), com folga para os cantos arredondados */
+                const float aw = fmaxf(w - 8.0f, 16.0f), ah = fmaxf(h - 8.0f - lab_h, 16.0f), sc = fminf(aw / (float)t->vw, ah / (float)t->vh);
+                cui_image(ui, t->vtex, .width = CUI_PX(floorf((float)t->vw * sc)), .height = CUI_PX(floorf((float)t->vh * sc)), .radius = sm ? 10 : 14);
+            } else
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(cv), .height = CUI_PX(cv), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_push_id_int(ui, (int)(t->level * 8) + ((int)d << 4));   /* o canvas é reaproveitado por id: muda o id quando o nível ou o tamanho muda */
                 cui_canvas(ui, "av", CUI_FILL, CUI_FILL, paint_avatar, &g_av[gi], 0);
@@ -440,16 +444,19 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
 }
 
 static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
+    cui_texture vt = 0; int vw = 0, vh = 0;
     const bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
     tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = 0;
     g_can_room_mute = s->rtc_owner_me && s->net_sfu;
-    T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL };
+    T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL, 0, 0, 0 };
+    if (cam_frame(ui, s, SLOT_ME, &vt, &vw, &vh)) { T[0].vtex = vt; T[0].vw = vw; T[0].vh = vh; }
     if (!s->in_room && getenv("BRIKS_DEMO") && !getenv("BRIKS_DEMO_PEERS")) T[n++] = (tile_t){ "Marina Costa", false, false, 0, BRIKS_MAX_PEERS, false, false, false, "", NULL };   /* participante de exemplo: só nas capturas de demonstração */
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) {
         if (s->rtc_peers[i].name[0]) snprintf(names[i], sizeof names[i], "%s", s->rtc_peers[i].name); else snprintf(names[i], sizeof names[i], "Participante %d", i + 1);
         const bool live = share_peer_live(s, i);
         T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL };
+                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0 };
+        if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }
     const float gap = 14.0f;
     if (g_call.layout == 1 && n > 1 && (W >= 720.0f ? H >= 150.0f : H >= 260.0f)) {   /* palco baixo demais para um bloco grande + faixa: fica a grade */
@@ -511,9 +518,11 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
             else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
         }
         if (pill(ui, 2, CUI_ICON_VOLUME_2, compact ? NULL : "Ensurdecer", s->deaf ? 1 : 0, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
-        /* Câmera: sem captura nem envio de vídeo nesta versão (decisão registrada em docs/plans/chamada-pacote-c.md): o botão existe, desligado e dizendo isso */
-        cui_push_disabled(ui, true); pill(ui, 3, CUI_ICON_VIDEO, compact ? NULL : "Câmera · em breve", 0, NULL); cui_pop_disabled(ui);
-        cui_push_id_int(ui, 3); if (briks_hover(ui, "b")) briks_tip("Câmera: em breve. O vídeo da câmera ainda não é enviado; compartilhar a tela já funciona."); cui_pop_id(ui);
+        /* Câmera: liga/desliga de verdade (o estado vem do core); só abre o dispositivo enquanto ligada */
+        {
+            const bool cam_on = cam_active(), cam_wait = cam_starting();
+            if (pill(ui, 3, CUI_ICON_VIDEO, compact ? NULL : cam_wait ? "Câmera…" : "Câmera", cam_on ? 1 : 0, cam_on ? "Desligar a câmera" : "Ligar a câmera: o vídeo vai para quem está na chamada")) cam_toggle(s);
+        }
         ui_share_bar(ui, s);
         cui_box(ui, .dir = CUI_STACK, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START) {
             const bool open_aud = pill(ui, 6, CUI_ICON_SLIDERS_HORIZONTAL, compact ? NULL : "Áudio", g_aud_open ? 1 : 0, "Volume e porta de ruído, sem sair da chamada");
@@ -528,6 +537,7 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
 
 void ui_call(cui_ctx *ui, app_state_t *s) {
     share_tick(ui, s);
+    cam_tick(ui, s);
     const cui_vec2 vp = cui_viewport_size(ui);
     const double now = cui_time(ui);
     const bool fs = g_call.fullscreen;

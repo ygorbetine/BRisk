@@ -40,6 +40,7 @@ void rtc_leave_room(app_state_t *s) {
     over_clear(s);
     memset(s->rtc_peers, 0, sizeof s->rtc_peers);
     share_reset(s);
+    cam_reset();
     call_reset(s);
 }
 
@@ -252,6 +253,8 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         changed = true;
     } else if (!strncmp(ev, "share.", 6)) {
         changed = share_handle_event(s, j, ev);
+    } else if (!strncmp(ev, "cam.", 4)) {
+        changed = cam_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
         net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");

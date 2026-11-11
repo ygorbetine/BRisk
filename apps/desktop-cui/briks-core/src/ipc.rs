@@ -211,10 +211,12 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
                         let mut sfu_err = String::new();
                         let mut sfu_failed = false;
+                        let mut hybrid: Option<crate::sfu::SfuHandle> = None;
+                        let mut sfu_au: Option<Arc<Audio>> = None;
                         let sfu_conf = crate::sfu_cfg::resolve(&net_env, &cfg.data_dir);
                         let sfu_ready = matches!(sfu_conf, Ok(Some(_)));
                         if let Err(e) = &sfu_conf { sfu_err = e.clone(); }
-                        if sfu_ns && net_mode != crate::sfu_cfg::NetMode::P2p {
+                        if sfu_ns && net_mode == crate::sfu_cfg::NetMode::Sfu {
                             if let Ok(Some(sc)) = &sfu_conf {
                                 let (ns, room) = (v["namespace"].as_str().unwrap_or("room").to_string(), v["room"].as_str().unwrap_or("").to_string());
                                 if !room.is_empty() && room.len() <= 200 && !kicked_rooms.contains(&format!("{ns}:{room}")) {
@@ -223,20 +225,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                     let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
                                     if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
                                     match try_sfu(sc, &accounts, &ns, &room, au.clone().zip(au_rx)).await {
-                                        Ok(h) => {
-                                            audio = au;
-                                            cur_room = format!("{ns}:{room}");
-                                            local_peer = h.identity.clone();
-                                            mesh_cmd = Some(h.cmd);
-                                            mesh_ev = Some(h.events);
-                                            rt_status = None;
-                                            if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
-                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
-                                            out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
-                                            out(&mut wr, json!({ "ev": "room.joining", "peer_id": local_peer })).await?;
-                                            out(&mut wr, json!({ "ev": "signaling.status", "state": "conectado", "message": "" })).await?;
-                                            continue;
-                                        }
+                                        // Híbrido: a mídia vai ao SFU e a malha P2P só de DataChannel (abaixo) cuida de chat, status, presença e expulsão.
+                                        Ok(h) => { hybrid = Some(h); sfu_au = au; }
                                         Err(e) => { sfu_failed = true; sfu_err = e; }
                                     }
                                 }
@@ -256,7 +246,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "você foi removido desta sala nesta sessão" })).await?;
                             continue;
                         }
-                        if sfu_ns {
+                        if let Some(h) = &hybrid {
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
+                            out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
+                        } else if sfu_ns {
                             let (_, reason) = crate::sfu_cfg::decide(net_mode, sfu_ready, sfu_failed);
                             out(&mut wr, json!({ "ev": "net.mode", "mode": "p2p", "reason": reason, "error": sfu_err, "configured": sfu_ready, "fallback": sfu_failed })).await?;
                         }
@@ -275,12 +268,14 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             }
                         });
                         let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
-                        let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
+                        let (au, au_rx) = if hybrid.is_some() { (sfu_au.clone(), None) } else if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
                         if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
                         audio = au.clone();
                         let (ice_list, ice_warn) = crate::ice::load(&|k| std::env::var(k).ok(), &cfg.data_dir);
                         out(&mut wr, json!({ "ev": "ice.info", "servers": ice_list.len(), "turn": crate::ice::has_turn(&ice_list), "warn": ice_warn.unwrap_or_default() })).await?;
+                        let au_h = au.clone();
                         let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: ice_list.clone(), audio: au.zip(au_rx), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at }, id, rt, fw_rx);
+                        let h = match hybrid.take() { Some(sfu) => crate::hybrid::spawn(h, sfu, au_h).await, None => h };
                         mesh_cmd = Some(h.cmd);
                         if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
                         mesh_ev = Some(h.events);

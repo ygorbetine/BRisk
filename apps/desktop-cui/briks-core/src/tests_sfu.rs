@@ -248,9 +248,9 @@ async fn ipc_net_mode_auto_falls_back_to_p2p_and_reports_why() {
     wr.write_all(b"{\"cmd\":\"session.start\",\"display_name\":\"T\"}\n").await.unwrap();
     until(&mut lines, "session.ready").await;
     // automático: tenta o SFU, sem conta falha e cai no P2P
-    wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-a\",\"net\":\"auto\"}\n").await.unwrap();
+    wr.write_all(b"{\"cmd\":\"room.join\",\"namespace\":\"room\",\"room\":\"sala-a\",\"net\":\"sfu\"}\n").await.unwrap();
     let nm = until(&mut lines, "net.mode").await;
-    eprintln!("net.mode (auto): {nm}");
+    eprintln!("net.mode (sfu manual, sem conta): {nm}");
     assert_eq!((nm["mode"].as_str(), nm["fallback"].as_bool(), nm["configured"].as_bool()), (Some("p2p"), Some(true), Some(true)));
     assert!(nm["error"].as_str().unwrap().contains("conta"), "{nm}");
     until(&mut lines, "room.joining").await;

@@ -21,6 +21,7 @@ mod mock;
 mod phoenix;
 mod procaudio;
 mod realtime;
+mod hybrid;
 mod sfu;
 mod sfu_cfg;
 mod share;
@@ -79,5 +80,7 @@ mod robust;
 mod tests;
 #[cfg(test)]
 mod tests_rede;
+#[cfg(test)]
+mod tests_hybrid;
 #[cfg(test)]
 mod tests_sfu;

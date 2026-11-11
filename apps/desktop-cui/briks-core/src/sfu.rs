@@ -544,7 +544,7 @@ impl Actor {
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
             MeshCmd::Chat { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
             MeshCmd::Kick { .. } | MeshCmd::Allow { .. } => self.emit(MeshEvent::Error("expulsar exige a API de administração do LiveKit: ainda não disponível".into())).await,
-            MeshCmd::ForceOffer { .. } => {}
+            MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } => {}
             #[cfg(test)]
             MeshCmd::KickUnchecked { .. } | MeshCmd::RawDc { .. } => {}
             MeshCmd::Close => {}

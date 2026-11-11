@@ -233,3 +233,22 @@ Divergências/atenções: (1) o cliente ignora o campo `url` da resposta e usa a
 é de um servidor e a conexão vai para outro (erro de entrada, sem aviso específico); (2) limite de 30 tokens por usuário a cada
 10 min: uma queda longa com o servidor recusando pode gastar isso, porque cada recusa pede token novo; resposta 429 hoje aparece
 só como "serviço de tokens recusou (429)"; (3) a função não confere se o usuário pertence à sala (limitação já descrita nela).
+
+---
+
+# Rodada 3 de 2026-11-11
+
+- **URL do servidor vinda do serviço de tokens:** se a resposta traz `url` e ela difere do `livekit.json`, vale a do serviço (é ele que
+  tem a chave); se a informada for inaceitável (esquema), erro "URL do servidor divergente". Só na entrada: a renovação de token na
+  reconexão não troca de servidor.
+- **429 do serviço de tokens:** mensagem "muitas tentativas no serviço de tokens: aguarde N s" (N do `Retry-After`; 30 s se não vier).
+  Na reconexão a próxima tentativa só acontece depois desse prazo, e há no máximo um pedido de token a cada 10 s por queda.
+  Testado no pedido (`fetch_token_ex`); o caminho da reconexão com 429 NÃO foi exercitado ao vivo. Na entrada (`room.join`) o 429 aparece
+  como erro com a mensagem acima; a UI não faz contagem regressiva.
+- **"+N":** acima de 32 remotos a grade ganha um último quadro "+N pessoas na chamada". Quem ficou de fora não é promovido quando abre
+  vaga (só quem entrar depois ocupa o lugar).
+- **Merge de `cui-integracao`** (`07f3c23`, parado havia ~4 h): conflitos em `ipc.rs`, `mesh.rs`, `tests.rs`, `briks_ui.h`, `rtc.c`,
+  `ui_call.c`, resolvidos mantendo as duas partes. O core do SFU passou a aceitar `ChatWithId` (id da UI), `AudioCfg` e `PeerVolume`.
+  **NÃO viajam pelo SFU:** anexos (erro visível), "digitando", instantâneo de grupo e histórico de DMs: esses recursos novos só
+  funcionam na malha P2P. Volume por pessoa no SFU usa a identidade do SFU como chave; NÃO testado.
+- Suíte completa depois do merge (`--test-threads=1`, codecs de software, LiveKit real): 179 passaram, 0 falharam, 24 ignorados.

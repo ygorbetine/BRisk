@@ -135,7 +135,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
-        copy(s->rtc_msg, sizeof s->rtc_msg, "O briks-core encerrou.");
+        copy(s->rtc_msg, sizeof s->rtc_msg, "O serviço de chamadas encerrou.");
         s->rtc_session_ready = s->rtc_session_sent = false;
     } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
@@ -205,7 +205,7 @@ void rtc_pump(app_state_t *s) {
 }
 
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap) {
-    if (!s->in_room) { snprintf(buf, cap, "Prévia local · fora da sala"); return buf; }
+    if (!s->in_room) { snprintf(buf, cap, "Você está fora da sala"); return buf; }
     const char *st = s->rtc_state[0] ? s->rtc_state : "conectando";
     if (!strcmp(st, "conectado")) {
         if (s->rtc_peer_count) snprintf(buf, cap, "Conectado · %d pessoa%s na sala", s->rtc_peer_count, s->rtc_peer_count == 1 ? "" : "s");

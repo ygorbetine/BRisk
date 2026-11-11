@@ -404,7 +404,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 60, .gap = 8) {
                     cui_icon(ui, CUI_ICON_MESSAGE_SQUARE, 34, B_C3);
                     cui_textf(ui, "Conversa com %s", title);
-                    cui_text(ui, "As mensagens ficam gravadas só neste computador até a entrega P2P (marco 3).", .size = 12, .color = B_MUTED);
+                    cui_text(ui, "As mensagens ficam gravadas só neste computador.", .size = 12, .color = B_MUTED);
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
@@ -728,7 +728,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     cui_dialog(ui, "Criar grupo", &s->create_group_open) {
-        cui_text(ui, "O grupo fica gravado neste computador; os convites por P2P chegam com o briks-core.", .color = B_MUTED);
+        cui_text(ui, "O grupo fica gravado neste computador.", .color = B_MUTED);
         int r = cui_input(ui, "new-group", s->new_group, sizeof s->new_group, .placeholder = "Nome do grupo", .autofocus = true);
         cui_dialog_footer(ui) {
             if ((cui_button(ui, "Criar", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy) || (r & CUI_SUBMITTED))) app_create_group(s);

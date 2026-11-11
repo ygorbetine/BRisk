@@ -95,7 +95,7 @@ static unsigned __stdcall start_thread(void *unused) {
     char cmd[MAX_PATH + 32]; snprintf(cmd, sizeof cmd, "\"%s\" serve-ipc", exe);
     BOOL created = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, dir, &si, &pi);
     SetEnvironmentVariableA("BRIKS_CORE_TOKEN", NULL);   /* o token não fica no ambiente da UI */
-    if (!created) { CloseHandle(rd); CloseHandle(wr); fail("Não foi possível iniciar o briks-core."); return 0; }
+    if (!created) { CloseHandle(rd); CloseHandle(wr); fail("Não foi possível iniciar o serviço de chamadas."); return 0; }
     CloseHandle(wr); CloseHandle(in_rd);
     g_job = CreateJobObjectA(NULL, NULL);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim = { 0 };
@@ -120,15 +120,15 @@ static unsigned __stdcall start_thread(void *unused) {
         if (len >= sizeof buf - 1) break;
     }
     CloseHandle(rd);
-    if (port <= 0) { fail("O briks-core não respondeu a tempo."); return 0; }
+    if (port <= 0) { fail("O serviço de chamadas não respondeu a tempo."); return 0; }
 
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     struct sockaddr_in addr = { 0 };
     addr.sin_family = AF_INET; addr.sin_port = htons((u_short)port); inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-    if (s == INVALID_SOCKET || connect(s, (struct sockaddr *)&addr, sizeof addr) != 0) { fail("Não foi possível falar com o briks-core."); return 0; }
+    if (s == INVALID_SOCKET || connect(s, (struct sockaddr *)&addr, sizeof addr) != 0) { fail("Não foi possível conectar ao serviço de chamadas."); return 0; }
     int nodelay = 1; setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof nodelay);
     char hello[160]; snprintf(hello, sizeof hello, "{\"cmd\":\"hello\",\"token\":\"%s\"}\n", token);
-    if (send(s, hello, (int)strlen(hello), 0) <= 0) { fail("Falha no hello do briks-core."); closesocket(s); return 0; }
+    if (send(s, hello, (int)strlen(hello), 0) <= 0) { fail("Falha ao conectar ao serviço de chamadas."); closesocket(s); return 0; }
     g_sock = s;
     InterlockedExchange(&g_state, CORE_READY);
 
@@ -144,7 +144,7 @@ static unsigned __stdcall start_thread(void *unused) {
         }
     }
     free(acc);
-    if (g_state == CORE_READY) { push_line("{\"ev\":\"core.closed\"}", 20); fail("O briks-core encerrou."); }
+    if (g_state == CORE_READY) { push_line("{\"ev\":\"core.closed\"}", 20); fail("O serviço de chamadas encerrou."); }
     return 0;
 }
 

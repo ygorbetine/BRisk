@@ -313,7 +313,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         char b[32]; fmt_bytes(store_bytes, b, sizeof b);
                         cui_row(ui, .width = CUI_FILL) { cui_text(ui, "Dados do Briks", .color = B_MUTED, .width = CUI_FILL); cui_text(ui, b); }
                         sub(ui, "Tudo fica neste dispositivo: mensagens, grupos e anexos permanecem somente neste computador.");
-                        sub(ui, "Detalhe por tipo (mensagens, grupos, anexos) depende do backend de dados.");
+                        sub(ui, "O detalhe por tipo (mensagens, grupos, anexos) ainda não está disponível.");
                     }
                     SCARD(ui, "LIMPEZA") {
                         cui_push_disabled(ui, true);
@@ -323,7 +323,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                             cui_button(ui, "Exportar meus dados", .variant = CUI_BUTTON_SECONDARY);
                         }
                         cui_pop_disabled(ui);
-                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados dependem do backend de dados; os botões ficam desligados até lá");
+                        soon(ui, "limpar anexos, apagar o histórico e exportar os dados; os botões ficam desligados até lá");
                     }
                     break; }
                 case 4: /* Sobreposição */

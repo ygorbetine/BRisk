@@ -174,6 +174,12 @@ void account_reset_photo(app_state_t *s) {
 
 static void wipe_phrase(app_state_t *s) { memset(s->backup_words, 0, sizeof s->backup_words); s->backup_ack = false; }
 
+void account_logout_others(app_state_t *s) {
+    if (core_state() != CORE_READY || s->others_busy) return;
+    s->others_busy = true; copy(s->others_msg, sizeof s->others_msg, "Desconectando os outros computadores…");
+    core_send("{\"cmd\":\"account.logout_others\"}");
+}
+
 void account_ice_get(app_state_t *s) { s->ice_asked = true; if (core_state() == CORE_READY) core_send("{\"cmd\":\"ice.get\"}"); }
 
 void account_ice_save(app_state_t *s) {
@@ -400,13 +406,16 @@ bool account_handle_event(app_state_t *s, const char *line) {
         copy(s->bridge_email, sizeof s->bridge_email, json_str(j, "email", ""));
         copy(s->bridge_pw, sizeof s->bridge_pw, json_str(j, "password", ""));
         /* account_tick conclui quando o backend local estiver pronto */
+    } else if (!strcmp(ev, "account.others")) {
+        s->others_busy = false; s->others_confirm = false;
+        copy(s->others_msg, sizeof s->others_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "ice.state")) {
         s->ice_busy = false; s->ice_turn = jbool(j, "turn"); s->ice_has_cred = jbool(j, "has_credential");
         copy(s->ice_source, sizeof s->ice_source, json_str(j, "source", "default"));
         if (json_str(j, "message", "")[0]) copy(s->ice_msg, sizeof s->ice_msg, json_str(j, "message", ""));
         else if (json_str(j, "warn", "")[0]) snprintf(s->ice_msg, sizeof s->ice_msg, "Configuração ignorada: %s", json_str(j, "warn", ""));
         if (!s->ice_edit_init || jbool(j, "ok")) { copy(s->ice_urls, sizeof s->ice_urls, json_str(j, "urls", "")); copy(s->ice_user, sizeof s->ice_user, json_str(j, "username", "")); s->ice_edit_init = true; }
-        s->ice_test_level = 0; s->ice_test_msg[0] = 0;   /* a configuração mudou: o resultado antigo não vale mais */
+        if (json_get(j, "ok")) { s->ice_test_level = 0; s->ice_test_msg[0] = 0; }   /* salvou/removeu: o resultado antigo não vale mais */
     } else if (!strcmp(ev, "ice.test")) {
         s->ice_testing = false;
         const char *lv = json_str(j, "level", "none");

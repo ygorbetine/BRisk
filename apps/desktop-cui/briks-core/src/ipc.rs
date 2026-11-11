@@ -154,6 +154,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     out(&mut wr, json!({ "ev": "hello.ok", "version": 1 })).await?;
 
     let (acct_tx, mut acct_rx) = mpsc::channel::<Value>(64);
+    let turn_rt = accounts.clone();   // cache do TURN da conta
     let ev_tx = acct_tx.clone();   // eventos de tarefas em segundo plano (teste de rede)
     let mut account = crate::accounts::service::Service::new(accounts, acct_tx);   // contas online: account.*, friends.*, import.*
     let mut identity: Option<Arc<Identity>> = None;
@@ -222,7 +223,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
                         if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
                         audio = au.clone();
-                        let (ice_list, ice_warn) = crate::ice::load(&|k| std::env::var(k).ok(), &cfg.data_dir);
+                        let (ice_list, ice_warn) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
                         out(&mut wr, json!({ "ev": "ice.info", "servers": ice_list.len(), "turn": crate::ice::has_turn(&ice_list), "warn": ice_warn.unwrap_or_default() })).await?;
                         let h = mesh::spawn(MeshCfg { namespace: ns, room, local_peer: local_peer.clone(), display_name: name.clone(), ice_servers: ice_list.clone(), audio: au.zip(au_rx), owner_fp: v["owner_fp"].as_str().map(String::from), joined_at }, id, rt, fw_rx);
                         mesh_cmd = Some(h.cmd);
@@ -400,18 +401,18 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareWatch { key, on: v["on"].as_bool().unwrap_or(true), path: cfg.data_dir.join("video").join(format!("remote-{safe}.bin")) }).await; }
                     }
                     // tela Rede: servidor TURN/STUN próprio em ice.json. A senha entra aqui e nunca volta para a UI.
-                    "ice.get" => out(&mut wr, crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir)).await?,
+                    "ice.get" => out(&mut wr, crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers())).await?,
                     "ice.set" | "ice.clear" => {
                         let s = |k: &str| v[k].as_str().unwrap_or("");
                         let set = v["cmd"] == "ice.set";
                         let r = if set { crate::ice::save(&cfg.data_dir, s("urls"), s("username"), s("credential")) } else { crate::ice::clear(&cfg.data_dir) };
-                        let mut ev = crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir);
+                        let mut ev = crate::ice::summary(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
                         ev["ok"] = r.is_ok().into();
                         ev["message"] = match r { Ok(()) if set => "Salvo. Vale a partir da próxima chamada.".into(), Ok(()) => "Removido. O Briks volta a usar só o STUN público.".into(), Err(e) => e.into() };
                         out(&mut wr, ev).await?;
                     }
                     "ice.test" => {
-                        let (list, _) = crate::ice::load(&|k| std::env::var(k).ok(), &cfg.data_dir);
+                        let (list, _) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
                         let tx = ev_tx.clone();
                         tokio::spawn(async move { let _ = tx.send(crate::ice::probe(list, Duration::from_secs(8)).await).await; });
                     }

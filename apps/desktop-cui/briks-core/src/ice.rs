@@ -57,10 +57,18 @@ pub fn parse(json: &str) -> Result<Vec<RTCIceServer>, String> {
 
 /// STUN padrão + o que o usuário configurou. Erro de configuração não derruba a chamada: volta ao padrão e devolve o aviso.
 pub fn load(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> (Vec<RTCIceServer>, Option<String>) {
+    load_with(env, data_dir, &[])
+}
+
+/// Como `load`, com os servidores que a conta recebeu da Edge Function `turn-credentials`. Prioridade:
+/// o que o usuário configurou (env ou ice.json, se válido) > TURN da conta > só o STUN padrão.
+pub fn load_with(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, account: &[RTCIceServer]) -> (Vec<RTCIceServer>, Option<String>) {
     let mut servers = default_servers();
     let src = env("BRIKS_ICE_SERVERS_JSON").or_else(|| std::fs::read_to_string(data_dir.join("ice.json")).ok());
     let mut warn = None;
-    if let Some(j) = src { match parse(&j) { Ok(extra) => servers.extend(extra), Err(e) => warn = Some(e) } }
+    let mut user_set = false;
+    if let Some(j) = src { match parse(&j) { Ok(extra) => { user_set = !extra.is_empty(); servers.extend(extra) } Err(e) => warn = Some(e) } }
+    if !user_set { servers.extend(account.iter().cloned()); }
     (servers, warn)
 }
 
@@ -138,15 +146,18 @@ pub fn clear(data_dir: &Path) -> Result<(), String> {
 }
 
 /// Situação para a tela Rede (evento `ice.state`). Nunca inclui a senha: só "há senha guardada".
-pub fn summary(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Value {
+pub fn summary(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, account: &[RTCIceServer]) -> Value {
     let from_env = env("BRIKS_ICE_SERVERS_JSON").is_some();
     let has_file = data_dir.join("ice.json").exists();
-    let (servers, warn) = load(env, data_dir);
-    let extra = servers.get(DEFAULT_STUN.len());
+    let (servers, warn) = load_with(env, data_dir, account);
+    let user_set = (from_env || has_file) && warn.is_none();
+    let from_account = !user_set && !account.is_empty();
+    // vindo da conta, a UI não recebe endereços nem credenciais: só o fato
+    let extra = servers.get(DEFAULT_STUN.len()).filter(|_| !from_account);
     serde_json::json!({
         "ev": "ice.state",
         "turn": has_turn(&servers),
-        "source": if from_env { "env" } else if has_file { "file" } else { "default" },
+        "source": if from_account { "account" } else if from_env { "env" } else if has_file { "file" } else { "default" },
         "urls": extra.map(|e| e.urls.join(", ")).unwrap_or_default(),
         "username": extra.map(|e| e.username.clone()).unwrap_or_default(),
         "has_credential": extra.map(|e| !e.credential.is_empty()).unwrap_or(false),
@@ -258,7 +269,7 @@ mod tests {
         assert!(w.is_none() && has_turn(&s) && s.len() == 4);
         assert_eq!((s[3].urls.len(), s[3].username.as_str(), s[3].credential.as_str()), (2, "ana", "senha-do-turn-123"));
         // a UI só fica sabendo que há senha; trocar o endereço sem digitar a senha de novo mantém a guardada
-        let v = summary(&noenv, &d);
+        let v = summary(&noenv, &d, &[]);
         assert_eq!((v["turn"].as_bool(), v["source"].as_str(), v["username"].as_str(), v["has_credential"].as_bool()), (Some(true), Some("file"), Some("ana"), Some(true)));
         assert!(!v.to_string().contains("senha-do-turn-123"));
         save(&d, "turn:outro.example.com:3478", "ana", "").unwrap();
@@ -267,10 +278,10 @@ mod tests {
         assert!(save(&d, "turn:outro.example.com:3478", "bia", "").is_err(), "outro usuário exige senha");
         // só STUN extra: sem credencial alguma
         save(&d, "stun:s.example.com:3478", "", "").unwrap();
-        let v = summary(&noenv, &d);
+        let v = summary(&noenv, &d, &[]);
         assert_eq!((v["turn"].as_bool(), v["urls"].as_str(), v["has_credential"].as_bool()), (Some(false), Some("stun:s.example.com:3478"), Some(false)));
         clear(&d).unwrap(); clear(&d).unwrap();
-        assert_eq!(summary(&noenv, &d)["source"], "default");
+        assert_eq!(summary(&noenv, &d, &[])["source"], "default");
     }
     #[test]
     fn hand_written_file_and_env_still_work_and_a_foreign_sealed_password_is_reported() {
@@ -281,7 +292,7 @@ mod tests {
         let (s, w) = load(&noenv, &d);
         assert!(!has_turn(&s) && w.unwrap().contains("salve de novo"));
         let env = |k: &str| (k == "BRIKS_ICE_SERVERS_JSON").then(|| r#"[{"urls":"stun:a:1"}]"#.to_string());
-        assert_eq!(summary(&env, &d)["source"], "env");
+        assert_eq!(summary(&env, &d, &[])["source"], "env");
     }
     #[tokio::test]
     async fn probe_reports_a_dead_turn_without_hanging_or_leaking_the_password() {

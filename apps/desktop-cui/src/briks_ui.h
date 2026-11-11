@@ -167,6 +167,7 @@ typedef struct {
     bool ice_turn, ice_has_cred, ice_asked, ice_busy, ice_testing, ice_edit_init;
     char ice_urls[300], ice_user[100], ice_pass[130], ice_msg[240], ice_test_msg[240];
     int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
+    char others_msg[200]; bool others_busy, others_confirm;
     char ice_source[8];                                        /* default | file | env */
 } app_state_t;
 
@@ -218,6 +219,7 @@ void account_set_name(app_state_t *s);                      /* troca o nome de e
 void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
 void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
 void ui_account_editor(cui_ctx *ui, app_state_t *s);
+void account_logout_others(app_state_t *s);                 /* "Sair dos outros computadores" */
 void account_ice_get(app_state_t *s);
 void account_ice_save(app_state_t *s);                      /* grava ice_urls/ice_user/ice_pass no core */
 void account_ice_clear(app_state_t *s);
@@ -228,6 +230,7 @@ void account_backup_confirm(app_state_t *s);                /* "anotei": cifra e
 void account_backup_cancel(app_state_t *s);                 /* descarta a frase gerada */
 void account_backup_restore(app_state_t *s);                /* usa s->backup_input */
 void account_backup_delete(app_state_t *s);
+void ui_others_section(cui_ctx *ui, app_state_t *s);        /* "Sair dos outros computadores" (aba Conta) */
 void ui_backup_section(cui_ctx *ui, app_state_t *s);        /* bloco para Configurações */
 void ui_backup_dialogs(cui_ctx *ui, app_state_t *s);        /* diálogos: frase nova, recuperar, apagar */        /* bloco "foto, nome e @" para o diálogo de Perfil */
 void account_import(app_state_t *s, bool apply);

@@ -32,6 +32,8 @@ pub struct Runtime {
     pub reason: String,
     pub mock: bool,
     pub data_dir: PathBuf,
+    /// TURN da conta (Edge Function turn-credentials), renovado em segundo plano
+    pub turn: Arc<super::turn::TurnCache>,
     _fake: Option<fake::Fake>,
 }
 
@@ -39,14 +41,16 @@ impl Runtime {
     #[cfg(test)]
     pub fn for_tests(acc: Option<Arc<Accounts>>, data_dir: PathBuf) -> Arc<Runtime> {
         let reason = if acc.is_none() { "Servidor de contas não configurado.".to_string() } else { String::new() };
-        Arc::new(Runtime { acc, reason, mock: false, data_dir, _fake: None })
+        Arc::new(Runtime { acc, reason, mock: false, data_dir, turn: Default::default(), _fake: None })
     }
     pub async fn build(data_dir: PathBuf, realtime: Option<(String, String)>) -> Arc<Runtime> {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         match config::resolve(&env, &data_dir, realtime) {
             AccountsConfig::Supabase { url, anon_key } => {
-                let acc = Accounts::new(Arc::new(SupabaseProvider::new(&url, &anon_key)), &data_dir, super::system_browser());
-                Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: false, data_dir, _fake: None })
+                let acc = Arc::new(Accounts::new(Arc::new(SupabaseProvider::new(&url, &anon_key)), &data_dir, super::system_browser()));
+                let turn: Arc<super::turn::TurnCache> = Default::default();
+                super::turn::spawn(acc.clone(), turn.clone(), url.clone(), anon_key.clone());
+                Arc::new(Runtime { acc: Some(acc), reason: String::new(), mock: false, data_dir, turn, _fake: None })
             }
             AccountsConfig::Mock => match fake::start(0).await {
                 Ok(f) => {
@@ -59,11 +63,11 @@ impl Runtime {
                     // sessão do modo falso fica numa pasta própria: nunca se mistura com a sessão real
                     let dir = data_dir.join("mock-accounts");
                     let acc = Accounts::new(Arc::new(SupabaseProvider::new(&f.url(), "chave-publica-falsa")), &dir, fake::auto_browser());
-                    Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: true, data_dir, _fake: Some(f) })
+                    Arc::new(Runtime { acc: Some(Arc::new(acc)), reason: String::new(), mock: true, data_dir, turn: Default::default(), _fake: Some(f) })
                 }
-                Err(e) => Arc::new(Runtime { acc: None, reason: format!("Servidor de contas falso não iniciou: {e}"), mock: true, data_dir, _fake: None }),
+                Err(e) => Arc::new(Runtime { acc: None, reason: format!("Servidor de contas falso não iniciou: {e}"), mock: true, data_dir, turn: Default::default(), _fake: None }),
             },
-            AccountsConfig::Missing(reason) => Arc::new(Runtime { acc: None, reason, mock: false, data_dir, _fake: None }),
+            AccountsConfig::Missing(reason) => Arc::new(Runtime { acc: None, reason, mock: false, data_dir, turn: Default::default(), _fake: None }),
         }
     }
 }
@@ -314,6 +318,16 @@ impl Service {
                     }
                     acc.sign_out().await;
                     let _ = tx.send(base(&rt, "signed_out")).await;
+                });
+            }
+            "account.logout_others" => {
+                tokio::spawn(async move {
+                    let ev = match acc.sign_out_others().await {
+                        Ok(()) => json!({ "ev": "account.others", "ok": true, "message": "Pronto: a conta foi desconectada dos outros computadores. Este continua conectado." }),
+                        Err(e) if e.is_auth() => failed(&rt, &e),
+                        Err(e) => json!({ "ev": "account.others", "ok": false, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
                 });
             }
             "account.password" => {

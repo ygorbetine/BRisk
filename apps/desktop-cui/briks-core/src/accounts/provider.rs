@@ -160,6 +160,8 @@ pub trait AuthProvider: Send + Sync {
     fn update_password(&self, access_token: &str, new_password: &str) -> AResult<()>;
     fn refresh(&self, refresh_token: &str) -> AResult<Session>;
     fn sign_out(&self, access_token: &str) -> AResult<()>;
+    /// Encerra as sessões da conta em todos os OUTROS aparelhos (a atual continua).
+    fn sign_out_others(&self, access_token: &str) -> AResult<()>;
 
     /// Cria/atualiza o perfil do usuário logado e liga a chave PÚBLICA da identidade P2P à conta.
     fn sync_profile(&self, access_token: &str, display_name: &str, avatar_url: &str, public_key: &Value, fingerprint: &str) -> AResult<Profile>;

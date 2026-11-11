@@ -708,6 +708,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                         }
                     }
                     if (s->acct_user_id[0]) {
+                        ui_others_section(ui, s);
                         ui_backup_section(ui, s);
                         if (s->import_state == 1 || s->import_state == 2 || s->import_state == 3) {
                             PCARD(ui, "BRIKS ANTIGO") {

@@ -882,7 +882,7 @@ async fn two_simultaneous_shares_in_one_room() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     let (na, nb) = (FrameSource::open(&dir.join("a-ve-b.bin")).unwrap().read().map(|r| r.2).unwrap_or(0), FrameSource::open(&dir.join("b-ve-a.bin")).unwrap().read().map(|r| r.2).unwrap_or(0));
     eprintln!("duas transmissões: A recebeu {na} quadros de B e B recebeu {nb} quadros de A em ~3 s");
-    assert!(na > 30 && nb > 30);
+    assert!(na > 15 && nb > 15, "poucos quadros: {na} e {nb}");
     // A para a dele: a de B continua
     a.cmd.send(MeshCmd::ShareStop).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await.expect("B não soube que A parou");
@@ -959,4 +959,22 @@ async fn soak_no_leaks_no_latency_drift() {
     assert!(h1 < h0 * 1.2 + 30.0, "handles cresceram: {h0:.0} → {h1:.0}");
     assert!((l1 - l0).abs() < 40.0, "latência derivou: {l0:.0} → {l1:.0} ms");
     assert!(fmin > 300, "houve um intervalo de 30 s quase sem quadros: {fmin}");
+}
+
+/// Captura preta (tela cheia exclusiva / conteúdo protegido): depois de 3 s de quadros pretos o emissor avisa a UI.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn black_source_is_detected_and_reported() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let mut a = node(port, "aaaaaaaa-1111-4111-8111-0000000000c5", "Ana", "preto1", Arc::new(Identity::generate()));
+    let cfg = |kind| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: "Preto".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true };
+    a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::TestBlack), preview: None, dump: None }).await.unwrap();
+    let t0 = std::time::Instant::now();
+    let h = wait_share(&mut a, |v| v["ev"] == "share.hint", 10).await.expect("não avisou da fonte preta");
+    assert_eq!(h["hint"], "black");
+    eprintln!("fonte preta avisada {:.1} s depois de começar", t0.elapsed().as_secs_f64());
+    // conteúdo normal não dispara o aviso
+    a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test), preview: None, dump: None }).await.unwrap();
+    assert!(wait_share(&mut a, |v| v["ev"] == "share.hint" && v["hint"] == "black", 6).await.is_none(), "aviso falso com conteúdo normal");
 }

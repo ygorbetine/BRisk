@@ -9,6 +9,12 @@ use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 fn var_u32(v: u32) -> VARIANT { let mut x = VARIANT::default(); unsafe { let a = &mut *x.Anonymous.Anonymous; a.vt = VT_UI4; a.Anonymous.ulVal = v; } x }
 fn var_bool(v: bool) -> VARIANT { let mut x = VARIANT::default(); unsafe { let a = &mut *x.Anonymous.Anonymous; a.vt = VT_BOOL; a.Anonymous.boolVal = windows::Win32::Foundation::VARIANT_BOOL(if v { -1 } else { 0 }); } x }
 
+/// O Media Foundation é iniciado uma única vez por processo (a adaptação recria codificadores com frequência).
+fn mf_startup() -> Result<()> {
+    static ONCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ONCE.get_or_init(|| unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).is_ok() }) { Ok(()) } else { Err(anyhow!("Media Foundation indisponível")) }
+}
+
 pub struct MfEnc {
     tr: IMFTransform,
     events: Option<IMFMediaEventGenerator>,
@@ -47,7 +53,7 @@ impl MfEnc {
     pub fn new(w: usize, h: usize, fps: u32, bps: u32, allow_hw: bool) -> Result<Self> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET)?;
+            mf_startup()?;
             let out_info = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_H264 };
             let mut tries: Vec<(IMFActivate, bool)> = vec![];
             for (flags, hw) in [(MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, true), (MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, false)] {
@@ -265,7 +271,7 @@ impl MfDec {
     pub fn new() -> Result<Self> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET)?;
+            mf_startup()?;
             let tr: IMFTransform = windows::Win32::System::Com::CoCreateInstance(&CLSID_MSH264DecoderMFT, None, windows::Win32::System::Com::CLSCTX_INPROC_SERVER)?;
             if let Ok(a) = tr.GetAttributes() { let _ = a.SetUINT32(&MF_LOW_LATENCY, 1); }
             if let Ok(c) = tr.cast::<ICodecAPI>() { let _ = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(true)); }

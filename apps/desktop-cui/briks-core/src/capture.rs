@@ -23,6 +23,8 @@ pub enum SourceKind {
     Screen(isize),   // HMONITOR
     Window(isize),   // HWND
     Test,            // padrão sintético
+    /// quadros totalmente pretos (como uma captura bloqueada por tela cheia exclusiva ou conteúdo protegido)
+    TestBlack,
     /// ruído rolando em 1920x1080 a 30 qps: conteúdo difícil, faz o codificador usar todo o bitrate (testes de adaptação)
     TestMotion,
     TestResize,      // padrão sintético que muda de 1280x720 para 960x540 depois de ~2 s (janela redimensionada)
@@ -71,7 +73,7 @@ impl Shared {
     /// Recebe um quadro BGRA (sem preenchimento de linha) da captura e guarda o I420 pronto para codificar.
     /// Este quadro entra? (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado ANTES de converter)
     pub fn accept(&self) -> bool {
-        let mut la = self.last_accept.lock().unwrap();
+        let mut la = self.last_accept.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         if let Some(t) = *la { if now.duration_since(t) < Duration::from_micros(self.min_interval_us.load(Ordering::Relaxed)) { self.dropped.fetch_add(1, Ordering::Relaxed); return false; } }
         *la = Some(now);
@@ -96,7 +98,7 @@ impl Shared {
             Some((pw, ph, out))
         } else { None };
         let raw_yuv = if self.want_raw.swap(false, Ordering::Relaxed) { Some(crate::video::Yuv { w: yuv.w, h: yuv.h, y: yuv.y.clone(), u: yuv.u.clone(), v: yuv.v.clone() }) } else { None };
-        let mut l = self.latest.lock().unwrap();
+        let mut l = self.latest.lock().unwrap_or_else(|e| e.into_inner());
         l.w = w; l.h = h; l.counter += 1; l.yuv = Some(yuv);
         if preview.is_some() { l.preview = preview; }
         if raw_yuv.is_some() { l.raw_yuv = raw_yuv; }
@@ -113,7 +115,7 @@ impl Shared {
         let n = self.frames.fetch_add(1, Ordering::Relaxed);
         let preview = if self.want_preview && n % self.preview_every == 0 { Some(preview_rgba(data, stride, w, h)) } else { None };
         let raw = if self.want_raw.swap(false, Ordering::Relaxed) { Some(data.chunks(stride).take(h).flat_map(|r| r[..w * 4].iter().copied()).collect()) } else { None };
-        let mut l = self.latest.lock().unwrap();
+        let mut l = self.latest.lock().unwrap_or_else(|e| e.into_inner());
         l.w = w; l.h = h; l.counter += 1; l.yuv = Some(yuv);
         if preview.is_some() { l.preview = preview; }
         if raw.is_some() { l.raw = raw; }
@@ -279,16 +281,17 @@ impl Capture {
                 });
                 Handle::Thread
             }
-            SourceKind::Test | SourceKind::TestResize => {
+            SourceKind::Test | SourceKind::TestResize | SourceKind::TestBlack => {
                 let resize = kind == SourceKind::TestResize;
+                let black = kind == SourceKind::TestBlack;
                 let (sh, st) = (shared.clone(), stop.clone());
                 let (w, h) = std::env::var("BRIKS_TEST_SOURCE_SIZE").ok().and_then(|v| v.split_once('x').map(|(a, b)| (a.parse().unwrap_or(1280), b.parse().unwrap_or(720)))).unwrap_or((1280usize, 720usize));
                 std::thread::spawn(move || {
                     let mut t = 0usize;
                     while !st.load(Ordering::Relaxed) {
                         let (w, h) = if resize && t > fps as usize * 2 { (960, 540) } else { (w, h) };
-                        let mut f = test_pattern(w, h, t / 10);
-                        stamp_ms(&mut f, w);
+                        let mut f = if black { let mut v = vec![0u8; w * h * 4]; for p in v.chunks_mut(4) { p[3] = 255; } v } else { test_pattern(w, h, t / 10) };
+                        if !black { stamp_ms(&mut f, w); }
                         sh.push_bgra(&f, w, h, w * 4);
                         t += 1;
                         std::thread::sleep(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));

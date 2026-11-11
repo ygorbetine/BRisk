@@ -132,8 +132,8 @@ fn capture_pid(pid: u32, ring: Ring, stop: Arc<AtomicBool>) -> Result<(), String
         client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, 0, 0, &fmt, None).map_err(|e| format!("Initialize: {e}"))?;
         let cap: IAudioCaptureClient = client.GetService().map_err(|e| e.to_string())?;
         let tick = CreateEventW(None, false, false, None).map_err(|e| e.to_string())?;
-        client.SetEventHandle(tick).map_err(|e| e.to_string())?;
-        client.Start().map_err(|e| e.to_string())?;
+        // a partir daqui o evento é fechado em qualquer saída (inclusive erro)
+        if let Err(e) = client.SetEventHandle(tick).and_then(|_| client.Start()) { let _ = CloseHandle(tick); return Err(e.to_string()); }
         while !stop.load(Ordering::Relaxed) {
             WaitForSingleObject(tick, 100);
             loop {

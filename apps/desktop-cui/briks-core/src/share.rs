@@ -164,6 +164,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
     let out_rtx = (out.rtx_sent.clone(), out.rtx_skipped.clone(), out.nack_unique.clone());
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
+        // Um pânico aqui dentro não pode deixar a UI mostrando "transmitindo" para sempre: o laço roda protegido e, se cair,
+        // a transmissão termina com aviso.
+        let ev_panic = ev.clone();
+        let run = std::panic::AssertUnwindSafe(move || {
         use crate::adapt::{Controller, Estimator};
         let max_fps = cfg.fps.clamp(5, 120);
         let no_cpu = std::env::var("BRIKS_ADAPT_NO_CPU").is_ok();   // testes de rede: isola o laço de rede da carga da máquina
@@ -183,6 +187,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut since_idr = 0u32;
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
+        let (mut black_t, mut black_run, mut black_said) = (Instant::now(), 0u32, false);
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
         let mut closed_reason = String::new();
@@ -244,7 +249,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
             let (yuv, pvw, raw, src) = {
-                let mut l = cap.shared.latest.lock().unwrap();
+                let mut l = cap.shared.latest.lock().unwrap_or_else(|e| e.into_inner());
                 if l.w == 0 { continue; }
                 let fresh = l.yuv.take();
                 if let (Some(d), Some(y)) = (&dump, l.raw_yuv.take()) { let mut rgba = vec![255u8; y.w * y.h * 4]; video::i420_to_rgba(&y.y, &y.u, &y.v, (y.w, y.w / 2, y.w / 2), y.w, y.h, &mut rgba); if let Some(img) = image::RgbaImage::from_raw(y.w as u32, y.h as u32, rgba) { let _ = img.save(d); } }
@@ -259,6 +264,18 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             // fila do pacer acima de ~0,3 s do bitrate atual: a rede não dá vazão. Pula este quadro SEM codificar (a cadeia de
             // referência fica intacta; nada de quadro-chave, que só pioraria o congestionamento)
             if let Some(e) = enc.as_ref() { if queued.load(Ordering::Relaxed) * 8 > (e.bps as u64 * 3 / 10).max(250_000) { pacer_drops += 1; held = Some(yuv); continue; } }
+            // Fonte saindo preta: jogo em tela cheia exclusiva ou conteúdo protegido (DRM) entregam quadros pretos à captura.
+            // Amostra o brilho uma vez por segundo; 3 s seguidos de preto uniforme avisam a UI (uma vez), e o aviso some se voltar.
+            if black_t.elapsed() >= Duration::from_secs(1) {
+                black_t = Instant::now();
+                let (mut sum, mut max, mut n) = (0u64, 0u8, 0u64);
+                for v in yuv.y.iter().step_by(97) { sum += *v as u64; max = max.max(*v); n += 1; }
+                let dark = n > 0 && sum / n <= 18 && max <= 24;
+                black_run = if dark { black_run + 1 } else { 0 };
+                if black_run == 3 { let _ = ev.try_send(json!({ "ev": "share.hint", "gen": gen, "hint": "black" })); }
+                if !dark && black_said { let _ = ev.try_send(json!({ "ev": "share.hint", "gen": gen, "hint": "" })); }
+                black_said = black_run >= 3;
+            }
             let (tw, th) = (yuv.w, yuv.h);
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
@@ -301,6 +318,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         }
         cap.stop();
         let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "off", "reason": closed_reason }));
+        });
+        if std::panic::catch_unwind(run).is_err() { let _ = ev_panic.try_send(json!({ "ev": "share.local", "gen": gen, "state": "off", "reason": "A transmissão parou por um erro interno" })); }
     });
     Ok(Sender { stop, idr })
 }

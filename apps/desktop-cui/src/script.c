@@ -25,7 +25,7 @@ static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdlib.h>
 #include <windows.h>
 
-int g_script_fail;
+int g_script_fail, g_script_rw, g_script_rh;   /* resize pendente (aplicado pelo laço principal) */
 static char *lines[512]; static int nlines, pc;
 static int timed_left, timed_total;       /* operação com duração em andamento */
 static bool timed_move; static float mx0, my0, mx1, my1;
@@ -98,6 +98,7 @@ void script_tick(cui_ctx *ui) {
             if (got != want) { g_script_fail++; fprintf(stderr, "roteiro: FALHOU linha %d: %s = %d, esperado %d\n", pc, n ? n : "?", got, want); }
             else fprintf(stderr, "roteiro: ok linha %d: %s = %d\n", pc, n, got);
         }
+        else if (!strcmp(cmd, "resize")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { g_script_rw = atoi(a); g_script_rh = atoi(b); } }   /* resize L A: redimensiona a janela (testa o layout ao vivo) */
         else if (!strcmp(cmd, "waitms")) { char *n = strtok(NULL, " "); wait_until = cui_time(ui) + (n ? atof(n) : 100) / 1000.0; }
         else if (!strcmp(cmd, "shot")) { char *n = strtok(NULL, " "); snprintf(shot_name, sizeof shot_name, "%s", n ? n : "shot"); }
         else if (!strcmp(cmd, "signal")) { char *n = strtok(NULL, " "); char f[640]; snprintf(f, sizeof f, "%s\\%s.flag", outdir, n ? n : "sinal"); FILE *o = fopen(f, "wb"); if (o) fclose(o); }
@@ -154,7 +155,7 @@ bool script_capture(cui_app *app) {
     cui_vec2 vp = cui_viewport_size(ui);
     float sc = cui_dpi_scale(ui);
     int w = (int)(vp.x * sc + 0.5f), h = (int)(vp.y * sc + 0.5f);
-    if (!px) px = malloc((size_t)w * (size_t)h * 4);
+    static int pw, ph; if (!px || pw != w || ph != h) { free(px); px = malloc((size_t)w * (size_t)h * 4); pw = w; ph = h; }   /* a janela pode mudar de tamanho (comando resize) */
     if (px && (shot_name[0] || !shots_only) && cui_app_screenshot(app, px, w, h)) {
         char name[640];
         if (shot_name[0]) snprintf(name, sizeof name, "%s\\%s.png", outdir, shot_name); else snprintf(name, sizeof name, "%s\\frame_%05d.png", outdir, frame_no++);

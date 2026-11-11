@@ -241,7 +241,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
     const char *items[5] = { tabs[0], tabs[1], s->pending_count ? pend : tabs[2], tabs[3], tabs[4] };
     if (!mid) { items[0] = shorts[0]; items[1] = shorts[1]; items[2] = s->pending_count ? pend : shorts[2]; items[3] = shorts[3]; items[4] = shorts[4]; }
     g_hub_h = cui_get_rect(ui, cui_make_id(ui, "friends-hub")).h;
-    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 18, .gap = 10, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_left = 18, .pad_right = 18 + g_tools_w, .gap = 10, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff0a),
             .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1) {
         cui_icon(ui, CUI_ICON_USERS, 18, B_MUTED);
         cui_text(ui, "Amigos", .font = CUI_FONT_MEDIUM, .nowrap = true);

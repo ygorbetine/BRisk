@@ -41,7 +41,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "friends_tab")) return state.friends_tab;
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
-    if (!strcmp(n, "pins")) return -1;
+    if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
     return dock_probe(n);
 }
 
@@ -107,8 +107,10 @@ int main(void) {
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 560 && h >= 480) { win_w = a; win_h = h; } }
 #ifdef _WIN32
-    if (!getenv("BRIKS_WINDOW")) {   /* nunca abre maior que a área útil da tela (tela pequena / escala de 125%+): senão o app passa das bordas */
-        RECT wa; if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0)) {
+    if (!getenv("BRIKS_WINDOW") || getenv("BRIKS_FAKE_WORKAREA")) {   /* nunca abre maior que a área útil da tela (tela pequena / escala de 125%+): senão o app passa das bordas */
+        RECT wa; int fw, fh; const char *fk = getenv("BRIKS_FAKE_WORKAREA");   /* teste: simula monitor pequeno (LxA) */
+        bool have = fk && sscanf(fk, "%dx%d", &fw, &fh) == 2 ? (wa.left = 0, wa.top = 0, wa.right = fw, wa.bottom = fh, true) : SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
+        if (have) {
             int mw = (int)(wa.right - wa.left) - 24, mh = (int)(wa.bottom - wa.top) - 24;
             if (win_w > mw) win_w = mw < 560 ? 560 : mw;
             if (win_h > mh) win_h = mh < 480 ? 480 : mh;
@@ -140,7 +142,7 @@ int main(void) {
     briks_glass_init(app);
     bool scripted = script_load();
     while (cui_app_frame(app)) {
-        if (scripted) script_tick(cui_app_ui(app));
+        if (scripted) { script_tick(cui_app_ui(app)); if (g_script_rw) { cui_app_set_size(app, g_script_rw, g_script_rh); g_script_rw = g_script_rh = 0; } }
         frame(cui_app_ui(app));
         if (scripted && script_capture(app)) break;
     }

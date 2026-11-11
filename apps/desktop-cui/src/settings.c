@@ -182,7 +182,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
     cui_dialog(ui, "Configurações", &s->settings_open, .width = dw) {
         cui_row(ui, .width = CUI_FILL, .height = CUI_PX(dh), .gap = 16) {
             cui_box(ui, .width = CUI_PX(220), .height = CUI_FILL, .pad = 10, .gap = 2, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
-                cui_scroll(ui, .id = "cfg-menu", .width = CUI_FILL, .height = CUI_FILL, .gap = 2) {
+                cui_scroll(ui, .id = "cfg-menu", .width = CUI_FILL, .height = CUI_PX(fmaxf(dh - 20.0f - 36.0f - 2.0f, 80.0f)), .gap = 2) {   /* altura exata: a lista rola e o botão Desconectar não sobrepõe */
                     for (int i = 0; i < NTABS; i++) {
                         cui_push_id_int(ui, 5000 + i);
                         if (menu_item(ui, TAB_ICONS[i], TAB_NAMES[i], s->settings_tab == i)) s->settings_tab = i;

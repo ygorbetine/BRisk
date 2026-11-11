@@ -160,6 +160,7 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = r.x, .pad_top = r.y) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
             g_panel_w = r.w;
+            { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); g_tools_w = (kind == P_SERVERS || !nb) ? 0.0f : 28.0f * (float)nb; }   /* reserva o canto dos botões + e × */
             ui_panel(ui, c->s, kind);
             if (kind != P_SERVERS) {   /* alça de arrasto: pintada em coordenadas do painel (sempre centralizada no topo, nunca no meio do conteúdo) */
                 grip_t gp = { hot };
@@ -464,6 +465,7 @@ int dock_probe(const char *n) {
     if (!strcmp(n, "menu")) return menu_open;
     if (!strcmp(n, "drag")) return drag.active;
     if (!strcmp(n, "count")) return layout_count(&L);
+    if (!strcmp(n, "fill_gap")) { float mr = 0; for (int k = 0; k < P_COUNT; k++) if (anim_on[k]) mr = fmaxf(mr, anim[k].x + anim[k].w); return (int)lroundf(last_vp_w - 10.0f - mr); }   /* sobra à direita (0 = preenche) */
     return -1;
 }
 void dock_script_restore(void) { layout_default(&L, last_vp_w); menu_open = false; }

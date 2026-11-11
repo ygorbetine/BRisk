@@ -18,7 +18,7 @@ static void initials(const char *name, char *out) {
 
 /* Barra de grupos responsiva: só ícones (36..56 px conforme a largura) ou, com folga, ícone + nome + "N membros".
  * g_panel_w é a largura atual do painel (dock.c). Texto sempre medido com a fonte real e cortado com reticências antes da borda. */
-float g_panel_w = 76;
+float g_panel_w = 76, g_tools_w;
 char g_tip[160];
 void briks_tip_draw(cui_ctx *ui) {
     if (!g_tip[0]) return;
@@ -332,7 +332,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             .border = 1, .border_color = B_GLASS_BORDER, .elevation = briks_elev(CUI_ELEVATION_RAISED)) {
         const bool group = s->active_group >= 0;
         const char *title = group ? s->groups[s->active_group].name : s->friends[s->active_friend].name;
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_x = 20, .gap = 10,
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_left = 20, .pad_right = 20 + g_tools_w, .gap = 10,
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM);
@@ -395,7 +395,7 @@ static void panel_servers(cui_ctx *ui, app_state_t *s) {
 
 
 static void panel_shell(cui_ctx *ui, const char *title, const char *icon) {
-    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 18, .gap = 10, .align = CUI_ALIGN_CENTER) {
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_left = 18, .pad_right = 18 + g_tools_w, .gap = 10, .align = CUI_ALIGN_CENTER) {
         cui_icon(ui, icon, 16, B_MUTED);
         cui_text(ui, title, .font = CUI_FONT_DISPLAY, .size = 15, .nowrap = true);
     }
@@ -459,7 +459,7 @@ static void panel_chat2(cui_ctx *ui, app_state_t *s) {
     if (!s->chat2_channel[0] && s->friend_count) app_open_chat2(s, s->chat2_friend < s->friend_count ? s->chat2_friend : 0);
     cui_box(ui, GLASS_PANEL) {
         const char *title = (s->chat2_friend >= 0 && s->chat2_friend < s->friend_count) ? s->friends[s->chat2_friend].name : "Escolha um amigo";
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 18, .gap = 10, .align = CUI_ALIGN_CENTER,
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_left = 18, .pad_right = 18 + g_tools_w, .gap = 10, .align = CUI_ALIGN_CENTER,
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a)) {
             cui_icon(ui, CUI_ICON_MESSAGE_SQUARE, 16, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM, .nowrap = true);

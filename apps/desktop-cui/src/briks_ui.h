@@ -293,6 +293,7 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern float g_tools_w;   /* largura reservada à direita do cabeçalho para os botões + e × do painel (0 = sem botões) */
 extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
 void briks_text_scale_apply(cui_ctx *ui);
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
@@ -300,7 +301,7 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúd
 void dock_render(cui_ctx *ui, app_state_t *s);
 int dock_probe(const char *name);   /* roteiro: estado do dock para 'expect' */
 int script_probe(const char *name);
-extern int g_script_fail;
+extern int g_script_fail, g_script_rw, g_script_rh;
 bool dock_script_point(const char *spec, float *x, float *y);   /* roteiro: "grip:chat", "zone:nav:left", "divider:nav"... */
 void dock_script_pick(const char *kind);
 void dock_script_menu(float x, float y);

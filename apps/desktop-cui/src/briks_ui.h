@@ -59,10 +59,11 @@ typedef struct {
     float stat_fps, enc_ms, audio_peak; int stat_kbps;
     /* laço de adaptação ao vivo (share.stats) */
     int live_h, target_fps, target_kbps, est_kbps, rtt_ms, rtx; float loss_pct;
+    bool black;                             /* a fonte está saindo preta (tela cheia exclusiva / conteúdo protegido) */
     char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
-    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; char label[64], path[300]; } remote[8];
+    struct { bool on, audio, watching, has_frame; int w, h, fps, kbps; float volume; bool vol_set; char label[64], path[300]; } remote[8];
 } share_state_t;
 
 typedef struct {

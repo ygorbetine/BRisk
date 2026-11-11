@@ -201,9 +201,11 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             q->audio_on = jbool(j, "audio"); q->hardware = jbool(j, "hardware");
             copy(q->encoder, sizeof q->encoder, json_str(j, "encoder", ""));
         } else {
-            q->active = false; q->starting = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
+            q->active = false; q->starting = false; q->black = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
             copy(q->err, sizeof q->err, json_str(j, "reason", ""));
         }
+    } else if (!strcmp(ev, "share.hint")) {
+        q->black = !strcmp(json_str(j, "hint", ""), "black");
     } else if (!strcmp(ev, "share.stats")) {
         q->stat_fps = jnum(j, "fps"); q->stat_kbps = jint(j, "kbps"); q->enc_ms = jnum(j, "enc_ms"); q->cpu = jint(j, "cpu_pct");
         q->audio_peak = jnum(j, "audio_peak"); q->audio_sources = jint(j, "audio_sources");
@@ -473,10 +475,10 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         char chip[80]; quality_chip(q, chip, sizeof chip);
         bool failed = q->err[0] && !on && !q->dialog_open;   /* motivo do fim ("A janela foi fechada"...) fica no chip até a próxima ação */
         cui_box(ui, .id = "q", .dir = CUI_ROW, .gap = 6, .pad_x = 14, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-            bool adapting = q->active && q->adapting[0];   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
+            bool adapting = q->active && (q->adapting[0] || q->black);   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
             if (failed) cui_icon(ui, CUI_ICON_TRIANGLE_ALERT, 13, B_DANGER);
-            else if (adapting) cui_icon(ui, !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
-            cui_text(ui, failed ? q->err : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
+            else if (adapting) cui_icon(ui, q->black ? CUI_ICON_TRIANGLE_ALERT : !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
+            cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
         if ((!modal && briks_clicked(ui, "q")) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
@@ -492,6 +494,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                 cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
                 snprintf(st, sizeof st, "Codificador: %s%s · %.1f ms/quadro · CPU %d%%", q->encoder[0] ? q->encoder : "H264", q->hardware ? " (GPU)" : " (software)", q->enc_ms, q->cpu);
                 cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+                if (q->black) cui_text(ui, "A fonte está saindo preta. Jogos em tela cheia exclusiva e conteúdo protegido não podem ser capturados: use janela sem bordas.", .size = 12, .color = CUI_RGB(0xf5d9a0));
                 if (q->adapting[0]) {
                     snprintf(st, sizeof st, !strcmp(q->adapting, "cpu") ? "Adaptando: o PC não deu conta; qualidade reduzida até caber." : "Adaptando à rede%s%s: qualidade reduzida, volta sozinha.", q->reason[0] ? " (" : "", q->reason[0] ? (!strcmp(q->reason, "perda") ? "perda)" : "atraso)") : "");
                     cui_text(ui, st, .size = 12, .color = CUI_RGB(0xf5d9a0), .nowrap = true);
@@ -504,7 +507,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
 }
 
 /* ---------- palco do modo Transmissão ---------- */
-static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait) {
+static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume) {
     cui_push_id_int(ui, 800 + key);
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, "vt"));   /* tamanho do quadro anterior: o vídeo cabe inteiro, sem distorcer */
     cui_box(ui, .id = "vt", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
@@ -525,6 +528,14 @@ static void video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             cui_card_end(ui);
         }
         if (chip && chip[0]) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 18) { briks_status_pill(ui, chip); }
+        if (volume) {   /* volume do áudio desta transmissão, só para quem assiste */
+            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 18) {
+                cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                    cui_icon(ui, *volume <= 0.01f ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, 14, B_TEXT);
+                    cui_box(ui, .width = CUI_FILL) { cui_slider(ui, "##vol", volume, 0, 2); }
+                }
+            }
+        }
     }
     cui_pop_id(ui);
 }
@@ -541,7 +552,7 @@ bool ui_share_stage(cui_ctx *ui, app_state_t *s) {
             bool has = fv_update(ui, s, &g_fv[8], path);
             snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
             quality_chip(q, chip, sizeof chip);
-            video_tile(ui, 8, has ? g_fv[8].tex : 0, g_fv[8].w, g_fv[8].h, title, chip, "Preparando a prévia…");
+            video_tile(ui, 8, has ? g_fv[8].tex : 0, g_fv[8].w, g_fv[8].h, title, chip, "Preparando a prévia…", NULL);
         }
         for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) {
             char title[200], chip[96], r[24];
@@ -550,7 +561,14 @@ bool ui_share_stage(cui_ctx *ui, app_state_t *s) {
             if (q->remote[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote[i].label); else snprintf(title, sizeof title, "%s", nm);
             fmt_rate(q->remote[i].kbps, r, sizeof r);
             snprintf(chip, sizeof chip, "%s · %d FPS · %s%s", res_name(q->remote[i].h), q->remote[i].fps, r, q->remote[i].audio ? " · com áudio" : "");
-            video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, "Carregando a transmissão…");
+            if (!q->remote[i].vol_set) { q->remote[i].vol_set = true; q->remote[i].volume = 1.0f; }
+            float before = q->remote[i].volume;
+            video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL);
+            if (fabsf(before - q->remote[i].volume) > 0.01f) {
+                char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
+                snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, q->remote[i].volume);
+                cmd(line);
+            }
         }
     }
     return true;

@@ -74,6 +74,7 @@ static void apply_demo(const char *d, float width) {
         int nav = layout_find(&L, P_NAV), inner = L.n[nav].parent;
         L.n[inner].ratio = 0.36f; demo_hover_div = true; return;
     }
+    if (!strcmp(d, "stacked")) { layout_move(&L, P_CHAT, P_NAV, Z_BOTTOM); return; }   /* conversa abaixo do menu lateral */
     if (!strcmp(d, "moved")) { layout_move(&L, P_CHAT, P_NAV, Z_LEFT); return; }
     layout_split(&L, P_CHAT, P_MEMBERS, Z_RIGHT);
     layout_split(&L, P_NAV, P_VOICE, Z_BOTTOM);

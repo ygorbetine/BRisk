@@ -70,8 +70,8 @@ static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char 
     cui_push_id(ui, id);
     cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
         cui_icon(ui, icon, 15, B_MUTED);
-        if (cui_last_hovered(ui)) cui_tooltip(ui, tip);
     }
+    if (briks_hover(ui, "b")) cui_tooltip(ui, tip);
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
     return hit;
@@ -99,6 +99,7 @@ static void section_title(cui_ctx *ui, const char *t) {
 /* Balões de pensamento (Liquid Glass): as telas registram onde fica o avatar e o texto; o desenho vem por cima de tudo no fim do quadro. */
 typedef struct { cui_rect av; char text[64]; } bub_note_t;
 static bub_note_t g_bub[4]; static int g_bub_n;
+static cui_rect g_bclip;   /* área visível da lista que contém o avatar (rect do cui_scroll no quadro anterior); w = 0: sem corte */
 static void bubble_note(cui_rect av, const char *text) {
     if (g_bub_n < 4 && av.w > 0 && text[0]) { g_bub[g_bub_n].av = av; snprintf(g_bub[g_bub_n].text, sizeof g_bub[g_bub_n].text, "%s", text); g_bub_n++; }
 }
@@ -148,7 +149,10 @@ static bool person_row(cui_ctx *ui, const person_t *f, bool active) {
                 cui_text(ui, line, .size = 11, .color = B_MUTED, .nowrap = true);
             }
         } else cui_text(ui, f->name, .nowrap = true, .width = CUI_FILL);
-        if (active && f->status[0]) bubble_note(cui_get_rect(ui, cui_make_id(ui, "av")), f->status);
+        if (active && f->status[0]) {   /* avatar rolado para fora da lista (painel baixo, layout empilhado): o balão não aparece sobre outro painel */
+            cui_rect av = cui_get_rect(ui, cui_make_id(ui, "av")), c = g_bclip;
+            if (!(c.w > 0 && (av.y < c.y || av.y + av.h > c.y + c.h || av.x < c.x || av.x + av.w > c.x + c.w))) bubble_note(av, f->status);
+        }
     }
     bool hit = briks_clicked(ui, "b");
     cui_pop_id(ui);
@@ -163,6 +167,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                      .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
         }
         cui_separator(ui);
+        g_bclip = cui_get_rect(ui, cui_make_id(ui, "nav-scroll"));
         cui_scroll(ui, .id = "nav-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
             if (nav_item(ui, CUI_ICON_USERS, "Amigos", s->active_friend < 0)) s->active_friend = -1;
             if (nav_item(ui, CUI_ICON_USER_PLUS, "Adicionar amigo", false)) { s->add_friend_open = true; s->notice[0] = 0; }
@@ -378,6 +383,7 @@ static void panel_shell(cui_ctx *ui, const char *title, const char *icon) {
 static void panel_friends(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, GLASS_PANEL) {
         panel_shell(ui, "Amigos", CUI_ICON_USERS);
+        g_bclip = cui_get_rect(ui, cui_make_id(ui, "friends-scroll"));
         cui_scroll(ui, .id = "friends-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
             if (!s->friend_count) cui_text(ui, "Nenhum amigo ainda.", .size = 12, .color = B_MUTED);
             for (int i = 0; i < s->friend_count; i++) {
@@ -392,6 +398,7 @@ static void panel_friends(cui_ctx *ui, app_state_t *s) {
 static void panel_members(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, GLASS_PANEL) {
         panel_shell(ui, "Membros", CUI_ICON_USERS);
+        g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
         cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
             person_t me; snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
             person_row(ui, &me, false);
@@ -403,11 +410,7 @@ static void panel_members(cui_ctx *ui, app_state_t *s) {
 static void panel_voice(cui_ctx *ui, app_state_t *s) {
     cui_box(ui, GLASS_PANEL) {
         panel_shell(ui, "Sala de voz", CUI_ICON_VOLUME_2);
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10, .pad = 16) {
-            cui_text(ui, "Sala geral", .font = CUI_FONT_DISPLAY, .size = 18);
-            { char st[160]; cui_text(ui, rtc_status_text(s, st, sizeof st), .size = 12, .color = B_MUTED); }
-            if (cui_button(ui, s->in_room ? "Voltar à sala" : "Entrar na sala", .variant = CUI_BUTTON_PRIMARY)) { s->screen = SCREEN_CALL; s->mic_on = true; if (!s->in_room) rtc_join_room(s, "voz-geral"); }
-        }
+        ui_voice_panel(ui, s);
     }
 }
 

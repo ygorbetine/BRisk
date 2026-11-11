@@ -119,7 +119,7 @@ typedef struct {
     char rtc_msg[160], rtc_fp[72], room_name[64];
     bool rtc_want_room, rtc_session_sent, rtc_session_ready, in_room;
     int rtc_peer_count, rtc_authed_count;
-    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; char fp[72], name[64], status[64], presence[64]; } rtc_peers[8];
+    struct { char id[48]; char state[16]; float level; bool mic_off, deafened, muted_by_me; float volume; bool vol_set; char fp[72], name[64], status[64], presence[64]; } rtc_peers[8];
     float me_level;                /* nível de fala do microfone local (0..1), evento "speaking" do core */
     bool rtc_owner_me;             /* sou o dono da sala (evento room.owner): só o dono vê "Expulsar" */
     int kick_slot;                 /* peer pendente de confirmação de expulsão (-1 = nenhum) */
@@ -206,6 +206,9 @@ void rtc_leave_room(app_state_t *s);
 void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
+void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay);
+void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */
 void settings_notice(const char *text);                    /* registra um aviso na aba Avisos */
 void briks_theme_editor_open(void);                        /* abre o editor de tema (aba Temas) */
@@ -213,6 +216,8 @@ void briks_theme_reset(void);                              /* restaura o tema Br
 void profile_tick(app_state_t *s);                              /* perfil local: presença do programa em uso, persistência (profile.c) */
 void rtc_set_mic(app_state_t *s, bool on);
 void rtc_set_deaf(app_state_t *s, bool on);
+void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só para quem escuta, 0..2 (1 = normal) */
+void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_pump(app_state_t *s);
@@ -280,6 +285,11 @@ static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     cui_box(ui, .dir = CUI_ROW, .pad_x = 12, .pad_y = 5, .radius = briks_bubble_radius(26), .bg = briks_bubble_bg(), .border = 1, .border_color = briks_bubble_border(), .align = CUI_ALIGN_CENTER) {
         cui_text(ui, text, .size = 12, .color = CUI_RGB(0xffffff), .nowrap = true);
     }
+}
+/* passar o mouse de verdade sobre a caixa `id` (cui_last_hovered não serve para caixas simples; em modo roteiro deixava tooltips presos no topo) */
+static inline bool briks_hover(cui_ctx *ui, const char *id) {
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
 }
 static inline bool briks_clicked(cui_ctx *ui, const char *id) {
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);

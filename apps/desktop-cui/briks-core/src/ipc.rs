@@ -273,6 +273,16 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::MutePeer { key, muted: v["muted"].as_bool().unwrap_or(true) }).await; }
                     }
+                    "audio.cfg" => {
+                        // Configurações > Voz: ganho de entrada/saída (1.0 = normal) e porta de ruído (gate_db ausente = desligada)
+                        if let Some(c) = &mesh_cmd {
+                            let _ = c.send(MeshCmd::AudioCfg { in_gain: v["in_gain"].as_f64().unwrap_or(1.0) as f32, out_gain: v["out_gain"].as_f64().unwrap_or(1.0) as f32, gate_db: v["gate_db"].as_f64().map(|d| d as f32) }).await;
+                        }
+                    }
+                    "peer.volume" => {
+                        let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::PeerVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }
+                    }
                     "share.list" => {
                         let dir = cfg.data_dir.join("thumbs");
                         let v = tokio::task::spawn_blocking(move || crate::capture::list_sources(&dir)).await.unwrap_or(Value::Null);

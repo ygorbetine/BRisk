@@ -107,7 +107,12 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     if (!o->slot) return;
     /* só um contorno sutil, com o MESMO retângulo e raio (22) do painel: segue a curva, sem cantos retos */
     cui_rect z = { o->slot_r.x, o->slot_r.y, o->slot_r.w, o->slot_r.h };
-    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), B_A(B_C3, 0xcc), 1.5f);
+    /* halo azul (3 anéis que somem para fora) + contorno azul nítido: o encaixe fica evidente, sempre com o raio do painel */
+    for (int i = 3; i >= 1; i--) {
+        float g = (float)i * 3.0f; cui_rect h = { z.x - g, z.y - g, z.w + 2 * g, z.h + 2 * g };
+        cui_draw_rect_border(ui, h, CUI_CORNERS(g_th.panel_radius + g), CUI_RGBA(0x00000000), CUI_RGBA(0x5aa0ff00 | (0x14 * (4 - i))), 3.0f);
+    }
+    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), CUI_RGBA(0x7db4ffee), 2.0f);
 }
 
 static float servers_target_w(float vw) {

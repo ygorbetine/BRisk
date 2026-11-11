@@ -2,6 +2,9 @@
 
 Base: `brisk-dev` em db2c4ee (release v1.3.0). Cada frente trabalha no próprio branch/worktree, faz `git merge brisk-dev` antes de começar e de entregar, commits locais pequenos, sem push/tag/release (a publicação é do orquestrador, com ok do usuário). Testes ocultos (`BRIKS_HIDDEN=1`), uma instância, fechar processos, cantos arredondados conferidos. Documentar FEITO/NÃO FEITO com evidência.
 
+## Prioridade (decisão do usuário)
+1º as funções que existiam no Briks anterior (Electron) — frentes B, C e D e tudo que falte da lista de paridade (`cui-ui-paridade-lacunas.md`). 2º as melhorias novas desta versão — frentes A (transmissão) e E (conta e rede) e a Onda 2. A e E ficam em espera depois de fechar o item em andamento e voltam quando B, C e D entregarem.
+
 ## Ondas e donos
 **Onda 1 (paralela)**
 | Frente | Dono | Escopo |
@@ -19,7 +22,7 @@ Base: `brisk-dev` em db2c4ee (release v1.3.0). Cada frente trabalha no próprio 
 - status personalizado (texto no perfil);
 - Modo Jogo (plano já escrito em docs/plans/modo-jogo-e-desempenho.md).
 
-## Integração e lançamento (1.3.1 / 1.4.0)
+## Integração e lançamento (UMA só versão, decisão do usuário: publica quando paridade + melhorias estiverem prontas; hotfix grave fura a fila)
 1. Cada frente entrega "pronto para integrar" (hash, testes, lista honesta).
 2. cui-integracao mescla em ordem A, E, D, B, C; build Release, cargo test, smoke, roteiro oculto, instalador -Test (instalar, atualizar, desinstalar sem processo vivo, Electron intacto).
 3. Hotfix urgente (se os testes do usuário com a 1.3.0 acharem algo grave) fura a fila: 1.3.1 só com a correção.

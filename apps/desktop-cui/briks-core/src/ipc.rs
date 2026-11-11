@@ -46,10 +46,51 @@ pub fn config_from_env() -> Config {
     let data_dir = std::env::var("BRIKS_CORE_DATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into())).join("Briks-CUI"));
-    Config {
-        data_dir,
-        realtime_url: get("BRIKS_REALTIME_URL").or_else(|| get("VITE_SUPABASE_URL")),
-        realtime_key: get("BRIKS_REALTIME_KEY").or_else(|| get("VITE_SUPABASE_ANON_KEY")),
+    config_with(&get, data_dir)
+}
+
+/// Precedência: BRIKS_REALTIME_* > VITE_SUPABASE_* > `supabase.json` (mesma busca das contas: pasta de dados, depois ao lado do exe).
+/// No modo somente-local, o arquivo só vale se a URL for loopback (um arquivo não abre a internet).
+fn config_with(get: &dyn Fn(&str) -> Option<String>, data_dir: PathBuf) -> Config {
+    let mut url = get("BRIKS_REALTIME_URL").or_else(|| get("VITE_SUPABASE_URL"));
+    let mut key = get("BRIKS_REALTIME_KEY").or_else(|| get("VITE_SUPABASE_ANON_KEY"));
+    if url.is_none() && key.is_none() {
+        if let Some((fu, fk)) = crate::accounts::config::file_credentials(&data_dir) {
+            if crate::netmode::deny_url(&fu).is_none() { url = Some(fu); key = Some(fk); }
+        }
+    }
+    Config { data_dir, realtime_url: url, realtime_key: key }
+}
+
+#[cfg(test)]
+mod cfg_tests {
+    use super::*;
+    fn dir(n: &str) -> PathBuf { let d = std::env::temp_dir().join(format!("briks-cfg-{n}-{}", std::process::id())); let _ = std::fs::remove_dir_all(&d); std::fs::create_dir_all(&d).unwrap(); d }
+    fn none(_: &str) -> Option<String> { None }
+    fn pair(c: &Config) -> (Option<&str>, Option<&str>) { (c.realtime_url.as_deref(), c.realtime_key.as_deref()) }
+
+    #[test]
+    fn realtime_falls_back_to_supabase_json_and_keeps_precedence() {
+        let d = dir("a");
+        std::fs::write(d.join("supabase.json"), r#"{"url":"https://abc.supabase.co","anon_key":"KEYFILE"}"#).unwrap();
+        assert_eq!(pair(&config_with(&none, d.clone())), (Some("https://abc.supabase.co"), Some("KEYFILE")));
+        let vite = |k: &str| match k { "VITE_SUPABASE_URL" => Some("https://vite.supabase.co".into()), "VITE_SUPABASE_ANON_KEY" => Some("KEYVITE".into()), _ => None };
+        assert_eq!(pair(&config_with(&vite, d.clone())), (Some("https://vite.supabase.co"), Some("KEYVITE")));
+        let both = |k: &str| match k { "BRIKS_REALTIME_URL" => Some("ws://x".into()), "BRIKS_REALTIME_KEY" => Some("KEYB".into()), _ => vite(k) };
+        assert_eq!(pair(&config_with(&both, d.clone())), (Some("ws://x"), Some("KEYB")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_file_no_env_stays_unconfigured_and_loopback_ignores_remote_file() {
+        let d = dir("b");
+        assert!(config_with(&none, d.clone()).realtime_url.is_none());
+        std::fs::write(d.join("supabase.json"), r#"{"url":"https://abc.supabase.co","anon_key":"K"}"#).unwrap();
+        crate::netmode::set_loopback_only(true);
+        let c = config_with(&none, d.clone());
+        crate::netmode::set_loopback_only(false);
+        assert!(c.realtime_url.is_none() && c.realtime_key.is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
 

@@ -64,7 +64,7 @@ static void defaults(void) {
     memset(&g_set, 0, sizeof g_set);
     g_set.text_size = 1;
     g_set.in_vol = 100; g_set.out_vol = 100; g_set.gate_db = -50; g_set.echo = true; g_set.excl_audio = true;
-    g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = true;
+    g_set.ov_on = true; g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = true;
     g_set.nt_online = g_set.nt_stream = true; g_set.ptt_delay = 200;
     snprintf(g_set.key_mute, sizeof g_set.key_mute, "Ctrl+Shift+M"); snprintf(g_set.key_deafen, sizeof g_set.key_deafen, "Ctrl+Shift+D");
     snprintf(g_set.key_stream, sizeof g_set.key_stream, "Ctrl+Shift+S");

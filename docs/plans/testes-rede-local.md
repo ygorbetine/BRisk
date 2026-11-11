@@ -44,9 +44,13 @@ Produção: sem a variável nada muda (o `.cargo/config.toml` só vale para proc
 ## O que fica de fora / não verificado
 
 - Testes marcados `#[ignore]` que usam rede de verdade (`real_supabase`, matriz de rede, etc.) continuam fora da suíte padrão.
-- O `livekit-server` não estava disponível na máquina ao implementar: a configuração YAML (`rtc.ips.includes`, `tcp_port: 0`) segue a
-  documentação do LiveKit, mas **não foi conferida contra o binário** nem com `Get-NetUDPEndpoint`. Se ele ainda abrir 0.0.0.0, ajustar
-  `lk_args()`.
+- **Limitação do modo loopback para o LiveKit (verificada com livekit-server 1.13.11 em 2026-11-11):** com `BRIKS_NET_LOOPBACK_ONLY=1` no
+  cliente, 11 testes SFU/hybrid falham ("publisher não conectou"): o servidor não anuncia candidato 127.0.0.1 (nem com `rtc.node_ip` nem com
+  `rtc.ips.includes 127.0.0.0/8`) e o ICE nunca sai de `checking`. Com `BRIKS_NET_LOOPBACK_ONLY=0` os mesmos testes passam (19 ok, 5 `#[ignore]`).
+  Por isso os testes SFU rodam com a variável em `0` e o servidor preso a `127.0.0.1` (`lk_args()`: `--dev --bind 127.0.0.1 --node-ip 127.0.0.1`),
+  sem internet. Ressalva: com o filtro desligado o cliente coleta candidatos nas interfaces locais (inclusive VPN/LAN), mas fala só com o servidor
+  em 127.0.0.1. Comando: `BRIKS_NET_LOOPBACK_ONLY=0 BRIKS_LIVEKIT_SERVER_BIN=<exe> cargo test --release -- --test-threads=1 tests_sfu tests_hybrid`.
+  Os binários ficam fora do git (ex.: `A:\BRiskCall\_tools\livekit\livekit-server.exe`).
 - Subprocessos externos dos testes (deno/PowerShell em `tests_sfukick`) não passam pelo modo.
 - Medição (Get-NetUDPEndpoint + Get-NetTCPConnection -State Listen, amostrando os processos de teste a cada 100 ms durante a suíte do
   briks-core): só 127.0.0.1 em 1154 amostras, exceto UM socket UDP 0.0.0.0 durante `ice::probe_reports_a_dead_turn...` (coleta relay) --

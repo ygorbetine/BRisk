@@ -48,6 +48,25 @@ void ui_account_editor(cui_ctx *ui, app_state_t *s) {
     cui_text(ui, "Seus amigos acham você pelo @nick e veem este nome e esta foto. Mensagens e grupos ficam guardados neste computador.", .size = 12, .color = B_MUTED);
 }
 
+/* ---------- segurança: sair dos outros computadores ---------- */
+
+void ui_others_section(cui_ctx *ui, app_state_t *s) {
+    /* segurança: derruba a conta nos outros computadores (perdeu um aparelho, ou esqueceu logado) */
+    cui_box(ui, .width = CUI_FILL, .pad = 12, .gap = 8, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
+        cui_text(ui, "Outros computadores", .size = 12, .color = B_MUTED);
+        cui_text(ui, "Se você esqueceu a conta aberta em outro computador, ou perdeu um aparelho, desconecte-a de todos os outros. Este continua conectado.", .size = 12, .width = CUI_FILL);
+        if (!s->others_confirm) {
+            if (cui_button(ui, "Sair dos outros computadores", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .loading = s->others_busy)) { s->others_confirm = true; s->others_msg[0] = 0; }
+        } else {
+            cui_row(ui, .gap = 8) {
+                if (cui_button(ui, "Confirmar", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM, .loading = s->others_busy)) account_logout_others(s);
+                if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_GHOST, .size = CUI_SIZE_SM)) s->others_confirm = false;
+            }
+        }
+        if (s->others_msg[0]) cui_text(ui, s->others_msg, .size = 12, .color = CUI_RGB(0xd9cdea), .width = CUI_FILL);
+    }
+}
+
 /* ---------- cópia cifrada da identidade, recuperável por frase ---------- */
 
 void ui_backup_section(cui_ctx *ui, app_state_t *s) {

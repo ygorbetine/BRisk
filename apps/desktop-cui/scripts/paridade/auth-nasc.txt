@@ -1,0 +1,15 @@
+# Cadastro: menor de 18 anos e bloqueado com mensagem (demo login, tela de criar conta)
+snap n0
+tap 640 322
+type Ana
+tap 640 370
+type ana@exemplo.com
+tap 600 418
+type senha12345
+tap 600 466
+type senha12345
+tap 640 514
+type 01/01/2015
+snap n1
+tap 640 620
+snap n2

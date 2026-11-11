@@ -3,6 +3,8 @@
 #include "core.h"
 #include "json.h"
 #include "msgui.h"
+#include "attach.h"
+#include "sysint.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +65,12 @@ void rtc_room_mute(app_state_t *s, int slot, bool muted) {
     if (core_state() == CORE_READY) send_cmd("room.mute", extra);
 }
 
+void rtc_mic_test(app_state_t *s, bool on) {
+    if (core_state() != CORE_READY) return;
+    /* o core aplica as Configurações > Voz (dispositivo, supressão, ganho e porta) no teste; o audio.cfg mais recente já foi enviado */
+    send_cmd("mic.test", on ? "\"on\":true" : "\"on\":false");
+    (void)s;
+}
 void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
 /* silenciar uma pessoa = ganho zero só para ela (por peer_id) */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
@@ -71,6 +79,12 @@ void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
     char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
+}
+void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
+    if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
+    char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
+    snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"volume\":%.2f", id, gain);
+    if (core_state() == CORE_READY) send_cmd("peer.volume", extra);
 }
 void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
@@ -106,17 +120,24 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     if (!strcmp(ev, "session.ready")) {
         s->rtc_session_ready = true;
         copy(s->rtc_fp, sizeof s->rtc_fp, json_str(j, "fingerprint", ""));
+        const jval *idn = json_get(j, "identity");
+        if (idn && json_str(idn, "x", "")[0]) snprintf(s->my_jwk, sizeof s->my_jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(idn, "x", ""), json_str(idn, "y", ""));
     } else if (!strcmp(ev, "signaling.status")) {
         copy(s->rtc_state, sizeof s->rtc_state, json_str(j, "state", ""));
-        copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
+        net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);   /* erro técnico de rede vira frase compreensível */
     } else if (!strcmp(ev, "peer")) {
         set_peer(s, json_str(j, "peer_id", ""), json_str(j, "state", ""));
+        if (!strcmp(json_str(j, "state", ""), "autenticado")) groups_resend(s);
     } else if (!strcmp(ev, "speaking")) {
         const jval *lv = json_get(j, "level");
         float l = lv && lv->type == J_NUM ? (float)lv->num : 0;
         const char *p = json_str(j, "peer", "");
         if (!strcmp(p, "me")) s->me_level = l;
         else for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
+    } else if (!strcmp(ev, "mic.test")) {
+        const jval *lv = json_get(j, "level"); const char *er = json_str(j, "error", "");
+        if (er[0]) { s->mic_test_on = false; s->mic_test_level = 0; copy(s->mic_test_msg, sizeof s->mic_test_msg, er); }
+        else if (s->mic_test_on) s->mic_test_level = lv && lv->type == J_NUM ? (float)lv->num : 0;
     } else if (!strcmp(ev, "peer.info")) {
         const char *p = json_str(j, "peer_id", "");
         for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
@@ -150,9 +171,13 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack")) {
+        changed = attach_event(s, ev, j);
     } else if (!strcmp(ev, "chat.event")) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
+    } else if (!strcmp(ev, "chat.message")) {   /* mensagem nova de outra pessoa: aviso do sistema e contador de não lidas (notify.c) */
+        notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), json_str(j, "content", ""));
     } else if (!strcmp(ev, "ice.info")) {
         const jval *tn = json_get(j, "turn"); const char *w = json_str(j, "warn", "");
         snprintf(s->ice_note, sizeof s->ice_note, "%s%s%s", (tn && tn->type == J_BOOL && tn->b) ? "STUN + TURN" : "Somente STUN: redes restritivas podem não conectar sem TURN", w[0] ? " · config ICE ignorada: " : "", w);
@@ -167,11 +192,11 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strncmp(ev, "share.", 6)) {
         changed = share_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
-        copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
+        net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
-        copy(s->rtc_msg, sizeof s->rtc_msg, "O briks-core encerrou.");
+        copy(s->rtc_msg, sizeof s->rtc_msg, "O serviço de chamadas encerrou.");
         s->rtc_session_ready = s->rtc_session_sent = false;
     } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
@@ -201,6 +226,19 @@ void rtc_pump(app_state_t *s) {
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());
     }
     if (st == CORE_READY) {
+        {   /* Configurações > Voz: ganhos, porta de ruído, supressão e dispositivos seguem para o core quando mudam ou quando entra numa sala (o áudio nasce ali) */
+            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16], lmic[64], lout[64]; static int lnoise = -1; static bool lcore;
+            float gi, go, gd; bool ga; settings_audio(&gi, &go, &ga, &gd);
+            char mic[64], outd[64]; int noff; settings_audio_ex(mic, sizeof mic, outd, sizeof outd, &noff);
+            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state) || strcmp(lmic, mic) || strcmp(lout, outd) || noff != lnoise || !lcore) {
+                snprintf(lstate, sizeof lstate, "%s", s->rtc_state); snprintf(lmic, sizeof lmic, "%s", mic); snprintf(lout, sizeof lout, "%s", outd);
+                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room; lnoise = noff; lcore = true;
+                char extra[420], me[140], oe[140]; json_escape(mic, me, sizeof me); json_escape(outd, oe, sizeof oe);
+                int n = snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"noise\":%d,\"mic\":\"%s\",\"out\":\"%s\"", gi, go, noff, me, oe);
+                if (ga) snprintf(extra + n, sizeof extra - (size_t)n, ",\"gate_db\":%.0f", gd);
+                send_cmd("audio.cfg", extra);
+            }
+        }
         {   /* status e presença (programa em uso, se ligado) seguem para o core; ele anuncia aos peers autenticados da sala */
             static char sent_st[64], sent_pr[64]; static bool sent_once;
             const char *pr = s->rp_enabled ? s->user_presence : "";
@@ -233,7 +271,7 @@ void rtc_pump(app_state_t *s) {
 }
 
 const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap) {
-    if (!s->in_room) { snprintf(buf, cap, "Prévia local · fora da sala"); return buf; }
+    if (!s->in_room) { snprintf(buf, cap, "Você está fora da sala"); return buf; }
     const char *st = s->rtc_state[0] ? s->rtc_state : "conectando";
     if (!strcmp(st, "conectado")) {
         if (s->rtc_peer_count) snprintf(buf, cap, "Conectado · %d pessoa%s na sala", s->rtc_peer_count, s->rtc_peer_count == 1 ? "" : "s");

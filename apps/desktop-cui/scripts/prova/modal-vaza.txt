@@ -1,0 +1,4 @@
+wait 8
+click 520 44
+wait 8
+shot modal-vaza

@@ -16,6 +16,7 @@ pub mod provider;
 pub mod service;
 pub mod store;
 pub mod supabase;
+pub mod turn;
 #[cfg(test)]
 mod tests;
 
@@ -47,6 +48,7 @@ pub struct Accounts {
     bridge: SecretFile,
     session: Mutex<Option<Session>>,
     refresh_lock: tokio::sync::Mutex<()>,
+    replaced: Mutex<Option<String>>,
     opener: Opener,
     pub oauth_timeout: Duration,
     pub email_timeout: Duration,
@@ -108,8 +110,13 @@ impl Accounts {
         Self::with_stores(provider, SecretFile::dpapi(data_dir.join("account-session.bin")), SecretFile::dpapi(data_dir.join("local-bridge.bin")), opener)
     }
     pub fn with_stores(provider: Arc<dyn AuthProvider>, store: SecretFile, bridge: SecretFile, opener: Opener) -> Self {
-        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), opener,
+        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), replaced: Mutex::new(None), opener,
             oauth_timeout: Duration::from_secs(300), email_timeout: Duration::from_secs(900) }
+    }
+
+    #[cfg(test)]
+    pub fn expire_access_for_tests(&self) {
+        if let Some(s) = self.session.lock().unwrap().as_mut() { s.expires_at = 0; }
     }
 
     pub fn user(&self) -> Option<AccountUser> {
@@ -120,8 +127,16 @@ impl Accounts {
         // falha ao cifrar/gravar não impede o uso: a sessão fica só na memória (e nunca vai para o disco em texto aberto)
         let _ = self.store.save(&Stored { version: 1, refresh_token: s.refresh_token.clone(), user: s.user.clone() });
         let u = s.user.clone();
-        *self.session.lock().unwrap() = Some(s);
+        let old = self.session.lock().unwrap().replace(s).map(|o| o.user.id).filter(|id| *id != u.id);
+        if old.is_some() {
+            *self.replaced.lock().unwrap() = old;
+        }
         u
+    }
+
+    /// Se a sessão que acabou de entrar substituiu a de OUTRA conta, devolve o id da anterior (uma vez só).
+    pub fn take_previous_id(&self, current: &str) -> Option<String> {
+        self.replaced.lock().unwrap().take().filter(|p| p != current)
     }
 
     fn drop_session(&self) {
@@ -230,6 +245,13 @@ impl Accounts {
             let p = self.provider.clone();
             let _ = tokio::time::timeout(Duration::from_secs(5), blk(move || p.sign_out(&tok))).await;
         }
+    }
+
+    /// "Sair dos outros computadores": o servidor derruba as outras sessões desta conta; esta continua.
+    pub async fn sign_out_others(&self) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.sign_out_others(&tok)).await
     }
 
     /// Segundos até a próxima renovação (60 s antes do vencimento). `None` sem sessão.
@@ -385,6 +407,41 @@ impl Accounts {
         let tok = self.access_token().await?;
         let (p, u) = (self.provider.clone(), user_id.to_string());
         blk(move || p.friend_remove(&tok, &u)).await
+    }
+    pub async fn nick_lookup(&self, nick: &str) -> AResult<NickHit> {
+        let tok = self.access_token().await?;
+        let (p, n) = (self.provider.clone(), nick.to_string());
+        blk(move || p.nick_lookup(&tok, &n)).await
+    }
+    pub async fn presence_beat(&self, invisible: bool) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_beat(&tok, invisible)).await
+    }
+    pub async fn presence_friends(&self) -> AResult<Vec<Presence>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_friends(&tok)).await
+    }
+    pub async fn presence_clear(&self) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.presence_clear(&tok)).await
+    }
+    pub async fn friend_block(&self, user_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, u) = (self.provider.clone(), user_id.to_string());
+        blk(move || p.friend_block(&tok, &u)).await
+    }
+    pub async fn friend_unblock(&self, user_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, u) = (self.provider.clone(), user_id.to_string());
+        blk(move || p.friend_unblock(&tok, &u)).await
+    }
+    pub async fn blocks(&self) -> AResult<Vec<Friend>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.blocks(&tok)).await
     }
 
     /// Credencial do banco LOCAL deste computador para a conta logada (ponte de transição: mensagens e grupos ainda são

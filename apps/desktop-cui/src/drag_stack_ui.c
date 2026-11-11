@@ -70,8 +70,8 @@ static void header_sz(cui_ctx *ui, cui_rect c, const char *icon, const char *tit
 static void header(cui_ctx *ui, cui_rect c, const char *icon, const char *title) { header_sz(ui, c, icon, title, 11.5f); }
 
 static const char *friend_name(const app_state_t *s, int i) {
-    static const char *demo[3] = { "Marina Costa", "Rafael Lima", "Bia Nogueira" };
-    return (s && i < s->friend_count) ? s->friends[i].name : demo[i % 3];
+    /* só dados REAIS: sem amigo nessa posição devolve NULL e a arte se adapta (nada de nomes de demonstração no uso real) */
+    return (s && i >= 0 && i < s->friend_count && s->friends[i].name[0]) ? s->friends[i].name : NULL;
 }
 static int people_in_call(const app_state_t *s) {
     (void)s;
@@ -80,15 +80,21 @@ static int people_in_call(const app_state_t *s) {
 static int community_total(const app_state_t *s) { return demo_servers >= 0 ? demo_servers : (s ? s->community_count : 0); }
 
 /* ---- uma arte por tipo de painel ---- */
-static void art_chat(cui_ctx *ui, const app_state_t *s, cui_rect c, bool group) {
+static void art_friends(cui_ctx *ui, const app_state_t *s, cui_rect c);
+/* conversa: título e ícone do que está aberto naquele painel (amigo, grupo/canal); sem conversa aberta o painel é a tela Amigos */
+static void art_chat(cui_ctx *ui, const app_state_t *s, cui_rect c, bool second) {
     float iw = c.w - PAD * 2, y0 = c.y + 40, x0 = c.x + PAD;
-    const char *name;
-    if (group && s && s->active_group >= 0 && s->active_group < s->group_count) name = s->groups[s->active_group].name;
-    else if (group) name = "Noite de jogos";
-    else name = (s && s->active_friend >= 0 && s->active_friend < s->friend_count) ? s->friends[s->active_friend].name : friend_name(s, 0);
+    const char *name = NULL; bool group = false;
+    if (second) { if (s && s->chat2_friend >= 0) name = friend_name(s, s->chat2_friend); if (!name) name = "Segunda conversa"; }
+    else if (s && s->active_group >= 0 && s->active_group < s->group_count) { name = s->groups[s->active_group].name; group = true; }
+    else if (s && s->active_friend >= 0) name = friend_name(s, s->active_friend);
+    if (!name) { art_friends(ui, s, c); return; }
     header(ui, c, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, name);
     float off = group ? 20 : 0;
-    if (group) { avatar(ui, x0 + 7, y0 + 8, 7, friend_name(s, 0), 0, false); avatar(ui, x0 + 7, y0 + 29, 7, friend_name(s, 1), 2, false); }
+    if (group) {
+        const char *a = friend_name(s, 0), *b = friend_name(s, 1), *me = (s && s->user_name[0]) ? s->user_name : "Você";
+        avatar(ui, x0 + 7, y0 + 8, 7, a ? a : me, 0, false); avatar(ui, x0 + 7, y0 + 29, 7, b ? b : name, 2, false);
+    }
     neu_bubble(ui, (cui_rect){ x0 + off, y0, iw * 0.58f, 16 }, true);
     neu_bubble(ui, (cui_rect){ x0 + off, y0 + 21, iw * 0.44f, 16 }, true);
     sent_bubble(ui, (cui_rect){ x0 + iw - iw * 0.52f, y0 + 42, iw * 0.52f, 16 });
@@ -103,15 +109,28 @@ static void art_nav(cui_ctx *ui, const app_state_t *s, cui_rect c) {
     cui_draw_icon(ui, CUI_ICON_HISTORY, (cui_rect){ x0, y, 12, 12 }, 11, CUI_RGBA(0xa592b8ff));
     txt(ui, CUI_FONT_BODY, 10.5f, x0 + 18, y, CUI_RGBA(0xc9bbdcff), "Histórico de chamadas", iw - 18);
     y += 19;
-    const char *act = (s && s->active_friend >= 0 && s->active_friend < s->friend_count) ? s->friends[s->active_friend].name : friend_name(s, 0);
-    cui_rect hl = { x0 - 3, y, iw + 6, 20 };
-    cui_draw_rect_border(ui, hl, CUI_CORNERS(8), CUI_RGBA(0x8b5cf64a), CUI_RGBA(0xc4b0ff50), 1.0f);
-    avatar(ui, x0 + 8, y + 10, 7, act, 3, false);
-    txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 21, y + 4, CUI_RGBA(0xffffffee), act, iw - 24);
-    y += 25;
-    const char *other = friend_name(s, 1);
-    avatar(ui, x0 + 8, y + 7, 7, other, 2, true);
-    txt(ui, CUI_FONT_BODY, 10.5f, x0 + 21, y + 1, CUI_RGBA(0xc9bbdcff), other, iw - 24);
+    const char *act = (s && s->active_friend >= 0) ? friend_name(s, s->active_friend) : NULL;
+    int shown = 0;
+    if (act) {
+        cui_rect hl = { x0 - 3, y, iw + 6, 20 };
+        cui_draw_rect_border(ui, hl, CUI_CORNERS(8), CUI_RGBA(0x8b5cf64a), CUI_RGBA(0xc4b0ff50), 1.0f);
+        avatar(ui, x0 + 8, y + 10, 7, act, 3, false);
+        txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 21, y + 4, CUI_RGBA(0xffffffee), act, iw - 24);
+        y += 25; shown++;
+    }
+    for (int i = 0; s && i < s->friend_count && shown < 2; i++) {   /* completa com amigos reais */
+        const char *o = friend_name(s, i); if (!o || i == s->active_friend) continue;
+        avatar(ui, x0 + 8, y + 7, 7, o, 2 + i, false);
+        txt(ui, CUI_FONT_BODY, 10.5f, x0 + 21, y + 1, CUI_RGBA(0xc9bbdcff), o, iw - 24);
+        y += 19; shown++;
+    }
+    if (!shown) {   /* conta sem amigos: os atalhos reais do menu */
+        cui_draw_icon(ui, CUI_ICON_USER_PLUS, (cui_rect){ x0, y, 12, 12 }, 11, CUI_RGBA(0xa592b8ff));
+        txt(ui, CUI_FONT_BODY, 10.5f, x0 + 18, y, CUI_RGBA(0xc9bbdcff), "Adicionar amigo", iw - 18);
+        y += 16;
+        cui_draw_icon(ui, CUI_ICON_PLUS, (cui_rect){ x0, y, 12, 12 }, 11, CUI_RGBA(0xa592b8ff));
+        txt(ui, CUI_FONT_BODY, 10.5f, x0 + 18, y, CUI_RGBA(0xc9bbdcff), "Criar grupo", iw - 18);
+    }
 }
 
 static void dashed_box(cui_ctx *ui, cui_rect t, cui_color col) {   /* "tracejado": traços só nos trechos retos, longe dos cantos */
@@ -161,12 +180,13 @@ static void art_servers(cui_ctx *ui, const app_state_t *s, cui_rect c) {
 }
 
 static void art_members(cui_ctx *ui, const app_state_t *s, cui_rect c) {
-    int n = 1 + (s ? s->friend_count : 3);
+    int n = 1 + (s ? s->friend_count : 0);
     char title[48]; snprintf(title, sizeof title, "Membros · %d", n);
     header(ui, c, CUI_ICON_USERS, title);
     float x0 = c.x + PAD, iw = c.w - PAD * 2, y = c.y + 40;
     for (int i = 0; i < 3; i++) {
         const char *nm = i == 0 ? ((s && s->user_name[0]) ? s->user_name : "Você") : friend_name(s, i - 1);
+        if (!nm) break;
         avatar(ui, x0 + 8, y + 8, 8, nm, i, false);
         txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 24, y + 2, CUI_RGBA(0xedf1f7e8), nm, iw - 44);
         cui_draw_circle(ui, (cui_vec2){ x0 + iw - 5, y + 8 }, 3.2f, i == 2 ? CUI_RGBA(0x6b5a80ff) : B_ONLINE);
@@ -197,7 +217,7 @@ static void art_voice(cui_ctx *ui, const app_state_t *s, cui_rect c) {
         cui_draw_rect(ui, (cui_rect){ t.x + 9, t.y + 1, t.w - 18, 1 }, CUI_CORNERS(0.5f), WHITE(0x40));   /* brilho interno de 1 px, longe dos cantos */
         char lab[12];
         if (plus) snprintf(lab, sizeof lab, "+%d", g.plus_n);
-        else { const char *nm = i == 0 ? ((s && s->user_name[0]) ? s->user_name : "Você") : friend_name(s, i - 1); ini(nm, lab); if (i >= 3 && i > 2) { char b[3]; ini(i >= 3 ? "Convidado" : nm, b); (void)b; } }
+        else { const char *nm = i == 0 ? ((s && s->user_name[0]) ? s->user_name : "Você") : (s && i - 1 < 8 && s->rtc_peers[i - 1].name[0]) ? s->rtc_peers[i - 1].name : "Convidado"; ini(nm, lab); if (i >= 3 && i > 2) { char b[3]; ini(i >= 3 ? "Convidado" : nm, b); (void)b; } }
         float sz = side * 0.36f; if (sz > 15) sz = 15;
         cui_draw_text(ui, CUI_FONT_MEDIUM, sz, (cui_vec2){ t.x + side * 0.5f - tw(sz, lab) * 0.5f, t.y + side * 0.5f - sz * 0.62f }, CUI_RGBA(0xffffffee), lab, -1);
     }
@@ -211,29 +231,26 @@ static void art_voice(cui_ctx *ui, const app_state_t *s, cui_rect c) {
     }
 }
 
-static void art_history(cui_ctx *ui, const app_state_t *s, cui_rect c) {
+static void art_history(cui_ctx *ui, const app_state_t *s, cui_rect c) {   /* igual ao painel de verdade: sem registros inventados */
+    (void)s;
     header(ui, c, CUI_ICON_HISTORY, "Histórico de chamadas");
-    float x0 = c.x + PAD, iw = c.w - PAD * 2, y = c.y + 40;
-    static const char *dur[3] = { "12:04", "3:21", "perdida" };
-    const char *ic[3] = { CUI_ICON_ARROW_DOWN, CUI_ICON_ARROW_UP_RIGHT, CUI_ICON_PHONE };
-    cui_color col[3] = { B_ONLINE, B_C3, B_DANGER };
-    for (int i = 0; i < 3; i++) {
-        cui_draw_circle(ui, (cui_vec2){ x0 + 8, y + 8 }, 8, (cui_color){ col[i].r, col[i].g, col[i].b, 0x38 });
-        cui_draw_icon(ui, ic[i], (cui_rect){ x0 + 3, y + 3, 10, 10 }, 10, col[i]);
-        txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 22, y + 2, CUI_RGBA(0xedf1f7e8), friend_name(s, i), iw - 22 - tw(10, dur[i]) - 6);
-        cui_draw_text(ui, CUI_FONT_BODY, 10, (cui_vec2){ x0 + iw - tw(10, dur[i]), y + 3 }, i == 2 ? col[2] : CUI_RGBA(0xa592b8ff), dur[i], -1);
-        y += 22;
-    }
+    float cy = c.y + 36 + (c.h - 36 - PAD) * 0.5f;
+    cui_draw_icon(ui, CUI_ICON_HISTORY, (cui_rect){ c.x + c.w * 0.5f - 9, cy - 16, 18, 18 }, 18, B_C3);
+    const char *t = "Nenhuma chamada ainda";
+    cui_draw_text(ui, CUI_FONT_MEDIUM, 10.5f, (cui_vec2){ c.x + c.w * 0.5f - tw(10.5f, t) * 0.5f, cy + 6 }, CUI_RGBA(0xedf1f7e8), t, -1);
 }
 
 static void art_friends(cui_ctx *ui, const app_state_t *s, cui_rect c) {
-    header(ui, c, CUI_ICON_USER_PLUS, "Amigos");
+    header(ui, c, CUI_ICON_USERS, "Amigos");
     float x0 = c.x + PAD, iw = c.w - PAD * 2, y = c.y + 38;
+    int shown = 0;
     for (int i = 0; i < 2; i++) {
-        avatar(ui, x0 + 8, y + 8, 8, friend_name(s, i), i + 1, i == 0);
-        txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 24, y + 2, CUI_RGBA(0xedf1f7e8), friend_name(s, i), iw - 24);
-        y += 21;
+        const char *nm = friend_name(s, i); if (!nm) break;
+        avatar(ui, x0 + 8, y + 8, 8, nm, i + 1, false);
+        txt(ui, CUI_FONT_MEDIUM, 10.5f, x0 + 24, y + 2, CUI_RGBA(0xedf1f7e8), nm, iw - 24);
+        y += 21; shown++;
     }
+    if (!shown) txt(ui, CUI_FONT_BODY, 10.5f, x0, y + 4, CUI_RGBA(0xc9bbdcff), "Nenhum amigo ainda", iw);
     cui_rect b = { x0, c.y + c.h - PAD - 18, 78, 18 };
     cui_draw_rect_gradient(ui, b, CUI_CORNERS(9), CUI_RGBA(0x9b6cf8ff), CUI_RGBA(0x6d5cf6ff));
     cui_draw_text(ui, CUI_FONT_MEDIUM, 10.5f, (cui_vec2){ b.x + (b.w - tw(10.5f, "Adicionar")) * 0.5f, b.y + 3.5f }, CUI_RGBA(0xffffffff), "Adicionar", -1);
@@ -249,8 +266,8 @@ static void art_generic(cui_ctx *ui, cui_rect c, int kind) {
 
 void drag_stack_art(cui_ctx *ui, const app_state_t *s, int kind, cui_rect c) {
     switch (kind) {
-    case P_CHAT: art_chat(ui, s, c, s && s->active_group >= 0 && s->active_group < s->group_count); break;
-    case P_CHAT2: art_chat(ui, s, c, false); break;
+    case P_CHAT: art_chat(ui, s, c, false); break;
+    case P_CHAT2: art_chat(ui, s, c, true); break;
     case P_NAV: art_nav(ui, s, c); break;
     case P_SERVERS: art_servers(ui, s, c); break;
     case P_MEMBERS: art_members(ui, s, c); break;

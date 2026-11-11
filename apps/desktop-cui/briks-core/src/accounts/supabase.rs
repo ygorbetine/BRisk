@@ -42,7 +42,11 @@ impl SupabaseProvider {
                 let text = r.into_string().unwrap_or_default();
                 Err(map_error(status, &serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)))
             }
-            Err(ureq::Error::Transport(_)) => Err(AccountError::network()),
+            Err(ureq::Error::Transport(t)) => {
+                // sem o texto técnico (pode conter o endereço): só a diferença entre "demorou" e "sem conexão"
+                let slow = t.to_string().to_lowercase().contains("timed out") || t.to_string().to_lowercase().contains("timeout");
+                Err(if slow { AccountError::new("timeout", "O servidor de contas demorou demais para responder. Tente de novo em instantes.") } else { AccountError::network() })
+            }
         }
     }
 
@@ -74,6 +78,10 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "invalid_backup" => return e("invalid_backup", "O servidor recusou a cópia de segurança."),
         "invalid_avatar" => return e("avatar", "O servidor recusou o endereço da foto."),
         "invalid_display_name" => return e("invalid_name", "O nome deve ter de 1 a 64 caracteres."),
+        "invalid_user" => return e("not_found", "Pessoa inválida."),
+        "rate_limited" => return e("rate_limited", "Muitas buscas em pouco tempo. Tente de novo mais tarde."),
+        "too_many_blocks" => return e("rate_limited", "Você já bloqueou pessoas demais."),
+        "blocked_by_you" => return e("blocked_by_you", "Você bloqueou essa pessoa. Desbloqueie para enviar um pedido."),
         _ => {}
     }
     if low.contains("bucket not found") {
@@ -202,6 +210,10 @@ impl AuthProvider for SupabaseProvider {
         self.call("POST", "/auth/v1/logout?scope=local", Some(access_token), Some(json!({}))).map(|_| ())
     }
 
+    fn sign_out_others(&self, access_token: &str) -> AResult<()> {
+        self.call("POST", "/auth/v1/logout?scope=others", Some(access_token), Some(json!({}))).map(|_| ())
+    }
+
     fn sync_profile(&self, access_token: &str, display_name: &str, avatar_url: &str, public_key: &Value, fingerprint: &str) -> AResult<Profile> {
         let v = self.rpc(access_token, "account_sync_profile", json!({
             "p_display_name": display_name, "p_avatar_url": if avatar_url.is_empty() { Value::Null } else { json!(avatar_url) },
@@ -264,5 +276,35 @@ impl AuthProvider for SupabaseProvider {
     }
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()> {
         self.rpc(access_token, "friend_remove", json!({ "p_user": user_id })).map(|_| ())
+    }
+    fn nick_lookup(&self, access_token: &str, nick: &str) -> AResult<NickHit> {
+        let v = self.rpc(access_token, "nick_lookup", json!({ "p_nick": nick }))?;
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn presence_beat(&self, access_token: &str, invisible: bool) -> AResult<()> {
+        self.rpc(access_token, "presence_beat", json!({ "p_invisible": invisible })).map(|_| ())
+    }
+    fn presence_friends(&self, access_token: &str) -> AResult<Vec<Presence>> {
+        let v = self.rpc(access_token, "presence_friends", json!({}))?;
+        if v.is_null() { return Ok(vec![]); }
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn presence_clear(&self, access_token: &str) -> AResult<()> {
+        self.rpc(access_token, "presence_clear", json!({})).map(|_| ())
+    }
+    fn friend_block(&self, access_token: &str, user_id: &str) -> AResult<()> {
+        self.rpc(access_token, "friend_block", json!({ "p_user": user_id })).map(|_| ())
+    }
+    fn friend_unblock(&self, access_token: &str, user_id: &str) -> AResult<()> {
+        self.rpc(access_token, "friend_unblock", json!({ "p_user": user_id })).map(|_| ())
+    }
+    fn blocks(&self, access_token: &str) -> AResult<Vec<Friend>> {
+        let v = self.rpc(access_token, "friend_blocks_list", json!({}))?;
+        if v.is_null() {
+            return Ok(vec![]);
+        }
+        let mut v = v;
+        if let Some(items) = v.as_array_mut() { for it in items { if let Some(o) = it.as_object_mut() { o.insert("state".into(), json!("blocked")); } } }
+        serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
     }
 }

@@ -39,11 +39,20 @@ static void derive_field_colors(void) {
     g_th.ph = p;
 }
 
+int g_text_size = 1;   /* padrão: grande */
+static const float TEXT_SCALES[] = { 1.0f, 1.12f, 1.25f, 1.4f };
+void briks_text_scale_apply(cui_ctx *ui) {
+    int i = g_text_size < 0 ? 0 : g_text_size > 3 ? 3 : g_text_size;
+    cui_theme_get(ui)->font_scale = TEXT_SCALES[i];
+    cui_request_redraw(ui);
+}
+
 void briks_apply_theme(cui_ctx *ui) {
     cui_set_theme(ui, CUI_THEME_DARK);
     cui_set_accent(ui, CUI_ACCENT_VIOLET);
     derive_field_colors();
     cui_theme *t = cui_theme_get(ui);
+    t->font_scale = TEXT_SCALES[g_text_size < 0 ? 0 : g_text_size > 3 ? 3 : g_text_size];
     t->colors[CUI_TOKEN_BACKGROUND]     = B_BG;
     t->colors[CUI_TOKEN_SURFACE]        = B_PANEL;
     t->colors[CUI_TOKEN_SURFACE_RAISED] = B_GLASS_POPUP;   /* diálogos e popovers: vidro na camada 1 (glass.c) */

@@ -1,0 +1,17 @@
+# Seletor "Adicionar painel" aberto: clicar fora fecha SÓ o menu; o que está por baixo não dispara
+wait 8
+menu 640 400
+wait 8
+expect menu 1
+click 47 196
+wait 8
+expect menu 0
+expect create_group 0
+menu 640 400
+wait 8
+click 368 144
+wait 8
+expect menu 0
+expect add_friend 0
+expect friends_tab 0
+expect count 3

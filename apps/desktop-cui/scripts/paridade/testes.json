@@ -1,0 +1,130 @@
+﻿{
+  "_ajuda": "Cada caso abre o app OCULTO no modo demo, roda o roteiro e compara capturas: esperado 'muda' = a tela mudou (a ação teve efeito visível); 'igual' = não mudou (voltou ao estado anterior ou o controle é inerte). Itens PRESENTE-SEM-EFEITO só usam 'igual'.",
+  "casos": [
+    { "id": "auth-a", "demo": "login", "roteiro": "auth-a.txt", "checagens": [
+      { "item": "AUT-01", "de": "a0", "para": "a1", "esperado": "muda" },
+      { "item": "AUT-04", "de": "a1", "para": "a2", "esperado": "muda" } ] },
+    { "id": "auth-b", "demo": "login", "roteiro": "auth-b.txt", "checagens": [
+      { "item": "AUT-02", "de": "b0", "para": "b1", "esperado": "muda" } ] },
+    { "id": "auth-c", "demo": "login", "roteiro": "auth-c.txt", "checagens": [
+      { "item": "AUT-09", "de": "c1", "para": "c2", "esperado": "muda" },
+      { "item": "AUT-10", "de": "c0", "para": "c3", "esperado": "igual" } ] },
+    { "id": "social-a", "demo": "social", "roteiro": "social-a.txt", "checagens": [
+      { "item": "AMI-13", "de": "s0", "para": "s1", "esperado": "muda" },
+      { "item": "AMI-02", "de": "s1", "para": "s2", "esperado": "muda" },
+      { "item": "AMI-01", "de": "s2", "para": "s3", "esperado": "muda" },
+      { "item": "AMI-03", "de": "s3", "para": "s4", "esperado": "muda" } ] },
+    { "id": "social-b", "demo": "social", "roteiro": "social-b.txt", "checagens": [
+      { "item": "GRP-01", "de": "g0", "para": "g1", "esperado": "muda" },
+      { "item": ["GRP-02", "GRP-03"], "de": "g0", "para": "g2", "esperado": "muda" },
+      { "item": "GRP-01", "de": "g2", "para": "g3", "esperado": "muda" },
+      { "item": "CHM-21", "de": "g2", "para": "h1", "esperado": "muda" },
+      { "item": "CHM-21", "de": "g2", "para": "h2", "esperado": "igual" },
+      { "item": ["CHM-01", "GRP-18"], "de": "h2", "para": "v1", "esperado": "muda" } ] },
+    { "id": "perfil", "demo": "social", "roteiro": "perfil.txt", "checagens": [
+      { "item": "PRF-10", "de": "p0", "para": "p1", "esperado": "muda" },
+      { "item": ["PRF-01", "PRF-10"], "de": "p1", "para": "p2", "esperado": "muda" },
+      { "item": ["PRF-04", "PRF-05"], "de": "p2", "para": "p3", "esperado": "muda" },
+      { "item": ["PRF-08", "PRF-09"], "de": "p3", "para": "p4", "esperado": "muda" },
+      { "item": "PRF-10", "de": "p4", "para": "p5", "esperado": "muda" },
+      { "item": "AUT-13", "de": "p5", "para": "p6", "esperado": "muda" } ] },
+    { "id": "config-abas", "demo": "social", "roteiro": "config-abas.txt", "checagens": [
+      { "item": "CFG-01", "de": "k0", "para": "k1", "esperado": "muda" },
+      { "item": ["CFG-02", "RDE-05"], "de": "k1", "para": "k2", "esperado": "muda" },
+      { "item": ["CFG-02", "CFG-15"], "de": "k2", "para": "k3", "esperado": "muda" },
+      { "item": ["CFG-02", "CFG-18"], "de": "k3", "para": "k4", "esperado": "muda" },
+      { "item": "CFG-02", "de": "k4", "para": "k5", "esperado": "muda" },
+      { "item": "CFG-02", "de": "k5", "para": "k6", "esperado": "muda" },
+      { "item": "CFG-02", "de": "k6", "para": "k7", "esperado": "muda" },
+      { "item": "CFG-02", "de": "k7", "para": "k8", "esperado": "muda" },
+      { "item": ["CFG-02", "ATU-01"], "de": "k8", "para": "k9", "esperado": "muda" },
+      { "item": ["CFG-02", "CFG-27"], "de": "k9", "para": "k10", "esperado": "muda" },
+      { "item": ["CFG-02", "EXT-04"], "de": "k10", "para": "k11", "esperado": "muda" },
+      { "item": ["CFG-02", "EXT-09"], "de": "k11", "para": "k12", "esperado": "muda" },
+      { "item": ["CFG-02", "EXT-03"], "de": "k12", "para": "k13", "esperado": "muda" },
+      { "item": "CFG-03", "de": "k13", "para": "k14", "esperado": "muda" },
+      { "item": "CFG-03", "de": "k0", "para": "k14", "esperado": "igual" } ] },
+    { "id": "call", "demo": "call", "roteiro": "call.txt", "checagens": [
+      { "item": "CHM-02", "de": "c0", "para": "c1", "esperado": "muda" },
+      { "item": "CHM-03", "de": "c1", "para": "c2", "esperado": "muda" },
+      { "item": "CHM-04", "de": "c2", "para": "c3", "esperado": "igual" },
+      { "item": "CHM-08", "de": "c3", "para": "c4", "esperado": "muda" },
+      { "item": "CHM-08", "de": "c4", "para": "c5", "esperado": "muda" },
+      { "item": ["CHM-09", "MSG-18"], "de": "c5", "para": "c6", "esperado": "muda" },
+      { "item": "CHM-09", "de": "c6", "para": "c7", "esperado": "muda" },
+      { "item": "CHM-06", "de": "c7", "para": "c8", "esperado": "muda" } ] },
+    { "id": "call-sair", "demo": "call", "roteiro": "call-sair.txt", "checagens": [
+      { "item": "CHM-05", "de": "x0", "para": "x1", "esperado": "muda" } ] },
+    { "id": "dock", "demo": "social", "roteiro": "dock.txt", "checagens": [
+      { "item": "EXT-01", "de": "d0", "para": "d1", "esperado": "muda" },
+      { "item": "EXT-02", "de": "d1", "para": "d2", "esperado": "muda" } ] },
+    { "id": "msg-menu", "demo": "msgs", "roteiro": "msg-menu.txt", "checagens": [
+      { "item": "EXT-06", "de": "m0", "para": "m1", "esperado": "muda" },
+      { "item": "MSG-03", "de": "m1", "para": "m2", "esperado": "muda" } ] },
+    { "id": "msg-editar", "demo": "msgs", "roteiro": "msg-editar.txt", "checagens": [
+      { "item": "MSG-04", "de": "e0", "para": "e1", "esperado": "muda" } ] },
+    { "id": "msg-excluir", "demo": "msgs", "roteiro": "msg-excluir.txt", "checagens": [
+      { "item": "MSG-05", "de": "x0", "para": "x1", "esperado": "muda" } ] },
+    { "id": "msg-reagir", "demo": "msgs", "roteiro": "msg-reagir.txt", "checagens": [
+      { "item": "MSG-06", "de": "r0", "para": "r1", "esperado": "muda" },
+      { "item": "MSG-06", "de": "r1", "para": "r2", "esperado": "muda" } ] },
+    { "id": "msg-enviar", "demo": "msgs", "roteiro": "msg-enviar.txt", "checagens": [
+      { "item": ["MSG-01", "MSG-02"], "de": "n0", "para": "n1", "esperado": "muda" },
+      { "item": "MSG-01", "de": "n1", "para": "n2", "esperado": "muda" } ] },
+    { "id": "msg-fixadas", "demo": "msgs", "roteiro": "msg-fixadas.txt", "checagens": [
+      { "item": "MSG-07", "de": "f0", "para": "f1", "esperado": "muda" } ] },
+    { "id": "bas-esc", "demo": "social", "roteiro": "bas-esc.txt", "checagens": [
+      { "item": "BAS-06", "de": "e0", "para": "e1", "esperado": "muda" },
+      { "item": "BAS-06", "de": "e1", "para": "e2", "esperado": "muda" } ] },
+    { "id": "lay-min", "demo": "msgs", "roteiro": "lay-min.txt", "env": { "BRIKS_WINDOW": "560x480" }, "checagens": [
+      { "item": "LAY-13", "de": "l0", "para": "l0", "esperado": "igual" } ] },
+    { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
+      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
+    { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [
+      { "item": "BAS-32", "de": "o0", "para": "o1", "esperado": "igual", "regiao": [700, 0, 240, 45] } ] },
+    { "id": "net-restaurada", "demo": "social", "roteiro": "net-restaurada.txt", "env": { "BRIKS_NET": "restored" }, "checagens": [
+      { "item": "BAS-32", "de": "r0", "para": "r1", "esperado": "muda", "regiao": [400, 0, 480, 45], "min": 150 } ] },
+    { "id": "auth-nasc", "demo": "login", "roteiro": "auth-nasc.txt", "env": { "BRIKS_DEV_ACCT": "signup" }, "checagens": [
+      { "item": "AUT-03", "de": "n1", "para": "n2", "esperado": "muda", "min": 800 } ] },
+    { "id": "auth-nick", "demo": "login", "roteiro": "auth-nick.txt", "env": { "BRIKS_DEV_ACCT": "login", "BRIKS_LOGIN_HINTS_FILE": "nao-existe-hints.txt" }, "checagens": [
+      { "item": "AUT-11", "de": "q1", "para": "q2", "esperado": "muda", "min": 800 } ] },
+    { "id": "config-licencas", "demo": "social", "roteiro": "config-licencas.txt", "env": { "BRIKS_DEV_OPEN": "settings:9" }, "checagens": [
+      { "item": "BAS-37", "de": "l0", "para": "l1", "esperado": "muda", "min": 2000 } ] },
+    { "id": "config-texto", "demo": "social", "roteiro": "config-texto.txt", "env": { "BRIKS_DEV_OPEN": "settings:2" }, "checagens": [
+      { "item": "BAS-39", "de": "t0", "para": "t1", "esperado": "muda", "min": 2000 },
+      { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] },
+    { "id": "perfil-fotos", "demo": "social", "roteiro": "perfil-fotos.txt", "env": { "BRIKS_DEV_FPHOTO": "assets/login/discord.png", "BRIKS_DEV_FPHOTO_DELAY": "1300" }, "checagens": [
+      { "item": "PRF-03", "de": "p0", "para": "p1", "esperado": "muda", "regiao": [270, 500, 230, 140], "min": 150 } ] },
+    { "id": "msg-estados", "demo": "msgs", "roteiro": "msg-estados.txt", "checagens": [
+      { "item": "MSG-14", "de": "e1", "para": "e2", "esperado": "muda", "min": 20 },
+      { "item": "MSG-14", "de": "e1", "para": "e4", "esperado": "muda", "min": 20 },
+      { "item": "MSG-14", "de": "e3", "para": "e4", "esperado": "muda", "min": 20 } ] },
+    { "id": "msg-rico", "demo": "msgs", "roteiro": "msg-rico.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1", "BRIKS_DEMO_ATTACH": "1" }, "checagens": [
+      { "item": ["MSG-12", "MSG-13"], "de": "r0", "para": "r1", "esperado": "muda" },
+      { "item": "TRY-08", "de": "r1", "para": "r2", "esperado": "muda" },
+      { "item": "BAS-04", "de": "r2", "para": "r3", "esperado": "muda" },
+      { "item": "BAS-04", "de": "r3", "para": "r4", "esperado": "muda" } ] },
+    { "id": "msg-fixadas-min", "demo": "msgs", "roteiro": "msg-fixadas-min.txt", "env": { "BRIKS_WINDOW": "560x480", "BRIKS_TEXT_SIZE": "3" }, "checagens": [] },
+    { "id": "msg-galeria", "demo": "msgs", "roteiro": "msg-galeria.txt", "env": { "BRIKS_DEMO_ATTACH": "1", "BRIKS_DEMO_GALERIA": "1" }, "checagens": [
+      { "item": ["MSG-10", "MSG-11"], "de": "g0", "para": "g1", "esperado": "muda" } ] },
+    { "id": "campos-menu", "demo": "msgs", "roteiro": "campos-menu.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-02", "de": "c1", "para": "c2", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c2", "para": "c3", "esperado": "muda" },
+      { "item": "BAS-02", "de": "c3", "para": "c4", "esperado": "muda" } ] },
+    { "id": "campos-selecao", "demo": "msgs", "roteiro": "campos-selecao.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-04", "de": "s0", "para": "s1", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s2", "esperado": "muda" },
+      { "item": "BAS-04", "de": "s1", "para": "s3", "esperado": "muda" } ] },
+    { "id": "campos-anexos", "demo": "msgs", "roteiro": "campos-anexos.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
+      { "item": "BAS-24", "de": "a0", "para": "a1", "esperado": "muda" },
+      { "item": "BAS-23", "de": "a1", "para": "a2", "esperado": "muda" },
+      { "item": ["BAS-23", "MSG-09"], "de": "a2", "para": "a3", "esperado": "muda" } ] },
+    { "id": "campos-busca", "demo": "msgs", "roteiro": "campos-busca.txt", "checagens": [
+      { "item": "BAS-08", "de": "b0", "para": "b1", "esperado": "muda" },
+      { "item": ["BAS-08", "MSG-15"], "de": "b0", "para": "b2", "esperado": "muda" } ] },
+    {"id": "voz-teste-mic", "demo": "social", "roteiro": "voz-teste-mic.txt", "env": {"BRIKS_CORE_FAKE_AUDIO": "1"}, "checagens": [{"item": ["CFG-07", "CFG-06"], "de": "m0", "para": "m1", "esperado": "muda"}, {"item": "CFG-07", "de": "m1", "para": "m2", "esperado": "muda"}]},
+    {"id": "atalhos-gravar", "demo": "social", "roteiro": "atalhos-gravar.txt", "env": { "BRIKS_HK_BUSY": "Ctrl+Shift+J" }, "checagens": [{"item": ["ATL-01", "ATL-02", "ATL-03"], "de": "h0", "para": "h1", "esperado": "muda"}, {"item": "ATL-05", "de": "h1", "para": "h2", "esperado": "muda"}, {"item": "ATL-04", "de": "h4", "para": "h5", "esperado": "muda"}]},
+    {"id": "dados-limpar-exportar", "demo": "social", "roteiro": "dados-limpar-exportar.txt", "env": {"BRIKS_RECV_DIR": "{w}\\recv", "BRIKS_HIST_DIR": "{w}\\hist", "BRIKS_EXPORT_FILE": "{w}\\export.json"}, "preparar": ["recv\\a.bin:200", "recv\\b.bin:141", "hist\\h.bin:117"], "checagens": [{"item": ["CFG-19", "CFG-20"], "de": "a2", "para": "a3", "esperado": "muda"}, {"item": "CFG-21", "de": "a3", "para": "a4", "esperado": "muda"}, {"item": "CFG-22", "de": "a4", "para": "a5", "esperado": "muda"}]},
+    {"id": "overlay-quadro", "demo": "call", "roteiro": "overlay-quadro.txt", "env": {"BRIKS_OVERLAY_FORCE": "1", "BRIKS_DEMO_PEERS": "1"}, "checagens": [{"item": ["CFG-23", "CFG-24"], "de": "o0", "para": "o0", "esperado": "igual"}]}
+  ]
+}

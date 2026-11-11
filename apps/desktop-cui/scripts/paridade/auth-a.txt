@@ -1,0 +1,6 @@
+# Auth: entrar com e-mail -> esqueci minha senha (demo login)
+snap a0
+tap 570 601
+snap a1
+tap 640 521
+snap a2

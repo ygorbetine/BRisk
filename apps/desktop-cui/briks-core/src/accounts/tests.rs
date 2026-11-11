@@ -421,6 +421,144 @@ async fn profile_publishes_only_the_public_key_and_friends_find_each_other() {
 }
 
 #[tokio::test]
+async fn blocking_removes_the_bond_hides_the_requests_and_falls_back_without_the_rpc() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("bl-a")), accounts(&f, &tmpdir("bl-b")));
+    let SignUpOutcome::SignedIn(_ua) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(ub) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let (ida, idb) = (crate::identity::Identity::generate(), crate::identity::Identity::generate());
+    let pa = a.publish_identity(serde_json::to_value(ida.public_jwk()).unwrap(), &ida.fingerprint()).await.unwrap();
+    b.publish_identity(serde_json::to_value(idb.public_jwk()).unwrap(), &idb.fingerprint()).await.unwrap();
+    b.set_nick("bia_01").await.unwrap();
+
+    a.friend_request("bia_01").await.unwrap();
+    // Bia bloqueia a Ana: o pedido some e a Ana não descobre (a resposta é igual a "@nick inexistente")
+    b.friend_block(&pa.user_id).await.unwrap();
+    assert!(b.friends().await.unwrap().is_empty());
+    let bl = b.blocks().await.unwrap();
+    assert_eq!((bl.len(), bl[0].user_id.as_str(), bl[0].state.as_str()), (1, pa.user_id.as_str(), "blocked"));
+    assert_eq!(a.friend_request("bia_01").await.unwrap_err().code, "not_found");
+    // quem bloqueou não consegue pedir amizade ao bloqueado sem desbloquear
+    assert_eq!(b.friend_request(&pa.nick).await.unwrap_err().code, "blocked_by_you");
+    assert_eq!(b.friend_block(&ub.id).await.unwrap_err().code, "not_found", "não bloqueia a si mesmo (perfil inválido)");
+    b.friend_unblock(&pa.user_id).await.unwrap();
+    assert!(b.blocks().await.unwrap().is_empty());
+    a.friend_request("bia_01").await.unwrap();
+
+    // servidor sem a migração 0006: server_not_ready (a UI mantém a lista local)
+    f.state.lock().unwrap().no_blocks_rpc = true;
+    assert_eq!(b.friend_block(&pa.user_id).await.unwrap_err().code, "server_not_ready");
+    assert_eq!(b.blocks().await.unwrap_err().code, "server_not_ready");
+}
+
+#[tokio::test]
+async fn presence_shows_only_accepted_unblocked_visible_friends_and_expires() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b, c) = (accounts(&f, &tmpdir("pr-a")), accounts(&f, &tmpdir("pr-b")), accounts(&f, &tmpdir("pr-c")));
+    let SignUpOutcome::SignedIn(_) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = c.sign_up("cai@exemplo.com", "senha-boa-1", "Cai").await.unwrap() else { panic!() };
+    let mut ids = vec![];
+    for (acc, nick) in [(&a, "ana_01"), (&b, "bia_01"), (&c, "cai_01")] {
+        let id = crate::identity::Identity::generate();
+        let p = acc.publish_identity(serde_json::to_value(id.public_jwk()).unwrap(), &id.fingerprint()).await.unwrap();
+        acc.set_nick(nick).await.unwrap();
+        ids.push(p.user_id);
+    }
+    // Ana pede a Bia (aceita) e à Cai (só pedido, não aceita)
+    a.friend_request("bia_01").await.unwrap();
+    a.friend_request("cai_01").await.unwrap();
+    let req = b.friends().await.unwrap().into_iter().find(|x| x.state == "incoming").unwrap();
+    b.friend_respond(req.request_id.as_deref().unwrap(), true).await.unwrap();
+    b.presence_beat(false).await.unwrap();
+    c.presence_beat(false).await.unwrap();
+    let l = a.presence_friends().await.unwrap();
+    assert_eq!(l.len(), 1, "só amigo aceito aparece (Cai é só pedido)");
+    assert_eq!((l[0].user_id.as_str(), l[0].online), (ids[1].as_str(), true));
+    // invisível: some da lista
+    b.presence_beat(true).await.unwrap();
+    assert!(a.presence_friends().await.unwrap().is_empty());
+    b.presence_beat(false).await.unwrap();
+    // bloqueio (em qualquer direção) esconde
+    a.friend_block(&ids[1]).await.unwrap();
+    assert!(a.presence_friends().await.unwrap().is_empty());
+    assert!(b.presence_friends().await.unwrap().is_empty());
+    // sem batimento por mais de 2 min: continua na lista, mas offline
+    a.friend_unblock(&ids[1]).await.unwrap();
+    a.friend_request("bia_01").await.unwrap();
+    let req = b.friends().await.unwrap().into_iter().find(|x| x.state == "incoming").unwrap();
+    b.friend_respond(req.request_id.as_deref().unwrap(), true).await.unwrap();
+    b.presence_beat(false).await.unwrap();
+    assert!(a.presence_friends().await.unwrap()[0].online);
+    f.state.lock().unwrap().clock_skew = 130;
+    assert!(!a.presence_friends().await.unwrap()[0].online);
+    // sair da conta: some na hora
+    b.presence_clear().await.unwrap();
+    assert!(a.presence_friends().await.unwrap().is_empty());
+    // servidor sem a 0007
+    f.state.lock().unwrap().no_presence_rpc = true;
+    assert_eq!(a.presence_beat(false).await.unwrap_err().code, "server_not_ready");
+    assert_eq!(a.presence_friends().await.unwrap_err().code, "server_not_ready");
+}
+
+#[tokio::test]
+async fn nick_lookup_is_exact_hides_blocked_and_rate_limited() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("nl-a")), accounts(&f, &tmpdir("nl-b")));
+    let SignUpOutcome::SignedIn(_) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let (ida, idb) = (crate::identity::Identity::generate(), crate::identity::Identity::generate());
+    let pa = a.publish_identity(serde_json::to_value(ida.public_jwk()).unwrap(), &ida.fingerprint()).await.unwrap();
+    let pb = b.publish_identity(serde_json::to_value(idb.public_jwk()).unwrap(), &idb.fingerprint()).await.unwrap();
+    a.set_nick("ana_01").await.unwrap();
+    b.set_nick("bia_01").await.unwrap();
+    let hit = a.nick_lookup("@Bia_01").await.unwrap();
+    assert_eq!((hit.user_id.as_str(), hit.nick.as_str(), hit.fingerprint.as_str()), (pb.user_id.as_str(), "bia_01", idb.fingerprint().as_str()));
+    // exato: prefixo, inexistente e a própria pessoa respondem igual
+    assert_eq!(a.nick_lookup("bia").await.unwrap_err().code, "not_found");
+    assert_eq!(a.nick_lookup("ninguem_x").await.unwrap_err().code, "not_found");
+    assert_eq!(a.nick_lookup("ana_01").await.unwrap_err().code, "not_found");
+    // bloqueio nos dois sentidos esconde
+    b.friend_block(&pa.user_id).await.unwrap();
+    assert_eq!(a.nick_lookup("bia_01").await.unwrap_err().code, "not_found");
+    b.friend_unblock(&pa.user_id).await.unwrap();
+    a.friend_block(&pb.user_id).await.unwrap();
+    assert_eq!(a.nick_lookup("bia_01").await.unwrap_err().code, "not_found");
+    a.friend_unblock(&pb.user_id).await.unwrap();
+    // anti-enumeração: 30 buscas por hora
+    let mut last = String::new();
+    for _ in 0..30 { if let Err(e) = a.nick_lookup("ninguem_x").await { last = e.code; } }
+    assert_eq!(last, "rate_limited");
+    // servidor sem a 0008
+    f.state.lock().unwrap().no_lookup_rpc = true;
+    assert_eq!(b.nick_lookup("ana_01").await.unwrap_err().code, "server_not_ready");
+}
+
+#[test]
+fn group_image_is_cropped_stored_per_group_and_cleared() {
+    let dir = tmpdir("grp-img");
+    let src = dir.join("origem.png");
+    image::RgbImage::from_pixel(300, 120, image::Rgb([200, 30, 90])).save(&src).unwrap();
+    let jpeg = super::avatar::prepare(&src).unwrap();
+    let p = super::avatar::store(&dir, "grp-g1", &jpeg).unwrap();
+    assert!(p.exists() && p.to_string_lossy().contains("grp-g1"));
+    assert_eq!(super::avatar::cached(&dir, "grp-g1"), Some(p));
+    assert!(super::avatar::cached(&dir, "grp-g2").is_none(), "cada grupo tem a sua imagem");
+    let img = image::open(super::avatar::cached(&dir, "grp-g1").unwrap()).unwrap();
+    assert_eq!((img.width(), img.height()), (120, 120), "recorte quadrado central");
+    super::avatar::clear(&dir, "grp-g1");
+    assert!(super::avatar::cached(&dir, "grp-g1").is_none());
+    std::fs::write(dir.join("ruim.png"), b"nao e imagem").unwrap();
+    assert!(super::avatar::prepare(&dir.join("ruim.png")).is_err());
+}
+
+#[tokio::test]
 async fn local_bridge_password_is_stable_per_account_and_encrypted() {
     let _g = FLOW.lock().await;
     let f = fake::start(0).await.unwrap();
@@ -780,6 +918,78 @@ fn backup_phrase_generation_and_typing_mistakes() {
 }
 
 #[test]
+fn backup_phrase_errors_say_what_to_fix_without_echoing_the_phrase() {
+    let a = backup::new_phrase();
+    let words: Vec<&str> = a.split(' ').collect();
+    let e = backup::check_phrase("").unwrap_err();
+    assert!(e.message.contains("12 palavras"));
+    let e = backup::check_phrase(&words[..10].join(" ")).unwrap_err();
+    assert!(e.message.contains("Faltam 2"), "{}", e.message);
+    let e = backup::check_phrase(&format!("{a} casa")).unwrap_err();
+    assert!(e.message.contains("Sobra"), "{}", e.message);
+    let e = backup::check_phrase(&format!("{} xyzzyq", words[..11].join(" "))).unwrap_err();
+    assert!(e.message.contains("palavra 12") && !e.message.contains("xyzzyq"), "{}", e.message);
+    // a mensagem de frase errada orienta sobre troca de frase e conta, sem vazar nada
+    let id = fixed_identity();
+    let phrase = fixed_phrase();
+    let blob = backup::seal(&id, &phrase, "11111111-aaaa-4bbb-8ccc-111111111111").unwrap();
+    let e = backup::open(&blob, &backup::new_phrase(), "11111111-aaaa-4bbb-8ccc-111111111111").unwrap_err();
+    assert!(e.message.contains("mais recente") && !e.message.contains(&phrase));
+}
+
+#[tokio::test]
+async fn dropped_session_during_a_command_sends_the_user_back_to_the_entry_screen() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("svc-drop");
+    let a = Arc::new(accounts(&f, &dir));
+    let rt = service::Runtime::for_tests(Some(a.clone()), dir.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut svc = service::Service::new(rt, tx);
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }   // busy, signed_in, profile, avatar
+    // o servidor derruba a sessão (refresh token revogado) e o access token vence
+    {
+        let mut st = f.state.lock().unwrap();
+        st.drop_all_sessions();
+    }
+    a.expire_access_for_tests();
+    svc.command("account.name", &json!({ "name": "Outro" }));
+    let e = next(&mut rx).await;
+    assert_eq!((e["state"].as_str(), e["error_code"].as_str()), (Some("signed_out"), Some("session_expired")));
+    assert!(a.user().is_none() && !dir.join("account-session.bin").exists(), "sessão guardada apagada");
+    // erro de rede NÃO derruba: continua logado, só avisa
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }
+    let dead = Arc::new(Accounts::new(Arc::new(SupabaseProvider::new("http://127.0.0.1:9", "k")), &tmpdir("svc-net"), fake::auto_browser()));
+    assert_eq!(dead.restore().await.unwrap(), None);
+    assert!(a.user().is_some());
+}
+
+#[tokio::test]
+async fn switching_accounts_replaces_the_session_and_forgets_the_previous_photo() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("switch");
+    let a = accounts(&f, &dir);
+    let first = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(a.take_previous_id(&first.id), None, "primeiro login: nada a esquecer");
+    avatar::store(&dir, &first.id, &[0xff, 0xd8, 0xff, 0xd9]).unwrap();
+    let second = a.sign_in_oauth(OAuthProvider::Discord).await.unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(a.user().unwrap().id, second.id);
+    assert_eq!(a.take_previous_id(&second.id).as_deref(), Some(first.id.as_str()));
+    assert_eq!(a.take_previous_id(&second.id), None, "só uma vez");
+    // a sessão guardada é a da conta nova: reabrir o app entra nela
+    let b = accounts(&f, &dir);
+    assert_eq!(b.restore().await.unwrap().unwrap().id, second.id);
+    // sair apaga a sessão guardada
+    b.sign_out().await;
+    assert!(!dir.join("account-session.bin").exists());
+    assert_eq!(accounts(&f, &dir).restore().await.unwrap(), None);
+}
+
+#[test]
 fn backup_wrong_phrase_tampering_and_other_account_all_fail_the_same_way() {
     let id = fixed_identity();
     let phrase = fixed_phrase();
@@ -971,4 +1181,118 @@ async fn real_supabase_answers_and_errors_map() {
         let loc = tokio::task::spawn_blocking(move || ureq::AgentBuilder::new().redirects(0).timeout(Duration::from_secs(15)).build().get(&u).call().ok().and_then(|r| r.header("Location").map(String::from))).await.unwrap();
         assert!(loc.unwrap_or_default().contains(host), "{host}");
     }
+}
+
+// ---------- TURN da conta (Edge Function turn-credentials, servidor HTTP falso) ----------
+
+#[tokio::test]
+async fn account_turn_is_fetched_after_login_cleared_on_logout_and_silent_on_failure() {
+    use super::turn::{self, TurnCache};
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("turn");
+    let a = accounts(&f, &dir);
+    let cache = TurnCache::default();
+
+    // sem login: nada, e nenhuma chamada à função
+    f.state.lock().unwrap().turn_ttl = 3600;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty() && f.state.lock().unwrap().turn_hits == 0);
+
+    // função não publicada (404): silêncio, só STUN
+    f.state.lock().unwrap().turn_ttl = 0;
+    a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let wait = turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty());
+    assert_eq!(wait, Duration::from_secs(300), "tenta de novo em 5 min, sem barulho");
+
+    // publicada: busca com o JWT da sessão, guarda e agenda a renovação antes de vencer
+    f.state.lock().unwrap().turn_ttl = 3600;
+    let wait = turn::step(&a, &cache, &f.url(), "k").await;
+    assert_eq!(wait, Duration::from_secs(3300));
+    let s = cache.servers();
+    assert!(crate::ice::has_turn(&s) && s.len() == 2, "STUN + TURN da conta");
+    assert_eq!(s[1].credential, "cred-falsa-do-turn");
+    assert_eq!(f.state.lock().unwrap().turn_hits, 1);
+
+    // o TURN da conta entra no ICE junto com o STUN padrão; o que o usuário configurou manda mais
+    let noenv = |_: &str| None;
+    let (list, w) = crate::ice::load_with(&noenv, &dir, &s);
+    assert!(w.is_none() && crate::ice::has_turn(&list) && list.len() == 3 + 2);
+    let sum = crate::ice::summary(&noenv, &dir, &s);
+    assert_eq!((sum["source"].as_str(), sum["turn"].as_bool(), sum["urls"].as_str(), sum["has_credential"].as_bool()), (Some("account"), Some(true), Some(""), Some(false)));
+    assert!(!sum.to_string().contains("cred-falsa") && !sum.to_string().contains("turn.exemplo"), "a UI não vê endereços nem senha");
+    std::fs::write(dir.join("ice.json"), r#"[{"urls":"turn:meu.example.com:3478","username":"u","credential":"c"}]"#).unwrap();
+    let (list, _) = crate::ice::load_with(&noenv, &dir, &s);
+    assert!(list.len() == 4 && list[3].urls[0].starts_with("turn:meu.example.com"), "ice.json substitui o TURN da conta");
+    assert_eq!(crate::ice::summary(&noenv, &dir, &s)["source"], "file");
+    std::fs::remove_file(dir.join("ice.json")).unwrap();
+
+    // falha depois de ter credencial: continua usando a que ainda vale
+    f.state.lock().unwrap().turn_ttl = 0;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert_eq!(cache.servers().len(), 2, "credencial ainda válida continua em uso");
+
+    // sair limpa o cache e para de pedir
+    a.sign_out().await;
+    let hits = f.state.lock().unwrap().turn_hits;
+    turn::step(&a, &cache, &f.url(), "k").await;
+    assert!(cache.servers().is_empty() && f.state.lock().unwrap().turn_hits == hits);
+}
+
+#[test]
+fn account_turn_renewal_is_early_and_responses_are_validated() {
+    use super::turn;
+    assert_eq!(turn::renew_after(3600), Duration::from_secs(3300));
+    assert_eq!(turn::renew_after(900), Duration::from_secs(600));
+    assert_eq!(turn::renew_after(300), Duration::from_secs(150));
+    // credencial vencida não é entregue
+    let c = turn::TurnCache::default();
+    c.set(crate::ice::default_servers(), 1);
+    assert!(c.servers().is_empty());
+    c.set(crate::ice::default_servers(), u64::MAX);
+    assert_eq!(c.servers().len(), 3);
+    c.clear();
+    assert!(c.servers().is_empty());
+    // servidor fora do ar: erro curto, sem endereço nem token
+    let e = turn::fetch("http://127.0.0.1:9", "k", "token-secreto-123").unwrap_err();
+    assert!(!e.contains("token-secreto") && !e.contains("127.0.0.1"), "{e}");
+}
+
+#[tokio::test]
+async fn sign_out_of_other_computers_keeps_this_one_and_kills_the_rest() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let (d1, d2) = (tmpdir("others-a"), tmpdir("others-b"));
+    // dois "computadores" na mesma conta
+    let (a, b) = (accounts(&f, &d1), accounts(&f, &d2));
+    let ua = a.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    let ub = b.sign_in_oauth(OAuthProvider::Google).await.unwrap();
+    assert_eq!(ua.id, ub.id);
+    a.sign_out_others().await.unwrap();
+    // o outro computador perdeu a sessão (a renovação falha como sessão derrubada); este segue funcionando
+    let c = accounts(&f, &d2);
+    assert_eq!(c.restore().await.unwrap(), None, "o outro computador foi desconectado");
+    assert!(!d2.join("account-session.bin").exists());
+    assert!(a.access_token().await.is_ok());
+    let again = accounts(&f, &d1);
+    assert_eq!(again.restore().await.unwrap().unwrap().id, ua.id, "este computador reabre normalmente");
+    // sem sessão: erro de sessão, não pânico
+    assert!(accounts(&f, &tmpdir("others-c")).sign_out_others().await.unwrap_err().is_auth());
+}
+
+#[tokio::test]
+async fn service_reports_the_result_of_signing_out_the_others() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    let dir = tmpdir("svc-others");
+    let rt = service::Runtime::for_tests(Some(Arc::new(accounts(&f, &dir))), dir.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut svc = service::Service::new(rt, tx);
+    svc.command("account.oauth", &json!({ "provider": "google" }));
+    for _ in 0..4 { next(&mut rx).await; }
+    svc.command("account.logout_others", &json!({}));
+    let e = next(&mut rx).await;
+    assert_eq!((e["ev"].as_str(), e["ok"].as_bool()), (Some("account.others"), Some(true)));
+    assert!(e["message"].as_str().unwrap().contains("Este continua conectado"));
 }

@@ -1,0 +1,11 @@
+# Mensagens (demo msgs): Excluir (confirmação)
+snap x0
+at 1100 250
+waitms 300
+rdown
+rup
+waitms 500
+click 1115 612
+at 2 790
+waitms 500
+shot x1

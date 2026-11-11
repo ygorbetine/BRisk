@@ -1,0 +1,28 @@
+# BAS-24 e BAS-23: colar imagem da área de transferência (FALSA) e soltar arquivo no chat. Sem sala de voz o anexo fica preparado no cartão.
+snap a0
+expect attach_pending 0
+clipimg {ASSETS}\imagem.png
+tap 700 753
+key ctrl+v
+waitms 600
+snap a1
+expect attach_pending 1
+expect attach_pending_img 1
+# texto na área de transferência vence a imagem: o campo cola o texto e nada vira anexo
+clip abc
+key ctrl+v
+wait 3
+expect draft_is:abc 1
+# soltar um arquivo: hover mostra o "Solte para enviar"; o drop prepara o anexo
+at 900 400
+hover on
+waitms 400
+shot a2
+hover off
+drop {ASSETS}\imagem.png
+waitms 400
+expect attach_pending 1
+drop {ASSETS}\roteiro-arquivo.txt
+waitms 400
+snap a3
+expect attach_pending 2

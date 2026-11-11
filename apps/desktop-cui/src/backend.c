@@ -52,19 +52,19 @@ static unsigned __stdcall start_thread(void *unused) {
 
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     HANDLE rd = NULL, wr = NULL;
-    if (!CreatePipe(&rd, &wr, &sa, 0)) { fail("Falha ao criar o pipe do backend."); return 0; }
+    if (!CreatePipe(&rd, &wr, &sa, 0)) { fail("Falha ao iniciar o serviço local do Briks (canal de saída)."); return 0; }
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
 
     /* O backend sai quando o stdin fecha (vigia do processo pai): entrega um pipe que fica aberto enquanto vivermos. */
     HANDLE in_rd = NULL, in_wr = NULL;
-    if (!CreatePipe(&in_rd, &in_wr, &sa, 0)) { CloseHandle(rd); CloseHandle(wr); fail("Falha ao criar o stdin do backend."); return 0; }
+    if (!CreatePipe(&in_rd, &in_wr, &sa, 0)) { CloseHandle(rd); CloseHandle(wr); fail("Falha ao iniciar o serviço local do Briks (canal de entrada)."); return 0; }
     SetHandleInformation(in_wr, HANDLE_FLAG_INHERIT, 0);
     STARTUPINFOA si = { sizeof si };
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = wr; si.hStdError = wr; si.hStdInput = in_rd;
     PROCESS_INFORMATION pi;
     if (!CreateProcessA(exe, NULL, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, dir, &si, &pi)) {
-        CloseHandle(rd); CloseHandle(wr); fail("Não foi possível iniciar o backend."); return 0;
+        CloseHandle(rd); CloseHandle(wr); fail("Não foi possível iniciar o serviço local do Briks."); return 0;
     }
     CloseHandle(wr); CloseHandle(in_rd);   /* in_wr fica aberto até o fim do processo */
     /* O backend morre junto com a interface, mesmo se ela travar. */
@@ -107,7 +107,7 @@ static unsigned __stdcall start_thread(void *unused) {
         if (len >= sizeof buf - 1) break;
     }
     CloseHandle(rd);
-    fail("O backend local não respondeu a tempo.");
+    fail("O serviço local do Briks não respondeu a tempo.");
     return 0;
 }
 
@@ -115,7 +115,7 @@ void bk_start(void) {
     if (g_status != BK_STOPPED) return;
     InterlockedExchange(&g_status, BK_STARTING);
     HANDLE t = (HANDLE)_beginthreadex(NULL, 0, start_thread, NULL, 0, NULL);
-    if (t) CloseHandle(t); else fail("Falha ao criar a thread do backend.");
+    if (t) CloseHandle(t); else fail("Falha ao iniciar o serviço local do Briks.");
 }
 
 void bk_stop(void) {

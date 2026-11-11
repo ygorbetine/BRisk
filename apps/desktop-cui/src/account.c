@@ -37,6 +37,37 @@ static void set_photo(app_state_t *s, const char *path) {
     if (path && path[0]) { int w = 0, h = 0; s->user_photo = cui_image_load(ui, path, &w, &h); }
 }
 
+/* Fotos dos amigos (PRF-03): o core baixa para o cache e manda friends.photos {photos:[{user_id,path}]}; aqui viram textura, uma por pessoa. */
+static struct { char id[48]; char path[300]; cui_texture tex; } g_fph[MAX_FRIENDS];
+static void fph_clear(cui_ctx *ui) { for (int i = 0; i < MAX_FRIENDS; i++) { if (g_fph[i].tex) cui_image_destroy(ui, g_fph[i].tex); memset(&g_fph[i], 0, sizeof g_fph[i]); } }
+cui_texture friend_photo(const char *user_id) {
+    if (!user_id || !user_id[0]) return 0;
+    for (int i = 0; i < MAX_FRIENDS; i++) if (g_fph[i].tex && !strcmp(g_fph[i].id, user_id)) return g_fph[i].tex;
+    return 0;
+}
+cui_texture friend_photo_by_name(const app_state_t *s, const char *name) {   /* mensagens e membros só trazem o nome: casa com a lista de amigos */
+    if (!name || !name[0]) return 0;
+    for (int i = 0; i < s->friend_count; i++) if (!strcmp(s->friends[i].name, name)) return friend_photo(s->friends[i].id);
+    return 0;
+}
+static void on_friend_photos(app_state_t *s, const jval *j) {
+    cui_ctx *ui = cui_app_ui(s->app);
+    const jval *l = json_get(j, "photos");
+    for (int k = 0; k < json_len(l); k++) {
+        const jval *e = json_at(l, k); const char *id = json_str(e, "user_id", ""), *path = json_str(e, "path", "");
+        if (!id[0] || !path[0]) continue;
+        int slot = -1, freeslot = -1;
+        for (int i = 0; i < MAX_FRIENDS; i++) { if (!strcmp(g_fph[i].id, id) && g_fph[i].id[0]) { slot = i; break; } if (freeslot < 0 && !g_fph[i].id[0]) freeslot = i; }
+        if (slot < 0) slot = freeslot;
+        if (slot < 0) continue;
+        if (g_fph[slot].tex && !strcmp(g_fph[slot].path, path)) continue;   /* mesma foto: nada a recarregar */
+        if (g_fph[slot].tex) { cui_image_destroy(ui, g_fph[slot].tex); g_fph[slot].tex = 0; }
+        int w = 0, h = 0; cui_texture t = cui_image_load(ui, path, &w, &h);
+        copy(g_fph[slot].id, sizeof g_fph[slot].id, id); copy(g_fph[slot].path, sizeof g_fph[slot].path, path); g_fph[slot].tex = t;
+    }
+    cui_request_redraw(ui);
+}
+
 static bool need_core(app_state_t *s) {
     if (core_state() == CORE_READY) return true;
     copy(s->acct_error, sizeof s->acct_error, core_state() == CORE_FAILED ? core_error() : "O Briks ainda está iniciando. Tente de novo em instantes.");
@@ -65,11 +96,16 @@ void account_submit(app_state_t *s) {
         send_kv("account.password", "password", s->password, NULL, NULL, NULL, NULL);
         return;
     }
+    if (s->acct_view == AV_LOGIN && (s->email[0] == '@' || (s->email[0] && !strchr(s->email, '@')))) {   /* AUT-11: @nick -> e-mail guardado neste computador */
+        char em[96]; if (login_hint_lookup(s->email, em, sizeof em)) copy(s->email, sizeof s->email, em);
+        else { copy(s->acct_error, sizeof s->acct_error, "Não conheço esse @nick neste computador. Entre com o e-mail desta vez; da próxima você pode usar o @nick."); return; }
+    }
     if (!strchr(s->email, '@')) { copy(s->acct_error, sizeof s->acct_error, "Digite um e-mail válido, como voce@exemplo.com."); return; }
     if (s->acct_view == AV_SIGNUP) {
         if (!s->name[0]) { copy(s->acct_error, sizeof s->acct_error, "Diga como devemos chamar você."); return; }
         if (strlen(s->password) < 8) { copy(s->acct_error, sizeof s->acct_error, "A senha precisa ter pelo menos 8 caracteres."); return; }
         if (strcmp(s->password, s->confirm)) { copy(s->acct_error, sizeof s->acct_error, "As senhas não conferem."); return; }
+        { SYSTEMTIME st; GetLocalTime(&st); if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->acct_error, sizeof s->acct_error)) return; }   /* AUT-03: só maiores de 18; a data não é enviada nem guardada */
     }
     if (s->acct_view == AV_LOGIN && !s->password[0]) { copy(s->acct_error, sizeof s->acct_error, "Digite sua senha."); return; }
     if (!need_core(s)) return;
@@ -92,7 +128,7 @@ void account_cancel(app_state_t *s) {
 void account_retry(app_state_t *s) { s->acct_asked = false; s->acct_state = ACCT_UNKNOWN; s->acct_error[0] = 0; }
 
 void account_logout(app_state_t *s) {
-    if (core_state() == CORE_READY) core_send("{\"cmd\":\"account.logout\"}");
+    if (core_state() == CORE_READY) { core_send("{\"cmd\":\"presence.clear\"}"); core_send("{\"cmd\":\"account.logout\"}"); s->pres_n = 0; }
     s->acct_state = ACCT_OUT; s->acct_view = AV_MAIN; s->acct_bridge = BRIDGE_NONE;
     s->acct_user_id[0] = s->acct_nick[0] = s->acct_error[0] = s->acct_info[0] = 0;
     s->user_nick[0] = 0; set_photo(s, NULL);
@@ -103,13 +139,30 @@ void account_logout(app_state_t *s) {
     s->backup_phrase_open = s->backup_restore_open = s->backup_delete_open = false;
 }
 
-void account_friends(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"friends.list\"}"); }
+void account_friends(app_state_t *s) {
+    (void)s; if (core_state() != CORE_READY) return;
+    core_send("{\"cmd\":\"friends.list\"}");
+    core_send("{\"cmd\":\"friends.blocks\"}");   /* lista de bloqueados do servidor (0006); sem a RPC o core responde remote=false e vale a lista local */
+}
+
+/* bloquear/desbloquear no servidor (a lista local é atualizada por quem chama; sem a 0006 o core só confirma remote=false) */
+void account_block_remote(app_state_t *s, const char *user_id, bool block) {
+    (void)s; if (core_state() != CORE_READY || !user_id[0]) return;
+    char id[96], line[200]; json_escape(user_id, id, sizeof id);
+    snprintf(line, sizeof line, "{\"cmd\":\"friends.%s\",\"user_id\":\"%s\"}", block ? "block" : "unblock", id);
+    core_send(line);
+}
 
 void account_add_friend(app_state_t *s) {
     if (!s->add_email[0]) return;
     if (core_state() != CORE_READY) { copy(s->notice, sizeof s->notice, "Sem conexão com o Briks. Tente de novo."); return; }
     copy(s->notice, sizeof s->notice, "Enviando…");
     send_kv("friends.request", "nick", s->add_email, NULL, NULL, NULL, NULL);
+}
+
+void account_remove_friend(app_state_t *s, const char *user_id) {
+    if (core_state() != CORE_READY) { copy(s->notice, sizeof s->notice, "Sem conexão com o Briks. Tente de novo."); return; }
+    send_kv("friends.remove", "user_id", user_id, NULL, NULL, NULL, NULL);
 }
 
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept) {
@@ -156,6 +209,33 @@ void account_reset_photo(app_state_t *s) {
 }
 
 static void wipe_phrase(app_state_t *s) { memset(s->backup_words, 0, sizeof s->backup_words); s->backup_ack = false; }
+
+void account_logout_others(app_state_t *s) {
+    if (core_state() != CORE_READY || s->others_busy) return;
+    s->others_busy = true; copy(s->others_msg, sizeof s->others_msg, "Desconectando os outros computadores…");
+    core_send("{\"cmd\":\"account.logout_others\"}");
+}
+
+void account_ice_get(app_state_t *s) { s->ice_asked = true; if (core_state() == CORE_READY) core_send("{\"cmd\":\"ice.get\"}"); }
+
+void account_ice_save(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_busy) return;
+    s->ice_busy = true; copy(s->ice_msg, sizeof s->ice_msg, "Salvando…");
+    send_kv("ice.set", "urls", s->ice_urls, "username", s->ice_user, "credential", s->ice_pass);
+    memset(s->ice_pass, 0, sizeof s->ice_pass);   /* a senha não fica na memória da UI */
+}
+
+void account_ice_clear(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_busy) return;
+    s->ice_busy = true; s->ice_urls[0] = s->ice_user[0] = 0; memset(s->ice_pass, 0, sizeof s->ice_pass);
+    core_send("{\"cmd\":\"ice.clear\"}");
+}
+
+void account_ice_test(app_state_t *s) {
+    if (core_state() != CORE_READY || s->ice_testing) return;
+    s->ice_testing = true; s->ice_test_level = 0; copy(s->ice_test_msg, sizeof s->ice_test_msg, "Testando… (até 8 segundos)");
+    core_send("{\"cmd\":\"ice.test\"}");
+}
 
 void account_backup_status(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"backup.status\"}"); }
 
@@ -235,7 +315,7 @@ static void on_state(app_state_t *s, const jval *j) {
     } else {   /* signed_out */
         const bool was_busy = s->acct_state == ACCT_BUSY;
         s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE;
-        s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL);
+        s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL); fph_clear(cui_app_ui(s->app));
         copy(s->acct_error, sizeof s->acct_error, strcmp(json_str(j, "error_code", ""), "cancelled") ? msg : "");
         copy(s->acct_info, sizeof s->acct_info, strcmp(json_str(j, "error_code", ""), "cancelled") || !was_busy ? "" : "Login cancelado.");
         if (s->acct_view == AV_NEWPASS) s->acct_view = AV_MAIN;
@@ -244,21 +324,67 @@ static void on_state(app_state_t *s, const jval *j) {
     }
 }
 
+/* friends.blocks {remote, blocks:[...]}: com a 0006 o servidor manda; bloqueios que só existiam aqui sobem para ele */
+static void on_blocks(app_state_t *s, const jval *j) {
+    if (!jbool(j, "remote")) return;   /* servidor sem a 0006: fica a lista local */
+    const jval *b = json_get(j, "blocks");
+    char ids[64][48]; int n = 0;
+    for (int i = 0; i < json_len(b) && n < 64; i++) copy(ids[n++], sizeof ids[0], json_str(json_at(b, i), "user_id", ""));
+    for (int i = 0; i < s->blocked_count; i++) {   /* local que o servidor não conhece: sobe */
+        bool known = false; for (int k = 0; k < n; k++) if (!strcmp(ids[k], s->blocked[i].id)) known = true;
+        if (!known) account_block_remote(s, s->blocked[i].id, true);
+    }
+    for (int i = 0; i < json_len(b) && i < 64; i++) {   /* servidor que a lista local não tem (outro computador): entra */
+        const jval *e = json_at(b, i); const char *id = json_str(e, "user_id", "");
+        if (id[0] && !friends_blocked(s, id)) { const char *nm = json_str(e, "display_name", json_str(e, "nick", "?")); friends_block(s, id, nm); }
+    }
+}
+
+static void on_presence(app_state_t *s, const jval *j) {
+    const jval *f = json_get(j, "friends");
+    s->pres_remote = jbool(j, "remote"); s->pres_n = 0;
+    for (int i = 0; i < json_len(f) && s->pres_n < MAX_FRIENDS; i++) {
+        const jval *p = json_at(f, i);
+        copy(s->pres[s->pres_n].id, sizeof s->pres[0].id, json_str(p, "user_id", ""));
+        s->pres[s->pres_n].online = jbool(p, "online"); s->pres_n++;
+    }
+    cui_request_redraw(cui_app_ui(s->app));
+}
+
+/* batimento: ao entrar na conta, a cada 60 s, e na hora quando "Aparecer offline" muda. Sem a 0007 o core responde remote=false e nada mais é tentado com frequência */
+void account_presence_tick(app_state_t *s) {
+    static ULONGLONG last; static bool inv_sent; static char who[48];
+    if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo) { last = 0; who[0] = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    const bool changed = strcmp(who, s->acct_user_id) != 0 || inv_sent != s->invisible;
+    if (!changed && last && now - last < 60000) return;
+    if (!changed && !s->pres_remote && last && now - last < 300000) return;   /* servidor sem a 0007: só tenta de novo a cada 5 min */
+    last = now; inv_sent = s->invisible; copy(who, sizeof who, s->acct_user_id);
+    char line[96]; snprintf(line, sizeof line, "{\"cmd\":\"presence.beat\",\"invisible\":%s}", s->invisible ? "true" : "false");
+    core_send(line);
+}
+
 static void on_friends(app_state_t *s, const jval *j) {
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
-    s->friend_count = s->pending_count = 0;
+    s->friend_count = s->pending_count = s->outgoing_count = 0;
     for (int i = 0; i < json_len(f); i++) {
         const jval *p = json_at(f, i); const char *state = json_str(p, "state", "");
         person_t *d = NULL;
+        if (friends_blocked(s, json_str(p, "user_id", ""))) continue;   /* bloqueados saem de todas as listas (ficam só na aba Bloqueados) */
         if (!strcmp(state, "friend") && s->friend_count < MAX_FRIENDS) d = &s->friends[s->friend_count++];
         else if (!strcmp(state, "incoming") && s->pending_count < MAX_FRIENDS) d = &s->pending[s->pending_count++];
-        if (!d) continue;   /* pedidos enviados ("outgoing") não entram nas listas */
+        else if (!strcmp(state, "outgoing") && s->outgoing_count < MAX_FRIENDS) d = &s->outgoing[s->outgoing_count++];
+        if (!d) continue;
         memset(d, 0, sizeof *d);
         copy(d->id, sizeof d->id, json_str(p, "user_id", ""));
         copy(d->name, sizeof d->name, json_str(p, "display_name", "?"));
         copy(d->request_id, sizeof d->request_id, json_str(p, "request_id", ""));
+        copy(d->nick, sizeof d->nick, json_str(p, "nick", ""));
         copy(d->status, sizeof d->status, json_str(p, "status", ""));
+        copy(d->fp, sizeof d->fp, json_str(p, "fingerprint", ""));
+        const jval *pk = json_get(p, "public_key");
+        if (pk && json_str(pk, "x", "")[0] && json_str(pk, "y", "")[0]) snprintf(d->jwk, sizeof d->jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(pk, "x", ""), json_str(pk, "y", ""));
     }
     int idx = -1;
     for (int i = 0; i < s->friend_count; i++) if (keep[0] && !strcmp(s->friends[i].id, keep)) idx = i;
@@ -273,7 +399,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
     if (!strcmp(ev, "account.state")) on_state(s, j);
     else if (!strcmp(ev, "account.profile")) {
         copy(s->acct_nick, sizeof s->acct_nick, json_str(j, "nick", ""));
-        if (s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, s->acct_nick);
+        if (s->acct_nick[0]) { copy(s->user_nick, sizeof s->user_nick, s->acct_nick); if (!s->acct_demo) login_hint_save(s->acct_nick, s->user_email); }   /* dica de login por @nick (AUT-11) */
         if (json_str(j, "display_name", "")[0]) copy(s->user_name, sizeof s->user_name, json_str(j, "display_name", ""));   /* vale o nome do perfil (pode ter sido trocado) */
         if (json_str(j, "message", "")[0]) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
         if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }
@@ -316,7 +442,35 @@ bool account_handle_event(app_state_t *s, const char *line) {
         copy(s->bridge_email, sizeof s->bridge_email, json_str(j, "email", ""));
         copy(s->bridge_pw, sizeof s->bridge_pw, json_str(j, "password", ""));
         /* account_tick conclui quando o backend local estiver pronto */
+    } else if (!strcmp(ev, "account.others")) {
+        s->others_busy = false; s->others_confirm = false;
+        copy(s->others_msg, sizeof s->others_msg, json_str(j, "message", ""));
+    } else if (!strcmp(ev, "ice.state")) {
+        s->ice_busy = false; s->ice_turn = jbool(j, "turn"); s->ice_has_cred = jbool(j, "has_credential");
+        copy(s->ice_source, sizeof s->ice_source, json_str(j, "source", "default"));
+        if (json_str(j, "message", "")[0]) copy(s->ice_msg, sizeof s->ice_msg, json_str(j, "message", ""));
+        else if (json_str(j, "warn", "")[0]) snprintf(s->ice_msg, sizeof s->ice_msg, "Configuração ignorada: %s", json_str(j, "warn", ""));
+        if (!s->ice_edit_init || jbool(j, "ok")) { copy(s->ice_urls, sizeof s->ice_urls, json_str(j, "urls", "")); copy(s->ice_user, sizeof s->ice_user, json_str(j, "username", "")); s->ice_edit_init = true; }
+        if (json_get(j, "ok")) { s->ice_test_level = 0; s->ice_test_msg[0] = 0; }   /* salvou/removeu: o resultado antigo não vale mais */
+    } else if (!strcmp(ev, "ice.test")) {
+        s->ice_testing = false;
+        const char *lv = json_str(j, "level", "none");
+        s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
+        copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
+    else if (!strcmp(ev, "friends.photos")) on_friend_photos(s, j);
+    else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
+    else if (!strcmp(ev, "presence.list")) on_presence(s, j);
+    else if (!strcmp(ev, "friends.lookup")) {
+        s->gnick_found = false; s->gnick_msg[0] = 0;
+        if (jbool(j, "ok")) {
+            const jval *h = json_get(j, "hit"); person_t *p = &s->gnick_hit; memset(p, 0, sizeof *p);
+            copy(p->id, sizeof p->id, json_str(h, "user_id", "")); copy(p->name, sizeof p->name, json_str(h, "display_name", "?"));
+            copy(p->nick, sizeof p->nick, json_str(h, "nick", "")); copy(p->fp, sizeof p->fp, json_str(h, "fingerprint", ""));
+            s->gnick_found = p->id[0] && p->fp[0];
+        } else copy(s->gnick_msg, sizeof s->gnick_msg, !strcmp(json_str(j, "error_code", ""), "server_not_ready") ? "A busca por @nick ainda não está ativa no servidor." : json_str(j, "message", "Não encontrado."));
+    }
+    else if (!strncmp(ev, "group.", 6)) groups_core_event(s, j, ev);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;
@@ -357,7 +511,17 @@ void account_tick(app_state_t *s) {
             }
         }
     }
-    if (s->acct_demo) return;
+    if (s->acct_demo) {   /* captura: BRIKS_DEV_FPHOTO=caminho põe essa imagem como foto do primeiro amigo (nada baixado) */
+        static bool fp_done; static ULONGLONG t0; const char *fp = getenv("BRIKS_DEV_FPHOTO"), *dl = getenv("BRIKS_DEV_FPHOTO_DELAY");   /* _DELAY: ms até a foto chegar (teste antes/depois) */
+        if (!t0) t0 = GetTickCount64();
+        if (fp && !fp_done && s->friend_count > 0 && (!dl || GetTickCount64() - t0 >= (ULONGLONG)atoi(dl))) {
+            cui_request_redraw(cui_app_ui(s->app));
+            fp_done = true; char esc[700], js[900]; json_escape(fp, esc, sizeof esc);
+            snprintf(js, sizeof js, "{\"photos\":[{\"user_id\":\"%s\",\"path\":\"%s\"}]}", s->friends[0].id, esc);
+            jval *j = json_parse(js); if (j) { on_friend_photos(s, j); json_free(j); }
+        }
+        return;
+    }
     core_status_t cs = core_state();
     if (cs == CORE_STOPPED) { core_start(); return; }
     if (cs == CORE_FAILED) {
@@ -366,6 +530,7 @@ void account_tick(app_state_t *s) {
     }
     if (cs != CORE_READY) { cui_request_redraw(cui_app_ui(s->app)); return; }
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
+    account_presence_tick(s);
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */

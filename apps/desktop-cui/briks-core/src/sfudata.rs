@@ -320,9 +320,11 @@ impl Layer {
                 self.resend.push((Instant::now(), 0, s.clone()));
                 Some(vec![Out::Send { to: vec![], msg: s }])
             }
-            MeshCmd::Chat { to_fp, text } => {
+            MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } => {
+                // a UI pode mandar o id da mensagem (para casar com o estado "enviada/entregue" dela); sem id, o core cria um
+                let (to_fp, text, id) = match c { MeshCmd::ChatWithId { to_fp, text, id } => (to_fp, text, id), MeshCmd::Chat { to_fp, text } => (to_fp, text, uuid::Uuid::new_v4().to_string()), _ => unreachable!() };
                 let m = identity::sign_message(&self.cfg.identity, ChatWire {
-                    version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&self.fp, &to_fp), id: uuid::Uuid::new_v4().to_string(),
+                    version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&self.fp, &to_fp), id,
                     author_peer_id: self.fp.clone(), author: self.cfg.name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 Some(self.flush(&to_fp))

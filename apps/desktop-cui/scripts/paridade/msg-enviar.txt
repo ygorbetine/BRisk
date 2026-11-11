@@ -1,0 +1,15 @@
+# Mensagens (demo msgs): digitar e enviar com Enter; depois com o botão
+snap n0
+tap 888 753
+type teste de paridade um
+key enter
+waitms 600
+snap n1
+tap 888 753
+type teste de paridade dois
+at 1232 753
+waitms 300
+click 1232 753
+at 2 790
+waitms 600
+shot n2

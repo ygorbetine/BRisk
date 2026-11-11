@@ -1,0 +1,9 @@
+# Links externos: só http(s) abre no navegador (o teste só valida, não abre)
+waitms 500
+sys url https://briks.app/ajuda?x=1
+sys url http://exemplo.com
+sys url file:///c:/windows/system32/calc.exe
+sys url javascript:alert(1)
+sys url ftp://exemplo.com/a
+expect url_ok 2
+expect url_bad 3

@@ -1,0 +1,5 @@
+wait 12
+expect win_w 1342
+expect win_h 704
+expect fill_gap 0
+shot pequeno

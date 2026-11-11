@@ -866,7 +866,7 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
-        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
             let media = self.media();
             let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
             self.apply(outs).await;
@@ -886,7 +886,14 @@ impl Actor {
             MeshCmd::ShareStop => self.share_stop().await,
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
-            MeshCmd::Chat { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
+            MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
+            MeshCmd::PeerVolume { key, gain } => { if let Some(a) = &self.audio { a.set_peer_gain(&key, gain); } }
+            // Ainda só na malha P2P: anexos, "digitando", grupos e histórico não viajam pela camada de dados do SFU.
+            MeshCmd::SendFile { .. } => self.emit(MeshEvent::Error("anexos ainda não estão disponíveis em chamadas pelo servidor".into())).await,
+            MeshCmd::CancelFile { .. } | MeshCmd::AcceptFile { .. } | MeshCmd::PauseFile { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } => {}
+            #[cfg(test)]
+            MeshCmd::HistSeed { .. } | MeshCmd::HistAsk => {}
+            MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::Event { .. } => self.emit(MeshEvent::Error("chat não disponível no modo SFU (use uma sala P2P)".into())).await,
             MeshCmd::Kick { .. } | MeshCmd::Allow { .. } => self.emit(MeshEvent::Error("expulsar exige a API de administração do LiveKit: ainda não disponível".into())).await,
             MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto exige a camada de dados do SFU".into())).await,
             MeshCmd::ForceOffer { .. } | MeshCmd::SetHybrid { .. } => {}

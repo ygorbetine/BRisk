@@ -1,5 +1,7 @@
 #include "msgui.h"
 #include "json.h"
+#include "attach.h"
+#include "richtext.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -186,6 +188,7 @@ static void st_load(void) {
 }
 
 /* ---------- consultas ---------- */
+bool msgui_has_reply(const msg_t *m) { st_load(); const mstate_t *t = st_find(m->id, false); return t && t->reply[0]; }
 bool msgui_deleted(const char *id) { st_load(); const mstate_t *m = st_find(id, false); return m && m->deleted; }
 const char *msgui_text(const msg_t *m) { st_load(); const mstate_t *s = st_find(m->id, false); return s && s->has_edit ? s->edited : m->content; }
 
@@ -203,11 +206,55 @@ static void toggle_react(const char *id, const char *emoji) {
     st_save(); emit_ev(id, "reaction.add", NULL, NULL, emoji);
 }
 
-static void set_clipboard(const char *utf8) {
+/* ---------- área de transferência (real; ou falsa nos testes) ---------- */
+static bool g_clip_fake; static char g_clip_buf[8192];
+static void fake_set(void *u, const char *t) { (void)u; snprintf(g_clip_buf, sizeof g_clip_buf, "%s", t ? t : ""); }
+static const char *fake_get(void *u) { (void)u; return g_clip_buf; }
+/* BRIKS_FAKE_CLIPBOARD=1 (ou o texto inicial): copiar e colar vão para um buffer em memória; a área de transferência do usuário nunca é lida nem escrita */
+void briks_clip_install(cui_ctx *ui) {
+    const char *f = getenv("BRIKS_FAKE_CLIPBOARD");
+    if (!f || !f[0]) return;
+    cui_platform_iface p; cui_get_platform(ui, &p);
+    p.set_clipboard = fake_set; p.get_clipboard = fake_get; cui_set_platform(ui, &p);
+    g_clip_fake = true; if (strcmp(f, "1")) fake_set(NULL, f);
+}
+bool briks_clip_fake(void) { return g_clip_fake; }
+const char *briks_clip_probe(void) { return g_clip_fake ? g_clip_buf : ""; }
+
+void briks_clip_set(const char *utf8) {
+    if (g_clip_fake) { fake_set(NULL, utf8); return; }
     int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0); if (n <= 0) return;
     HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, (size_t)n * sizeof(wchar_t)); if (!h) return;
     MultiByteToWideChar(CP_UTF8, 0, utf8, -1, (wchar_t *)GlobalLock(h), n); GlobalUnlock(h);
     if (OpenClipboard(NULL)) { EmptyClipboard(); if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h); CloseClipboard(); } else GlobalFree(h);
+}
+
+/* ---------- menu de clique direito dos campos de texto (BAS-02) ----------
+ * Todo cui_input do app passa por aqui (macro em briks_ui.h). O menu é o popup do CUI (acima de diálogos, fecha ao clicar fora) e conta como
+ * modal para a regra central; as ações viram comandos de edição do campo (cui_edit_command), que rodam com o foco devolvido a ele. */
+int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *o) {
+    int r = cui_input_ex(ui, id, buf, cap, o);
+    cui_id fid = cui_make_id(ui, id);
+    bool pw = o && o->password, ro = o && (o->read_only || o->disabled);
+    cui_push_id(ui, id);
+    cui_context_menu(ui, "ctxmenu") {
+        int s0 = 0, s1 = 0; bool can_u = false, can_r = false;
+        cui_edit_selection(ui, fid, &s0, &s1, &can_u, &can_r);
+        bool sel = s1 > s0, any = buf[0] != 0;
+        if (cui_menu_item(ui, "Desfazer", .icon = CUI_ICON_UNDO_2, .shortcut = "Ctrl+Z", .disabled = ro || !can_u)) cui_edit_command(ui, fid, CUI_EDIT_UNDO);
+        if (cui_menu_item(ui, "Refazer", .icon = CUI_ICON_REDO_2, .shortcut = "Ctrl+Y", .disabled = ro || !can_r)) cui_edit_command(ui, fid, CUI_EDIT_REDO);
+        cui_menu_separator(ui);
+        if (cui_menu_item(ui, "Recortar", .icon = CUI_ICON_SCISSORS, .shortcut = "Ctrl+X", .disabled = ro || pw || !sel)) cui_edit_command(ui, fid, CUI_EDIT_CUT);
+        if (cui_menu_item(ui, "Copiar", .icon = CUI_ICON_COPY, .shortcut = "Ctrl+C", .disabled = pw || !sel)) cui_edit_command(ui, fid, CUI_EDIT_COPY);
+        if (cui_menu_item(ui, "Colar", .icon = CUI_ICON_CLIPBOARD, .shortcut = "Ctrl+V", .disabled = ro)) {
+            if (!strcmp(id, "draft") && attach_paste_image(ui)) {}   /* imagem na área de transferência: vira anexo (BAS-24) */
+            else cui_edit_command(ui, fid, CUI_EDIT_PASTE);
+        }
+        cui_menu_separator(ui);
+        if (cui_menu_item(ui, "Selecionar tudo", .icon = CUI_ICON_SQUARE_CHECK, .shortcut = "Ctrl+A", .disabled = !any)) cui_edit_command(ui, fid, CUI_EDIT_SELECT_ALL);
+    }
+    cui_pop_id(ui);
+    return r;
 }
 
 /* ---------- estado da interação ---------- */
@@ -219,9 +266,10 @@ void msgui_set_view(cui_rect r) { g_view = r; }
 static bool g_menu_want;             /* pedido de abrir o menu (consumido no overlay) */
 static float g_menu_x, g_menu_y;
 static msg_t g_menu_m;               /* mensagem alvo do menu/diálogos */
+static char g_menu_sel[1100];         /* trecho de texto marcado com o mouse na mensagem alvo (BAS-04); vazio = sem seleção */
 static bool g_menu_live;
 static bool g_menu_open, g_emo_open, g_drag_on;
-static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic;
+static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic, g_dlg_select;
 static float g_emo_x, g_emo_y;
 static char g_recent[160];
 static int g_tone;
@@ -249,7 +297,10 @@ static bool can_pin(const app_state_t *s) { return !group_open(s) || can_moderat
 
 static char g_hot_now[48], g_hot_prev[48];   /* mensagem sob o mouse (balão ou seta) neste quadro / no quadro anterior */
 
-static void open_menu(const msg_t *m, float x, float y) { g_menu_m = *m; g_menu_x = x; g_menu_y = y; g_menu_want = true; }
+static void open_menu(cui_ctx *ui, const msg_t *m, float x, float y) {
+    g_menu_m = *m; g_menu_x = x; g_menu_y = y; g_menu_want = true;
+    g_menu_sel[0] = 0; attach_selected_text(ui, m->id, msgui_text(m), g_menu_sel, sizeof g_menu_sel);   /* lê a seleção agora: o clique no menu tira o foco do texto */
+}
 
 /* depois do balão e da seta: o hover vale só para o balão (e a seta); botão direito no balão abre o menu no mouse */
 void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m) {
@@ -260,7 +311,7 @@ void msgui_row(cui_ctx *ui, app_state_t *s, const msg_t *m) {
     if (g_menu_open || g_emo_open) return;
     bool over = inside(b, mp) || inside(a, mp);
     if (over) snprintf(g_hot_now, sizeof g_hot_now, "%s", m->id);
-    if (inside(b, mp) && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) open_menu(m, mp.x, mp.y);
+    if (!briks_blocked() && inside(b, mp) && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)) open_menu(ui, m, mp.x, mp.y);   /* modal aberto: botão direito não atravessa */
 }
 
 /* setinha ao lado do balão: o espaço é sempre reservado (o layout não pula); só aparece no hover da mensagem */
@@ -272,7 +323,7 @@ void msgui_arrow(cui_ctx *ui, const msg_t *m) {
     }
     if (show && briks_clicked(ui, "arw")) {
         cui_rect r = cui_get_rect(ui, cui_make_id(ui, "arw"));
-        open_menu(m, r.x < 640 ? r.x : r.x - 200, r.y + r.h + 4);
+        open_menu(ui, m, r.x < 640 ? r.x : r.x - 200, r.y + r.h + 4);
     }
 }
 
@@ -408,7 +459,9 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     msep(ui);
     if (mrow(ui, 3, CUI_ICON_MESSAGE_SQUARE, "Responder", NULL, false)) { start_reply(m); act_close_menu(ui); }
     if (mrow(ui, 4, CUI_ICON_SHARE_2, "Encaminhar", NULL, false)) { g_dlg_forward = true; act_close_menu(ui); }
-    if (mrow(ui, 6, CUI_ICON_COPY, "Copiar texto", NULL, false)) { set_clipboard(msgui_text(m)); act_close_menu(ui); }
+    if (g_menu_sel[0] && mrow(ui, 14, CUI_ICON_TYPE, "Copiar seleção", NULL, false)) { briks_clip_set(g_menu_sel); act_close_menu(ui); }
+    if (!rich_is_plain(msgui_text(m)) && mrow(ui, 15, CUI_ICON_TYPE, "Selecionar texto…", NULL, false)) { g_dlg_select = true; act_close_menu(ui); }   /* mensagem com formatação: texto cru selecionável num quadro */
+    if (mrow(ui, 6, CUI_ICON_COPY, "Copiar texto", NULL, false)) { briks_clip_set(msgui_text(m)); act_close_menu(ui); }
     msep(ui);
     if (is_mine(m) && mrow(ui, 2, CUI_ICON_PENCIL, "Editar mensagem", NULL, false)) { start_edit(s, m); act_close_menu(ui); }
     if (can_pin(s) && mrow(ui, 7, CUI_ICON_MAP_PIN, pinned ? "Desafixar mensagem" : "Fixar mensagem", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->pinned = !pinned; st_save(); emit_ev(m->id, w->pinned ? "pin" : "unpin", NULL, NULL, NULL); } act_close_menu(ui); }
@@ -416,12 +469,12 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     if (mrow(ui, 9, CUI_ICON_BELL, "Criar lembrete", "sem efeito", false)) { g_dlg_remind = true; act_close_menu(ui); }
     if (mrow(ui, 10, CUI_ICON_EYE_OFF, t && t->unread ? "Marcar como lida" : "Marcar como não lida", NULL, false)) { mstate_t *w = st_find(m->id, true); if (w) { w->unread = !(t && t->unread); st_save(); } act_close_menu(ui); }
     msep(ui);
-    if (mrow(ui, 11, CUI_ICON_LINK, "Copiar link da mensagem", NULL, false)) { char l[220]; snprintf(l, sizeof l, "briks://mensagem/%s/%s", s->chat_channel, m->id); set_clipboard(l); act_close_menu(ui); }
-    if (mrow(ui, 13, CUI_ICON_HASH, "Copiar ID da mensagem", NULL, false)) { set_clipboard(m->id); act_close_menu(ui); }
+    if (mrow(ui, 11, CUI_ICON_LINK, "Copiar link da mensagem", NULL, false)) { char l[220]; snprintf(l, sizeof l, "briks://mensagem/%s/%s", s->chat_channel, m->id); briks_clip_set(l); act_close_menu(ui); }
+    if (mrow(ui, 13, CUI_ICON_HASH, "Copiar ID da mensagem", NULL, false)) { briks_clip_set(m->id); act_close_menu(ui); }
     if (can_delete(s, m)) { msep(ui); if (mrow(ui, 12, CUI_ICON_TRASH_2, "Excluir mensagem", NULL, true)) { g_dlg_delete = true; act_close_menu(ui); } }
 }
 
-static float menu_height(const app_state_t *s, const msg_t *m) { return 8.0f + (3.0f + (can_delete(s, m) ? 1 : 0)) * 9.0f + 30.0f * (float)(8 + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
+static float menu_height(const app_state_t *s, const msg_t *m) { return 8.0f + (3.0f + (can_delete(s, m) ? 1 : 0)) * 9.0f + 30.0f * (float)(8 + (g_menu_sel[0] ? 1 : 0) + (rich_is_plain(msgui_text(m)) ? 0 : 1) + (is_mine(m) ? 1 : 0) + (can_pin(s) ? 1 : 0) + (can_delete(s, m) ? 1 : 0)) + 6.0f; }
 
 void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     int n = 0;
@@ -429,7 +482,7 @@ void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     cui_push_id(ui, "pinsbtn");
     cui_box(ui, .id = "b", .dir = CUI_ROW, .gap = 5, .pad_x = 9, .pad_y = 5, .radius = 12, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0xffffff12)) {
         cui_icon(ui, CUI_ICON_MAP_PIN, 13, n ? CUI_RGB(0xc4b5fd) : B_MUTED);
-        cui_textf(ui, "Fixadas %d", n);
+        { char t[24]; if (g_view.w > 0 && g_view.w < 560) snprintf(t, sizeof t, "%d", n); else snprintf(t, sizeof t, "Fixadas %d", n); cui_text(ui, t, .nowrap = true); }   /* painel estreito (janela mínima, texto grande): só o número, sem quebrar em duas linhas */
     }
     if (briks_clicked(ui, "b")) g_dlg_pins = true;
     cui_pop_id(ui);
@@ -538,6 +591,16 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) g_dlg_delete = false;
             if (cui_button(ui, "Excluir", .variant = CUI_BUTTON_DANGER)) { mstate_t *w = st_find(g_menu_m.id, true); if (w) { w->deleted = true; st_save(); emit_ev(g_menu_m.id, "delete", NULL, NULL, NULL); } g_dlg_delete = false; }
+        }
+    }
+    cui_dialog(ui, "Selecionar texto", &g_dlg_select, .width = dw) {
+        cui_text(ui, "Arraste para marcar um trecho e use Ctrl+C.", .color = B_MUTED, .size = 12);
+        cui_box(ui, .width = CUI_FILL, .pad = 10, .radius = 12, .bg = CUI_RGBA(0x00000030), .max_height = fmaxf(vp.y - 260.0f, 120.0f), .scroll_y = true) {
+            cui_push_id(ui, "seltxt"); cui_selectable_text(ui, "sel", msgui_text(&g_menu_m)); cui_pop_id(ui);
+        }
+        cui_dialog_footer(ui) {
+            if (cui_button(ui, "Copiar tudo", .variant = CUI_BUTTON_SECONDARY)) briks_clip_set(msgui_text(&g_menu_m));
+            if (cui_button(ui, "Fechar", .variant = CUI_BUTTON_PRIMARY)) g_dlg_select = false;
         }
     }
     cui_dialog(ui, "Encaminhar para…", &g_dlg_forward, .width = dw) {

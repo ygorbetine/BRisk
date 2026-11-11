@@ -1,0 +1,5 @@
+# MSG-10/11: cartões de anexo (progresso, pausar, abrir) e galeria de imagens recebidas
+snap g0
+tap 592 551
+waitms 400
+shot g1

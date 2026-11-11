@@ -1,0 +1,7 @@
+# Funções básicas (demo social): abrir Configurações e fechar com Esc
+snap e0
+tap 441 755
+snap e1
+esc
+waitms 400
+snap e2

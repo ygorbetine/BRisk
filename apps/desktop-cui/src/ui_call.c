@@ -94,7 +94,7 @@ static int tile(cui_ctx *ui, const tile_t *t, bool mic_on) {
                 if (briks_clicked(ui, "lab")) act = TILE_MUTE;
                 {   /* botão direito no rótulo: popover de vidro acima do rótulo (não o cobre) */
                     cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "lab")); cui_vec2 mp = cui_mouse_pos(ui);
-                    if (cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && lr.w > 0 && mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h) cui_popover_open(ui, "pmenu");
+                    if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && lr.w > 0 && mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h) cui_popover_open(ui, "pmenu");
                 }
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);
@@ -230,7 +230,8 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 int order[BRIKS_MAX_PEERS], np = 0;
                 for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) order[np++] = i;
                 bool more = s->in_room && s->rtc_overflow > 0;   /* gente além da grade: um último quadro "+N" */
-                int total = 1 + np + (s->in_room ? 0 : 1) + (more ? 1 : 0);
+                bool preview = !s->in_room && getenv("BRIKS_DEMO") != NULL;   /* participante de exemplo: só nas capturas de demonstração, nunca no uso real */
+                int total = 1 + np + (preview ? 1 : 0) + (more ? 1 : 0);
                 int cols = total <= 3 ? total : total <= 4 ? 2 : total <= 6 ? 3 : total <= 12 ? 4 : total <= 20 ? 5 : total <= 30 ? 6 : 7;
                 int rows = (total + cols - 1) / cols;
                 cui_vec2 gvp = cui_viewport_size(ui);
@@ -246,7 +247,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     for (int k = r * cols; k < (r + 1) * cols; k++) {
                         if (k >= total) { cui_box(ui, .width = CUI_FILL, .height = CUI_FILL) {} continue; }   /* última linha incompleta: mantém a largura das colunas */
                         if (k == 0) { tile(ui, &me, mic_eff); continue; }
-                        if (!s->in_room) { tile(ui, &other, s->mic_on); continue; }   /* prévia local sem sala */
+                        if (preview && k == 1) { tile(ui, &other, s->mic_on); continue; }
                         if (more && k == total - 1) {
                             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 2, .clip = true) {
                                 char pn[24]; snprintf(pn, sizeof pn, "+%d", s->rtc_overflow);
@@ -284,7 +285,8 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
                 }
                 if (pill(ui, 2, CUI_ICON_VOLUME_2, "Ensurdecer", s->deaf ? 1 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
-                cui_push_disabled(ui, true); pill(ui, 3, CUI_ICON_VIDEO, "Câmera · em breve", 0); cui_pop_disabled(ui);   /* sem backend de vídeo da câmera nesta versão */
+                cui_push_disabled(ui, true); pill(ui, 3, CUI_ICON_VIDEO, "Câmera · em breve", 0); cui_pop_disabled(ui);
+                cui_push_id_int(ui, 3); if (briks_hover(ui, "b")) briks_tip("O envio de vídeo da câmera chega numa próxima versão. Compartilhar tela já funciona."); cui_pop_id(ui);   /* sem backend de vídeo da câmera nesta versão */
                 ui_share_bar(ui, s);
                 if (pill(ui, 5, CUI_ICON_PHONE, "Sair", 2)) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
             }

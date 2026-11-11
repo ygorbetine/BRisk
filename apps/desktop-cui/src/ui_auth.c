@@ -3,6 +3,7 @@
 #include "briks_ui.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include <windows.h>
 
@@ -53,7 +54,7 @@ static void messages(cui_ctx *ui, app_state_t *s) {
 
 static void go(app_state_t *s, int view) {
     s->acct_view = view; s->acct_error[0] = 0; s->acct_info[0] = 0;
-    memset(s->password, 0, sizeof s->password); memset(s->confirm, 0, sizeof s->confirm);
+    memset(s->password, 0, sizeof s->password); memset(s->confirm, 0, sizeof s->confirm); s->birth[0] = 0;
 }
 
 static void heading(cui_ctx *ui, const char *title, const char *sub) {
@@ -89,9 +90,14 @@ static void view_form(cui_ctx *ui, app_state_t *s) {
             : v == AV_RECOVER ? "Enviamos um link para você escolher uma senha nova." : NULL);
     int r = 0;
     if (v == AV_SIGNUP) cui_input(ui, "name", s->name, sizeof s->name, .placeholder = "Como devemos chamar você?");
-    r |= cui_input(ui, "email", s->email, sizeof s->email, .placeholder = "seu@email.com", .autofocus = v != AV_SIGNUP);
+    r |= cui_input(ui, "email", s->email, sizeof s->email, .placeholder = v == AV_LOGIN ? "seu@email.com ou @nick" : "seu@email.com", .autofocus = v != AV_SIGNUP);
+    if (v == AV_LOGIN && s->email[0] == '@') cui_text(ui, "Vamos usar o e-mail que este computador guardou para esse @nick.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
     if (v != AV_RECOVER) r |= cui_input(ui, "password", s->password, sizeof s->password, .password = true, .placeholder = v == AV_SIGNUP ? "Senha (mínimo 8 caracteres)" : "Senha");
     if (v == AV_SIGNUP) r |= cui_input(ui, "confirm", s->confirm, sizeof s->confirm, .password = true, .placeholder = "Repita a senha");
+    if (v == AV_SIGNUP) {
+        r |= cui_input(ui, "birth", s->birth, sizeof s->birth, .placeholder = "Data de nascimento (dd/mm/aaaa)");
+        cui_text(ui, "O Briks é só para maiores de 18 anos. A data serve só para conferir isso e não é guardada.", .size = 13, .color = B_MUTED, .width = CUI_FILL);
+    }
     messages(ui, s);
     if (cui_button(ui, v == AV_SIGNUP ? "Criar conta" : v == AV_RECOVER ? "Enviar e-mail de recuperação" : "Entrar",
                    .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_LG, .full_width = true) || (r & CUI_SUBMITTED)) account_submit(s);
@@ -151,8 +157,12 @@ static void view_entering(cui_ctx *ui, app_state_t *s) {
 
 void ui_auth(cui_ctx *ui, app_state_t *s) {
     briks_ambient(ui, 1.0f);   /* primeiro filho do STACK: fundo */
-    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad = 16) {
-        cui_box(ui, .width = CUI_FILL, .max_width = 440, .pad = 36, .gap = 12, .radius = 26,
+    /* rola quando a janela é baixa ou o texto é grande (o cartão nunca fica cortado); centrado na vertical quando cabe */
+    const cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "auth-card"));
+    const float top = fmaxf(16.0f, (cui_viewport_size(ui).y - cr.h) * 0.5f);
+    cui_scroll(ui, .id = "auth-scroll", .width = CUI_FILL, .height = CUI_FILL) {
+      cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_x = 16, .pad_top = top, .pad_bottom = 16) {
+        cui_box(ui, .id = "auth-card", .width = CUI_FILL, .max_width = 440, .pad = 36, .gap = 12, .radius = 26,
                 .bg = B_GLASS_STRONG, .border = 1, .border_color = B_A(B_C3, 0x33), .elevation = briks_elev(CUI_ELEVATION_FLOATING)) {
             briks_brand(ui, 26);
             cui_gap(ui, 12);
@@ -169,5 +179,6 @@ void ui_auth(cui_ctx *ui, app_state_t *s) {
                 cui_text(ui, "Modo de desenvolvimento: contas de mentira, sem internet.", .size = 11, .color = CUI_RGB(0xe8c46a));
             }
         }
+      }
     }
 }

@@ -1,0 +1,12 @@
+# janela: abre menor, cresce ao vivo e o layout deve acompanhar (fill_gap 0)
+wait 10
+expect fill_gap 0
+resize 2000 900
+wait 20
+expect win_w 2000
+expect fill_gap 0
+shot cresceu
+resize 700 520
+wait 20
+expect fill_gap 0
+shot encolheu

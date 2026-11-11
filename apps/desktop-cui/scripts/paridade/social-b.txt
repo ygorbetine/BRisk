@@ -1,0 +1,18 @@
+# Social: criar grupo, abrir grupo, sala de voz, histórico e voltar (demo social)
+snap g0
+tap 350 357
+snap g1
+key esc
+waitms 400
+tap 376 438
+snap g2
+tap 47 196
+snap g3
+key esc
+waitms 400
+tap 390 182
+snap h1
+tap 47 44
+snap h2
+tap 343 270
+snap v1

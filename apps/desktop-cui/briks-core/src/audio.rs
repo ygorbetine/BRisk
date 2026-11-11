@@ -3,7 +3,7 @@
 //! Com `fake = true` (BRIKS_CORE_FAKE_AUDIO=1) a captura é um tom de 440 Hz e não há dispositivo de áudio: os testes
 //! chamam `mix_pull` no lugar do callback do cpal.
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -77,9 +77,57 @@ pub struct Audio {
     gains: Mutex<HashMap<String, f32>>,
     sinks: Mutex<HashMap<String, Sink>>,
     cap: Mutex<VecDeque<f32>>,
+    /// Configurações de áudio (bits de f32): ganho de entrada, ganho de saída, limite da porta de ruído em dB (NAN = porta desligada)
+    in_gain: AtomicU32,
+    out_gain: AtomicU32,
+    gate_db: AtomicU32,
+    /// Supressão de ruído: 0 = Padrão (filtro leve), 1 = desligada
+    noise: AtomicU8,
+    nf: Mutex<NoiseFilter>,
+    /// Dispositivos escolhidos (nome; vazio = padrão do sistema). `dev_gen` sobe quando mudam: a thread do cpal reabre os fluxos.
+    mic_dev: Mutex<String>,
+    out_dev: Mutex<String>,
+    dev_gen: AtomicU32,
     pub stats: Mutex<HashMap<String, RxStat>>,
     pub sent_frames: AtomicU64,
     ev: mpsc::Sender<AudioEvent>,
+}
+
+/// Ganho de entrada + porta de ruído (bloco inteiro abaixo do limite em dB vira silêncio).
+pub fn process_input(x: &[f32], gain: f32, gate_db: Option<f32>) -> Vec<f32> {
+    let closed = match gate_db { Some(db) if !x.is_empty() => { let r = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt() * gain; 20.0 * r.max(1e-9).log10() < db } _ => false };
+    if closed { return vec![0.0; x.len()]; }
+    x.iter().map(|v| (v * gain).clamp(-1.0, 1.0)).collect()
+}
+
+/// Ajustes de áudio vindos das Configurações > Voz.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioCfg { pub in_gain: f32, pub out_gain: f32, pub gate_db: Option<f32>, pub noise: u8, pub mic: String, pub out: String }
+impl Default for AudioCfg { fn default() -> Self { AudioCfg { in_gain: 1.0, out_gain: 1.0, gate_db: None, noise: 0, mic: String::new(), out: String::new() } } }
+
+/// Supressão de ruído "Padrão": filtro passa-altas (~80 Hz, tira ronco e DC) + expansor suave que abaixa até 12 dB o que fica
+/// perto do piso de ruído estacionário (ventilador, chiado). Voz bem acima do piso passa intacta. Não é RNNoise.
+pub struct NoiseFilter { hx: f32, hy: f32, floor: f32, gain: f32 }
+impl NoiseFilter {
+    pub fn new() -> Self { NoiseFilter { hx: 0.0, hy: 0.0, floor: 0.0, gain: 1.0 } }
+    pub fn process(&mut self, x: &mut [f32]) {
+        if x.is_empty() { return; }
+        const A: f32 = 0.9895;
+        for v in x.iter_mut() { let y = A * (self.hy + *v - self.hx); self.hx = *v; self.hy = y; *v = y; }
+        let r = rms(x).max(1e-5);
+        let ms = x.len() as f32 * 1000.0 / RATE as f32;
+        self.floor = if self.floor == 0.0 || r < self.floor { r } else { (self.floor * 1.00005f32.powf(ms)).min(r) };
+        let target = if r < self.floor * 2.0 { 0.25 } else { 1.0 };
+        for v in x.iter_mut() { self.gain += (target - self.gain) * 0.004; *v *= self.gain; }
+    }
+}
+
+/// Dispositivo cujo nome combina com o pedido (o Windows corta nomes em 31 caracteres: aceita prefixo; depois, trecho).
+pub fn match_device(names: &[String], want: &str) -> Option<usize> {
+    let w = want.trim().to_lowercase();
+    if w.is_empty() { return None; }
+    let low: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    low.iter().position(|n| *n == w).or_else(|| low.iter().position(|n| n.starts_with(&w))).or_else(|| low.iter().position(|n| n.contains(&w)))
 }
 
 pub fn rms(x: &[f32]) -> f32 { if x.is_empty() { 0.0 } else { (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt() } }
@@ -93,7 +141,7 @@ impl Audio {
             "briks".into(),
         ));
         let a = Arc::new(Audio { track, mic_muted: AtomicBool::new(false), deaf: AtomicBool::new(false), stop: AtomicBool::new(false), fake,
-            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
+            muted_peers: Default::default(), gains: Default::default(), sinks: Default::default(), cap: Default::default(), in_gain: AtomicU32::new(1.0f32.to_bits()), out_gain: AtomicU32::new(1.0f32.to_bits()), gate_db: AtomicU32::new(f32::NAN.to_bits()), noise: AtomicU8::new(0), nf: Mutex::new(NoiseFilter::new()), mic_dev: Default::default(), out_dev: Default::default(), dev_gen: AtomicU32::new(0), stats: Default::default(), sent_frames: AtomicU64::new(0), ev });
         (a, rx)
     }
 
@@ -112,6 +160,23 @@ impl Audio {
     }
     /// Volume (0..2) do áudio da transmissão de um peer, só para este espectador.
     pub fn set_screen_gain(&self, peer: &str, gain: f32) { self.gains.lock().unwrap().insert(format!("{peer}#screen"), gain.clamp(0.0, 2.0)); }
+    /// Volume (0..2) da voz de um peer, só para quem escuta (1.0 = normal).
+    pub fn set_peer_gain(&self, peer: &str, gain: f32) { self.gains.lock().unwrap().insert(peer.to_string(), gain.clamp(0.0, 2.0)); }
+    /// Ajustes de áudio das Configurações: ganhos 0..2 (1 = normal) e porta de ruído (`gate_db` = None desliga).
+    pub fn set_audio_cfg(&self, in_gain: f32, out_gain: f32, gate_db: Option<f32>) {
+        self.in_gain.store(in_gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.out_gain.store(out_gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+        self.gate_db.store(gate_db.map(|d| d.clamp(-90.0, 0.0)).unwrap_or(f32::NAN).to_bits(), Ordering::Relaxed);
+    }
+    /// Aplica todas as Configurações > Voz (ganhos, porta, supressão e dispositivos). Mudar dispositivo reabre os fluxos.
+    pub fn apply_cfg(&self, c: &AudioCfg) {
+        self.set_audio_cfg(c.in_gain, c.out_gain, c.gate_db);
+        self.noise.store(c.noise.min(1), Ordering::Relaxed);
+        let mut changed = false;
+        { let mut m = self.mic_dev.lock().unwrap(); if *m != c.mic { *m = c.mic.clone(); changed = true; } }
+        { let mut o = self.out_dev.lock().unwrap(); if *o != c.out { *o = c.out.clone(); changed = true; } }
+        if changed { self.dev_gen.fetch_add(1, Ordering::Relaxed); }
+    }
     pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
     pub fn rx_stat(&self, peer: &str) -> RxStat { self.stats.lock().unwrap().get(peer).cloned().unwrap_or_default() }
 
@@ -255,22 +320,51 @@ impl Audio {
             for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v * g; } }
             if take < out.len() { s.primed = false; }
         }
-        out.iter_mut().for_each(|v| *v = v.clamp(-1.0, 1.0));
+        let og = f32::from_bits(self.out_gain.load(Ordering::Relaxed));
+        out.iter_mut().for_each(|v| *v = (*v * og).clamp(-1.0, 1.0));
     }
 
     fn push_capture(&self, mono48: &[f32]) {
+        let gate = f32::from_bits(self.gate_db.load(Ordering::Relaxed));
+        let tmp;
+        let mono48 = if self.noise.load(Ordering::Relaxed) == 0 { let mut t = mono48.to_vec(); self.nf.lock().unwrap().process(&mut t); tmp = t; &tmp[..] } else { mono48 };
+        let proc = process_input(mono48, f32::from_bits(self.in_gain.load(Ordering::Relaxed)), if gate.is_nan() { None } else { Some(gate) });
         let mut c = self.cap.lock().unwrap();
-        c.extend(mono48.iter().copied());
+        c.extend(proc.iter().copied());
         if c.len() > RATE as usize { let d = c.len() - RATE as usize; c.drain(..d); }
     }
 
     // ---------- dispositivos (cpal), numa thread própria porque o Stream do WASAPI não é Send ----------
     fn run_cpal(self: &Arc<Self>) -> Result<(), String> {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        // Reabre os fluxos quando a pessoa troca de microfone/saída nas Configurações (dev_gen sobe).
+        while !self.stop.load(Ordering::Relaxed) {
+            let gen = self.dev_gen.load(Ordering::Relaxed);
+            let keep = self.open_streams()?;
+            while !self.stop.load(Ordering::Relaxed) && self.dev_gen.load(Ordering::Relaxed) == gen { std::thread::sleep(Duration::from_millis(100)); }
+            drop(keep);
+        }
+        Ok(())
+    }
+
+    /// Escolhe o dispositivo pelo nome salvo; se sumiu, usa o padrão e avisa.
+    fn pick(&self, host: &cpal::Host, input: bool, want: &str) -> Option<cpal::Device> {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        if !want.trim().is_empty() {
+            let list: Vec<cpal::Device> = if input { host.input_devices().map(|d| d.collect()).unwrap_or_default() } else { host.output_devices().map(|d| d.collect()).unwrap_or_default() };
+            let names: Vec<String> = list.iter().map(|d| d.name().unwrap_or_default()).collect();
+            if let Some(i) = match_device(&names, want) { return list.into_iter().nth(i); }
+            let _ = self.ev.try_send(AudioEvent::Error(format!("{} \"{}\" não encontrado; usando o padrão do sistema", if input { "microfone" } else { "saída" }, want)));
+        }
+        if input { host.default_input_device() } else { host.default_output_device() }
+    }
+
+    fn open_streams(self: &Arc<Self>) -> Result<Vec<cpal::Stream>, String> {
+        use cpal::traits::{DeviceTrait, StreamTrait};
         use cpal::SampleFormat;
         let host = cpal::default_host();
         let mut keep: Vec<cpal::Stream> = vec![];
-        if let Some(dev) = host.default_input_device() {
+        let (want_in, want_out) = (self.mic_dev.lock().unwrap().clone(), self.out_dev.lock().unwrap().clone());
+        if let Some(dev) = self.pick(&host, true, &want_in) {
             let cfg = dev.default_input_config().map_err(|e| format!("microfone: {e}"))?;
             let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
             let me = self.clone();
@@ -289,7 +383,7 @@ impl Audio {
         } else {
             let _ = self.ev.try_send(AudioEvent::Error("nenhum microfone encontrado".into()));
         }
-        if let Some(dev) = host.default_output_device() {
+        if let Some(dev) = self.pick(&host, false, &want_out) {
             let cfg = dev.default_output_config().map_err(|e| format!("saída: {e}"))?;
             let (ch, rate) = (cfg.channels() as usize, cfg.sample_rate().0);
             let me = self.clone();
@@ -307,11 +401,68 @@ impl Audio {
         } else {
             let _ = self.ev.try_send(AudioEvent::Error("nenhuma saída de áudio encontrada".into()));
         }
-        while !self.stop.load(Ordering::Relaxed) { std::thread::sleep(Duration::from_millis(200)); }
-        drop(keep);
-        Ok(())
+        Ok(keep)
     }
 }
+
+/// Teste do microfone fora da chamada: captura curta só para medir o nível (nada é gravado nem enviado).
+/// Aplica o mesmo caminho da chamada (supressão, ganho, porta) para o medidor refletir as Configurações.
+/// `fake` (BRIKS_CORE_FAKE_AUDIO=1): tom de 440 Hz no lugar do microfone, para os testes sem dispositivo.
+pub struct MicTest { stop: Arc<AtomicBool> }
+impl MicTest {
+    pub fn start(cfg: AudioCfg, fake: bool, tx: mpsc::Sender<serde_json::Value>) -> MicTest {
+        let stop = Arc::new(AtomicBool::new(false));
+        let st = stop.clone();
+        std::thread::spawn(move || {
+            let send = |level: f32, error: Option<String>| { let mut j = serde_json::json!({ "ev": "mic.test", "level": level }); if let Some(e) = error { j["error"] = e.into(); } let _ = tx.try_send(j); };
+            let buf: Arc<Mutex<VecDeque<f32>>> = Default::default();
+            let mut nf = NoiseFilter::new();
+            let mut keep: Option<cpal::Stream> = None;
+            if !fake {
+                use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+                use cpal::SampleFormat;
+                let host = cpal::default_host();
+                let list: Vec<cpal::Device> = host.input_devices().map(|d| d.collect()).unwrap_or_default();
+                let names: Vec<String> = list.iter().map(|d| d.name().unwrap_or_default()).collect();
+                let dev = match_device(&names, &cfg.mic).and_then(|i| list.into_iter().nth(i)).or_else(|| host.default_input_device());
+                let Some(dev) = dev else { send(0.0, Some("nenhum microfone encontrado".into())); return };
+                let r = dev.default_input_config().map_err(|e| e.to_string()).and_then(|c| {
+                    let (ch, rate) = (c.channels() as usize, c.sample_rate().0);
+                    let b = buf.clone();
+                    let mut rs = Resampler::new(rate as f64 / RATE as f64);
+                    let mut push = move |m: Vec<f32>| { let mut o = vec![]; rs.process(&m, &mut o); let mut q = b.lock().unwrap(); q.extend(o); if q.len() > RATE as usize { let d = q.len() - RATE as usize; q.drain(..d); } };
+                    let err = |e| eprintln!("teste do microfone: {e}");
+                    let s = match c.sample_format() {
+                        SampleFormat::F32 => dev.build_input_stream(&c.config(), move |d: &[f32], _| push(mono(d, ch, |v| v)), err, None),
+                        SampleFormat::I16 => dev.build_input_stream(&c.config(), move |d: &[i16], _| push(mono(d, ch, |v| v as f32 / 32768.0)), err, None),
+                        SampleFormat::U16 => dev.build_input_stream(&c.config(), move |d: &[u16], _| push(mono(d, ch, |v| (v as f32 - 32768.0) / 32768.0)), err, None),
+                        f => return Err(format!("formato não suportado: {f:?}")),
+                    }.map_err(|e| e.to_string())?;
+                    s.play().map_err(|e| e.to_string())?;
+                    Ok(s)
+                });
+                match r { Ok(s) => keep = Some(s), Err(e) => { send(0.0, Some(format!("não foi possível abrir o microfone: {e}"))); return } }
+            }
+            let mut phase = 0.0f32;
+            let started = std::time::Instant::now();
+            while !st.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(60) {   // trava de segurança: encerra sozinho em 60 s
+                std::thread::sleep(Duration::from_millis(50));
+                let mut x: Vec<f32> = if fake {
+                    (0..2400).map(|_| { let v = 0.3 * phase.sin(); phase += 2.0 * std::f32::consts::PI * 440.0 / RATE as f32; v }).collect()
+                } else { buf.lock().unwrap().drain(..).collect() };
+                if x.is_empty() { continue; }
+                if cfg.noise == 0 { nf.process(&mut x); }
+                let p = process_input(&x, cfg.in_gain, cfg.gate_db);
+                send((rms(&p) * 5.0).clamp(0.0, 1.0), None);
+            }
+            drop(keep);
+            send(0.0, None);
+        });
+        MicTest { stop }
+    }
+    pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
+}
+impl Drop for MicTest { fn drop(&mut self) { self.stop(); } }
 
 #[cfg(test)]
 mod unit {
@@ -330,6 +481,76 @@ mod unit {
         let mut off = None;
         for _ in 0..16 { if let Some(l) = s.feed(0.001) { off = Some(l); } }
         assert_eq!(off, Some(0.0));
+    }
+
+    #[test]
+    fn input_gain_and_noise_gate() {
+        let tone: Vec<f32> = (0..480).map(|i| 0.2 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin()).collect();
+        let r0 = rms(&tone);
+        assert!((rms(&process_input(&tone, 0.5, None)) - r0 * 0.5).abs() < 1e-4, "ganho 0,5");
+        assert!(rms(&process_input(&tone, 1.0, Some(-50.0))) > r0 * 0.99, "porta aberta (voz forte)");
+        let hiss: Vec<f32> = tone.iter().map(|v| v * 0.005).collect();   // ~-60 dB
+        assert_eq!(rms(&process_input(&hiss, 1.0, Some(-50.0))), 0.0, "porta fecha no ruído baixo");
+        assert!(rms(&process_input(&hiss, 1.0, None)) > 0.0, "sem porta o ruído passa");
+    }
+
+    #[test]
+    fn noise_filter_cuts_steady_hiss_keeps_voice() {
+        let mut seed = 1u32;
+        let mut noise = |n: usize, amp: f32| -> Vec<f32> { (0..n).map(|_| { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); ((seed >> 8) as f32 / 8388608.0 - 1.0) * amp }).collect() };
+        let mut nf = NoiseFilter::new();
+        let mut last = vec![];
+        for _ in 0..300 { let mut c = noise(480, 0.01); let before = rms(&c); nf.process(&mut c); last = vec![before, rms(&c)]; }
+        assert!(last[1] < last[0] * 0.5, "chiado cai pelo menos 6 dB: {:?}", last);
+        let mk = || -> Vec<f32> { (0..480).map(|i| 0.3 * (2.0 * std::f32::consts::PI * 300.0 * i as f32 / 48000.0).sin()).collect() };
+        let before = rms(&mk());
+        let mut v = mk();
+        for _ in 0..40 { v = mk(); nf.process(&mut v); }
+        assert!(rms(&v) > before * 0.9, "voz passa: {} vs {}", rms(&v), before);
+        let mut nf2 = NoiseFilter::new();
+        let mut dc = vec![0.2f32; 9600]; nf2.process(&mut dc);
+        assert!(rms(&dc[8000..]) < 0.02, "DC removido");
+    }
+
+    #[test]
+    fn device_name_matching() {
+        let n: Vec<String> = ["Alto-falantes (Realtek High Definition Audio)", "Microfone (USB Audio Device)", "Headset (Realtek High Definition Audio)"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(match_device(&n, "Microfone (USB Audio Device)"), Some(1));
+        assert_eq!(match_device(&n, "Headset (Realtek High Definit"), Some(2), "nome cortado em 31 caracteres do Windows");
+        assert_eq!(match_device(&n, "usb audio"), Some(1));
+        assert_eq!(match_device(&n, ""), None);
+        assert_eq!(match_device(&n, "Inexistente"), None);
+    }
+
+    #[test]
+    fn apply_cfg_bumps_device_generation_only_on_change() {
+        let (a, _rx) = Audio::new(true);
+        let g0 = a.dev_gen.load(Ordering::Relaxed);
+        let c = AudioCfg { mic: "USB".into(), ..Default::default() };
+        a.apply_cfg(&c);
+        assert_eq!(a.dev_gen.load(Ordering::Relaxed), g0 + 1);
+        a.apply_cfg(&c);
+        assert_eq!(a.dev_gen.load(Ordering::Relaxed), g0 + 1, "mesma config não reabre");
+        a.apply_cfg(&AudioCfg { mic: "USB".into(), out: "Fone".into(), noise: 1, ..Default::default() });
+        assert_eq!(a.dev_gen.load(Ordering::Relaxed), g0 + 2);
+        assert_eq!(a.noise.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn mic_test_fake_reports_levels_and_stops() {
+        let (tx, mut rx) = mpsc::channel(64);
+        let t = MicTest::start(AudioCfg { noise: 1, ..Default::default() }, true, tx);
+        let j = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+        assert_eq!(j["ev"], "mic.test");
+        assert!(j["level"].as_f64().unwrap() > 0.5, "tom de 440 Hz a 0,3 mede alto: {j}");
+        t.stop();
+        let mut last = None;
+        while let Ok(Some(j)) = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await { let z = j["level"] == 0.0; last = Some(j); if z { break; } }
+        assert_eq!(last.unwrap()["level"], 0.0, "ao parar, o medidor volta a zero");
+        let (tx, mut rx) = mpsc::channel(64);
+        let _t = MicTest::start(AudioCfg { noise: 1, gate_db: Some(0.0), ..Default::default() }, true, tx);
+        let j = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+        assert_eq!(j["level"], 0.0, "porta fechada: {j}");
     }
 
     #[test]

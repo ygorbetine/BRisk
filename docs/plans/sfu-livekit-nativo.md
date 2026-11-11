@@ -67,3 +67,11 @@ Estado em 01:47: o lock de GPU pertence à sessão da transmissão; nada de GPU 
 5. Regra proposta para o Automático sem salas divididas: SFU só se há configuração válida E o token foi obtido; qualquer falha no token = P2P para aquela pessoa. Para ninguém ficar sozinho em outra sala, o ideal é o dono/primeiro a entrar anunciar o modo no Realtime e os demais seguirem: não implementado.
 6. **Risco achado por inspeção:** a UI manda `chat.send`/`chat.event.send` pela mesma sala `room` e, no modo SFU, o core responde "chat não disponível no modo SFU". Ou seja, hoje o SFU quebra o chat da sala. Correção prevista: no modo SFU manter também uma malha só de DataChannel (sem mídia) para chat, status, presença e expulsão, e rotear mídia ao SFU; precisa reconciliar `peer_id` (UUID da malha x identidade do SFU). Até lá, o Automático com SFU configurado não deve ser ligado para usuários.
 7. Expulsar/mudo remoto por mensagens assinadas do dono: NÃO FEITO.
+
+## Marco 6+4 (feito): modo híbrido, chat/status/presença/expulsão junto do SFU
+
+- `hybrid.rs` junta o SFU (voz e tela) com a malha só de DataChannel (`audio: None`) num único `MeshHandle`: IPC e UI não mudam.
+- Identidade: cada nó anuncia a sua identidade do SFU no `peer.state` da malha (campo `sfuId`, aceito só de peer autenticado pela prova ECDSA); eventos do SFU (fala, transmissão) saem com o peer_id da malha.
+- Automático NUNCA escolhe SFU (só escolha manual em Rede ou configuração explícita) até o híbrido ser validado em uso real.
+- Teste `tests_hybrid::hybrid_chat_presence_voice_share_and_kick` (livekit-server --dev real): DM, evento de chat assinado, status, voz (66 quadros/2 s), mudo, tela com peer_id da malha, expulsão pela dona. Passa.
+- Limite: a malha tem `MAX_PEERS = 5`, então o chat em sala grande no SFU ainda é limitado. NÃO FEITO: reconexão automática, regra do Automático, perda de pacotes/merge `cui-transmissao`, NVENC sobre SFU, mudo remoto assinado.

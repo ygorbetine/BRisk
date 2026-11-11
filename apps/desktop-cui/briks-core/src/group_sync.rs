@@ -268,6 +268,27 @@ mod tests {
     }
 
     #[test]
+    fn admin_edits_channels_and_wire_check_binds_the_sender() {
+        let w = world();
+        let v1 = signed(&w.owner, base(&w.owner, vec![mem(&w.owner, "Ana", true), mem(&w.adm, "Adm", true), mem(&w.bia, "Bia", false)]));
+        let me = w.bia.fingerprint();
+        // administrador cria, renomeia e apaga canais (o manifesto muda, os cargos não)
+        let mut v2 = v1.clone(); v2.version = 2;
+        v2.channels.push(Channel { id: "c3".into(), name: "novo".into(), kind: "text".into() });
+        v2.channels[1].name = "Sala 2".into();
+        let v2 = signed(&w.adm, v2);
+        assert_eq!(accept(Some(&v1), &v2, &me).unwrap(), Decision::Update);
+        let mut v3 = v2.clone(); v3.version = 3; v3.channels.retain(|c| c.id != "c3");
+        assert_eq!(accept(Some(&v2), &signed(&w.adm, v3), &me).unwrap(), Decision::Update);
+        // pelo DataChannel: o signatário tem de ser quem enviou
+        assert!(verify_wire(&v2, &w.adm.fingerprint()).is_ok());
+        assert!(verify_wire(&v2, &w.cai.fingerprint()).unwrap_err().to_string().contains("quem o enviou"));
+        // sem canal de texto sobrando, o próprio assinar recusa
+        let mut v4 = v2.clone(); v4.version = 4; v4.channels.retain(|c| c.kind == "voice");
+        assert!(sign(&w.adm, &mut v4).is_err());
+    }
+
+    #[test]
     fn revoked_admin_loses_the_power_and_removed_member_drops_the_group() {
         let w = world();
         let v1 = signed(&w.owner, base(&w.owner, vec![mem(&w.owner, "Ana", true), mem(&w.adm, "Adm", true), mem(&w.bia, "Bia", false)]));

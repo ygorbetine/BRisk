@@ -585,3 +585,19 @@ rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agor
   com 8 espectadores o emissor não autenticou com todos em 60 s). A máquina estava ocupada por outras sessões (o emissor chegou
   a só ~19 qps), então os números absolutos valem pouco; a relação (todos recebem o que sai) é o resultado.
 - **Para o SFU:** `docs/plans/transmissao-api-interna.md` + `VideoOut::publish`.
+
+## 18. Frente A, 4º marco — cliques e segurança dos testes — 2026-11-11
+
+- **Cliques restantes (alternar apps, parar/retomar, volume do espectador) — NÃO FEITO.** Dois roteiros foram tentados e descartados:
+  os cliques por coordenada do `teste-ui-real.sh` ficaram defasados quando o diálogo ganhou o selo "Beta" (o clique na aba
+  "Janelas" caiu na aba "Telas") e a tentativa com fonte sintética (`BRIKS_DEV_SHARE=test`) não iniciou a transmissão.
+- **INCIDENTE de teste (corrigido):** por causa do clique defasado, um roteiro automático transmitiu por ~10 s a "Tela 1", o
+  MONITOR PRINCIPAL do usuário, para um espectador local em loopback (nada saiu da máquina; as capturas desse teste foram apagadas
+  sem abrir). Resposta: `BRIKS_SHARE_NO_PRIMARY=1` (agora definido pelo `teste-ui-real.sh`) faz o app recusar transmitir a tela
+  principal. Lembrete: a miniatura do monitor principal aparece sempre no seletor, então capturas do seletor também mostram a tela
+  real do usuário; roteiros futuros devem evitar fotografar o seletor.
+- **DPI / vários monitores — NÃO FEITO** (só a 2ª tela 1920x1080 foi usada; nada com escala de DPI diferente de 100%).
+- **Tela cheia exclusiva / DRM reais — NÃO FEITO.** Existe a detecção de quadros pretos e o aviso na interface; nenhum jogo ou
+  conteúdo protegido real foi testado.
+- **Discord tocando — NÃO FEITO.** **FEC de vídeo — NÃO FEITO** (retransmissão por NACK cobre a perda; FEC exigiria um canal
+  extra e ainda não foi avaliado).

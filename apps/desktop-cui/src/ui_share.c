@@ -139,6 +139,8 @@ static void start_selected(app_state_t *s) {
     share_state_t *q = &s->sh;
     int t = q->tab;
     if (q->sel[t] < 0 || q->sel[t] >= q->nsrc[t]) return;
+    /* trava de teste: com BRIKS_SHARE_NO_PRIMARY os roteiros automáticos nunca transmitem o monitor principal do usuário */
+    if (t == 0 && getenv("BRIKS_SHARE_NO_PRIMARY") && strstr(q->src[t][q->sel[t]].sub, "principal")) { copy(q->err, sizeof q->err, "Teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)"); return; }
     send_start(s, t == 0 ? "screen" : "window", q->src[t][q->sel[t]].id, q->src[t][q->sel[t]].name);
     q->dialog_open = false;
 }

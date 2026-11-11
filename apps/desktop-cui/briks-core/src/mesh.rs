@@ -82,6 +82,8 @@ pub enum MeshCmd {
     /// Começa a transmitir (faixa de vídeo para todos os peers autenticados, com renegociação).
     ShareStart { cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf> },
     ShareStop,
+    /// Volume (0..2) do áudio da transmissão de um peer, só para mim.
+    ShareVolume { key: String, gain: f32 },
     /// Troca os processos capturados durante a transmissão ("Escolher apps"); só vale se ela começou com áudio.
     ShareAudio { mode: crate::procaudio::AudioMode },
     /// Liga/desliga a decodificação do vídeo de um peer e define o arquivo de quadro compartilhado.
@@ -453,6 +455,9 @@ impl Actor {
             }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
             MeshCmd::ShareStop => self.share_stop().await,
+            MeshCmd::ShareVolume { key, gain } => {
+                if let Some(a) = &self.audio { let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key); a.set_screen_gain(&id, gain); }
+            }
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => {
                 let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv.clone()));

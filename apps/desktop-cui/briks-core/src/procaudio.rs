@@ -37,6 +37,9 @@ pub enum AudioMode {
     Tree(u32),
     Pids(Vec<u32>),
     AllExcept,
+    /// Só testes: bipe sintético de 1 kHz por 100 ms no início de cada segundo do relógio, só no canal esquerdo (prova de estéreo
+    /// e de sincronia A/V, sem depender de placa de som nem de outro processo).
+    TestBeep,
 }
 
 pub fn new_audio_track() -> Arc<TrackLocalStaticSample> {
@@ -180,8 +183,12 @@ struct Src { ring: Ring, stop: Arc<AtomicBool>, dead: Arc<AtomicBool> }
 
 fn wanted(mode: &AudioMode) -> Vec<u32> {
     match mode {
-        AudioMode::None => vec![],
-        AudioMode::Tree(p) => vec![*p],
+        AudioMode::None | AudioMode::TestBeep => vec![],
+        // "Da fonte" numa janela: a árvore do processo da janela e também as sessões de áudio do MESMO executável que vivem fora
+        // dela (apps que tocam por um processo irmão)
+        AudioMode::Tree(p) => { let exe = exe_of(*p).to_lowercase(); let mut v = vec![*p];
+            if !exe.is_empty() { for a in list_apps() { if a["exe"].as_str().map(|e| e.to_lowercase()) == Some(exe.clone()) { if let Some(q) = a["pid"].as_u64() { if !v.contains(&(q as u32)) { v.push(q as u32); } } } } }
+            v }
         AudioMode::Pids(v) => v.clone(),
         AudioMode::AllExcept => list_apps().iter().filter(|a| a["excluded"] != true).filter_map(|a| a["pid"].as_u64().map(|p| p as u32)).collect(),
     }
@@ -198,6 +205,10 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
     std::thread::spawn(move || {
         let mut enc = match opus::Encoder::new(RATE, opus::Channels::Stereo, opus::Application::Audio) { Ok(e) => e, Err(_) => return };
         let _ = enc.set_bitrate(opus::Bitrate::Bits(128_000));
+        let _ = enc.set_inband_fec(true);   // FEC interno do Opus: um pacote perdido é reconstruído a partir do seguinte
+        let _ = enc.set_packet_loss_perc(5);
+        let beep = *md.lock().unwrap() == AudioMode::TestBeep;
+        let mut beep_phase = 0.0f32;
         let mut srcs: HashMap<u32, Src> = HashMap::new();
         let mut last_scan = Instant::now() - Duration::from_secs(10);
         let mut next = Instant::now();
@@ -223,6 +234,15 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
             if next + Duration::from_millis(200) < now { next = now; }
             mix.iter_mut().for_each(|v| *v = 0.0);
             let mut any = false;
+            if beep {
+                // o quadro cobre os 20 ms que acabaram de passar (como numa captura de verdade)
+                let ms0 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0).saturating_sub(20_000);
+                for i in 0..FRAME {
+                    let t_ms = (ms0 + i as u64 * 1_000_000 / RATE as u64) / 1000 % 1000;
+                    if t_ms < 100 { mix[i * 2] = 0.5 * beep_phase.sin(); beep_phase += 2.0 * std::f32::consts::PI * 1000.0 / RATE as f32; any = true; } else { beep_phase = 0.0; }
+                }
+                any = true;   // envia também o silêncio: o receptor precisa vê-lo para detectar o início do bipe
+            }
             for s in srcs.values() {
                 let mut r = s.ring.lock().unwrap();
                 if r.len() < FRAME * 2 { continue; }
@@ -248,6 +268,16 @@ mod tests {
     fn exclusion_list_covers_briks_and_discord() {
         assert!(excluded_exe("Briks.exe") && excluded_exe("briks-core.exe") && excluded_exe("Discord.exe") && excluded_exe("DiscordPTB.exe"));
         assert!(!excluded_exe("Spotify.exe") && !excluded_exe("chrome.exe"));
+    }
+
+    /// Lista real das sessões de áudio desta máquina (não toca nada): mostra quem seria capturado e quem fica de fora.
+    #[test]
+    fn lists_audio_sessions_and_marks_briks_and_discord_as_excluded() {
+        let apps = list_apps();
+        for a in &apps { eprintln!("sessão de áudio: {} (pid {}) tocando={} excluído={}", a["exe"], a["pid"], a["playing"], a["excluded"]); }
+        for a in &apps { let e = a["exe"].as_str().unwrap_or("").to_lowercase(); assert_eq!(a["excluded"] == true, e.starts_with("briks") || e.starts_with("discord"), "{a}"); }
+        let all: Vec<u32> = wanted(&AudioMode::AllExcept);
+        for a in apps.iter().filter(|a| a["excluded"] == true) { assert!(!all.contains(&(a["pid"].as_u64().unwrap() as u32)), "excluído entrou na captura: {a}"); }
     }
 
     /// Toca um WAV do Windows num processo filho (PowerShell) e mede: capturando o PID dele chega som; capturando outro PID

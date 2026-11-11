@@ -691,3 +691,59 @@ async fn local_overload_lowers_fps_and_recovers() {
     assert!(after >= 20, "não voltou quando a folga reapareceu: {after}");
     let _ = a.cmd.send(MeshCmd::Close).await;
 }
+
+/// Áudio da transmissão em ESTÉREO no receptor, volume do espectador e sincronia A/V. Fontes sintéticas presas ao mesmo relógio:
+/// bipe de 1 kHz no início de cada segundo (só no canal esquerdo) e vídeo com o relógio carimbado em cada quadro. No receptor:
+/// atraso do áudio = instante em que o início do bipe chega ao buffer de reprodução (ms dentro do segundo); atraso do vídeo =
+/// instante em que o quadro fica pronto menos o carimbo. O buffer de reprodução do áudio soma 60 ms antes de tocar.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn screen_audio_is_stereo_and_av_offset_is_measured() {
+    use crate::capture::{read_stamp, SourceKind};
+    use crate::procaudio::AudioMode;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000e1", "bbbbbbbb-2222-4222-8222-0000000000e1");
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, pa, "Ana", "av1", ia);
+    let (mut b, bau) = node_audio(port, pb, "Beto", "av1", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-av-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "AV".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
+    assert_eq!(on["audio"], true);
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("quadro");
+    let src = FrameSource::open(&dir.join("rx.bin")).unwrap();
+    let (mut last_n, mut vlat) = (0u64, vec![]);
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(7) {
+        if let Some((w, _, n, rgba)) = src.read() { if n != last_n { last_n = n; let l = (src.ts() as u32).wrapping_sub(read_stamp(&rgba, w)) as i32; if (0..2000).contains(&l) { vlat.push(l); } } }
+        tokio::time::sleep(Duration::from_millis(8)).await;
+    }
+    let key = format!("{pa}#screen");
+    let st = bau.rx_stat(&key);
+    let mut alat: Vec<i32> = st.onsets.iter().skip(1).map(|t| (t % 1000) as i32).filter(|d| *d < 900).collect();
+    vlat.sort(); alat.sort();
+    assert!(st.frames > 100 && alat.len() >= 3 && vlat.len() > 60, "amostras insuficientes: áudio {} quadros, {} bipes, vídeo {}", st.frames, alat.len(), vlat.len());
+    let (v50, a50) = (vlat[vlat.len() / 2], alat[alat.len() / 2]);
+    eprintln!("estéreo: maior diferença entre canais {:.3} (0 = mono), pico {:.3}", st.stereo_diff, st.peak);
+    eprintln!("A/V: vídeo pronto {v50} ms depois da captura (p50, {} quadros); áudio no buffer {a50} ms depois do bipe (p50, {} bipes, mín {} máx {}); com os 60 ms do buffer de reprodução o áudio sai ~{} ms DEPOIS do vídeo",
+        vlat.len(), alat.len(), alat[0], alat[alat.len() - 1], a50 + 60 - v50);
+    assert!(st.stereo_diff > 0.2, "o áudio da transmissão chegou em mono");
+    assert!((a50 + 60 - v50).abs() < 250, "áudio e vídeo fora de sincronia: {} ms", a50 + 60 - v50);
+    // volume do espectador: com ganho 0 a mixagem sai muda; com 1 volta
+    // puxa a mixagem como a placa de som faria (10 ms por vez) durante 1,5 s e guarda o pico: cobre pelo menos um bipe
+    async fn level(au: &Arc<Audio>) -> f32 {
+        let mut peak = 0.0f32;
+        for _ in 0..150 { let mut out = vec![0.0f32; 960]; au.mix_pull_stereo(&mut out); peak = out.iter().fold(peak, |m, v| m.max(v.abs())); tokio::time::sleep(Duration::from_millis(10)).await; }
+        peak
+    }
+    let loud = level(&bau).await;
+    b.cmd.send(MeshCmd::ShareVolume { key: pa.into(), gain: 0.0 }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let muted = level(&bau).await;
+    eprintln!("volume do espectador: pico {loud:.3} com volume 1; {muted:.3} com volume 0");
+    assert!(loud > 0.1 && muted < 0.001);
+}

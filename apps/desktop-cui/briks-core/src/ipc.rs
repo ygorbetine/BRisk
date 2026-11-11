@@ -246,6 +246,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config) -> Result<()> {
                         let mode = audio_mode(&v, &crate::capture::SourceKind::Test);
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareAudio { mode }).await; }
                     }
+                    "share.volume" => {
+                        let key = v["peer"].as_str().unwrap_or("").to_string();
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }
+                    }
                     "share.stop" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareStop).await; } }
                     "share.watch" => {
                         let key = v["peer"].as_str().unwrap_or("").to_string();

@@ -37,6 +37,37 @@ static void set_photo(app_state_t *s, const char *path) {
     if (path && path[0]) { int w = 0, h = 0; s->user_photo = cui_image_load(ui, path, &w, &h); }
 }
 
+/* Fotos dos amigos (PRF-03): o core baixa para o cache e manda friends.photos {photos:[{user_id,path}]}; aqui viram textura, uma por pessoa. */
+static struct { char id[48]; char path[300]; cui_texture tex; } g_fph[MAX_FRIENDS];
+static void fph_clear(cui_ctx *ui) { for (int i = 0; i < MAX_FRIENDS; i++) { if (g_fph[i].tex) cui_image_destroy(ui, g_fph[i].tex); memset(&g_fph[i], 0, sizeof g_fph[i]); } }
+cui_texture friend_photo(const char *user_id) {
+    if (!user_id || !user_id[0]) return 0;
+    for (int i = 0; i < MAX_FRIENDS; i++) if (g_fph[i].tex && !strcmp(g_fph[i].id, user_id)) return g_fph[i].tex;
+    return 0;
+}
+cui_texture friend_photo_by_name(const app_state_t *s, const char *name) {   /* mensagens e membros só trazem o nome: casa com a lista de amigos */
+    if (!name || !name[0]) return 0;
+    for (int i = 0; i < s->friend_count; i++) if (!strcmp(s->friends[i].name, name)) return friend_photo(s->friends[i].id);
+    return 0;
+}
+static void on_friend_photos(app_state_t *s, const jval *j) {
+    cui_ctx *ui = cui_app_ui(s->app);
+    const jval *l = json_get(j, "photos");
+    for (int k = 0; k < json_len(l); k++) {
+        const jval *e = json_at(l, k); const char *id = json_str(e, "user_id", ""), *path = json_str(e, "path", "");
+        if (!id[0] || !path[0]) continue;
+        int slot = -1, freeslot = -1;
+        for (int i = 0; i < MAX_FRIENDS; i++) { if (!strcmp(g_fph[i].id, id) && g_fph[i].id[0]) { slot = i; break; } if (freeslot < 0 && !g_fph[i].id[0]) freeslot = i; }
+        if (slot < 0) slot = freeslot;
+        if (slot < 0) continue;
+        if (g_fph[slot].tex && !strcmp(g_fph[slot].path, path)) continue;   /* mesma foto: nada a recarregar */
+        if (g_fph[slot].tex) { cui_image_destroy(ui, g_fph[slot].tex); g_fph[slot].tex = 0; }
+        int w = 0, h = 0; cui_texture t = cui_image_load(ui, path, &w, &h);
+        copy(g_fph[slot].id, sizeof g_fph[slot].id, id); copy(g_fph[slot].path, sizeof g_fph[slot].path, path); g_fph[slot].tex = t;
+    }
+    cui_request_redraw(ui);
+}
+
 static bool need_core(app_state_t *s) {
     if (core_state() == CORE_READY) return true;
     copy(s->acct_error, sizeof s->acct_error, core_state() == CORE_FAILED ? core_error() : "O Briks ainda está iniciando. Tente de novo em instantes.");
@@ -284,7 +315,7 @@ static void on_state(app_state_t *s, const jval *j) {
     } else {   /* signed_out */
         const bool was_busy = s->acct_state == ACCT_BUSY;
         s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE;
-        s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL);
+        s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL); fph_clear(cui_app_ui(s->app));
         copy(s->acct_error, sizeof s->acct_error, strcmp(json_str(j, "error_code", ""), "cancelled") ? msg : "");
         copy(s->acct_info, sizeof s->acct_info, strcmp(json_str(j, "error_code", ""), "cancelled") || !was_busy ? "" : "Login cancelado.");
         if (s->acct_view == AV_NEWPASS) s->acct_view = AV_MAIN;
@@ -427,6 +458,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
         copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
+    else if (!strcmp(ev, "friends.photos")) on_friend_photos(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
     else if (!strcmp(ev, "presence.list")) on_presence(s, j);
     else if (!strcmp(ev, "friends.lookup")) {
@@ -479,7 +511,17 @@ void account_tick(app_state_t *s) {
             }
         }
     }
-    if (s->acct_demo) return;
+    if (s->acct_demo) {   /* captura: BRIKS_DEV_FPHOTO=caminho põe essa imagem como foto do primeiro amigo (nada baixado) */
+        static bool fp_done; static ULONGLONG t0; const char *fp = getenv("BRIKS_DEV_FPHOTO"), *dl = getenv("BRIKS_DEV_FPHOTO_DELAY");   /* _DELAY: ms até a foto chegar (teste antes/depois) */
+        if (!t0) t0 = GetTickCount64();
+        if (fp && !fp_done && s->friend_count > 0 && (!dl || GetTickCount64() - t0 >= (ULONGLONG)atoi(dl))) {
+            cui_request_redraw(cui_app_ui(s->app));
+            fp_done = true; char esc[700], js[900]; json_escape(fp, esc, sizeof esc);
+            snprintf(js, sizeof js, "{\"photos\":[{\"user_id\":\"%s\",\"path\":\"%s\"}]}", s->friends[0].id, esc);
+            jval *j = json_parse(js); if (j) { on_friend_photos(s, j); json_free(j); }
+        }
+        return;
+    }
     core_status_t cs = core_state();
     if (cs == CORE_STOPPED) { core_start(); return; }
     if (cs == CORE_FAILED) {

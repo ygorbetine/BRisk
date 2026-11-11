@@ -92,6 +92,8 @@
       { "item": "BAS-37", "de": "l0", "para": "l1", "esperado": "muda", "min": 2000 } ] },
     { "id": "config-texto", "demo": "social", "roteiro": "config-texto.txt", "env": { "BRIKS_DEV_OPEN": "settings:2" }, "checagens": [
       { "item": "BAS-39", "de": "t0", "para": "t1", "esperado": "muda", "min": 2000 },
-      { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] }
+      { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] },
+    { "id": "perfil-fotos", "demo": "social", "roteiro": "perfil-fotos.txt", "env": { "BRIKS_DEV_FPHOTO": "assets/login/discord.png", "BRIKS_DEV_FPHOTO_DELAY": "1300" }, "checagens": [
+      { "item": "PRF-03", "de": "p0", "para": "p1", "esperado": "muda", "regiao": [270, 500, 230, 140], "min": 150 } ] }
   ]
 }

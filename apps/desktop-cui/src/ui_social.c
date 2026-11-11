@@ -263,7 +263,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
-                if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);
+                if (person_row_ex(ui, &s->friends[i], s->active_friend == i, friend_photo(s->friends[i].id))) app_open_friend(s, i);
                 cui_pop_id(ui);
             }
         }
@@ -322,7 +322,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
     cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
-        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo; agrupada: só o espaço */
+        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar_ex(ui, m->author, &(cui_avatar_opts){ .size = 32, .image = friend_photo_by_name(s, m->author) }); } }   /* avatar sem relevo; agrupada: só o espaço */
         if (m->mine) {
             if (interactive) msgui_arrow(ui, m);   /* seta do lado de dentro, como no WhatsApp: à esquerda do nosso balão */
             /* nosso: roxo padrão; só a quina superior direita mais reta */
@@ -483,8 +483,8 @@ static void panel_members(cui_ctx *ui, app_state_t *s) {
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
         cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
             person_t me; snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
-            person_row(ui, &me, false);
-            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row(ui, &s->friends[i], false); cui_pop_id(ui); }
+            person_row_ex(ui, &me, false, s->user_photo);
+            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row_ex(ui, &s->friends[i], false, friend_photo(s->friends[i].id)); cui_pop_id(ui); }
         }
     }
 }

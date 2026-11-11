@@ -10,6 +10,7 @@
 //!   backup.result   {op: save|restore|delete, ok, message}   (comandos: backup.restore {phrase}, backup.delete, backup.status)
 //!   identity.changed {fingerprint}                 a identidade deste aparelho foi trocada pela recuperada
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
+//!   friends.photos  {photos:[{user_id,path}]}      fotos dos amigos no cache local (PNG/JPEG), depois de friends.list
 //!   presence.beat {invisible} / presence.friends / presence.clear -> presence.list {remote, friends:[{user_id,online,last_seen}]}   (0007)
 //!   friends.blocks  {remote, blocks:[{user_id,nick,display_name}]}   (friends.block/unblock/blocks {user_id}); remote=false: servidor sem a 0006, vale a lista local da UI
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
@@ -140,6 +141,24 @@ async fn refresh_photo(rt: &Runtime, user_id: &str, url: String, tx: &mpsc::Send
         avatar::cache(&dir, &id, &url).ok().or_else(|| avatar::cached(&dir, &id))
     }).await.ok().flatten();
     let _ = tx.send(json!({ "ev": "account.avatar", "path": path })).await;
+}
+
+/// Fotos dos amigos (PRF-03): baixa cada foto para o cache (arquivo com menos de 1 dia é reaproveitado) e avisa a UI com `friends.photos`.
+/// Falha de uma foto não atrapalha as outras; quem não tem foto continua só com as iniciais.
+async fn friend_photos(rt: &Runtime, friends: &[super::provider::Friend], tx: &mpsc::Sender<Value>) {
+    let dir = rt.data_dir.clone();
+    let todo: Vec<(String, String)> = friends.iter().filter(|f| f.state == "friend")
+        .filter_map(|f| f.avatar_url.clone().filter(|u| !u.is_empty()).map(|u| (f.user_id.clone(), u))).collect();
+    if todo.is_empty() { return; }
+    let list = tokio::task::spawn_blocking(move || {
+        todo.into_iter().filter_map(|(id, url)| {
+            let fresh = avatar::cached(&dir, &id).filter(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()
+                .and_then(|t| t.elapsed().ok()).map(|e| e.as_secs() < 86_400).unwrap_or(false));
+            let path = fresh.or_else(|| avatar::cache(&dir, &id, &url).ok()).or_else(|| avatar::cached(&dir, &id))?;
+            Some(json!({ "user_id": id, "path": path }))
+        }).collect::<Vec<Value>>()
+    }).await.unwrap_or_default();
+    if !list.is_empty() { let _ = tx.send(json!({ "ev": "friends.photos", "photos": list })).await; }
 }
 
 /// Situação da cópia: existe? é da identidade deste aparelho? Nunca inclui o pacote cifrado nem a frase.
@@ -508,7 +527,7 @@ impl Service {
                     let remote = remote && list.is_some();
                     let _ = tx.send(json!({ "ev": "friends.blocks", "remote": remote, "blocks": list.unwrap_or_default() })).await;
                     if remote && cmd != "friends.blocks" {
-                        if let Ok(f) = acc.friends().await { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; }
+                        if let Ok(f) = acc.friends().await { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; friend_photos(&rt, &f, &tx).await; }
                     }
                 });
             }
@@ -531,7 +550,7 @@ impl Service {
                         _ => {}
                     }
                     match acc.friends().await {
-                        Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; }
+                        Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; friend_photos(&rt, &f, &tx).await; }
                         Err(e) => {
                             let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
                             if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }

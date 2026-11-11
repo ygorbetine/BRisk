@@ -389,6 +389,9 @@ static inline float briks_text_floor(float size) { return (size > 0 && size < BR
 static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
 #undef cui_text
 #define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
+/* account.c: fotos dos amigos no cache local (PRF-03); 0 = sem foto (só iniciais) */
+cui_texture friend_photo(const char *user_id);
+cui_texture friend_photo_by_name(const app_state_t *s, const char *name);
 /* accountx.c: data de nascimento do cadastro e dica de login por @nick */
 bool birth_parse(const char *t, int *d, int *m, int *y);
 int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */

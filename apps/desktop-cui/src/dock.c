@@ -382,7 +382,7 @@ static bool menu_pill(cui_ctx *ui, const char *label, int id, float a) {
         cui_text(ui, label, .font = CUI_FONT_MEDIUM, .size = 13, .color = fade(CUI_RGB(0xf6f1ff), a));
     }
     if (hot) cui_set_cursor(ui, CUI_CURSOR_HAND);
-    bool hit = briks_clicked(ui, "pill");
+    bool hit = briks_clicked_r(ui, "pill", 18.0f);
     cui_pop_id(ui);
     return hit;
 }

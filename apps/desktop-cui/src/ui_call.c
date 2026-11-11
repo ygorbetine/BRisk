@@ -195,7 +195,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             const cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "lab")), tr = cui_get_rect(ui, cui_make_id(ui, "tile"));
             const cui_vec2 mp = cui_mouse_pos(ui);
             if (!t->me) {
-                if (briks_clicked(ui, "lab")) act = TILE_MUTE;
+                if (briks_clicked_r(ui, "lab", 20.0f)) act = TILE_MUTE;
                 if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && in_rect(tr, mp)) cui_popover_open(ui, "pmenu");   /* botão direito em qualquer ponto do bloco */
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);

@@ -364,6 +364,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     /* ganchos de teste/captura: BRIKS_DEV_SHARE=dialog | dialog-apps | dialog-windows | screen | test (uma vez, com o core pronto) */
     static int dev; const char *d = getenv("BRIKS_DEV_SHARE");
     if (d) cui_request_redraw(ui);
+    if (d && !strcmp(d, "demo-quality")) { static int once; if (!once && cui_time(ui) > 1.0) { once = 1; g_dev_open_quality = true; } }   /* captura sem core: abre a janela de qualidade */
     if (d && core_state() == CORE_READY && s->in_room) {
         if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }
         if (dev == 0 && !strcmp(d, "dialog-quality")) { q->quality_open = true; q->br_mode = 3; q->br_custom = 35; q->res = 2; q->fps = FPS_N - 1; }
@@ -609,6 +610,8 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         vsep(ui);
         char chip[80]; quality_chip(q, chip, sizeof chip);
         bool failed = q->err[0] && !on && !q->dialog_open;   /* motivo do fim ("A janela foi fechada"...) fica no chip até a próxima ação */
+        /* chip + âncora + popover num mesmo empilhamento (como o popover do Áudio): a janela abre colada ao chip, acima dele */
+        cui_box(ui, .dir = CUI_STACK, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START) {
         cui_box(ui, .id = "q", .dir = CUI_ROW, .gap = 6, .pad_x = 14, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
             bool adapting = q->active && (q->adapting[0] || q->black);   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
             if (failed) cui_icon(ui, CUI_ICON_TRIANGLE_ALERT, 13, B_DANGER);
@@ -616,7 +619,8 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
         if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
-        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP_END, .width = 520, .pad = 16, .gap = 10) {
+            cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);   /* âncora: topo do chip, com a largura dele */
+        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
             beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");
             static bool dirty;
@@ -637,6 +641,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                 }
                 if (cui_button(ui, "Aplicar na transmissão", .variant = CUI_BUTTON_PRIMARY, .disabled = !dirty)) { dirty = false; send_start(s, q->last_kind, q->last_id, q->label); cui_popover_close(ui, "shq"); }
             } else dirty = false;
+        }
         }
     }
     cui_pop_id(ui);

@@ -43,6 +43,10 @@ int script_probe(const char *n) {
     if (!strcmp(n, "modal")) return g_modal_prev;
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
     if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
+    if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
+    if (!strcmp(n, "amg_in_len")) return (int)strlen(state.amg_in);
+    if (!strcmp(n, "amg_own")) return strstr(state.amg_msg, "próprio") != NULL;   /* aceitar o meu próprio código é recusado pelo core */
+    if (!strcmp(n, "amg_friends")) return state.friend_count;
     if (!strcmp(n, "search_on")) return attach_search_is_on();
     return dock_probe(n);
 }

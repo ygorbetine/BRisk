@@ -3,6 +3,7 @@
  * %APPDATA%\Briks-CUI\blocked.json (o servidor ainda não tem bloqueio: supabase/migrations/0006_friend_blocks.sql prepara isso, sem estar aplicada). */
 #include "briks_ui.h"
 #include "json.h"
+#include "core.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -271,6 +272,79 @@ static void blocked_tab(cui_ctx *ui, app_state_t *s) {
     if (!s->blocked_count) empty_state(ui, CUI_ICON_SHIELD, "Ninguém bloqueado", "Use “Bloquear” no menu de um amigo ou de um pedido.");
 }
 
+static void amg_send(app_state_t *s) {   /* manda o pedido pendente quando o core estiver pronto (ele sobe sob demanda) */
+    if (!s->amg_pend) return;
+    core_status_t cs = core_state();
+    if (cs == CORE_STOPPED) { core_start(); return; }
+    if (cs == CORE_FAILED) { snprintf(s->amg_msg, sizeof s->amg_msg, "O serviço do Briks não iniciou. Tente de novo."); s->amg_pend = 0; s->amg_wait = false; return; }
+    if (cs != CORE_READY) { cui_request_redraw(cui_app_ui(s->app)); return; }
+    char line[1200];
+    if (s->amg_pend == 1) { char nm[200]; json_escape(s->user_name, nm, sizeof nm); snprintf(line, sizeof line, "{\"cmd\":\"friend.invite\",\"name\":\"%s\"}", nm); }
+    else { char c[1100]; json_escape(s->amg_in, c, sizeof c); snprintf(line, sizeof line, "{\"cmd\":\"friend.accept\",\"code\":\"%s\"}", c); }
+    s->amg_pend = 0; core_send(line);
+}
+static void amg_make(app_state_t *s) { s->amg_pend = 1; s->amg_wait = true; s->amg_msg[0] = 0; amg_send(s); }
+static void amg_accept(app_state_t *s) {
+    if (!s->amg_in[0]) { snprintf(s->amg_msg, sizeof s->amg_msg, "Cole o código que a pessoa mandou."); return; }
+    s->amg_pend = 2; s->amg_wait = true; s->amg_msg[0] = 0; amg_send(s);
+}
+
+/* ---- amigo P2P por código assinado (core: friend.invite / friend.accept; briks-core/src/friend_invite.rs) ---- */
+static void amg_clip(const char *utf8) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0); if (n <= 0) return;
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, (size_t)n * sizeof(wchar_t)); if (!h) return;
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, (wchar_t *)GlobalLock(h), n); GlobalUnlock(h);
+    if (OpenClipboard(NULL)) { EmptyClipboard(); if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h); CloseClipboard(); } else GlobalFree(h);
+}
+
+static void amg_paste(app_state_t *s) {   /* cola o texto da área de transferência no campo do código */
+    if (getenv("BRIKS_DEV_NOCLIP") && s->amg_code) { snprintf(s->amg_in, sizeof s->amg_in, "%s", s->amg_code); return; }   /* teste oculto: sem mexer na área de transferência do usuário */
+    if (!OpenClipboard(NULL)) return;
+    HANDLE h = GetClipboardData(CF_UNICODETEXT);
+    if (h) { const wchar_t *w = (const wchar_t *)GlobalLock(h); if (w) { WideCharToMultiByte(CP_UTF8, 0, w, -1, s->amg_in, (int)sizeof s->amg_in, NULL, NULL); s->amg_in[sizeof s->amg_in - 1] = 0; GlobalUnlock(h); } }
+    CloseClipboard();
+}
+
+/* resposta do core (friend.result): convite gerado, amigo aceito ou erro em português */
+void friends_p2p_event(app_state_t *s, const jval *j) {
+    const char *op = json_str(j, "op", ""); const jval *okv = json_get(j, "ok"); const bool ok = okv && okv->type == J_BOOL && okv->b;
+    s->amg_wait = false;
+    if (!ok) { snprintf(s->amg_msg, sizeof s->amg_msg, "%s", json_str(j, "message", "Não deu certo.")); return; }
+    if (!strcmp(op, "invite")) {
+        free(s->amg_code); s->amg_code = _strdup(json_str(j, "code", ""));
+        snprintf(s->amg_msg, sizeof s->amg_msg, "Código pronto (vale por 7 dias). Mande só para quem você quer como amigo.");
+    } else if (!strcmp(op, "accept")) {
+        const char *fp = json_str(j, "fp", ""), *nm = json_str(j, "name", "?");
+        bool have = false; for (int i = 0; i < s->friend_count; i++) if (fp[0] && !strcmp(s->friends[i].fp, fp)) have = true;
+        if (!have && s->friend_count < MAX_FRIENDS) {   /* só nesta sessão: a lista de verdade vem da conta; o amigo P2P fica gravado no core (friends-p2p.json) */
+            person_t *p = &s->friends[s->friend_count++]; memset(p, 0, sizeof *p);
+            snprintf(p->id, sizeof p->id, "p2p:%.40s", fp); snprintf(p->name, sizeof p->name, "%s", nm); snprintf(p->fp, sizeof p->fp, "%s", fp);
+        }
+        s->amg_in[0] = 0;
+        snprintf(s->amg_msg, sizeof s->amg_msg, json_get(j, "existed") && json_get(j, "existed")->b ? "%s já era seu amigo (dados atualizados)." : "%s foi adicionado como amigo.", nm);
+    }
+}
+
+/* cartão "Por código": gerar o meu convite, copiar, e colar o de outra pessoa para aceitar */
+void friends_code_card(cui_ctx *ui, app_state_t *s) {
+    amg_send(s);
+    cui_box(ui, .width = CUI_FILL, .pad = 16, .gap = 10, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
+        cui_text(ui, "Adicionar por código", .font = CUI_FONT_MEDIUM);
+        cui_text(ui, "Sem servidor: gere o seu código e mande à pessoa, ou cole aqui o código que ela mandou. O código é assinado com a sua chave e vale por 7 dias.", .size = 12.5f, .color = B_MUTED);
+        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            if (cui_button(ui, s->amg_code ? "Gerar outro" : "Gerar meu código", .variant = CUI_BUTTON_SECONDARY, .loading = s->amg_wait)) amg_make(s);
+            if (s->amg_code && cui_button(ui, "Copiar código", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_COPY)) { if (!getenv("BRIKS_DEV_NOCLIP")) amg_clip(s->amg_code); snprintf(s->amg_msg, sizeof s->amg_msg, "Código copiado."); }
+        }
+        if (s->amg_code) { char head[72]; snprintf(head, sizeof head, "%.44s…", s->amg_code); cui_text(ui, head, .size = 13, .color = B_MUTED, .nowrap = true); }
+        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            int r = cui_input(ui, "amg-in", s->amg_in, sizeof s->amg_in, .placeholder = "Cole o código briks-amg1…", .width = CUI_FILL);
+            if (cui_button(ui, "Colar", .variant = CUI_BUTTON_SECONDARY)) amg_paste(s);
+            if (cui_button(ui, "Adicionar", .variant = CUI_BUTTON_PRIMARY, .loading = s->amg_wait) || (r & CUI_SUBMITTED)) amg_accept(s);
+        }
+        if (s->amg_msg[0]) cui_text(ui, s->amg_msg, .size = 12.5f, .color = B_MUTED);
+    }
+}
+
 static void add_tab(cui_ctx *ui, app_state_t *s) {
     const bool online = s->acct_user_id[0] != 0;
     cui_box(ui, .width = CUI_FILL, .pad = 16, .gap = 10, .radius = 16, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
@@ -284,6 +358,7 @@ static void add_tab(cui_ctx *ui, app_state_t *s) {
         if (online && s->acct_nick[0]) cui_textf(ui, "O seu é @%s", s->acct_nick);
         if (s->notice[0]) cui_text(ui, s->notice, .size = 12.5f, .color = B_MUTED);
     }
+    friends_code_card(ui, s);
 }
 
 void friends_hub(cui_ctx *ui, app_state_t *s) {

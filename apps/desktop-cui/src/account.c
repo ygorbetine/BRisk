@@ -434,6 +434,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         } else copy(s->gnick_msg, sizeof s->gnick_msg, !strcmp(json_str(j, "error_code", ""), "server_not_ready") ? "A busca por @nick ainda não está ativa no servidor." : json_str(j, "message", "Não encontrado."));
     }
     else if (!strncmp(ev, "group.", 6)) groups_core_event(s, j, ev);
+    else if (!strcmp(ev, "friend.result")) friends_p2p_event(s, j);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;

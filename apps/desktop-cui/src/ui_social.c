@@ -751,6 +751,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         cui_dialog_footer(ui) {
             if (cui_button(ui, "Enviar pedido", .variant = CUI_BUTTON_PRIMARY, .loading = s->busy)) app_add_friend(s);
         }
+        friends_code_card(ui, s);   /* AMI-04: por código assinado */
     }
     cui_dialog(ui, "Criar grupo", &s->create_group_open) {
         cui_text(ui, "O grupo fica gravado neste computador. Para chamar alguém, abra “Membros” e convide um amigo: você recebe um código para mandar a ele.", .color = B_MUTED);

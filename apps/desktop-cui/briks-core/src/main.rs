@@ -11,6 +11,7 @@ mod adapt;
 mod capture;
 mod video;
 mod gpuconv;
+mod friend_invite;
 mod group_sync;
 mod ice;
 mod history;

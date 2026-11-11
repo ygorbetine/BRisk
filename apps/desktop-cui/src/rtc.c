@@ -86,7 +86,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         if (idn && json_str(idn, "x", "")[0]) snprintf(s->my_jwk, sizeof s->my_jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(idn, "x", ""), json_str(idn, "y", ""));
     } else if (!strcmp(ev, "signaling.status")) {
         copy(s->rtc_state, sizeof s->rtc_state, json_str(j, "state", ""));
-        copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
+        net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);   /* erro técnico de rede vira frase compreensível */
     } else if (!strcmp(ev, "peer")) {
         set_peer(s, json_str(j, "peer_id", ""), json_str(j, "state", ""));
         if (!strcmp(json_str(j, "state", ""), "autenticado")) groups_resend(s);
@@ -134,7 +134,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     } else if (!strncmp(ev, "share.", 6)) {
         changed = share_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
-        copy(s->rtc_msg, sizeof s->rtc_msg, json_str(j, "message", ""));
+        net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");

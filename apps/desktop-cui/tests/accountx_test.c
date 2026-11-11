@@ -40,7 +40,7 @@ int main(void) {
     net_friendly_error("operation timed out", o, sizeof o); CHECK(strstr(o, "demorou"));
     net_friendly_error("dns error: no such host", o, sizeof o); CHECK(strstr(o, "encontrar o servidor"));
     net_friendly_error("HTTP 429", o, sizeof o); CHECK(strstr(o, "Muitas tentativas"));
-    net_friendly_error("", o, sizeof o); CHECK(strstr(o, "Algo deu errado"));
+    net_friendly_error("", o, sizeof o); CHECK(!o[0]);
     net_friendly_error("Senha curta demais.", o, sizeof o); CHECK(!strcmp(o, "Senha curta demais."));   /* mensagem já amigável passa intacta */
     if (fails) { printf("%d falha(s)\n", fails); return 1; }
     printf("accountx_test: ok\n"); return 0;

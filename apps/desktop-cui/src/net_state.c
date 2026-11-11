@@ -86,7 +86,7 @@ void net_friendly_error(const char *raw, char *out, size_t cap) {
     for (; raw && raw[n] && n < sizeof low - 1; n++) low[n] = (char)((raw[n] >= 'A' && raw[n] <= 'Z') ? raw[n] + 32 : raw[n]);
     low[n] = 0;
     const char *m;
-    if (!raw || !raw[0]) m = "Algo deu errado. Tente de novo em instantes.";
+    if (!raw || !raw[0]) { if (cap) out[0] = 0; return; }   /* sem texto: fica vazio (quem chama mostra o seu padrão) */
     else if (strstr(low, "timed out") || strstr(low, "timeout") || strstr(low, "10060")) m = "O servidor demorou demais para responder. Confira a internet e tente de novo.";
     else if (strstr(low, "dns") || strstr(low, "resolve") || strstr(low, "no such host") || strstr(low, "11001")) m = "Não foi possível encontrar o servidor. Confira a internet e tente de novo.";
     else if (strstr(low, "connection refused") || strstr(low, "10061") || strstr(low, "connect error") || strstr(low, "network is unreachable") || strstr(low, "error sending request")) m = "Sem conexão com o servidor. Confira a internet e tente de novo.";

@@ -173,6 +173,7 @@ typedef struct {
     /* Voz e atalhos: teste do microfone fora da chamada e resultado do registro dos atalhos globais */
     bool mic_test_on; float mic_test_level; char mic_test_msg[160];
     int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
+    char *amg_code; char amg_in[1024], amg_msg[200]; bool amg_wait; int amg_pend;   /* amigo P2P por código assinado (friends_code_card) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -213,6 +214,13 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);
 void groups_create_json(const app_state_t *s, char *out, size_t cap);
+void groups_overlay(cui_ctx *ui, app_state_t *s);                              /* menu de contexto do grupo (camada de cima, junto do menu da mensagem) */
+void friends_code_card(cui_ctx *ui, app_state_t *s);   /* cartão "Por código" (gerar/copiar/aceitar), usado no diálogo e no hub */
+void friends_p2p_event(app_state_t *s, const struct jval *j);   /* friend.result do core */
+void groups_demo_roster(void);                                                  /* dados demo da presença por sala (BRIKS_DEMO_GROSTER) */
+int groups_probe(const app_state_t *s, const char *name);                      /* roteiro oculto: expect grp_nch / grp_nm / grp_nadmin ... */
+bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
+void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
 void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */

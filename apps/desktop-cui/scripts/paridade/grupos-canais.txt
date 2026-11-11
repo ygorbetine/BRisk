@@ -1,0 +1,50 @@
+# Grupos: canais (demo group; dono). Renomear (lápis no hover), apagar (lixeira + confirmação) e criar canal. Conferido com `expect grp_*`.
+waitms 600
+expect grp_nch 4
+at 380 508
+waitms 400
+shot gc0
+click 435 508
+at 2 790
+waitms 500
+shot gc1
+expect grp_ren_open 1
+tap 700 411
+type 2
+waitms 300
+tap 790 471
+snap gc2
+expect grp_ch1len 6
+expect grp_ren_open 0
+at 380 582
+waitms 400
+click 467 582
+at 2 790
+waitms 500
+shot gc3
+expect grp_del_open 1
+tap 766 485
+snap gc4
+expect grp_nch 3
+expect grp_del_open 0
+tap 380 581
+snap gc5
+tap 529 396
+tap 640 445
+type Sala 2
+waitms 300
+tap 784 505
+snap gc6
+expect grp_nch 4
+expect grp_ntext 2
+at 380 432
+rdown
+rup
+at 380 432
+waitms 500
+shot gc7
+expect grp_ctx_open 1
+tap 460 495
+snap gc8
+expect grp_ctx_open 0
+expect grp_members_open 1

@@ -1,0 +1,9 @@
+# Grupos: presenca por sala de voz na lateral (quem esta em qual sala, AO VIVO + Assistir). Demo group + BRIKS_DEMO_GROSTER.
+waitms 600
+snap gv0
+expect grp_voice_who 3
+expect grp_voice_live 1
+expect grp_call_mode -1
+tap 388 599
+snap gv1
+expect grp_call_mode 11

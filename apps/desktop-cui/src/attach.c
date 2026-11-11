@@ -563,6 +563,7 @@ void attach_search_button(cui_ctx *ui) {
         if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Fechar busca")) { g_search_on = false; g_search[0] = 0; }
     } else if (cui_icon_button(ui, CUI_ICON_SEARCH, .size = CUI_SIZE_SM, .tooltip = "Buscar mensagens (Ctrl+F)")) attach_search_open();
 }
+bool attach_search_is_on(void) { return g_search_on; }
 bool attach_search_match(const char *text) {
     if (!g_search_on || !g_search[0]) return true;
     char a[1200], b[64]; size_t i = 0; for (; text[i] && i < sizeof a - 1; i++) a[i] = (char)tolower((unsigned char)text[i]); a[i] = 0;

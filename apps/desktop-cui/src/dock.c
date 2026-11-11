@@ -136,10 +136,9 @@ static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
 }
 
 typedef struct { bool hot; } grip_t;
-static void paint_grip(cui_ctx *ui, cui_rect r, void *user) {
+static void paint_grip(cui_ctx *ui, cui_rect r, void *user) {   /* só a barrinha (34x4): um canvas do tamanho do painel roubava o clique dos botões do cabeçalho */
     const grip_t *g = (const grip_t *)user;
-    float bw = fminf(34.0f, r.w - 24.0f); cui_rect b = { r.x + r.w * 0.5f - bw * 0.5f, r.y + (r.w < 110.0f ? 4.0f : 8.0f), bw, 4.0f };
-    cui_draw_rect(ui, b, CUI_CORNERS(2), g->hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24));
+    cui_draw_rect(ui, r, CUI_CORNERS(2), g->hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24));
 }
 
 typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float mx, my; bool down; } rc_t;
@@ -165,7 +164,10 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
             ui_panel(ui, c->s, kind);
             if (hot) {   /* alça de arrasto: só aparece com o mouse sobre a faixa que move o painel, em QUALQUER painel; pintada em coordenadas do painel (não mexe no layout) */
                 grip_t gp = { true };
-                cui_canvas(ui, "grip", CUI_FILL, CUI_FILL, paint_grip, &gp, sizeof gp);
+                float bw = fminf(34.0f, r.w - 24.0f);
+                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = r.w < 110.0f ? 4.0f : 8.0f) {
+                    cui_canvas(ui, "grip", CUI_PX(bw), CUI_PX(4), paint_grip, &gp, sizeof gp);
+                }
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {
                 { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + 8, 28 * nb, 28); }

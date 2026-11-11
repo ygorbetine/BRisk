@@ -401,12 +401,12 @@ static void content(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(62), .pad_left = 20, .pad_right = 20 + g_tools_w, .gap = 10,
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
-            cui_text(ui, title, .font = CUI_FONT_MEDIUM);
+            cui_text(ui, title, .font = CUI_FONT_MEDIUM, .nowrap = true);
             { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
-              cui_text(ui, sub, .size = 12, .color = B_MUTED); }
+              if (g_panel_w >= 380.0f * cui_theme_get(ui)->font_scale) cui_text(ui, sub, .size = 12, .color = B_MUTED, .nowrap = true); }   /* painel estreito ou texto grande: a legenda sai, o título fica inteiro */
             if (group) groups_header(ui, s);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
-            { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3); }
+            { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3, .nowrap = true); }
             msgui_pinned_button(ui, s);
             attach_search_button(ui);
         }

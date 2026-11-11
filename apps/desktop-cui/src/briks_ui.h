@@ -380,6 +380,13 @@ static inline void briks_pop_end(cui_ctx *ui) { g_in_modal--; cui_popover_end(ui
 #define cui_popover(ui, id, ...) CUI__SCOPE_IF(briks_pop_begin((ui), (id), CUI__OPTS(cui_popover_opts, __VA_ARGS__)), briks_pop_end(ui))
 #undef cui_dialog
 #define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
+/* Texto sempre legível (LAY-11): nenhuma etiqueta abaixo de BRIKS_MIN_TEXT px (antes havia 10 a 11 px espalhados). O piso fica aqui, no cui_text, para valer
+   em todos os arquivos; o tamanho do texto ajustável (Configurações > Temas) multiplica por cima (font_scale). size = 0 segue o tema. */
+#define BRIKS_MIN_TEXT 12.0f
+static inline float briks_text_floor(float size) { return (size > 0 && size < BRIKS_MIN_TEXT) ? BRIKS_MIN_TEXT : size; }
+static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
+#undef cui_text
+#define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
 /* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */
 static inline bool briks_clicked_top(cui_ctx *ui, const char *id) {
     if (briks_blocked()) return false;

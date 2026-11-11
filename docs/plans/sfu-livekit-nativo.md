@@ -292,3 +292,61 @@ UI:
   `tests_sfu::sfu_screen_share_published_and_watched` com o disco C: (pasta temporária) em 0 MB livres; repetir o teste sozinho caiu
   de novo, ainda com o disco cheio. O teste grava quadros em arquivo mapeado na pasta temporária, então disco cheio é a causa provável,
   NÃO comprovada. Os testes deixam pastas `briks-*` em %TEMP% (as `briks-robust-churn-*` têm 190 MB cada). Repetir com espaço livre.
+
+## Rodada 5 (para a 1.4.0)
+
+### Dono fixo da chamada: marca no token
+- Antes: dono = "o mais antigo" (no app, o `joinedAt` assinado no hello; na `livekit-kick`, o `joinedAt` do servidor). Depois de uma
+  queda ou reinício do servidor de chamadas a ordem de volta podia trocar o dono.
+- Agora a função `livekit-token` põe a marca de dono no próprio token (`metadata` do participante = `{"briks":{"owner":true}}`).
+  O servidor de chamadas repassa essa metadata a todos e a devolve em ListParticipants; o cliente não consegue alterá-la (o token
+  não dá `canUpdateOwnMetadata`). Sem tabela nova e sem segredo novo. Regra em `supabase/functions/_shared/owner.ts`:
+  1. ninguém recebe a marca se outra pessoa que está na sala já a tem;
+  2. quem reentra (manda o token anterior da mesma sala e identidade, com assinatura válida, vencido há no máximo 24 h) mantém o
+     que tinha: o dono continua dono, e quem não era não vira dono por ter voltado primeiro;
+  3. quem entra numa sala vazia recebe a marca.
+- App (`sfu.rs`, `sfudata.rs`): dono = o informado pelo app; senão o marcado pelo servidor (entre marcados, o que entrou primeiro);
+  senão o mais antigo. Enquanto o marcado não se autenticou, ninguém passa por dono. Durante uma reconexão a marca de quem eu
+  conhecia fica valendo até ele reaparecer ou o prazo de tolerância vencer.
+- O pedido de token feito DURANTE uma chamada leva `previous` (o token em uso); entrada nova não leva.
+- `livekit-kick` (`_shared/kick.ts`): `roomOwner` passa a preferir o marcado; sem marcado na sala, mesma regra de antes. Tokens
+  antigos (sem marca) continuam funcionando.
+- **O que mudou nas funções (para republicar):** `livekit-token/index.ts` (pergunta ListParticipants, aceita `previous`, emite a
+  marca, devolve `owner` na resposta), `livekit-kick` via `_shared/kick.ts`, `_shared/livekit-admin.ts` (lê a metadata) e o arquivo
+  novo `_shared/owner.ts`. As duas funções precisam ser republicadas juntas. Nenhum secret novo.
+- Prova: `supabase/tests/livekit-owner.test.ts` (9 casos em Node, simulados); `sfudata::t::server_marked_owner_wins_over_the_oldest`;
+  `tests_sfu::token_request_carries_the_previous_token_only_during_a_call`; e, contra o `livekit-server --dev` real,
+  `tests_sfukick::sfu_owner_is_the_one_marked_in_the_token_even_after_restarts` (a marcada entra por último, é reconhecida pelos
+  três apps, só ela silencia, continua dona depois de 2 reinícios do servidor, a função de expulsão recusa o mais antigo e atende a
+  marcada, e o mais antigo assume quando ela sai).
+- NÃO testado: a `livekit-token` em si (Deno, `AccessToken` com `metadata`, ListParticipants no servidor publicado): só a regra
+  (`owner.ts`) rodou, em Node. Nos testes contra o servidor real o token com a marca é emitido pelo teste, no mesmo formato.
+- Limites: um cliente modificado pode omitir `previous` e pedir entrada nova; só vira dono se a sala estiver vazia naquele instante.
+  Duas entradas simultâneas numa sala vazia podem sair as duas marcadas (vale a que o servidor registrou primeiro). Se a dona sai
+  de vez, o mais antigo assume (não há transferência explícita de dono).
+
+### Anexos: pausar e cancelar durante o envio
+- Pausar/retomar e cancelar já existiam no protocolo; faltava prova e havia dois defeitos, corrigidos:
+  - quem RECEBE cancelar derrubava o envio para todos os destinatários; agora só o envio para ele para (`by_peer` no evento);
+  - as mensagens de controle (aceitar, pausar, cancelar) entravam na fila dos pedaços, que só o ator esvazia: enviando um arquivo
+    e aceitando ou pausando outro ao mesmo tempo, o ator esperava vaga na fila que ele mesmo esvazia e travava. Agora saem direto.
+- Prova (`tests_sfuapps::sfu_file_pause_resume_and_cancel_during_transfer`, 24 MB, 3 clientes, servidor real): pausa por quem
+  envia e por quem recebe (progresso parado por 2 s), retomada com conteúdo idêntico, cancelamento por quem envia (em curso e em
+  pausa) e por quem recebe com o pedaço gravado apagado, desistência de um sem parar o envio ao outro, e envio e recepção simultâneos.
+- NÃO feito: retomar um anexo depois de uma queda do servidor (continua falhando de forma visível); anexos pela UI C.
+
+### Vídeo depois de reconectar
+- Causa: ao republicar a faixa de vídeo, o app forçava um quadro-chave antes de o transporte novo existir (perdido). O pedido do
+  servidor quando o espectador reassina (PLI) tinha então de esperar o intervalo mínimo entre quadros-chave do codificador (1 a 2 s)
+  contado a partir desse quadro desperdiçado.
+- Mudança (`sfu.rs`, `on_track_published`): na REpublicação não força quadro-chave; o PLI do servidor é atendido na hora.
+- Medição (`tests_sfurec`, 1º quadro novo do espectador depois de os três voltarem, e quadros por segundo nos 5 s seguintes),
+  com a máquina a 100% de CPU por outras compilações: ver a tabela no relatório da rodada. O teste falha nessa carga no limite de
+  quadros por segundo (720p em software), antes e depois da mudança.
+
+### 10% de perda no envio
+- Mudança pequena (`sfu.rs`, `rtx_gap_ms`): com perda alta relatada pelo SFU (a mesma faixa que liga a retransmissão em dobro), o
+  intervalo mínimo entre retransmissões do mesmo pacote cai de 1,5 x RTT + 15 ms (mín. 30) para RTT + 5 ms (mín. 10), para o 2º e
+  o 3º pedido do servidor não serem recusados.
+- **NÃO medido.** A matriz de perda (`tests_sfurede`, ignorada por padrão) não foi rodada nesta rodada. O que falta de verdade
+  (FEC, quadro-chave menor, piso no estimador) fica em `share.rs`/`adapt.rs`, fora do escopo desta rodada.

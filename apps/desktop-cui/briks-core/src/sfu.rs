@@ -1161,6 +1161,14 @@ impl Actor {
     }
 }
 
+/// Intervalo mínimo (ms) entre duas retransmissões do MESMO pacote para o SFU. Normal: 1,5 x RTT + 15 ms (30 a 150). Com perda alta
+/// no enlace de envio (`high_loss` = retransmissão em dobro ligada), a própria retransmissão se perde com frequência e o servidor
+/// pede de novo logo em seguida, poucas vezes, e desiste: o intervalo cai para RTT + 5 ms (10 a 150) para o 2º e o 3º pedido não
+/// serem recusados por "acabou de sair". O custo é alguma retransmissão repetida, dentro do mesmo orçamento do pacer.
+fn rtx_gap_ms(rtt_ms: f32, high_loss: bool) -> u64 {
+    if high_loss { (rtt_ms as u64 + 5).clamp(10, 150) } else { ((rtt_ms * 1.5) as u64 + 15).clamp(30, 150) }
+}
+
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports
 /// (perda/jitter/RTT para o adapt.rs). É a mesma leitura da malha, com a chave "sfu" no lugar do peer.
 fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<(mpsc::Sender<Vec<u16>>, Arc<AtomicU64>, Arc<AtomicBool>)>, stats: Arc<SfuStats>) {
@@ -1183,14 +1191,20 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                         e.loss = r.fraction_lost as f32 / 256.0;
                         // histerese: liga a retransmissão em dobro com 3,5% no relatório, desliga abaixo de 1,5% (o relatório do SFU mostrou cerca de
                         // metade da perda real do enlace nos testes: 5% relatados com 10% reais)
-                        if let Some((_, _, twice)) = &nack_tx { if e.loss >= 0.035 { twice.store(true, Ordering::Relaxed); } else if e.loss < 0.015 { twice.store(false, Ordering::Relaxed); } }
+                        if let Some((_, gap, twice)) = &nack_tx {
+                            let was = twice.load(Ordering::Relaxed);
+                            if e.loss >= 0.035 { twice.store(true, Ordering::Relaxed); } else if e.loss < 0.015 { twice.store(false, Ordering::Relaxed); }
+                            // a perda mudou de faixa: o intervalo entre retransmissões acompanha já, sem esperar o próximo RTT medido
+                            let now = twice.load(Ordering::Relaxed);
+                            if now != was { gap.store(rtx_gap_ms(e.rtt_ms, now), Ordering::Relaxed); }
+                        }
                         e.jitter_ms = r.jitter as f32 / 90.0;
                         if r.last_sender_report != 0 {
                             let now = (webrtc::rtp::extension::abs_send_time_extension::unix2ntp(std::time::SystemTime::now()) >> 16) as u32;
                             let d = now.wrapping_sub(r.last_sender_report).wrapping_sub(r.delay);
                             if d < 10 * 65536 {
                                 e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); }
-                                if let Some((_, gap, _)) = &nack_tx { gap.store(((e.rtt_ms * 1.5) as u64 + 15).clamp(30, 150), Ordering::Relaxed); }
+                                if let Some((_, gap, twice)) = &nack_tx { gap.store(rtx_gap_ms(e.rtt_ms, twice.load(Ordering::Relaxed)), Ordering::Relaxed); }
                             }
                         }
                         e.updated = std::time::Instant::now();
@@ -1221,6 +1235,13 @@ mod t {
         assert!(s.contains("access_token=***&protocol=15"));
         assert_eq!(redact("sem token"), "sem token");
     }
+    #[test]
+    fn retransmission_gap_follows_rtt_and_shrinks_under_high_loss() {
+        assert_eq!((rtx_gap_ms(1.0, false), rtx_gap_ms(40.0, false), rtx_gap_ms(400.0, false)), (30, 75, 150));
+        assert_eq!((rtx_gap_ms(1.0, true), rtx_gap_ms(40.0, true), rtx_gap_ms(400.0, true)), (10, 45, 150));
+        for rtt in [0.0f32, 5.0, 20.0, 60.0, 120.0] { assert!(rtx_gap_ms(rtt, true) <= rtx_gap_ms(rtt, false)); }
+    }
+
     #[test]
     fn url_building() {
         assert_eq!(ws_url("ws://127.0.0.1:7880/", "T"), "ws://127.0.0.1:7880/rtc?access_token=T&protocol=15&auto_subscribe=0&sdk=rust&version=briks-0.1&adaptive_stream=0");

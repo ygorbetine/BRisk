@@ -211,7 +211,7 @@ void themes_tab(cui_ctx *ui) {
                         if (sel) cui_icon(ui, CUI_ICON_CHECK, 14, B_ONLINE);
                     }
                 }
-                if (briks_clicked(ui, "card")) apply(ui, &PRESETS[i]);
+                if (briks_clicked_r(ui, "card", 14.0f)) apply(ui, &PRESETS[i]);
                 cui_pop_id(ui);
             }
         }

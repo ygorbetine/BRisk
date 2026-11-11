@@ -98,7 +98,7 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
     }
     { cui_rect tr = cui_get_rect(ui, cui_make_id(ui, "b")); cui_vec2 tm = cui_mouse_pos(ui);   /* tooltip só com o mouse realmente sobre o item (cui_last_hovered não serve p/ caixas simples) */
       if (tr.w > 0 && tm.x >= tr.x && tm.y >= tr.y && tm.x < tr.x + tr.w && tm.y < tr.y + tr.h && (!wide || strlen(name) > 14)) briks_tip(name); }
-    if (briks_clicked(ui, "b")) *clicked_id = id;
+    if (briks_clicked_r(ui, "b", rad)) *clicked_id = id;
     cui_pop_id(ui);
 }
 
@@ -109,7 +109,7 @@ static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char 
         cui_icon(ui, icon, 15, B_MUTED);
     }
     if (briks_hover(ui, "b")) briks_tip(tip);
-    bool hit = briks_clicked(ui, "b");
+    bool hit = briks_clicked_r(ui, "b", 9.0f);
     cui_pop_id(ui);
     return hit;
 }
@@ -282,7 +282,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .pad_right = 8, .gap = g_panel_w < 300.0f ? 4 : 8, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
-                if (briks_clicked(ui, "avatar")) { s->profile_open = true; s->profile_tab = 0; }
+                if (briks_clicked_r(ui, "avatar", 16.0f)) { s->profile_open = true; s->profile_tab = 0; }
                 bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
                 if (f_compact) cui_box(ui, .width = CUI_FILL) {}
                 else cui_box(ui, .id = "ident", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 4) {

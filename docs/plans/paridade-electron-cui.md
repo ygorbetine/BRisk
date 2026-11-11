@@ -7,13 +7,13 @@ Este arquivo é gerado a partir de `apps/desktop-cui/scripts/paridade/itens.csv`
 
 | Classe | Itens |
 |---|---|
-| PRESENTE-FUNCIONAL | 204 |
-| PRESENTE-SEM-EFEITO | 9 |
-| AUSENTE | 28 |
-| VERIFICAR | 6 |
+| PRESENTE-FUNCIONAL | 214 |
+| PRESENTE-SEM-EFEITO | 6 |
+| AUSENTE | 20 |
+| VERIFICAR | 7 |
 | **Total** | **248** |
 
-Itens PRESENTE-FUNCIONAL com teste automático oculto: 111 de 204 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
+Itens PRESENTE-FUNCIONAL com teste automático oculto: 114 de 214 (os demais dependem de core/GPU/rede real ou de conferência manual e saem como SEM-TESTE no relatório).
 
 Definição das classes: **PRESENTE-FUNCIONAL** = existe e o clique/fluxo produz o efeito; **PRESENTE-SEM-EFEITO** = existe na tela (ou no core) mas não faz nada de verdade (interruptor que só grava, botão desabilitado, texto "em breve", dado que nada consome); **AUSENTE** = não existe; **VERIFICAR** = não consegui concluir.
 
@@ -78,21 +78,14 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Prio | ID | Área | Item | Classe | No Electron | CUI hoje | Encaixe no CUI e adaptação ao layout novo |
 |---|---|---|---|---|---|---|---|
-| P1 | AMI-06 | Amigos | Pedidos pendentes: recusar | SEM-EFEITO | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | Segundo ícone (X, secundario) ao lado do check em cada linha de PEDIDOS (ui_social.c), tooltip Recusar |
-| P1 | AMI-07 | Amigos | Desfazer amizade (com confirmacao) | AUSENTE | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | Item 'Desfazer amizade' no menu de contexto da linha do amigo (person_row) + diálogo de confirmacao no estilo Expulsar (ui_call.c) |
-| P1 | AMI-08 | Amigos | Abas Online / Todos / Pendentes com contadores | AUSENTE | views/FriendsView.tsx | ui_social.c: uma lista única AMIGOS e PEDIDOS, sem filtro | cui_segmented no topo do painel Amigos (mesmo componente do 'Limpar depois de'), contadores nos rotulos; pendentes sobem para a aba |
 | P1 | AMI-10 | Amigos | Indicador online/offline do amigo | AUSENTE | views/HomeView.tsx (title Online/Offline) | ui_social.c só mostra 'Disponivel' no próprio rodape | Bolinha 8 px (B_ONLINE / cinza) no canto do avatar em person_row; presença vem do core |
 | P1 | CFG-13 | Configurações | Cancelamento de eco | AUSENTE | components/VoiceVideoSettingsPanel.tsx | settings.c: interruptor desabilitado com a nota em breve (sem AEC no core) | Já existe; AEC no core |
 | P1 | CHM-04 | Chamada | Câmera (ligar e enviar vídeo) | SEM-EFEITO | components/CallWorkspace.tsx (Câmera) | ui_call.c: pílula desabilitada 'Câmera · em breve' (decisão: sem captura nem envio nesta versão; ver docs/plans/chamada-pacote-c.md) | Pílula nova na barra flutuante de controles da chamada (pill() em ui_call.c, raio 28, vidro forte), com rótulo e estado ativo em violeta; captura e envio no core (Media Foundation + encoder já usados na transmissão) |
-| P1 | CHM-14 | Chamada | Volume por pessoa (slider) lembrado nas próximas chamadas | AUSENTE | services/áudio/person-áudio.ts | só liga/desliga mudo, sem volume e sem memória | Menu de contexto do bloco da pessoa na chamada (pmenu em ui_call.c, cui_menu_item), mais um item com ícone com cui_slider 0-200%; salvar por peerId em settings |
 | P1 | LAY-05 | Layout novo (trilho, lista, conversa, hub) | Tela inicial "Amigos" com abas Online/Todos/Pendentes e cartões de amigo | AUSENTE | (padrão novo do usuário) | Amigos abre só um estado vazio "Escolha uma conversa", sem abas nem lista de pedidos (AMI-08) | Painel central em vez do estado vazio: cabeçalho com abas em pílula (padrão do seletor Call/Transmissão da chamada), linhas largas de amigo com ações e a lista de pedidos; hub à direita mostra "Ativos agora" |
 | P1 | RDE-01 | Rede | Modo da chamada (Automático, Sempre P2P, Sempre SFU) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; passar o modo ao core ao entrar na sala |
 | P1 | RDE-02 | Rede | Preferência de conexão (Automático, Internet direta, VPN) | SEM-EFEITO | components/NetworkSettingsPanel.tsx | settings.c; só salvo | Já existe; filtrar interfaces/candidatos ICE no core (ice.rs) |
 | P1 | RDE-04 | Rede | Teste de rede (STUN/relay, variacao, perda, 'precisa de relay') | AUSENTE | components/NetworkSettingsPanel.tsx | (não existe) | Botão 'Testar rede' no cartão DIAGNOSTICO de Configurações > Rede, resultado em linhas 13 px com selos de cor |
 | P1 | RDE-06 | Rede | TURN com credenciais da conta / configuração na interface | AUSENTE | services/rtc/turn-credentials.ts | só por BRIKS_ICE_SERVERS_JSON ou ice.json | Campos no cartão PREFERENCIA DE CONEXAO (URL, usuário, senha) ou credenciais automaticas da conta; indicador 'Somente STUN' como chip |
-| P1 | TRX-11 | Transmissão | SFU (LiveKit) como padrão para salas grandes e redes dificeis | AUSENTE | services/rtc/transport-factory | só malha P2P; a opção 'Sempre SFU' em Configurações não faz nada | Sem UI nova: o seletor Modo da chamada (Rede) passa a valer; indicador 'via servidor' no chip de rede da chamada |
-| P2 | AMI-09 | Amigos | Buscar amigo | AUSENTE | views/FriendsView.tsx | (não existe) | cui_input com lupa no topo do painel Amigos (altura 36, raio 12), filtra a lista ao digitar |
-| P2 | AMI-11 | Amigos | Painel Atividade (quem está em sala de voz nos grupos) | AUSENTE | views/FriendsView.tsx | (não existe) | Painel novo 'Atividade' no dock (menu + Painel), cartões de vidro por grupo com avatares de quem está na sala |
 | P2 | AMI-15 | Amigos | Sino para silenciar avisos de cada amigo | AUSENTE | services/profile/use-friend-notifications.ts | (não existe) | Ícone de sino 14 px no menu de contexto do amigo (person_row); depende de NOT-01/02 |
 | P2 | ATU-04 | Atualização | Botão 'Verificar agora' | AUSENTE | components/UpdatesPanel.tsx; ipc updater:check | (não existe: só verifica sozinho a cada 4 h) | Botão secundario no cartão ATUALIZACOES (settings.c) com estado 'Verificando...' (loading) e resultado em 12 px |
 | P2 | CFG-29 | Configurações | Novidades da versão em uso | AUSENTE | components/release-notes.ts | (não existe) | Cartão NOVIDADES na aba Sobre/Atualizacoes, lista de 12-13 px, e diálogo de vidro 'O que há de novo' após atualizar |
@@ -100,17 +93,13 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | P2 | CHM-16 | Chamada | Desconexao após 1 h sem falar, com aviso e Continuar | AUSENTE | CallWorkspace.tsx; release 1.1.0 | (não existe) | Banner de vidro no topo da chamada nos últimos 5 min com botão Continuar (update_banner), contagem 13 px |
 | P2 | CHM-24 | Chamada | Vídeo remoto, câmera dos outros e 2a tela | AUSENTE | components/CallWorkspace.tsx | (não existe; depende da câmera e do pacote de transmissão: ver docs/plans/chamada-pacote-c.md) | Tile de vídeo no palco da chamada no lugar do avatar; 2a tela como tile extra com selo |
 | P2 | LAY-12 | Layout novo (trilho, lista, conversa, hub) | Dica "Sair" (tooltip) presa no topo da tela e círculo no canto inferior esquerdo em todas as capturas | AUSENTE | (padrão novo do usuário) | Nas capturas ocultas o tooltip do botão sair do rodapé aparece fixo em x=640 y=20; já listado em plano-pos-1.3.0 (frente D) | Corrigir a âncora do tooltip do rodapé (cui_tooltip) para o botão, e esconder o ponteiro do roteiro nas capturas |
-| P2 | MSG-08 | Mensagens | Indicador 'digitando...' | AUSENTE | components/ConversationTimeline.tsx | (não existe) | Linha de 12 px cor B_MUTED acima do compositor, com três pontos animados (respeita reduced motion) |
-| P2 | PRF-06 | Perfil | Limpar o status depois de 30 min/1 h/4 h/hoje | SEM-EFEITO | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | Aplicar a expiracao em profile.c (timer) e mostrar 'some em X' sob o campo, 11 px, cor B_MUTED |
 | P2 | PRF-12 | Perfil | Outros computadores ligados ao @nick (listar e revogar) | AUSENTE | components/AccountPanel.tsx (Revogar) | (não existe) | Cartão 'Computadores' na aba Conta do diálogo Perfil e conta: linhas com nome do PC, data e botão Revogar secundario, confirmacao em diálogo |
-| P2 | RDE-03 | Rede | Redes privadas detectadas (ZeroTier, Tailscale, WireGuard) | AUSENTE | desktop network-interfaces.ts | (não existe) | Linha 'Detectado' com selo verde dentro do cartão PREFERENCIA DE CONEXAO |
 | P3 | AMI-16 | Amigos | Desconectar só o chat privado (Desconectar P2P) | AUSENTE | views/HomeView.tsx | (não existe) | Item no menu de contexto do amigo; texto 13 px; confirmacao simples |
 | P3 | ATL-06 | Atalhos | Ctrl+Shift+O: editar posições do overlay em qualquer tela | AUSENTE | components/OverlaySettingsPanel.tsx | (não existe) | Depende de CFG-25 |
 | P3 | BAS-27 | Funções básicas de desktop | Tema claro e escuro (e seguir o do Windows) | AUSENTE | (Electron: só tema escuro com cores) | Temas por gradiente (Configurações > Temas), sempre escuros; sem tema claro nem seguir o Windows | Opção nova no cartão Temas: "Claro" e "Seguir o Windows"; o gerador de tema (themes.c) precisa de uma variante clara com o mesmo contraste mínimo; fora do escopo do Electron |
 | P3 | BAS-28 | Funções básicas de desktop | Idioma da interface (pt-BR, inglês) | AUSENTE | (não existe no Electron também) | (não existe): textos fixos em português no código | Tabela de strings e seletor de idioma no cartão Sobre de Configurações; só depois do conteúdo final dos painéis |
 | P3 | BAS-40 | Funções básicas de desktop | Leitor de tela e navegação assistiva (UI Automation / MSAA) | AUSENTE | Chromium (nativo, sem código próprio) (árvore de acessibilidade) | (não existe): a interface é desenhada pela biblioteca, sem UIA | Sem tela: provedor UIA mínimo na plataforma (nome, papel e estado de botões e campos); alto custo, vale só depois do resto |
 | P3 | CFG-25 | Configurações | Sobreposição: editar posições (arrastar, redimensionar) | AUSENTE | components/OverlaySettingsPanel.tsx | settings.c: nota em breve; só os 4 cantos são reais (CFG-24) | Botão já existe; modo de edicao do overlay com atalho Ctrl+Shift+O (ATL-06) |
-| P3 | CFG-26 | Configurações | Aba Avisos: lista e limpar | SEM-EFEITO | views/SettingsView.tsx | settings.c: lista existe, mas nada gera avisos | Cartão já existe; chamar settings_notice() para erros reais (backend, core, atualizacao) |
 | P3 | CFG-28 | Configurações | Telemetria anonima ligar/desligar | SEM-EFEITO | components/AboutPanel.tsx; services/telemetry | settings.c; só salvo, nada e enviado | Interruptor já existe; contadores diarios no core |
 | P3 | EXT-07 | Extras do CUI (sem equivalente no Electron) | Lembrete de mensagem | SEM-EFEITO | (novo) | msgui.c: grava o lembrete mas não notifica ('sem efeito') | Disparar toast quando o prazo chega (depende de NOT-03) |
 | P3 | TRX-12 | Transmissão | Excluir o áudio do Briks da transmissão | SEM-EFEITO | components/VoiceVideoSettingsPanel.tsx | settings.c interruptor sem efeito (o core já exclui Briks e Discord sempre) | Já existe em Voz e vídeo; ligar o interruptor ao core (share.áudio.set) |
@@ -121,6 +110,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 - **GRP-22** Sincronização do manifesto do grupo, cargos e revogacoes entre pares. Electron: chat/GroupChatService.ts; SyncService.ts. CUI: briks-core: parte em chat_events.rs; trabalho em andamento no branch cui-ui-paridade (grupos-p2p-core.md); sem teste de interop.
 - **MSG-17** Histórico sincronizado com o par (pedir/responder histórico). Electron: chat/HistoryService.ts. CUI: briks-core chat_events.rs; sem teste de interop.
 - **TRX-10** Aviso 'Assistir' quando alguem comeca a transmitir e troca automatica para o modo Transmissão. Electron: release 1.1.0/1.1.1. CUI: ui_call.c/ui_share.c; comportamento não conferido.
+- **TRX-11** SFU (LiveKit) como padrão para salas grandes e redes dificeis. Electron: services/rtc/transport-factory. CUI: core sfu.rs + sfu_cfg.rs; Configuracoes > Rede envia o modo (rtc.c net); falta testar com servidor LiveKit real.
 - **BAS-19** Vários monitores: abrir no monitor onde estava e janela fora da área visível voltar para dentro. Electron: desktop-lifecycle.ts. CUI: (não existe): sem restauração de posição, então depende do Windows.
 - **BAS-30** Estado de carregamento (spinner ou esqueleto) enquanto o core sobe, entra na sala ou carrega o histórico. Electron: Electron. CUI: VERIFICAR: há texto de status ("Conectando", "Baixando a atualização"), mas não vi spinner ou esqueleto nas listas; depende do core real.
 - **BAS-42** IME (japonês, chinês, coreano) e emoji do teclado do Windows (Win+.). Electron: Chromium (nativo, sem código próprio). CUI: VERIFICAR: a plataforma trata WM_CHAR mas não WM_IME_COMPOSITION; o texto final de IME e o painel de emoji provavelmente entram, mas sem janela de composição junto ao cursor.
@@ -155,7 +145,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | PRF-03 | Mostrar a foto dos OUTROS em amigos, membros, tiles da chamada e mensagens | components/ProfileAvatar.tsx | Foto dos amigos (core: friends.photos baixa para o cache; UI: lista lateral, hub de Amigos, membros e bolhas das mensagens). Tiles da chamada ainda com iniciais | PRESENTE-FUNCIONAL | perfil-fotos |
 | PRF-04 | Status personalizado (texto e emoji) | components/StatusEditor.tsx | ui_social.c (STATUS) | PRESENTE-FUNCIONAL | perfil |
 | PRF-05 | Chips rapidos de status (Jogando, Estudando...) | components/StatusEditor.tsx | ui_social.c (CHIPS) | PRESENTE-FUNCIONAL | perfil |
-| PRF-06 | Limpar o status depois de 30 min/1 h/4 h/hoje | components/StatusEditor.tsx | ui_social.c pf-clear grava status_clear, mas nada o le: o status nunca expira | PRESENTE-SEM-EFEITO | sonda |
+| PRF-06 | Limpar o status depois de 30 min/1 h/4 h/hoje | components/StatusEditor.tsx | profile.c: status_expires / profile_expiry_for apagam o status no prazo (tests/profile_test.c) | PRESENTE-FUNCIONAL | - |
 | PRF-07 | Limpar status (botão) | components/StatusEditor.tsx | ui_social.c (Limpar) | PRESENTE-FUNCIONAL | - |
 | PRF-08 | Programa em uso: ligar/desligar | components/RichPresencePanel.tsx | profile.c + ui_social.c | PRESENTE-FUNCIONAL | perfil |
 | PRF-09 | Ocultar/ignorar programas especificos | components/RichPresencePanel.tsx | ui_social.c (Ignorar programa) | PRESENTE-FUNCIONAL | perfil |
@@ -173,12 +163,12 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | AMI-03 | Adicionar amigo pelo @nick | components/NickInvite.tsx | ui_social.c (Adicionar amigo) / account.c | PRESENTE-FUNCIONAL | social-a |
 | AMI-04 | Adicionar amigo por código de convite P2P (criar convite, usar código, aceitar, recusar) | components/P2PInvitePanel.tsx; services/invites/service.ts | ui_friends.c friends_code_card (dialogo Adicionar amigo e aba Adicionar do hub): Gerar meu codigo, Copiar, Colar e Adicionar; core friend_invite.rs (friend.invite/friend.accept, codigo briks-amg1.*, assinado, vale 7 dias) [teste amigos-codigo + cargo friend_invite]. LIMITES: sem aba "Por @nick/Por codigo" (e um cartao abaixo do @nick); aceitar grava em friends-p2p.json do core e entra na lista so nesta sessao; o amigo P2P ainda nao e usado em chamadas; aceitar codigo de OUTRA pessoa so testado em Rust (o roteiro oculto aceita o proprio codigo e ve a recusa); convite nao e de uso unico (sem servidor) | PRESENTE-FUNCIONAL | amigos-codigo |
 | AMI-05 | Pedidos pendentes: aceitar | views/FriendsView.tsx (Aceitar) | ui_social.c (ícone check) | PRESENTE-FUNCIONAL | - |
-| AMI-06 | Pedidos pendentes: recusar | components/P2PInvitePanel.tsx (Recusar) | core aceita friends.respond accept=false, mas a UI só tem Aceitar | PRESENTE-SEM-EFEITO | sonda |
-| AMI-07 | Desfazer amizade (com confirmacao) | views/FriendsView.tsx; HomeView.tsx deleteTarget | core tem friends.remove; sem UI | AUSENTE | sonda |
-| AMI-08 | Abas Online / Todos / Pendentes com contadores | views/FriendsView.tsx | ui_social.c: uma lista única AMIGOS e PEDIDOS, sem filtro | AUSENTE | sonda |
-| AMI-09 | Buscar amigo | views/FriendsView.tsx | (não existe) | AUSENTE | sonda |
+| AMI-06 | Pedidos pendentes: recusar | components/P2PInvitePanel.tsx (Recusar) | ui_friends.c: botao Recusar na aba Pendentes (account_respond_friend false) | PRESENTE-FUNCIONAL | - |
+| AMI-07 | Desfazer amizade (com confirmacao) | views/FriendsView.tsx; HomeView.tsx deleteTarget | ui_friends.c: dialogo Desfazer amizade -> account_remove_friend | PRESENTE-FUNCIONAL | - |
+| AMI-08 | Abas Online / Todos / Pendentes com contadores | views/FriendsView.tsx | ui_friends.c: abas Todos/Online/Pendentes N/Bloqueados/Adicionar/Atividade (roteiro amigos-abas) | PRESENTE-FUNCIONAL | amigos-abas |
+| AMI-09 | Buscar amigo | views/FriendsView.tsx | ui_friends.c: campo Buscar amigo filtra a lista (roteiro amigos-abas) | PRESENTE-FUNCIONAL | amigos-abas |
 | AMI-10 | Indicador online/offline do amigo | views/HomeView.tsx (title Online/Offline) | ui_social.c só mostra 'Disponivel' no próprio rodape | AUSENTE | sonda |
-| AMI-11 | Painel Atividade (quem está em sala de voz nos grupos) | views/FriendsView.tsx | (não existe) | AUSENTE | sonda |
+| AMI-11 | Painel Atividade (quem está em sala de voz nos grupos) | views/FriendsView.tsx | ui_friends.c: aba Atividade; o texto so chega de quem esta na sua chamada (roteiro amigos-abas) | PRESENTE-FUNCIONAL | amigos-abas |
 | AMI-12 | Estado vazio de amigos com chamada para adicionar | views/FriendsView.tsx | ui_social.c ('Nenhum amigo ainda...') | PRESENTE-FUNCIONAL | - |
 | AMI-13 | Estado vazio 'Escolha uma conversa' | views/HomeView.tsx | ui_social.c | PRESENTE-FUNCIONAL | social-a |
 | AMI-14 | Status e programa em uso visiveis na lista | components/StatusEditor.tsx | ui_social.c person_row | PRESENTE-FUNCIONAL | - |
@@ -224,7 +214,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | MSG-05 | Excluir mensagem (própria e, como admin, de outros) | components/ConversationTimeline.tsx | msgui.c (Excluir) | PRESENTE-FUNCIONAL | msg-excluir |
 | MSG-06 | Reagir com emoji | components/ConversationTimeline.tsx | msgui.c (picker e chips) | PRESENTE-FUNCIONAL | msg-reagir |
 | MSG-07 | Fixar/desafixar e ver Fixadas | components/ConversationTimeline.tsx | msgui.c (Fixar, chip Fixadas) | PRESENTE-FUNCIONAL | msg-fixadas |
-| MSG-08 | Indicador 'digitando...' | components/ConversationTimeline.tsx | (não existe) | AUSENTE | sonda |
+| MSG-08 | Indicador 'digitando...' | components/ConversationTimeline.tsx | attach.c attach_typing_ping/label + core typing.send / chat.typing | PRESENTE-FUNCIONAL | - |
 | MSG-09 | Anexar arquivo (botão, arrastar e soltar) | components/MessageComposer.tsx (Anexar arquivo, Solte para enviar) | botão do clipe (seletor múltiplo) + arquivo solto + imagem colada; sem sala de voz o anexo fica preparado | PRESENTE-FUNCIONAL | msg-anexar, campos-anexos |
 | MSG-10 | Cartão de anexo (baixar, pausar, retomar, cancelar, abrir) | components/AttachmentCard.tsx | msg-galeria.txt: cartão (ícone, nome, tamanho, barra de progresso, Pausar/Retomar/Cancelar/Abrir com aviso, mostrar na pasta) no fluxo da conversa; transferência real testada só no núcleo (teste Rust) | PRESENTE-FUNCIONAL | msg-galeria |
 | MSG-11 | Galeria de anexos do canal | components/ConversationTimeline.tsx (Galeria do canal) | msg-galeria.txt: botão "Galeria de imagens" com miniaturas das imagens recebidas na sessão (o Electron guarda por canal; aqui só desta sessão) | PRESENTE-FUNCIONAL | msg-galeria |
@@ -254,7 +244,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | CHM-11 | Tela cheia da transmissão e da chamada | components/CallWorkspace.tsx (Tela cheia); ipc window:fullscreen | ui_call.c call_set_fullscreen: botão, F11 e Esc; a barra some após 3 s sem mouse (tela cheia da chamada; o palco da transmissão é do pacote de transmissão) | PRESENTE-FUNCIONAL | call-grade |
 | CHM-12 | Zoom na transmissão (roda, pinca, arrastar, selo de %) | components/vídeo-zoom.tsx | (não existe) | AUSENTE | sonda |
 | CHM-13 | Silenciar uma pessoa só para mim | components/CallWorkspace.tsx | ui_call.c (Silenciar para mim) | PRESENTE-FUNCIONAL | - |
-| CHM-14 | Volume por pessoa (slider) lembrado nas próximas chamadas | services/áudio/person-áudio.ts | só liga/desliga mudo, sem volume e sem memória | AUSENTE | sonda |
+| CHM-14 | Volume por pessoa (slider) lembrado nas próximas chamadas | services/áudio/person-áudio.ts | ui_voice.c: slider 0-200% por pessoa -> peer.volume; NAO e lembrado na proxima chamada | PRESENTE-FUNCIONAL | - |
 | CHM-15 | Pedir a alguem que transmita (e aceitar/recusar o pedido) | call/stream-request.ts | ui_call.c: menu do bloco > Pedir transmissão; aviso com Transmitir / Agora não; core stream.request/stream.reply (roomchat.rs) | PRESENTE-FUNCIONAL | call-pedir |
 | CHM-16 | Desconexao após 1 h sem falar, com aviso e Continuar | CallWorkspace.tsx; release 1.1.0 | (não existe) | AUSENTE | sonda |
 | CHM-17 | Diagnóstico da conexão e indicador Rede Boa dentro da chamada | components/CallWorkspace.tsx (Rede, Diagnóstico) | ui_call.c net_chip: chip no cabeçalho + cartão com sinalização, pessoas, transporte e teste STUN (callhist.c call_net_quality) | PRESENTE-FUNCIONAL | call-rede |
@@ -281,7 +271,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | TRX-08 | Volume da transmissão de quem assiste | components/CallWorkspace.tsx | ui_share.c (share.volume); não exercitado aqui | PRESENTE-FUNCIONAL | - |
 | TRX-09 | Prévia local da própria transmissão | components/CallWorkspace.tsx (PREVIA) | ui_share.c (preview.bin); não exercitado aqui | PRESENTE-FUNCIONAL | - |
 | TRX-10 | Aviso 'Assistir' quando alguem comeca a transmitir e troca automatica para o modo Transmissão | release 1.1.0/1.1.1 | ui_call.c/ui_share.c; comportamento não conferido | VERIFICAR | - |
-| TRX-11 | SFU (LiveKit) como padrão para salas grandes e redes dificeis | services/rtc/transport-factory | só malha P2P; a opção 'Sempre SFU' em Configurações não faz nada | AUSENTE | sonda |
+| TRX-11 | SFU (LiveKit) como padrão para salas grandes e redes dificeis | services/rtc/transport-factory | core sfu.rs + sfu_cfg.rs; Configuracoes > Rede envia o modo (rtc.c net); falta testar com servidor LiveKit real | VERIFICAR | - |
 | TRX-12 | Excluir o áudio do Briks da transmissão | components/VoiceVideoSettingsPanel.tsx | settings.c interruptor sem efeito (o core já exclui Briks e Discord sempre) | PRESENTE-SEM-EFEITO | sonda |
 
 ### Configurações
@@ -313,7 +303,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 | CFG-23 | Sobreposição em jogos: interruptor geral | components/OverlaySettingsPanel.tsx | overlay_host.c: abre/fecha briks_overlay.exe --stdin na chamada; protocolo testado (overlay-stdin.ps1, --protocol-test) | PRESENTE-FUNCIONAL | overlay-quadro |
 | CFG-24 | Sobreposição: o que aparece (4 itens) e opacidade | components/OverlaySettingsPanel.tsx | overlay_host.c: quem está na sala, sala, transmissão, mudo, opacidade e canto vão por stdin (roteiro overlay-quadro) | PRESENTE-FUNCIONAL | overlay-quadro |
 | CFG-25 | Sobreposição: editar posições (arrastar, redimensionar) | components/OverlaySettingsPanel.tsx | settings.c: nota em breve; só os 4 cantos são reais (CFG-24) | AUSENTE | sonda |
-| CFG-26 | Aba Avisos: lista e limpar | views/SettingsView.tsx | settings.c: lista existe, mas nada gera avisos | PRESENTE-SEM-EFEITO | sonda |
+| CFG-26 | Aba Avisos: lista e limpar | views/SettingsView.tsx | settings.c: lista e Limpar avisos; hoje so a falha de iniciar com o Windows gera aviso (winstate.c) | PRESENTE-FUNCIONAL | - |
 | CFG-27 | Sobre: versão, licenca e código-fonte | components/AboutPanel.tsx | settings.c (Sobre) | PRESENTE-FUNCIONAL | config-abas |
 | CFG-28 | Telemetria anonima ligar/desligar | components/AboutPanel.tsx; services/telemetry | settings.c; só salvo, nada e enviado | PRESENTE-SEM-EFEITO | sonda |
 | CFG-29 | Novidades da versão em uso | components/release-notes.ts | (não existe) | AUSENTE | sonda |
@@ -324,7 +314,7 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 |---|---|---|---|---|---|
 | RDE-01 | Modo da chamada (Automático, Sempre P2P, Sempre SFU) | components/NetworkSettingsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
 | RDE-02 | Preferência de conexão (Automático, Internet direta, VPN) | components/NetworkSettingsPanel.tsx | settings.c; só salvo | PRESENTE-SEM-EFEITO | sonda |
-| RDE-03 | Redes privadas detectadas (ZeroTier, Tailscale, WireGuard) | desktop network-interfaces.ts | (não existe) | AUSENTE | sonda |
+| RDE-03 | Redes privadas detectadas (ZeroTier, Tailscale, WireGuard) | desktop network-interfaces.ts | netdiag.c netdiag_vpn_scan (GetAdaptersAddresses) mostrado em Configuracoes > Rede | PRESENTE-FUNCIONAL | - |
 | RDE-04 | Teste de rede (STUN/relay, variacao, perda, 'precisa de relay') | components/NetworkSettingsPanel.tsx | (não existe) | AUSENTE | sonda |
 | RDE-07 | Indicador Somente STUN / STUN + TURN | services/rtc/turn-credentials.ts | settings.c (DIAGNÓSTICO, ice_note) | PRESENTE-FUNCIONAL | - |
 | RDE-05 | Diagnóstico: signaling, canal, pessoas | components/CallWorkspace.tsx (Diagnóstico) | settings.c (DIAGNOSTICO) | PRESENTE-FUNCIONAL | config-abas |
@@ -464,12 +454,12 @@ A implementação segue o design do app novo (vidro, tema por gradiente, cantos 
 
 | Resultado | Itens |
 |---|---|
-| AUSENTE | 18 |
-| PASSOU | 111 |
-| REVER | 13 |
+| AUSENTE | 20 |
+| FALHOU | 1 |
+| PASSOU | 113 |
 | SEM-EFEITO | 6 |
-| SEM-TESTE | 93 |
-| VERIFICAR | 7 |
+| SEM-TESTE | 100 |
+| VERIFICAR | 8 |
 
 PASSOU = a ação teve o efeito visível esperado no app oculto; SEM-TESTE = item PRESENTE-FUNCIONAL sem roteiro automático (depende do core, da rede, de GPU ou de conferência manual); SEM-EFEITO/AUSENTE = confirmado pelo clique e/ou pela sonda; REVER = sonda ou clique indica que algo mudou; reclassifique.
 

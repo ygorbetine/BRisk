@@ -186,6 +186,7 @@ static void st_load(void) {
 }
 
 /* ---------- consultas ---------- */
+bool msgui_has_reply(const msg_t *m) { st_load(); const mstate_t *t = st_find(m->id, false); return t && t->reply[0]; }
 bool msgui_deleted(const char *id) { st_load(); const mstate_t *m = st_find(id, false); return m && m->deleted; }
 const char *msgui_text(const msg_t *m) { st_load(); const mstate_t *s = st_find(m->id, false); return s && s->has_edit ? s->edited : m->content; }
 

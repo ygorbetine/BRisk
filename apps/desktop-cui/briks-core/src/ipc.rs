@@ -161,6 +161,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let mut local_peer = uuid::Uuid::new_v4().to_string();
     let mut mesh_cmd: Option<mpsc::Sender<MeshCmd>> = None;
     let mut mesh_ev: Option<mpsc::Receiver<MeshEvent>> = None;
+    let (link_tx, mut link_rx) = mpsc::channel::<Value>(16);   // respostas de pré-visualização de links (busca em threads)
     let mut rt_status: Option<mpsc::Receiver<String>> = None;
     let mut audio: Option<Arc<Audio>> = None;
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
@@ -241,6 +242,26 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let Some(c) = &mesh_cmd {
                             let _ = c.send(MeshCmd::Chat { to_fp: to.into(), text: text.chars().take(crate::identity::MAX_CHAT_CHARS).collect() }).await;
                         }
+                    }
+                    "file.send" => {
+                        let Some(path) = v["path"].as_str() else { continue };
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SendFile { path: path.into(), to_fp: v["to_fp"].as_str().map(|x| x.to_string()) }).await; }
+                    }
+                    "file.cancel" => {
+                        if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::CancelFile { id: id.into() }).await; }
+                    }
+                    "file.accept" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } }
+                    "file.pause" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: v["paused"].as_bool().unwrap_or(true) }).await; } }
+                    "typing.send" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::Typing).await; } }
+                    "link.preview" => {
+                        // busca segura em thread própria (bloqueante); a resposta volta como evento `link.preview`
+                        let (Some(url), Some(rid)) = (v["url"].as_str(), v["id"].as_str()) else { continue };
+                        let (url, rid, tx) = (url.to_string(), rid.to_string(), link_tx.clone());
+                        tokio::task::spawn_blocking(move || {
+                            let r = crate::linkpreview::fetch(&url, crate::linkpreview::STRICT);
+                            let ev = match r { Ok(mut j) => { j["ev"] = "link.preview".into(); j["id"] = rid.into(); j["ok"] = true.into(); j }, Err(e) => json!({ "ev": "link.preview", "id": rid, "url": url, "ok": false, "error": e.to_string() }) };
+                            let _ = tx.blocking_send(ev);
+                        });
                     }
                     "chat.event.send" => {
                         let (Some(ch), Some(target), Some(action)) = (v["channel"].as_str(), v["target"].as_str(), v["action"].as_str()) else { continue };
@@ -340,9 +361,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                 }
             }
             Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
+            Some(j) = link_rx.recv() => out(&mut wr, j).await?,
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
+                    Some(MeshEvent::File(j)) => { let mut j = j; j["ev"] = "file".into(); out(&mut wr, j).await? }
+                    Some(MeshEvent::Ack { id, from_fp }) => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
+                    Some(MeshEvent::Typing { from_fp }) => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
                     Some(MeshEvent::ChatEvent { from_fp, wire, local }) => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
                     Some(MeshEvent::PeerInfo { peer_id, fp, name }) => out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await?,

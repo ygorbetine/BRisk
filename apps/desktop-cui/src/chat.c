@@ -4,6 +4,7 @@
 #include "backend.h"
 #include "json.h"
 #include "msgui.h"
+#include "attach.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -63,6 +64,7 @@ void app_send_message(app_state_t *s) {
     add_msg(s, id, s->user_name, s->draft, iso, true);   /* otimista: some se a gravação falhar */
     msgui_after_send(id);                                 /* liga a resposta pendente (citação) ao id novo */
     s->draft[0] = 0;
+    attach_set_inflight(id);
     app_begin(s, OP_MSG_SEND, "POST", path, b);
 }
 
@@ -227,5 +229,13 @@ void app_demo(app_state_t *s, const char *mode) {
             if (getenv("BRIKS_DEMO_ADMIN")) { s->active_group = 0; s->active_friend = -1; s->groups[0].can_moderate = true; }
         }
         (void)who;
+        if (getenv("BRIKS_DEMO_ATTACH")) {   /* capturas de anexos, prévia de link, estados e digitando (sem rede) */
+            add_msg(s, "m4", "Marina Costa", "Olha esse artigo: https://exemplo.com/artigo-p2p", "2026-11-09T23:44:00.000Z", false);
+            add_msg(s, "m4b", "Marina Costa", "Tem **negrito**, `codigo()`, [um link](https://exemplo.com) e menção @Ygor. # isto não é título", "2026-11-09T23:44:30.000Z", false);
+            add_msg(s, "m5", "Ygor", "Boa! Vou ler agora.", "2026-11-09T23:45:00.000Z", true);
+            add_msg(s, "m6", "Ygor", "Essa mensagem não chegou.", "2026-11-09T23:46:00.000Z", true);
+            attach_mark("m5", ATT_SENDING); attach_mark("m6", ATT_FAILED);
+            attach_demo(s);
+        }
     }
 }

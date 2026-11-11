@@ -4,7 +4,7 @@
 #   duas   -> dois monitores: duas telas da mesma pessoa, dois blocos, zoom independente
 # Uso: powershell -File prova-transmissao-ui.ps1 [-Out pasta] [-Casos aviso,zoom,duas]
 # Dados, layout, configurações e temporários ficam numa pasta própria, apagada no fim. Sai com código 1 se algum "expect" falhar.
-param([string]$Out = "$PSScriptRoot\..\provas\transmissao-ui", [string[]]$Casos = @("aviso", "zoom", "duas"))
+param([string]$Out = "$PSScriptRoot\..\provas\transmissao-ui", [string[]]$Casos = @("aviso", "zoom", "duas", "grade", "qualidade"))
 $Casos = $Casos -split ","
 $exe = "$PSScriptRoot\..\build\briks_cui.exe"
 $base = Join-Path $PSScriptRoot "..\build\tmp-prova-transmissao"
@@ -18,8 +18,8 @@ foreach ($c in $Casos) {
     $psi.FileName = (Resolve-Path $exe).Path; $psi.WorkingDirectory = (Split-Path -Parent $psi.FileName); $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardError = $true
     $e = $psi.EnvironmentVariables
-    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = "3"; $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
-    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } else { "demo-remote" })
+    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = $(if ($c -eq "grade") { "4" } else { "3" }); $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
+    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "grade") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } else { "demo-remote" })
     $e["BRIKS_SCRIPT"] = (Join-Path $PSScriptRoot "share-$c.txt"); $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
     $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"
     $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")

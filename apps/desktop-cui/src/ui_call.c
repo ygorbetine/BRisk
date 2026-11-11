@@ -592,11 +592,11 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
                             if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1, compact, 0)) s->call_mode = 1;
                         }
-                        {   /* Grade/Foco vale para os participantes: fora da aba Call fica esmaecido (o cabeçalho não muda de lugar) e clicar leva para lá */
-                            const bool people = s->call_mode == 0 && s->call_view == 0;
-                            cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER, .opacity = people ? 0.0f : 0.5f) {
-                                if (tab(ui, 15, CUI_ICON_GRID_3X3, "Grade", people && g_call.layout == 0, compact, 0)) { g_call.layout = 0; s->call_mode = 0; s->call_view = 0; }
-                                if (tab(ui, 16, CUI_ICON_LAYOUT_DASHBOARD, "Foco", people && g_call.layout == 1, compact, 0)) { g_call.layout = 1; s->call_mode = 0; s->call_view = 0; }
+                        {   /* Grade/Foco vale nos dois modos (Call: participantes; Transmissão: as transmissões); só esmaece no Chat e clicar volta para a Chamada */
+                            const bool here = s->call_view == 0;
+                            cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER, .opacity = here ? 0.0f : 0.5f) {
+                                if (tab(ui, 15, CUI_ICON_GRID_3X3, "Grade", here && g_call.layout == 0, compact, 0)) { g_call.layout = 0; s->call_view = 0; }
+                                if (tab(ui, 16, CUI_ICON_LAYOUT_DASHBOARD, "Foco", here && g_call.layout == 1, compact, 0)) { g_call.layout = 1; s->call_view = 0; }
                             }
                         }
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
@@ -630,21 +630,21 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, pn, .size = 13, .color = B_MUTED);
                     }
                 }
+                /* tamanho do palco a partir da janela (menos a faixa de 3 px do topo), nunca de uma caixa medida: os blocos têm tamanho fixo em px,
+                   então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
+                const float rw = vp.x, rh = vp.y - 4.0f - titlebar_height();   /* desconta a barra de título própria: sem isto o palco passava da base da janela e a barra de controles saía cortada */
+                float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + bar_h) - pad * 2;
+                if (s->net_failed) H -= 78.0f;                               /* faixa "não foi possível entrar pelo servidor" */
+                if (s->in_room && s->rtc_overflow > 0) H -= 46.0f;           /* faixa "+N pessoas fora da grade" */
+                if (W < 120) W = 120; if (H < 90) H = 90;
                 if (s->call_view == 1) stage_chat(ui, s);
                 else if (s->call_mode == 1) {
-                    if (!ui_share_stage(ui, s)) {
+                    if (!ui_share_stage(ui, s, W, H, g_call.layout)) {
                         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .clip = true) {
                             empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui. Para pedir, clique com o botão direito em alguém na aba Call.");
                         }
                     }
                 } else {
-                    /* tamanho do palco a partir da janela (menos a faixa de 3 px do topo), nunca de uma caixa medida: os blocos têm tamanho fixo em px,
-                       então medir o palco ou a raiz realimentava o tamanho antigo (ao sair da tela cheia a barra era empurrada para fora) */
-                    const float rw = vp.x, rh = vp.y - 4.0f - titlebar_height();   /* desconta a barra de título própria: sem isto o palco passava da base da janela e a barra de controles saía cortada */
-                    float W = rw - pad * 2, H = rh - (g_call.fullscreen ? 0.0f : 70.0f + 1.0f + bar_h) - pad * 2;
-                    if (s->net_failed) H -= 78.0f;                               /* faixa "não foi possível entrar pelo servidor" */
-                    if (s->in_room && s->rtc_overflow > 0) H -= 46.0f;           /* faixa "+N pessoas fora da grade" */
-                    if (W < 120) W = 120; if (H < 90) H = 90;
                     stage_people(ui, s, W, H);
                 }
             }

@@ -1,0 +1,11 @@
+# Modo Transmissao com 4 transmissoes (uma pessoa com duas telas): Grade (todas lado a lado) e Foco (uma grande + faixa)
+waitms 1500
+expect share_mode 1
+expect share_tiles 4
+shot grade-1-quatro-blocos
+at 908 38
+click
+waitms 500
+expect share_tiles 4
+expect share_focus -1
+shot grade-2-foco

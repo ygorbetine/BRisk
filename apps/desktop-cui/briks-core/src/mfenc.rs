@@ -10,7 +10,7 @@ fn var_u32(v: u32) -> VARIANT { let mut x = VARIANT::default(); unsafe { let a =
 fn var_bool(v: bool) -> VARIANT { let mut x = VARIANT::default(); unsafe { let a = &mut *x.Anonymous.Anonymous; a.vt = VT_BOOL; a.Anonymous.boolVal = windows::Win32::Foundation::VARIANT_BOOL(if v { -1 } else { 0 }); } x }
 
 /// O Media Foundation é iniciado uma única vez por processo (a adaptação recria codificadores com frequência).
-fn mf_startup() -> Result<()> {
+pub(crate) fn mf_startup() -> Result<()> {
     static ONCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ONCE.get_or_init(|| unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).is_ok() }) { Ok(()) } else { Err(anyhow!("Media Foundation indisponível")) }
 }

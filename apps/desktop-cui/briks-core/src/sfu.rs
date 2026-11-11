@@ -121,7 +121,8 @@ struct TrackMeta { identity: String, source: i32, ttype: i32, name: String, w: u
 struct Shared {
     tracks: HashMap<String, TrackMeta>,     // sid da faixa -> dono e tipo
     part_ident: HashMap<String, String>,    // sid do participante -> identity
-    recv: HashMap<String, Arc<RecvState>>,  // identity -> estado de recepção do vídeo
+    recv: HashMap<String, Arc<RecvState>>,  // identity -> estado de recepção do vídeo (transmissão de tela)
+    recv_cam: HashMap<String, Arc<RecvState>>,   // identity -> estado de recepção do vídeo da câmera
 }
 
 /// `epoch` = geração da sessão (sobe a cada reconexão): o que vier de PeerConnections antigos é descartado.
@@ -235,12 +236,14 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                 for _ in 0..30 { meta = shared.lock().unwrap().tracks.get(&sid).cloned(); if meta.is_some() { break; } tokio::time::sleep(Duration::from_millis(100)).await; }
                 let Some(meta) = meta else { let _ = etx.send(MeshEvent::Error(format!("faixa {sid} sem dono"))).await; return; };
                 if track.kind() == RTPCodecType::Video {
-                    let recv = shared.lock().unwrap().recv.entry(meta.identity.clone()).or_default().clone();
+                    let is_cam = meta.source == lk::TrackSource::Camera as i32;
+                    let recv = { let mut sh = shared.lock().unwrap(); if is_cam { sh.recv_cam.entry(meta.identity.clone()).or_default().clone() } else { sh.recv.entry(meta.identity.clone()).or_default().clone() } };
                     let ssrc = track.ssrc();
                     let pli: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                         if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                     });
-                    tokio::spawn(share::run_remote_video(meta.identity.clone(), track, recv, sev, pli));
+                    if is_cam { tokio::spawn(share::run_remote_video_as("cam", meta.identity.clone(), track, recv, sev, pli)); }
+                    else { tokio::spawn(share::run_remote_video(meta.identity.clone(), track, recv, sev, pli)); }
                 } else if let Some(a) = audio {
                     let key = if meta.source == lk::TrackSource::ScreenShareAudio as i32 { format!("{}#screen", meta.identity) } else { meta.identity.clone() };
                     tokio::spawn(a.run_remote(key, track));
@@ -285,7 +288,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
-        pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
+        pend_ice: [vec![], vec![]], share: None, cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(AtomicBool::new(true)), vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
     actor.handle_join(join, false).await;
@@ -353,6 +356,7 @@ fn redact(s: &str) -> String {
 }
 
 struct ActiveShare { gen: u64, sender: share::Sender, audio: Option<crate::procaudio::ProcAudio>, info: Option<Value>, label: String, h: u32 }
+struct ActiveCam { gen: u64, sender: share::Sender, info: Option<Value> }
 
 struct Actor {
     tx: WsTx,
@@ -374,6 +378,11 @@ struct Actor {
     pub_dirty: bool,
     pend_ice: [Vec<RTCIceCandidateInit>; 2],
     share: Option<ActiveShare>,
+    cam: Option<ActiveCam>,
+    cam_gen: u64,
+    cam_vout: Option<share::VideoOut>,
+    cam_net: Arc<Mutex<crate::adapt::NetShared>>,   // RTCP dos espectadores da câmera: não mistura com a adaptação da tela
+    cam_idr: Arc<AtomicBool>,
     vout: Option<share::VideoOut>,
     atrack: Option<Arc<webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample>>,
     share_gen: u64,
@@ -404,7 +413,7 @@ struct Actor {
 }
 
 #[derive(Default, Clone)]
-struct KnownPeer { sid: String, mic: Option<bool>, share: Option<(String, u32, u32)>, name: String }
+struct KnownPeer { sid: String, mic: Option<bool>, share: Option<(String, u32, u32)>, cam: Option<(u32, u32)>, name: String }
 
 impl Actor {
     async fn emit(&self, e: MeshEvent) {
@@ -445,6 +454,10 @@ impl Actor {
                 if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
                     self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
                 }
+            }
+            // câmera ligada: republica a faixa dela também
+            if let (Some(_), Some(vout)) = (self.cam.as_ref(), self.cam_vout.clone()) {
+                self.publish(share::CAMERA_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await;
             }
             // meu estado (microfone/status) de novo para todos: quem voltou depois de mim pode ter perdido a última mudança
             if self.data.is_some() {
@@ -549,7 +562,7 @@ impl Actor {
     async fn peer_gone(&mut self, identity: &str, sid: &str) {
         self.known.remove(identity);
         self.stale.remove(identity);
-        { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); }
+        { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); sh.recv_cam.remove(identity); }
         if let Some(a) = &self.audio { a.remove_peer(identity); }
         let gone_fp = self.data.as_ref().and_then(|l| l.peer_key(identity)).map(|k| k.0);
         if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
@@ -566,6 +579,12 @@ impl Actor {
             self.stale.remove(&id);
             let (here, sharing) = { let sh = self.shared.lock().unwrap(); (sh.part_ident.values().any(|v| *v == id), sh.tracks.values().any(|t| t.identity == id && t.source == lk::TrackSource::ScreenShare as i32 && !t.muted)) };
             if !here { self.peer_gone(&id, "").await; continue; }
+            let cam_on = { let sh = self.shared.lock().unwrap(); sh.tracks.values().any(|t| t.identity == id && t.source == lk::TrackSource::Camera as i32 && !t.muted) };
+            if !cam_on && self.known.get(&id).map(|k| k.cam.is_some()).unwrap_or(false) {
+                if let Some(k) = self.known.get_mut(&id) { k.cam = None; }
+                let r = self.shared.lock().unwrap().recv_cam.get(&id).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); }
+                self.emit(MeshEvent::Share(json!({ "ev": "cam.remote", "peer_id": id, "state": "off" }))).await;
+            }
             if !sharing && self.known.get(&id).map(|k| k.share.is_some()).unwrap_or(false) {
                 if let Some(k) = self.known.get_mut(&id) { k.share = None; }
                 let r = self.shared.lock().unwrap().recv.get(&id).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); }
@@ -618,7 +637,11 @@ impl Actor {
         let pc = match self.ensure_publisher().await { Ok(p) => p, Err(e) => { self.emit(MeshEvent::Error(format!("publisher: {e}"))).await; return; } };
         match pc.add_track(p.track.clone()).await {
             Ok(sender) => {
-                if p.video {
+                if p.video && r.cid == share::CAMERA_TRACK_ID {
+                    self.cam_idr.store(true, Ordering::Relaxed);
+                    let nack = self.cam_vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
+                    spawn_rtcp_reader(sender.clone(), self.cam_net.clone(), self.cam_idr.clone(), nack, self.stats.clone());
+                } else if p.video {
                     self.idr.store(true, Ordering::Relaxed);
                     let nack = self.vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
                     spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
@@ -740,6 +763,7 @@ impl Actor {
                 let mut sh = self.shared.lock().unwrap();
                 sh.part_ident.insert(p.sid.clone(), p.identity.clone());
                 sh.recv.entry(p.identity.clone()).or_default();
+                sh.recv_cam.entry(p.identity.clone()).or_default();
                 for t in &p.tracks { sh.tracks.insert(t.sid.clone(), TrackMeta { identity: p.identity.clone(), source: t.source, ttype: t.r#type, name: t.name.clone(), w: t.width, h: t.height, muted: t.muted }); }
             }
             k.sid = p.sid.clone();
@@ -767,6 +791,25 @@ impl Actor {
             if self.shared.lock().unwrap().recv.get(&p.identity).map(|r| r.watching.load(Ordering::Relaxed)).unwrap_or(false) {
                 for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::ScreenShare as i32 || t.source == lk::TrackSource::ScreenShareAudio as i32) {
                     if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
+                }
+            }
+            // câmera que eu estava mostrando (antes de uma reconexão): assina de novo sozinho
+            if self.shared.lock().unwrap().recv_cam.get(&p.identity).map(|r| r.watching.load(Ordering::Relaxed)).unwrap_or(false) {
+                for t in p.tracks.iter().filter(|t| t.source == lk::TrackSource::Camera as i32 && !t.muted) {
+                    if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
+                }
+            }
+            // câmera ligada/desligada (faixa publicada e não silenciada)
+            {
+                let cam = p.tracks.iter().find(|t| t.source == lk::TrackSource::Camera as i32 && !t.muted).map(|t| (t.width, t.height));
+                if cam != k.cam && !(cam.is_none() && self.stale.contains_key(&p.identity)) {
+                    k.cam = cam;
+                    if cam.is_none() { let r = self.shared.lock().unwrap().recv_cam.get(&p.identity).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); } }
+                    let ev = match cam {
+                        Some((w, h)) => json!({ "ev": "cam.remote", "peer_id": p.identity, "state": "on", "w": w, "h": h, "fps": 0, "kbps": 0 }),
+                        None => json!({ "ev": "cam.remote", "peer_id": p.identity, "state": "off" }),
+                    };
+                    self.emit(MeshEvent::Share(ev)).await;
                 }
             }
             // tela
@@ -857,6 +900,7 @@ impl Actor {
         let _ = self.tx.close().await;
         if let Some(a) = &self.audio { a.stop(); }
         if let Some(sh) = self.share.take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } }
+        if let Some(c) = self.cam.take() { c.sender.stop(); }   // fechar a chamada desliga a captura
         if let Some(p) = self.publisher.take() { let _ = p.close().await; }
         let _ = self.sub.close().await;
     }
@@ -920,6 +964,9 @@ impl Actor {
             MeshCmd::ShareVolume { key, gain } => { if let Some(a) = &self.audio { a.set_screen_gain(&key, gain); } }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump).await,
             MeshCmd::ShareStop => self.share_stop().await,
+            MeshCmd::CamStart { device, preview } => self.cam_start(device, preview).await,
+            MeshCmd::CamStop => self.cam_stop().await,
+            MeshCmd::CamWatch { key, on, path } => self.watch_cam(&key, on, path).await,
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share.as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path).await,
             MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }
@@ -1071,7 +1118,72 @@ impl Actor {
         self.set_muted(share::AUDIO_TRACK_ID, true).await;
     }
 
+    // ------------------------------------------------------------------------------------------------------------------
+    // Câmera: faixa própria (`camera-video`, fonte Camera), publicada uma vez e silenciada/reaberta como a da tela.
+    // ------------------------------------------------------------------------------------------------------------------
+    async fn cam_start(&mut self, device: String, preview: Option<std::path::PathBuf>) {
+        self.cam_stop().await;
+        self.cam_gen += 1;
+        let gen = self.cam_gen;
+        let first = !self.published.contains_key(share::CAMERA_TRACK_ID) && !self.pending.contains_key(share::CAMERA_TRACK_ID);
+        let vout = self.cam_vout.get_or_insert_with(share::VideoOut::new_camera).clone();
+        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, adaptive: true };
+        // os eventos do emissor chegam como "share.*"; o encaminhador os renomeia para "cam.*" antes de irem ao laço
+        let (ctx, mut crx) = mpsc::channel::<Value>(64);
+        let sev = self.sev_tx.clone();
+        tokio::spawn(async move { while let Some(mut v) = crx.recv().await { if let Some(e) = v["ev"].as_str().map(|e| e.replacen("share.", "cam.", 1)) { v["ev"] = json!(e); } if sev.send(v).await.is_err() { break; } } });
+        self.cam_idr.store(true, Ordering::Relaxed);
+        match share::start_sender(gen, self.cam_idr.clone(), self.cam_net.clone(), cfg, vout.clone(), ctx, preview, None) {
+            Ok(sender) => {
+                self.cam = Some(ActiveCam { gen, sender, info: None });
+                if first { self.publish(share::CAMERA_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await; }
+                else { self.set_muted(share::CAMERA_TRACK_ID, false).await; }
+            }
+            Err(e) => {
+                let (code, text) = crate::camera::split_code(&e);
+                self.emit(MeshEvent::Share(json!({ "ev": "cam.local", "state": "off", "code": code, "reason": text }))).await;
+            }
+        }
+    }
+
+    async fn cam_stop(&mut self) {
+        let Some(c) = self.cam.take() else { return };
+        c.sender.stop();
+        self.set_muted(share::CAMERA_TRACK_ID, true).await;
+    }
+
+    async fn on_cam_event(&mut self, mut v: Value) {
+        if let Some(g) = v["gen"].as_u64() { if self.cam.as_ref().map(|c| c.gen) != Some(g) && !(v["ev"] == "cam.local" && v["state"] == "off" && self.cam.is_none()) { return; } }
+        if v["ev"] == "cam.hint" { return; }
+        if v["ev"] == "cam.local" {
+            if v["state"] == "on" { if let Some(c) = self.cam.as_mut() { c.info = Some(v.clone()); } }
+            else {
+                let (code, text) = crate::camera::split_code(v["reason"].as_str().unwrap_or(""));
+                let (code, text) = (code.to_string(), text.to_string());
+                v["code"] = json!(code); v["reason"] = json!(text);
+                self.cam_stop().await;
+            }
+        }
+        self.emit(MeshEvent::Share(v)).await;
+    }
+
+    async fn watch_cam(&mut self, key: &str, on: bool, path: std::path::PathBuf) {
+        let (recv, sids): (Option<Arc<RecvState>>, Vec<(String, String)>) = {
+            let sh = self.shared.lock().unwrap();
+            let sids = sh.tracks.iter().filter(|(_, t)| t.identity == key && t.source == lk::TrackSource::Camera as i32)
+                .map(|(sid, _)| (self.known.get(key).map(|k| k.sid.clone()).unwrap_or_default(), sid.clone())).collect();
+            (sh.recv_cam.get(key).cloned(), sids)
+        };
+        let Some(r) = recv else { self.emit(MeshEvent::Error("câmera: peer desconhecido".into())).await; return };
+        if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, Ordering::Relaxed); r.frames.store(0, Ordering::Relaxed); }
+        r.watching.store(on, Ordering::Relaxed);
+        let todo: Vec<(String, String)> = sids.into_iter().filter(|(_, s)| if on { self.subscribed.insert(s.clone()) } else { self.subscribed.remove(s) }).collect();
+        self.subscribe(todo, on).await;
+        self.emit(MeshEvent::Share(json!({ "ev": "cam.remote", "peer_id": key, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
+    }
+
     async fn on_share_event(&mut self, mut v: Value) {
+        if v["ev"].as_str().map(|e| e.starts_with("cam.")).unwrap_or(false) { return self.on_cam_event(v).await; }
         if let Some(g) = v["gen"].as_u64() { if self.share.as_ref().map(|s| s.gen) != Some(g) && !(v["ev"] == "share.local" && v["state"] == "off" && self.share.is_none()) { return; } }
         if v["ev"] == "share.local" {
             if v["state"] == "on" {

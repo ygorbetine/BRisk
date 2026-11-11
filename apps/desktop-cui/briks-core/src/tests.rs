@@ -1342,3 +1342,6 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
 
 #[path = "tests_sala.rs"]
 mod sala;   // chat da sala e pedido de transmissao
+
+#[path = "tests_camera.rs"]
+mod camera_e2e;   // camera na chamada (camera falsa, sem hardware)

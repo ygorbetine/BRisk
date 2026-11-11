@@ -8,6 +8,7 @@ mod accounts;
 mod audio;
 mod chat_events;
 mod adapt;
+mod camera;
 mod capture;
 mod video;
 mod gpuconv;

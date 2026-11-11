@@ -206,6 +206,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let mut audio: Option<Arc<Audio>> = None;
     let mut audio_cfg = crate::audio::AudioCfg::default();   // última Configurações > Voz; vale também para a sala que ainda vai nascer
     let mut mic_test: Option<crate::audio::MicTest> = None;
+    let mut cam_prev: Option<crate::camera::PreviewHandle> = None;   // teste da câmera em Configurações (fora da chamada)
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
@@ -545,6 +546,31 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     "peer.volume" => {
                         let key = v["peer"].as_str().or(v["fp"].as_str()).unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::PeerVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }
+                    }
+                    // ---- câmera ----
+                    "cam.list" => {
+                        let ev = tokio::task::spawn_blocking(crate::camera::devices_event).await.unwrap_or(Value::Null);
+                        out(&mut wr, ev).await?;
+                    }
+                    "cam.preview" => {
+                        // Configurações > Voz e vídeo > "Testar câmera": mostra a imagem sem enviar nada a ninguém. Só uma captura por vez.
+                        if let Some(p) = cam_prev.take() { p.stop(); }
+                        if v["on"].as_bool().unwrap_or(false) {
+                            let dev: String = v["device"].as_str().unwrap_or("").chars().take(300).collect();
+                            cam_prev = Some(crate::camera::start_preview(dev, cfg.data_dir.join("video").join("cam-test.bin"), link_tx.clone()));
+                        }
+                    }
+                    "cam.start" => {
+                        let Some(c) = &mesh_cmd else { out(&mut wr, json!({ "ev": "cam.local", "state": "off", "code": "no_room", "reason": "Entre numa sala para ligar a câmera." })).await?; continue };
+                        if let Some(p) = cam_prev.take() { p.stop(); }   // a mesma câmera não abre duas vezes
+                        let dev: String = v["device"].as_str().unwrap_or("").chars().take(300).collect();
+                        let _ = c.send(MeshCmd::CamStart { device: dev, preview: Some(cfg.data_dir.join("video").join("cam-preview.bin")) }).await;
+                    }
+                    "cam.stop" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::CamStop).await; } }
+                    "cam.watch" => {
+                        let key = v["peer"].as_str().unwrap_or("").to_string();
+                        let safe: String = key.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+                        if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::CamWatch { key, on: v["on"].as_bool().unwrap_or(true), path: cfg.data_dir.join("video").join(format!("cam-{safe}.bin")) }).await; }
                     }
                     "share.list" => {
                         let dir = cfg.data_dir.join("thumbs");

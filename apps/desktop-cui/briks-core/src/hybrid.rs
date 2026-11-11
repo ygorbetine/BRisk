@@ -59,7 +59,8 @@ pub async fn spawn(mesh: MeshHandle, sfu: SfuHandle, audio: Option<Arc<Audio>>) 
                         MeshCmd::MutePeer { key, muted } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::MutePeer { key: k, muted }).await; }
                         MeshCmd::ShareVolume { key, gain } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::ShareVolume { key: k, gain }).await; }
                         MeshCmd::ShareWatch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::ShareWatch { key: k, on, path }).await; }
-                        c @ (MeshCmd::ShareStart { .. } | MeshCmd::ShareStop | MeshCmd::ShareAudio { .. }) => { let _ = sfu_cmd.send(c).await; }
+                        MeshCmd::CamWatch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::CamWatch { key: k, on, path }).await; }
+                        c @ (MeshCmd::ShareStart { .. } | MeshCmd::ShareStop | MeshCmd::ShareAudio { .. } | MeshCmd::CamStart { .. } | MeshCmd::CamStop) => { let _ = sfu_cmd.send(c).await; }
                         c => { let _ = mesh_cmd.send(c).await; }   // chat, eventos, status/presença, expulsar/permitir
                     }
                 }
@@ -70,7 +71,9 @@ pub async fn spawn(mesh: MeshHandle, sfu: SfuHandle, audio: Option<Arc<Audio>>) 
                         if peer.is_empty() || ident.is_empty() { continue; }
                         links.by_ident.insert(ident.clone(), peer.clone());
                         links.by_peer.insert(peer.clone(), ident.clone());
-                        if let Some(mut s) = pending_share.remove(&ident) { s["peer_id"] = Value::String(peer); let _ = etx.send(MeshEvent::Share(s)).await; }
+                        for key in [ident.clone(), format!("{ident}#cam")] {
+                            if let Some(mut s) = pending_share.remove(&key) { s["peer_id"] = Value::String(peer.clone()); let _ = etx.send(MeshEvent::Share(s)).await; }
+                        }
                     }
                     Some(MeshEvent::PeerInfo { peer_id, fp, name }) => {
                         links.fp_peer.insert(fp.clone(), peer_id.clone());
@@ -104,7 +107,12 @@ pub async fn spawn(mesh: MeshHandle, sfu: SfuHandle, audio: Option<Arc<Audio>>) 
                         if let Some(ident) = v["peer_id"].as_str().map(String::from) {
                             match links.by_ident.get(&ident) {
                                 Some(p) => { v["peer_id"] = Value::String(p.clone()); let _ = etx.send(MeshEvent::Share(v)).await; }
-                                None => { if v["ev"] == "share.remote" && (v["state"] == "on" || v["state"] == "off") { pending_share.insert(ident, v); } }
+                                None => {
+                                    if (v["ev"] == "share.remote" || v["ev"] == "cam.remote") && (v["state"] == "on" || v["state"] == "off") {
+                                        let key = if v["ev"] == "cam.remote" { format!("{ident}#cam") } else { ident };
+                                        pending_share.insert(key, v);
+                                    }
+                                }
                             }
                         } else { let _ = etx.send(MeshEvent::Share(v)).await; }
                     }

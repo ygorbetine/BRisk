@@ -182,6 +182,7 @@ static void pending_tab(cui_ctx *ui, app_state_t *s) {
 }
 
 static void blocked_tab(cui_ctx *ui, app_state_t *s) {
+    int unb = -1;
     cui_text(ui, "Bloqueados não aparecem nas suas listas nem podem te mandar pedido por aqui. A lista fica neste computador.", .size = 12, .color = B_MUTED);
     for (int i = 0; i < s->blocked_count; i++) {
         person_t p; memset(&p, 0, sizeof p); snprintf(p.name, sizeof p.name, "%s", s->blocked[i].name);
@@ -189,10 +190,11 @@ static void blocked_tab(cui_ctx *ui, app_state_t *s) {
         cui_push_id_int(ui, 9500 + i);
         ROW_BEGIN(ui, &p) {
             row_ident(ui, &p, "bloqueado");
-            if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { char id[48]; snprintf(id, sizeof id, "%s", s->blocked[i].id); friends_unblock(s, id); cui_pop_id(ui); return; }
+            if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) unb = i;
         }
         cui_pop_id(ui);
     }
+    if (unb >= 0) { char id[48]; snprintf(id, sizeof id, "%s", s->blocked[unb].id); friends_unblock(s, id); }
     if (!s->blocked_count) empty_state(ui, CUI_ICON_SHIELD, "Ninguém bloqueado", "Use “Bloquear” no menu de um amigo ou de um pedido.");
 }
 

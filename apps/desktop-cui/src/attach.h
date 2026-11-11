@@ -23,6 +23,7 @@ void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m);   /* "envian
 void attach_rich(cui_ctx *ui, const char *id, const char *text);   /* texto da mensagem: **negrito**, `código`, links clicáveis, menções */
 void attach_mentions(cui_ctx *ui, app_state_t *s);                 /* sugestões de @menção acima do campo de texto */
 bool attach_grouped(const app_state_t *s, int idx);                /* a mensagem idx continua a anterior (mesmo autor, < 5 min, sem resposta) */
+void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until);   /* anexos concluídos desta conversa, na ordem do horário (until NULL = o resto) */
 void attach_demo(app_state_t *s);                                  /* BRIKS_DEMO=msgs: dados de exemplo para capturas, sem rede */
 void attach_set_inflight(const char *msg_id);                      /* chat.c: mensagem cuja gravação acabou de começar */
 void attach_inflight_done(app_state_t *s, bool ok);                /* app.c: resultado do OP_MSG_SEND */

@@ -345,7 +345,9 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 }
             }
             cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg_count; i++) { if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); g_grouped = attach_grouped(s, i); bubble(ui, s, &s->msgs[i], true); g_grouped = false; cui_pop_id(ui); }
+                int tcur = 0;   /* anexos concluídos entram na linha do tempo, na posição do horário */
+                for (int i = 0; i < s->msg_count; i++) { attach_timeline(ui, s, &tcur, s->msgs[i].created); if (msgui_deleted(s->msgs[i].id) || !attach_search_match(msgui_text(&s->msgs[i]))) continue; cui_push_id_int(ui, 5000 + i); g_grouped = attach_grouped(s, i); bubble(ui, s, &s->msgs[i], true); g_grouped = false; cui_pop_id(ui); }
+                attach_timeline(ui, s, &tcur, NULL);
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {

@@ -21,6 +21,7 @@
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
 #include "layout.h"
+#include "sysint.h"
 static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdio.h>
 #include <string.h>
@@ -102,6 +103,7 @@ void script_tick(cui_ctx *ui) {
             else fprintf(stderr, "roteiro: ok linha %d: %s = %d\n", pc, n, got);
         }
         else if (!strcmp(cmd, "resize")) { char *a = strtok(NULL, " "), *b = strtok(NULL, " "); if (a && b) { g_script_rw = atoi(a); g_script_rh = atoi(b); } }   /* resize L A: redimensiona a janela (testa o layout ao vivo) */
+        else if (!strcmp(cmd, "sys")) { char *r = strtok(NULL, ""); if (!sys_script(r ? r : "")) fprintf(stderr, "roteiro: sys inválido na linha %d\n", pc); }   /* sys <comando>: bandeja, avisos, janela (winstate.c) */
         else if (!strcmp(cmd, "waitms")) { char *n = strtok(NULL, " "); wait_until = cui_time(ui) + (n ? atof(n) : 100) / 1000.0; }
         else if (!strcmp(cmd, "shot")) { char *n = strtok(NULL, " "); snprintf(shot_name, sizeof shot_name, "%s", n ? n : "shot"); }
         else if (!strcmp(cmd, "signal")) { char *n = strtok(NULL, " "); char f[640]; snprintf(f, sizeof f, "%s\\%s.flag", outdir, n ? n : "sinal"); FILE *o = fopen(f, "wb"); if (o) fclose(o); }

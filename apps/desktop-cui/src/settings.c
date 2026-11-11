@@ -5,6 +5,7 @@
 #include "netdiag.h"
 #include "update.h"
 #include "core.h"
+#include "sysint.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,8 @@ static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efei
 }
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay) { *mute = g_set.key_mute; *deafen = g_set.key_deafen; *stream = g_set.key_stream; *ptt = g_set.key_ptt; *ptt_on = g_set.ptt_on; *delay = g_set.ptt_delay; }
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
+bool settings_nt_online(void) { return g_set.nt_online; }
+bool settings_nt_stream(void) { return g_set.nt_stream; }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
 }
@@ -359,10 +362,10 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     break;
                 case 6: /* Notificações */
                     SCARD(ui, "AVISOS DE AMIGOS") {
-                        sw(ui, "Amigo ficou online", "Avisa quando alguém da sua lista abre o Briks.", &g_set.nt_online);
+                        sw(ui, "Amigo ficou online", "Avisa quando alguém da sua lista abre o Briks (ou entra na sua chamada), com o Briks fora de foco.", &g_set.nt_online);
                         sw(ui, "Amigo começou a transmitir", "Avisa quando alguém começa a compartilhar a tela numa chamada.", &g_set.nt_stream);
-                        tag_nofx(ui);
                     }
+                    sys_settings_notifications(ui);   /* winstate.c: nova mensagem e sons */
                     break;
                 case 7: /* Avisos */
                     SCARD(ui, "AVISOS") {
@@ -381,6 +384,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     }
                     break;
                 case 9: /* Sobre */
+                    sys_settings_system(ui);   /* winstate.c: fechar para a bandeja e iniciar com o Windows */
                     SCARD(ui, "BRIKS") {
                         cui_text(ui, "Briks", .font = CUI_FONT_DISPLAY, .size = 20);
                         sub(ui, "Chamadas e chat ponto a ponto, com grupos assinados e @nick. Compartilhamento de tela: em breve.");

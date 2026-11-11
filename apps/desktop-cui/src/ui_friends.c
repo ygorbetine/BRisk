@@ -3,6 +3,7 @@
  * %APPDATA%\Briks-CUI\blocked.json (o servidor ainda não tem bloqueio: supabase/migrations/0006_friend_blocks.sql prepara isso, sem estar aplicada). */
 #include "briks_ui.h"
 #include "json.h"
+#include "sysint.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -110,8 +111,8 @@ void friends_notify_tick(app_state_t *s) {
         if (prev_n < 0 || s->notify_off) continue;
         int k = -1; for (int q = 0; q < prev_n; q++) if (!strcmp(prev_id[q], s->friends[i].id)) k = q;
         if (k < 0) continue;
-        if (ncall[i] && !prev_call[k]) { snprintf(fn_text, sizeof fn_text, "%s entrou na sua chamada", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); }
-        else if (nid[i] && !prev_on[k]) { snprintf(fn_text, sizeof fn_text, "%s ficou online", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); }
+        if (ncall[i] && !prev_call[k]) { snprintf(fn_text, sizeof fn_text, "%s entrou na sua chamada", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); notify_friend(s, fn_text, true); }
+        else if (nid[i] && !prev_on[k]) { snprintf(fn_text, sizeof fn_text, "%s ficou online", s->friends[i].name); fn_until = now + 7000; cui_request_redraw(cui_app_ui(s->app)); notify_friend(s, fn_text, false); }
     }
     for (int i = 0; i < n; i++) { snprintf(prev_id[i], sizeof prev_id[i], "%s", s->friends[i].id); prev_on[i] = nid[i]; prev_call[i] = ncall[i]; }
     prev_n = n;

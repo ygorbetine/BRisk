@@ -1403,3 +1403,16 @@ mod sala;   // chat da sala e pedido de transmissao
 
 #[path = "tests_camera.rs"]
 mod camera_e2e;   // camera na chamada (camera falsa, sem hardware)
+
+/// O ícone do app (assets/briks.ico, usado por src/briks.rc, instalador e bandeja) traz os 7 tamanhos e o logo de 128 px existe.
+#[test]
+fn app_icon_has_all_seven_sizes() {
+    let ico = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/briks.ico"));
+    assert_eq!(&ico[0..4], &[0, 0, 1, 0], "cabeçalho ICO");
+    let n = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+    let mut sizes: Vec<u32> = (0..n).map(|i| match ico[6 + 16 * i] { 0 => 256, w => w as u32 }).collect();
+    sizes.sort();
+    assert_eq!(sizes, vec![16, 24, 32, 48, 64, 128, 256]);
+    let png = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/logo/briks-logo-128.png"));
+    assert_eq!(&png[1..4], b"PNG");
+}

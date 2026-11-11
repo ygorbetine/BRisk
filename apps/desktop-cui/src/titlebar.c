@@ -103,6 +103,7 @@ void titlebar_draw(cui_ctx *ui, app_state_t *s) {
     g_scale = cui_dpi_scale(ui);
     const bool max = g_hwnd && IsZoomed(g_hwnd);
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(TB_H), .pad_x = TB_MARGIN + 4, .gap = 10, .align = CUI_ALIGN_CENTER, .bg = CUI_RGBA(0x0c021466)) {
+        if (!briks_logo(ui, 22))
         cui_box(ui, .width = CUI_PX(20), .height = CUI_PX(20), .radius = 6, .bg = B_C2, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
             cui_text(ui, "B", .font = CUI_FONT_DISPLAY, .size = 13, .color = CUI_RGB(0xffffff));
         }

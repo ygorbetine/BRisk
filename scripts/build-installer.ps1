@@ -42,6 +42,7 @@ Copy-Item "$bd\briks_cui.exe" "$stage\Briks.exe"          # mesmo nome do execut
 Copy-Item "$bd\briks_overlay.exe" "$stage\briks_overlay.exe"
 Copy-Item $core "$stage\briks-core.exe"
 if (Test-Path "$cui\assets\login") { New-Item -ItemType Directory "$stage\assets" -Force | Out-Null; Copy-Item "$cui\assets\login" "$stage\assets\login" -Recurse }
+if (Test-Path "$cui\assets\logo") { New-Item -ItemType Directory "$stage\assets" -Force | Out-Null; Copy-Item "$cui\assets\logo" "$stage\assets\logo" -Recurse }   # logo da barra de titulo e do login
 if (Test-Path "$cui\assets\licenses.txt") { New-Item -ItemType Directory "$stage\assets" -Force | Out-Null; Copy-Item "$cui\assets\licenses.txt" "$stage\assets\licenses.txt" }   # Sobre > Licencas de terceiros
 Copy-Item $backend "$stage\backend\briks-desktop-backend.exe"
 $crt = Get-ChildItem "$vs\VC\Redist\MSVC" -Recurse -Filter vcruntime140.dll | Where-Object { $_.FullName -match '\\x64\\Microsoft\.VC\d+\.CRT\\' -and $_.FullName -notmatch 'onecore' } | Sort-Object FullName | Select-Object -Last 1

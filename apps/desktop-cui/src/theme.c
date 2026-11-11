@@ -1,5 +1,8 @@
 #include "briks_ui.h"
 #include <math.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <stdlib.h>
 
 static cui_color with_a(cui_color c, uint8_t a) { c.a = a; return c; }
@@ -148,8 +151,24 @@ void briks_gradient_bar(cui_ctx *ui) {
     cui_canvas(ui, "topbar", CUI_FILL, CUI_PX(3), paint_bar, NULL, 0);
 }
 
+bool briks_logo(cui_ctx *ui, float px) {
+    static cui_texture tex; static bool tried;
+    if (!tried) {
+        tried = true;
+        char dir[MAX_PATH], path[MAX_PATH + 40]; int w = 0, h = 0;
+        GetModuleFileNameA(NULL, dir, sizeof dir);
+        char *slash = strrchr(dir, '\\'); if (slash) *slash = 0;
+        snprintf(path, sizeof path, "%s\\assets\\logo\\briks-logo-128.png", dir);
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) tex = cui_image_load(ui, path, &w, &h);
+    }
+    if (!tex) return false;
+    cui_image(ui, tex, .width = CUI_PX(px), .height = CUI_PX(px));
+    return true;
+}
+
 void briks_brand(cui_ctx *ui, float size) {
     cui_row(ui, .gap = 9, .align = CUI_ALIGN_CENTER) {
+        if (!briks_logo(ui, size + 6))
         cui_box(ui, .width = CUI_PX(size + 6), .height = CUI_PX(size + 6), .radius = (size + 6) * 0.3f,
                 .bg = B_C2, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
             cui_text(ui, "B", .font = CUI_FONT_DISPLAY, .size = size * 0.8f, .color = CUI_RGB(0xffffff));

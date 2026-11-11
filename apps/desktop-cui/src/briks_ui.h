@@ -377,6 +377,8 @@ void briks_glass_shutdown(void);
 void briks_apply_theme(cui_ctx *ui);
 void briks_ambient(cui_ctx *ui, float strength);          /* fundo ambiente das manchas de cor */
 void briks_brand(cui_ctx *ui, float size);
+/* Logo do Briks (cubo de tijolos, cantos já transparentes) em px x px; false se assets\logoriks-logo-128.png faltar (o chamador desenha o "B" antigo). */
+bool briks_logo(cui_ctx *ui, float px);
 void briks_gradient_bar(cui_ctx *ui);                     /* faixa de 3px do topo */
 void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);

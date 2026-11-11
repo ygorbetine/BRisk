@@ -121,7 +121,7 @@ void friends_notify_banner(cui_ctx *ui, app_state_t *s) {
     (void)s; if (!fn_until || !fn_text[0]) return;
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 18, .pad_y = 6) {
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 14, .pad_y = 7, .gap = 8, .radius = 14, .bg = B_A(B_ONLINE, 0x24), .border = 1, .border_color = B_A(B_ONLINE, 0x66), .align = CUI_ALIGN_CENTER) {
-            cui_box(ui, .width = 8, .height = 8, .radius = 4, .bg = B_ONLINE);
+            cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_ONLINE);
             cui_text(ui, fn_text, .size = 13, .nowrap = true);
         }
     }
@@ -144,7 +144,7 @@ static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, 
     cui_column(ui, .gap = 1, .width = CUI_FILL) {
         cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, p->name, .nowrap = true);
-            if (online) cui_box(ui, .width = 8, .height = 8, .radius = 4, .bg = B_ONLINE);   /* ponto verde: online agora */
+            if (online) cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_ONLINE);   /* ponto verde: online agora */
         }
         char sub[130] = "";
         if (sub_override) snprintf(sub, sizeof sub, "%s", sub_override);

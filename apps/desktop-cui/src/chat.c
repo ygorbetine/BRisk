@@ -170,6 +170,7 @@ void app_demo(app_state_t *s, const char *mode) {
         const char *pn[] = { "Lucas Prado", "Helena Dias" }, *pk[] = { "lucasp", "helenad" };
         for (int i = 0; i < 2; i++) { snprintf(s->pending[i].name, sizeof s->pending[i].name, "%s", pn[i]); snprintf(s->pending[i].nick, sizeof s->pending[i].nick, "%s", pk[i]); }
         s->pending_count = 2;
+        s->pres_remote = true; s->pres_n = 2; for (int i = 0; i < 2; i++) { snprintf(s->pres[i].id, sizeof s->pres[i].id, "%s", s->friends[i].id); s->pres[i].online = true; }   /* dois amigos "online" na captura */
         snprintf(s->outgoing[0].name, sizeof s->outgoing[0].name, "Caio Ramos"); snprintf(s->outgoing[0].nick, sizeof s->outgoing[0].nick, "caior"); s->outgoing_count = 1;
         snprintf(s->blocked[0].name, sizeof s->blocked[0].name, "Fulano Spam"); snprintf(s->blocked[0].id, sizeof s->blocked[0].id, "x1"); s->blocked_count = 1;
         for (int i = 0; i < 3; i++) snprintf(s->friends[i].nick, sizeof s->friends[i].nick, "%s", i == 0 ? "marina" : i == 1 ? "rafa_lima" : "bianog");

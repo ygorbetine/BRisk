@@ -1,0 +1,21 @@
+# MSG-14: ícones de estado da mensagem própria (relógio, check, check duplo, alerta)
+snap e0
+msgstate 0 sending
+waitms 300
+expect attach_mine_state0 1
+shot e1
+msgstate 0 sent
+waitms 300
+expect attach_mine_state0 2
+shot e2
+msgstate 0 ack
+waitms 300
+expect attach_mine_state0 4
+shot e3
+msgstate 0 failed
+waitms 300
+expect attach_mine_state0 3
+shot e4
+msgstate 0 ack
+waitms 200
+expect attach_mine_state0 3

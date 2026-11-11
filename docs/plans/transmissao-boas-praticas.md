@@ -548,3 +548,20 @@ Resultado (mesma rede simulada; CSVs em `provas/transmissao/adaptacao-*.csv`; m�
 **NÃO resolvido**: o pior congelamento nas quedas bruscas ficou em 8–11 s nesta rodada (antes ~5 s, porém com 0,4 Mbps de média); numa
 rodada intermediária a Fluidez com conteúdo-ruído chegou a 22 s. O teste agora falha só acima de 14 s. O PLI mais frequente
 (0,6 s) já havia sido testado sem ganho (seção 14).
+
+## 16. Frente A, 2º marco — 2026-11-11
+
+- **1080p com latência maior que 720p (loopback, `glass_to_glass_latency`) — INVESTIGADO, causa não isolada.** Padrão (NVENC +
+  decodificador do Media Foundation): 720p p50 17 ms / p95 26; 1080p p50 61 / p95 70. Com `BRIKS_DECODER=openh264`: 1080p p50 49;
+  com `BRIKS_ENCODER=mf-soft`: 151 (codificador por software); conversão na CPU: 97 e 14 qps. O pacer não é a causa (fila 0 KB,
+  excesso de bitrate 1,0). A bancada (codificar/decodificar isolados) dá 5,0 e 7,3 ms em 1080p, então a diferença vem do pipeline
+  dos MFTs de hardware com quadros maiores. Medições variam bastante com a máquina ocupada; nenhuma correção foi feita.
+- **Espectador de rede ruim sem explicação — FEITO (UI), NÃO verificado em tela.** Com menos de 3 quadros/s por 4 s seguidos, o
+  espectador vê "Conexão instável: a imagem pode ficar parada" (e "Sua conexão não está dando conta desta transmissão" se ainda
+  não houve quadro). A regra da maioria (seção anterior) continua: o emissor não baixa a qualidade de todos por um espectador só.
+  NÃO FEITO: bitrate/camada própria por espectador (exige simulcast ou um 2º codificador).
+- **Reconexão do emissor — SÓ LEITURA DO CÓDIGO.** O `mesh.rs` re-anexa a transmissão em curso quando um par volta a autenticar
+  (`attach_share` na autenticação), então um espectador que sai e volta recebe a imagem (teste `late_joiner_resize_and_leave_keep_the_share_alive`).
+  Queda de sinalização do emissor com a transmissão no ar NÃO foi testada.
+- **NÃO FEITO nesta rodada:** 4+ espectadores, FEC de vídeo, DPI/múltiplos monitores, tela cheia/DRM reais, Discord tocando,
+  cliques restantes (alternar apps, parar/retomar, volume).

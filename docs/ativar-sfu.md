@@ -25,7 +25,9 @@ Siga `infrastructure/livekit/README.md` (Docker + `livekit.yaml`) e depois os pa
 Em uma sala com mais de 8 pessoas (ou escolhendo SFU), o diagnóstico da conexão mostra "SFU".
 Sem as variáveis, o app continua só com a malha P2P.
 
-## App nativo (CUI): passo a passo curto
+## App nativo (CUI, versão 1.4.0): passo a passo curto
+
+As seções acima (`.env`, `VITE_*`, `pnpm package:win`) são do app antigo (Electron) e não valem para o app nativo.
 
 Nada aqui foi publicado ainda: é o que VOCÊ faz quando quiser ligar o servidor de chamadas. Nenhum segredo vai para o app.
 
@@ -39,7 +41,7 @@ Nada aqui foi publicado ainda: é o que VOCÊ faz quando quiser ligar o servidor
    ```
 3. **Publicar a função de tokens** (com o JWT do gateway ligado): `supabase functions deploy livekit-token`.
    Opcional, para a expulsão derrubar a pessoa de verdade no servidor: `supabase functions deploy livekit-kick`
-   (já escrita e testada localmente; o app ainda NÃO a chama).
+   (o app nativo já a chama quando o dono da sala expulsa alguém numa chamada pelo SFU; se a função não estiver publicada, fica só o aviso assinado entre os apps).
 4. **Dizer ao app onde fica o servidor** (são endereços públicos, não segredos). Crie `%APPDATA%\Briks-CUI\livekit.json`:
    ```json
    {"url":"wss://SEU-SERVIDOR","token_url":"https://SEU-PROJETO.supabase.co/functions/v1/livekit-token"}

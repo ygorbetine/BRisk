@@ -5,6 +5,7 @@
 #include "netdiag.h"
 #include "update.h"
 #include "core.h"
+#include "hotkeys.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +18,7 @@ typedef struct {
     int mic, out;                 /* índices nas listas de dispositivos (0 = padrão do sistema) */
     char mic_name[64], out_name[64];
     float in_vol, out_vol;        /* 0..100 */
-    int noise;                    /* 0 Padrão, 1 RNNoise, 2 Desligada */
+    int noise_off;                /* 0 filtro leve de ruído ligado (Padrão), 1 desligado */
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
     bool echo, excl_audio;
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
@@ -32,7 +33,7 @@ settings_t g_set;
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
-    { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise", 'i', &g_set.noise }, { "gate_on", 'b', &g_set.gate_on },
+    { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
     { "call_mode", 'i', &g_set.call_mode }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
     { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute },
@@ -137,6 +138,9 @@ static void soon(cui_ctx *ui, const char *what) {   /* o que ainda não tem efei
     cui_text(ui, b, .size = 11, .color = g_th.ph);
 }
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay) { *mute = g_set.key_mute; *deafen = g_set.key_deafen; *stream = g_set.key_stream; *ptt = g_set.key_ptt; *ptt_on = g_set.ptt_on; *delay = g_set.ptt_delay; }
+void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off) {
+    snprintf(mic, mic_cap, "%s", g_set.mic ? g_set.mic_name : ""); snprintf(out, out_cap, "%s", g_set.out ? g_set.out_name : ""); *noise_off = g_set.noise_off != 0;
+}
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 11, .color = g_th.ph);
@@ -159,6 +163,46 @@ static const char *const TAB_ICONS[] = { CUI_ICON_MIC, CUI_ICON_GLOBE, CUI_ICON_
     CUI_ICON_PLUS, CUI_ICON_USERS, CUI_ICON_SETTINGS, CUI_ICON_USER, CUI_ICON_SETTINGS };
 #define NTABS 13
 
+/* ---- atalhos: gravar a combinação apertada, remover, avisar de conflito ---- */
+static int rec_slot = -1;                 /* 0..2 globais, 3 apertar para falar */
+static char key_msg[160]; static int key_msg_slot = -1;
+static char *key_field(int i) { return i == 0 ? g_set.key_mute : i == 1 ? g_set.key_deafen : i == 2 ? g_set.key_stream : g_set.key_ptt; }
+static const char *const KEY_LABEL[4] = { "Mutar / desmutar microfone", "Ensurdecer", "Iniciar / parar transmissão", "Tecla de apertar para falar" };
+static void key_apply(int i, const char *t) {   /* aceita a combinação gravada ou explica por que não */
+    unsigned m; int v; char fin[48];
+    if (!hk_parse(t, &m, &v)) return;
+    if (i == 3) { m = 0; if (!hk_format(0, v, fin, sizeof fin)) return; t = fin; }   /* apertar para falar segue só a tecla */
+    key_msg_slot = i; key_msg[0] = 0;
+    for (int j = 0; j < 4; j++) if (j != i && hk_same(key_field(j), t)) { snprintf(key_msg, sizeof key_msg, "%s já usa %s. Escolha outra combinação.", KEY_LABEL[j], t); return; }
+    if (i < 3 && !hk_is_mouse(v) && !hk_same(key_field(i), t)) {
+        const char *busy = getenv("BRIKS_HK_BUSY");   /* testes: finge que outro programa usa este combo */
+        const bool hidden = getenv("BRIKS_HIDDEN") || getenv("BRIKS_SCRIPT") || getenv("BRIKS_DEMO");
+        if ((busy && hk_same(busy, t)) || (!busy && !hidden && !hkw_probe(m, v))) { snprintf(key_msg, sizeof key_msg, "Outro programa já usa %s. Escolha outra combinação.", t); return; }
+    }
+    snprintf(key_field(i), 24, "%s", t);
+}
+static void key_row(cui_ctx *ui, app_state_t *s, int i) {
+    char *f = key_field(i); const bool rec = rec_slot == i;
+    cui_text(ui, KEY_LABEL[i], .size = 12, .color = B_MUTED);
+    cui_row(ui, .width = CUI_FILL, .gap = 8, .align = CUI_ALIGN_CENTER) {
+        cui_box(ui, .width = CUI_FILL, .pad_x = 12, .pad_y = 9, .radius = 12, .bg = B_PANEL, .border = rec ? 2 : 1, .border_color = rec ? B_C3 : B_LINE) {
+            cui_text(ui, rec ? "Aperte a combinação… (Esc cancela)" : f[0] ? f : "Sem atalho", .size = 13, .color = rec ? B_C3 : f[0] ? B_TEXT : g_th.ph, .nowrap = true);
+        }
+        cui_push_id_int(ui, 6000 + i);
+        if (cui_button(ui, rec ? "Cancelar" : f[0] ? "Alterar" : "Gravar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+            if (rec) rec_slot = -1; else { rec_slot = i; hkw_capture_begin(true); key_msg[0] = 0; }
+        }
+        if (f[0] && !rec && cui_button(ui, "Remover", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM)) { f[0] = 0; key_msg_slot = -1; }
+        cui_pop_id(ui);
+    }
+    if (key_msg_slot == i && key_msg[0]) cui_text(ui, key_msg, .size = 12, .color = B_DANGER, .width = CUI_FILL);
+    else if (i < 3 && f[0]) {
+        if (!s->in_room) sub(ui, "Passa a valer quando você entra numa chamada.");
+        else if (s->hk_status[i] == HKS_BUSY) cui_text(ui, "Outro programa já usa esta combinação: ela não vai funcionar. Escolha outra.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
+        else if (s->hk_status[i] == HKS_OK || s->hk_status[i] == HKS_POLLED) cui_text(ui, "Ativo agora, mesmo com o Briks em segundo plano.", .size = 12, .color = B_ONLINE);
+    }
+}
+
 void settings_tick(void) {
     static bool loaded; static settings_t last;
     if (!loaded) { loaded = true; load(); enum_devices(); last = g_set; return; }
@@ -174,9 +218,15 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
     static unsigned long long store_bytes; static float level_sim;
     if (s->settings_open && !was_open) {
         char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) == S_OK) { strcat(ad, "\\Briks-CUI"); store_bytes = dir_size(ad, 0); }
-        enum_devices(); confirm_hist = confirm_all = false;
+        enum_devices(); confirm_hist = confirm_all = false; rec_slot = -1; key_msg[0] = 0; key_msg_slot = -1;
     }
     was_open = s->settings_open;
+    if (rec_slot >= 0 && (!s->settings_open || s->settings_tab != 5)) rec_slot = -1;
+    if (rec_slot >= 0) {   /* captura da tecla apertada: o laço de atalhos reais fica parado enquanto isso */
+        char t[48]; g_hk_recording = true; cui_request_wakeup(ui, 0.03f);
+        int r = hkw_capture_poll(t, sizeof t);
+        if (r == 1) { key_apply(rec_slot, t); rec_slot = -1; } else if (r == 2) rec_slot = -1;
+    }
     cui_vec2 vp = cui_viewport_size(ui);
     const float dw = fminf(900.0f, fmaxf(vp.x - 48.0f, 340.0f)), dh = fminf(900.0f, fmaxf(vp.y - 150.0f, 260.0f));
     cui_dialog(ui, "Configurações", &s->settings_open, .width = dw) {
@@ -195,34 +245,48 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                 switch (s->settings_tab) {
                 case 0: /* Voz e vídeo */
                     SCARD(ui, "ENTRADA") {
+                        cui_text(ui, "Microfone", .size = 12, .color = B_MUTED);
                         cui_select(ui, "cfg-mic", in_ptr, in_n, &g_set.mic);
+                        sub(ui, "Vale na hora, inclusive numa chamada em andamento. Se o aparelho sumir, volta ao padrão do sistema.");
                         cui_text(ui, "Nível do microfone", .size = 12, .color = B_MUTED);
-                        level_sim += (s->me_level - level_sim) * 0.3f;
+                        level_sim += ((s->in_room ? s->me_level : s->mic_test_level) - level_sim) * 0.3f;
                         cui_progress(ui, level_sim);
-                        sub(ui, s->in_room ? "A barra mostra o que o Briks está ouvindo na chamada." : "Entre numa sala para ver o nível; o teste fora da chamada chega com o áudio nativo.");
+                        if (s->in_room) sub(ui, "A barra mostra o que o Briks está ouvindo na chamada.");
+                        else {
+                            cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .wrap = true) {
+                                if (cui_button(ui, s->mic_test_on ? "Parar teste" : "Testar microfone", .variant = s->mic_test_on ? CUI_BUTTON_SECONDARY : CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) {
+                                    s->mic_test_on = !s->mic_test_on; s->mic_test_msg[0] = 0; if (!s->mic_test_on) s->mic_test_level = 0;
+                                }
+                            }
+                            if (s->mic_test_msg[0]) cui_text(ui, s->mic_test_msg, .size = 12, .color = B_DANGER, .width = CUI_FILL);
+                            else sub(ui, s->mic_test_on ? "Fale: a barra mostra o que sai com o seu ganho, a porta e a supressão. Nada é gravado nem enviado." : "Mede o microfone sem entrar numa chamada. Nada é gravado nem enviado; para sozinho ao sair desta tela.");
+                            if (s->mic_test_on) cui_request_wakeup(ui, 0.05f);
+                        }
                         cui_text(ui, "Volume de entrada (ganho)", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-invol", &g_set.in_vol, 0, 100);
                         sub(ui, "O ganho vale na hora, na sua voz que sai para a sala.");
-                        soon(ui, "escolher o microfone (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "SAÍDA") {
+                        cui_text(ui, "Saída de som", .size = 12, .color = B_MUTED);
                         cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
+                        sub(ui, "Vale na hora para as vozes da sala. Se o aparelho sumir, volta ao padrão do sistema.");
                         cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
                         cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
                         sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
-                        soon(ui, "escolher a saída de som (hoje usa o padrão do sistema)");
                     }
                     SCARD(ui, "PROCESSAMENTO") {
-                        static const char *NZ[] = { "Padrão", "RNNoise", "Desligada" };
+                        static const char *NZ[] = { "Padrão", "Desligada" };
                         cui_text(ui, "Supressão de ruído", .size = 12, .color = B_MUTED);
-                        seg(ui, "cfg-nz", NZ, 3, &g_set.noise);
-                        sub(ui, g_set.noise == 0 ? "O mais compatível. Recomendado." : g_set.noise == 1 ? "Experimental. Processa a voz no seu computador." : "Sem filtro algum.");
+                        seg(ui, "cfg-nz", NZ, 2, &g_set.noise_off);
+                        sub(ui, g_set.noise_off ? "Sem filtro algum: a voz sai como o microfone captou." : "Filtro leve no seu computador: corta ronco grave e abaixa chiado constante (ventilador). Não é a redução por rede neural (RNNoise), que chega depois.");
                         sw(ui, "Porta de ruído", "Silencia o microfone abaixo do limite (teclado, ventilador).", &g_set.gate_on);
                         if (g_set.gate_on) { cui_textf(ui, "Limite: %d dB", (int)g_set.gate_db); cui_slider(ui, "##cfg-gate", &g_set.gate_db, -70, -20); }
-                        sw(ui, "Cancelamento de eco", "Evita que o áudio dos alto-falantes volte pelo microfone.", &g_set.echo);
-                        sw(ui, "Excluir áudio do Briks da transmissão", "Ao compartilhar a tela, não retransmite as vozes tocadas pelo próprio Briks.", &g_set.excl_audio);
-                        sub(ui, "A porta de ruído vale na hora.");
-                        soon(ui, "supressão de ruído, cancelamento de eco e excluir áudio do Briks");
+                        sub(ui, "A porta de ruído e a supressão valem na hora.");
+                        cui_push_disabled(ui, true);
+                        cui_switch(ui, "Cancelamento de eco", &g_set.echo);
+                        cui_switch(ui, "Excluir áudio do Briks da transmissão", &g_set.excl_audio);
+                        cui_pop_disabled(ui);
+                        soon(ui, "cancelamento de eco e excluir o áudio do Briks da transmissão (os interruptores ficam desligados até lá). Dica: use fones para evitar eco");
                     }
                     break;
                 case 1: { /* Rede */
@@ -341,20 +405,18 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     break;
                 case 5: /* Atalhos */
                     SCARD(ui, "ATALHOS GLOBAIS") {
-                        sub(ui, "Funcionam com o Briks em segundo plano, só numa chamada. Se outro programa usar a combinação, escolha outra.");
-                        cui_text(ui, "Mutar / desmutar microfone", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-mute", g_set.key_mute, sizeof g_set.key_mute, .placeholder = "Ex.: Ctrl+Shift+M");
-                        cui_text(ui, "Ensurdecer", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-deaf", g_set.key_deafen, sizeof g_set.key_deafen, .placeholder = "Ex.: Ctrl+Shift+D");
-                        cui_text(ui, "Iniciar / parar transmissão", .size = 12, .color = B_MUTED); cui_input(ui, "cfg-k-str", g_set.key_stream, sizeof g_set.key_stream, .placeholder = "Ex.: Ctrl+Shift+S");
-                        tag_nofx(ui);
+                        sub(ui, "Funcionam numa chamada, mesmo com o Briks em segundo plano. Clique em Gravar e aperte a combinação; o botão do meio e os laterais do mouse também servem.");
+                        key_row(ui, s, 0); key_row(ui, s, 1); key_row(ui, s, 2);
+                        sub(ui, "Se outro programa já usa a combinação, o Briks avisa e não a grava.");
+                        soon(ui, "editar as posições da sobreposição por atalho (Ctrl+Shift+O)");
                     }
                     SCARD(ui, "APERTAR PARA FALAR") {
-                        sw(ui, "Apertar para falar", "O microfone fica mudo e só abre enquanto você segura a tecla.", &g_set.ptt_on);
+                        sw(ui, "Apertar para falar", "O microfone fica mudo e só abre enquanto você segura a tecla (numa chamada).", &g_set.ptt_on);
                         if (g_set.ptt_on) {
-                            cui_text(ui, "Tecla (teclado, botão do meio ou laterais do mouse)", .size = 12, .color = B_MUTED);
-                            cui_input(ui, "cfg-k-ptt", g_set.key_ptt, sizeof g_set.key_ptt, .placeholder = "Escolher tecla");
+                            key_row(ui, s, 3);
                             cui_textf(ui, "Atraso ao soltar: %d ms", (int)g_set.ptt_delay); cui_slider(ui, "##cfg-ptt", &g_set.ptt_delay, 0, 1000);
+                            if (!g_set.key_ptt[0]) cui_text(ui, "Escolha uma tecla: sem ela o apertar para falar não faz nada.", .size = 12, .color = B_DANGER, .width = CUI_FILL);
                         }
-                        tag_nofx(ui);
                     }
                     break;
                 case 6: /* Notificações */

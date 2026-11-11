@@ -44,6 +44,12 @@ void rtc_kick_peer(app_state_t *s, int slot) {
     if (core_state() == CORE_READY) send_cmd("peer.kick", extra);
 }
 
+void rtc_mic_test(app_state_t *s, bool on) {
+    if (core_state() != CORE_READY) return;
+    /* o core aplica as Configurações > Voz (dispositivo, supressão, ganho e porta) no teste; o audio.cfg mais recente já foi enviado */
+    send_cmd("mic.test", on ? "\"on\":true" : "\"on\":false");
+    (void)s;
+}
 void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
 /* silenciar uma pessoa = ganho zero só para ela (por peer_id) */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
@@ -96,6 +102,10 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const char *p = json_str(j, "peer", "");
         if (!strcmp(p, "me")) s->me_level = l;
         else for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) s->rtc_peers[i].level = l;
+    } else if (!strcmp(ev, "mic.test")) {
+        const jval *lv = json_get(j, "level"); const char *er = json_str(j, "error", "");
+        if (er[0]) { s->mic_test_on = false; s->mic_test_level = 0; copy(s->mic_test_msg, sizeof s->mic_test_msg, er); }
+        else if (s->mic_test_on) s->mic_test_level = lv && lv->type == J_NUM ? (float)lv->num : 0;
     } else if (!strcmp(ev, "peer.info")) {
         const char *p = json_str(j, "peer_id", "");
         for (int i = 0; i < 8; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, p)) {
@@ -164,15 +174,16 @@ void rtc_pump(app_state_t *s) {
         copy(s->rtc_msg, sizeof s->rtc_msg, core_error());
     }
     if (st == CORE_READY) {
-        {   /* Configurações > Voz: ganhos e porta de ruído seguem para o core quando mudam ou quando entra numa sala (o áudio nasce ali) */
-            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16];
+        {   /* Configurações > Voz: ganhos, porta de ruído, supressão e dispositivos seguem para o core quando mudam ou quando entra numa sala (o áudio nasce ali) */
+            static float li = -1, lo = -1, lg = -1; static bool lgo, lroom; static char lstate[16], lmic[64], lout[64]; static int lnoise = -1; static bool lcore;
             float gi, go, gd; bool ga; settings_audio(&gi, &go, &ga, &gd);
-            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state)) {
-                snprintf(lstate, sizeof lstate, "%s", s->rtc_state);
-                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room;
-                char extra[160];
-                if (ga) snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"gate_db\":%.0f", gi, go, gd);
-                else snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f", gi, go);
+            char mic[64], outd[64]; int noff; settings_audio_ex(mic, sizeof mic, outd, sizeof outd, &noff);
+            if (gi != li || go != lo || ga != lgo || (ga && gd != lg) || s->in_room != lroom || strcmp(lstate, s->rtc_state) || strcmp(lmic, mic) || strcmp(lout, outd) || noff != lnoise || !lcore) {
+                snprintf(lstate, sizeof lstate, "%s", s->rtc_state); snprintf(lmic, sizeof lmic, "%s", mic); snprintf(lout, sizeof lout, "%s", outd);
+                li = gi; lo = go; lgo = ga; lg = gd; lroom = s->in_room; lnoise = noff; lcore = true;
+                char extra[420], me[140], oe[140]; json_escape(mic, me, sizeof me); json_escape(outd, oe, sizeof oe);
+                int n = snprintf(extra, sizeof extra, "\"in_gain\":%.2f,\"out_gain\":%.2f,\"noise\":%d,\"mic\":\"%s\",\"out\":\"%s\"", gi, go, noff, me, oe);
+                if (ga) snprintf(extra + n, sizeof extra - (size_t)n, ",\"gate_db\":%.0f", gd);
                 send_cmd("audio.cfg", extra);
             }
         }

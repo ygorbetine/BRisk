@@ -17,10 +17,12 @@
  *   shot <nome>            salva <nome>.png (com BRIKS_SCRIPT_SHOTS=1 só estes são salvos, não um PNG por quadro)
  *   type <texto>           digita o texto no campo com foco (como o teclado; usado pelo roteiro de paridade)
  *   key enter|tab|backspace|esc   aperta e solta a tecla (idem)
+ *   hkey <combinação>      finge a tecla apertada na captura da tela de Atalhos (ex.: hkey Ctrl+Shift+K, hkey Esc)
  *   signal <nome>          cria o arquivo <nome>.flag na pasta de saída (um roteiro externo espera por ele para agir) */
 #include "briks_ui.h"
 #include "drag_stack_ui.h"
 #include "layout.h"
+#include "hotkeys.h"
 static int demo_voice_n = -1, demo_servers_n = -1;
 #include <stdio.h>
 #include <string.h>
@@ -117,6 +119,7 @@ void script_tick(cui_ctx *ui) {
             char *k = strtok(NULL, " "); int kc = !k ? -1 : !strcmp(k, "enter") ? CUI_KEY_ENTER : !strcmp(k, "tab") ? CUI_KEY_TAB : !strcmp(k, "backspace") ? CUI_KEY_BACKSPACE : !strcmp(k, "esc") ? CUI_KEY_ESCAPE : -1;
             if (kc >= 0) { cui_input_key(ui, (cui_key)kc, true, 0); key_up = kc; }
         }
+        else if (!strcmp(cmd, "hkey")) { char *r = strtok(NULL, ""); if (r) hkw_capture_inject(r); }   /* hkey <combinação>: finge que a tecla foi apertada na captura de atalhos */
         else if (!strcmp(cmd, "restore")) dock_script_restore();
         else if (!strcmp(cmd, "art")) { char *n = strtok(NULL, " "); drag_stack_set_art(n ? panel_from_name(n) : -1); }
         else if (!strcmp(cmd, "voice")) { char *n = strtok(NULL, " "); demo_voice_n = n ? atoi(n) : -1; drag_stack_set_demo(demo_voice_n, demo_servers_n); }

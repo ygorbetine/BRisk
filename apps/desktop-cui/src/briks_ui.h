@@ -169,6 +169,9 @@ typedef struct {
     int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
     char others_msg[200]; bool others_busy, others_confirm;
     char ice_source[8];                                        /* default | file | env */
+    /* Voz e atalhos: teste do microfone fora da chamada e resultado do registro dos atalhos globais */
+    bool mic_test_on; float mic_test_level; char mic_test_msg[160];
+    int hk_status[3];                                          /* HKS_* (hotkeys.h): mutar, ensurdecer, transmissão */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -254,6 +257,9 @@ void themes_tab(cui_ctx *ui);                              /* themes.c: aba Tema
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
+void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */
+void rtc_mic_test(app_state_t *s, bool on);               /* rtc.c: teste do microfone fora da chamada (eventos mic.test) */
+extern bool g_hk_recording;                                /* hotkeys_rt.c: capturando tecla na tela de Atalhos */
 void settings_keys(const char **mute, const char **deafen, const char **stream, const char **ptt, bool *ptt_on, float *delay);
 void hotkeys_tick(cui_ctx *ui, app_state_t *s);            /* hotkeys.c: atalhos globais e apertar para falar */
 void settings_tick(void);                                  /* carrega/grava settings.cfg */

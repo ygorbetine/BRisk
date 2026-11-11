@@ -1,0 +1,7 @@
+wait 12
+at 40 760
+wait 12
+shot dica-sair-hover
+at 700 300
+wait 12
+shot dica-sair-depois

@@ -107,7 +107,12 @@ static void paint_over(cui_ctx *ui, cui_rect r, void *user) {
     if (!o->slot) return;
     /* só um contorno sutil, com o MESMO retângulo e raio (22) do painel: segue a curva, sem cantos retos */
     cui_rect z = { o->slot_r.x, o->slot_r.y, o->slot_r.w, o->slot_r.h };
-    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), B_A(B_C3, 0xcc), 1.5f);
+    /* halo azul (3 anéis que somem para fora) + contorno azul nítido: o encaixe fica evidente, sempre com o raio do painel */
+    for (int i = 3; i >= 1; i--) {
+        float g = (float)i * 3.0f; cui_rect h = { z.x - g, z.y - g, z.w + 2 * g, z.h + 2 * g };
+        cui_draw_rect_border(ui, h, CUI_CORNERS(g_th.panel_radius + g), CUI_RGBA(0x00000000), CUI_RGBA(0x5aa0ff00 | (0x14 * (4 - i))), 3.0f);
+    }
+    cui_draw_rect_border(ui, z, CUI_CORNERS(g_th.panel_radius), CUI_RGBA(0x00000000), CUI_RGBA(0x7db4ffee), 2.0f);
 }
 
 static float servers_target_w(float vw) {
@@ -120,11 +125,12 @@ static bool inside(lrect r, float x, float y) { return x >= r.x && y >= r.y && x
 
 static void tool_button(cui_ctx *ui, int id, const char *icon, bool *hit) {
     cui_push_id_int(ui, id);
-    cui_box(ui, .id = "b", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 9, .bg = B_A(B_PANEL, 0xe6), .border = 1,
+    bool hot = briks_hover_top(ui, "b");
+    cui_box(ui, .id = "b", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 9, .bg = hot ? CUI_RGBA(0x2a1b4fee) : B_A(B_PANEL, 0xe6), .border = 1,
             .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         cui_icon(ui, icon, 13, B_TEXT);
     }
-    *hit = briks_clicked(ui, "b");
+    *hit = briks_clicked_top(ui, "b");
     cui_pop_id(ui);
 }
 
@@ -135,9 +141,9 @@ typedef struct { cui_ctx *ui; app_state_t *s; lrect r[LAYOUT_MAX_NODES]; float m
 static float header_h(int kind) { return kind == P_SERVERS ? 12.0f : 56.0f; }
 static bool in_header(int kind, lrect r, float x, float y) {
     if (!inside(r, x, y) || y > r.y + header_h(kind)) return false;
-    int n = 1 + (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0);
+    int n = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0);
     float tw = 24.0f * n + 4.0f * (n - 1);
-    if (kind != P_SERVERS && x >= r.x + r.w - 6 - tw - 4 && y < r.y + 36) return false;   /* sob os botões de atalho */
+    if (n > 0 && kind != P_SERVERS && x >= r.x + r.w - 10 - tw - 4 && y < r.y + 38) return false;   /* sob os botões de atalho */
     return true;
 }
 
@@ -148,22 +154,21 @@ static void render_leaf(rc_t *c, int kind, lrect r, bool tools, int hot) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(r.h)) {
             g_panel_w = r.w;
             ui_panel(ui, c->s, kind);
-            if (hot || tools) {   /* alça de arrasto no topo + leve destaque do cabeçalho (cantos de cima acompanham o painel) */
+            if (kind != P_SERVERS) {   /* alça de arrasto: SEMPRE presente, mesma altura/posição em todo layout (só a cor muda ao passar o mouse; nada se move) */
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START) {
                     cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(r.w), .height = CUI_PX(header_h(kind)), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START, .pad_top = 5,
-                            .radius_tl = (int)g_th.panel_radius, .radius_tr = (int)g_th.panel_radius, .bg = hot ? CUI_RGBA(0xffffff14) : CUI_RGBA(0x00000000)) {
-                        if (kind != P_SERVERS) cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(4), .radius = 2, .bg = hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff30)) {}
+                            .radius_tl = (int)g_th.panel_radius, .radius_tr = (int)g_th.panel_radius) {
+                        cui_box(ui, .width = CUI_PX(34), .height = CUI_PX(4), .radius = 2, .bg = hot ? CUI_RGBA(0xc4b0ffcc) : CUI_RGBA(0xffffff24)) {}
                     }
                 }
             }
             if (tools && !(kind == P_SERVERS && r.w < 76)) {
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 6) {
+                { int nb = (r.w >= 120 ? 1 : 0) + (layout_count(&L) > 1 ? 1 : 0); if (nb) briks_cover(r.x + r.w - 10 - 28 * nb + 4 - 2, r.y + 8, 28 * nb, 28); }
+                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 10) {
                     cui_box(ui, .dir = CUI_ROW, .gap = 4) {
-                        bool g = false, p = false, x = false;
-                        tool_button(ui, 1, CUI_ICON_MOVE, &g);
+                        bool p = false, x = false;
                         if (r.w >= 120) tool_button(ui, 2, CUI_ICON_PLUS, &p);
                         if (layout_count(&L) > 1) tool_button(ui, 3, CUI_ICON_X, &x);
-                        if (g && !drag.active) { drag = (drag_t){ true, kind, false }; }
                         if (p) { menu_open = true; menu_age = 0; menu_ax = c->mx; menu_ay = c->my; }
                         if (x) { layout_remove(&L, kind); save_layout(); }
                     }
@@ -379,6 +384,7 @@ static bool menu_pill(cui_ctx *ui, const char *label, int id, float a) {
 static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
     static float t;   /* abertura 0..1 */
     if (!menu_open) return;
+    g_modal_now = true; g_in_modal++;
     if (menu_age == 0) t = g_perf >= PERF_MIN ? 1.0f : 0.0f;
     float dur = g_perf == PERF_SIMPLE ? 0.07f : 0.16f;
     if (t < 1.0f) { t += (dur > 0 ? 1.0f / 60.0f / dur : 1.0f); if (t > 1.0f) t = 1.0f; cui_request_redraw(ui); }
@@ -392,7 +398,7 @@ static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
     x = fminf(fmaxf(x, 8), fmaxf(vp.x - w - 8, 8)); y = fminf(fmaxf(y, 8), fmaxf(vp.y - h - 8, 8));
     float lift = (1.0f - e) * 8.0f;             /* sobe 8 px ao abrir */
     bool out = menu_age > 0 && lr.w > 0 && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !(mp.x >= lr.x && mp.y >= lr.y && mp.x < lr.x + lr.w && mp.y < lr.y + lr.h);
-    if (out || (menu_age > 0 && cui_key_pressed(ui, CUI_KEY_ESCAPE))) { menu_open = false; return; }
+    if (out || (menu_age > 0 && cui_key_pressed(ui, CUI_KEY_ESCAPE))) { menu_open = false; g_in_modal--; return; }
     if (menu_age < 3) cui_request_redraw(ui);   /* o 2º quadro já mede o tamanho real e reposiciona */
     menu_age++;
     menu_paint_t pt = { a };
@@ -412,6 +418,7 @@ static void add_menu(cui_ctx *ui, cui_vec2 vp, cui_vec2 mp) {
             }
         }
     }
+    g_in_modal--;
 }
 
 /* ---- ganchos do roteiro (BRIKS_SCRIPT): pontos e ações simbólicas, para o vídeo não depender de coordenadas fixas ---- */
@@ -423,11 +430,10 @@ bool dock_script_point(const char *spec, float *x, float *y) {
     lrect r = last_r[i];
     int cnt = layout_count(&L);
     bool has_plus = r.w >= 120, has_x = cnt > 1;
-    float right = r.x + r.w - 6, cy = r.y + 18;
+    float right = r.x + r.w - 10, cy = r.y + 22;
     float x_close = right - 12;                                   /* da direita para a esquerda: x, +, alça */
     float x_plus = right - 12 - (has_x ? 28 : 0);
-    float x_grip = right - 12 - 28 * ((has_x ? 1 : 0) + (has_plus ? 1 : 0));
-    if (!strcmp(what, "grip")) { *x = x_grip; *y = cy; return true; }
+        if (!strcmp(what, "grip")) { *x = r.x + r.w * 0.35f; *y = r.y + 28; return true; }   /* a alça é o próprio cabeçalho */
     if (!strcmp(what, "plus") && has_plus) { *x = x_plus; *y = cy; return true; }
     if (!strcmp(what, "close") && has_x) { *x = x_close; *y = cy; return true; }
     if (!strcmp(what, "header")) { *x = r.x + r.w * 0.35f; *y = r.y + 28; return true; }

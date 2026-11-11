@@ -34,6 +34,9 @@ static void dev_autologin(void) {
 }
 
 static void frame(cui_ctx *ui) {
+    g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0;
+    memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
+    { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
@@ -57,6 +60,7 @@ static void frame(cui_ctx *ui) {
             case SCREEN_CALL: ui_call(ui, &state); break;
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
+            briks_tip_draw(ui);
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }
@@ -91,6 +95,13 @@ int main(void) {
     int win_w = 1280, win_h = 800;   /* BRIKS_WINDOW=LxA: tamanho inicial (capturas) */
     { const char *w = getenv("BRIKS_WINDOW"); int a, h; if (w && sscanf(w, "%dx%d", &a, &h) == 2 && a >= 560 && h >= 480) { win_w = a; win_h = h; } }
 #ifdef _WIN32
+    if (!getenv("BRIKS_WINDOW")) {   /* nunca abre maior que a área útil da tela (tela pequena / escala de 125%+): senão o app passa das bordas */
+        RECT wa; if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0)) {
+            int mw = (int)(wa.right - wa.left) - 24, mh = (int)(wa.bottom - wa.top) - 24;
+            if (win_w > mw) win_w = mw < 560 ? 560 : mw;
+            if (win_h > mh) win_h = mh < 480 ? 480 : mh;
+        }
+    }
     g_prev_fg = getenv("BRIKS_TEST_WINDOW") ? (void *)GetForegroundWindow() : NULL;
 #endif
     cui_app *app = cui_app_create(&(cui_app_desc){

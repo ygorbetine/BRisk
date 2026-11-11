@@ -1,0 +1,5 @@
+wait 12
+shot vazio-amigos
+click 640 400
+wait 10
+shot vazio-clicou

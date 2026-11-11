@@ -293,6 +293,8 @@ void ui_auth(cui_ctx *ui, app_state_t *s);
 void ui_social(cui_ctx *ui, app_state_t *s);
 void ui_call(cui_ctx *ui, app_state_t *s);
 void ui_history(cui_ctx *ui, app_state_t *s);
+extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
+void briks_text_scale_apply(cui_ctx *ui);
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
@@ -327,11 +329,46 @@ static inline void briks_status_pill(cui_ctx *ui, const char *text) {
     }
 }
 /* passar o mouse de verdade sobre a caixa `id` (cui_last_hovered não serve para caixas simples; em modo roteiro deixava tooltips presos no topo) */
+/* tooltip próprio: registra o texto neste quadro; briks_tip_draw (fim do quadro, dentro da pilha raiz) o desenha ao lado do mouse, dentro da janela.
+   Não entra no layout (o cui_tooltip ancorava no "último componente" e ficava preso no topo / empurrava irmãos). */
+extern char g_tip[160];
+static inline void briks_tip(const char *t) { snprintf(g_tip, sizeof g_tip, "%s", t); }
+void briks_tip_draw(cui_ctx *ui);
+/* Modais: enquanto houver diálogo/menu aberto, hover e clique por rect nas camadas de BAIXO são ignorados (só vale o que é desenhado dentro do modal). */
+__declspec(selectany) bool g_modal_now, g_modal_prev; __declspec(selectany) int g_in_modal;
+/* Controles sobrepostos (ex.: botões + e × do painel) registram o retângulo para o próximo quadro: o que está por baixo não recebe hover/clique ali. */
+__declspec(selectany) float g_cov_now[8][4], g_cov_prev[8][4]; __declspec(selectany) int g_cov_n_now, g_cov_n_prev;
+static inline void briks_cover(float x, float y, float w, float h) { if (g_cov_n_now < 8) { g_cov_now[g_cov_n_now][0] = x; g_cov_now[g_cov_n_now][1] = y; g_cov_now[g_cov_n_now][2] = w; g_cov_now[g_cov_n_now][3] = h; g_cov_n_now++; } }
+static inline bool briks_covered(cui_ctx *ui) {
+    cui_vec2 m = cui_mouse_pos(ui);
+    for (int i = 0; i < g_cov_n_prev; i++) if (m.x >= g_cov_prev[i][0] && m.y >= g_cov_prev[i][1] && m.x < g_cov_prev[i][0] + g_cov_prev[i][2] && m.y < g_cov_prev[i][1] + g_cov_prev[i][3]) return true;
+    return false;
+}
+static inline bool briks_blocked(void) { return g_modal_prev && g_in_modal == 0; }
+static inline bool briks_dlg_begin(cui_ctx *ui, const char *t, bool *open, const cui_dialog_opts *o) {
+    bool b = cui_dialog_begin(ui, t, open, o); if (b) { g_modal_now = true; g_in_modal++; } return b;
+}
+static inline void briks_dlg_end(cui_ctx *ui) { g_in_modal--; cui_dialog_end(ui); }
+#undef cui_dialog
+#define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
+/* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */
+static inline bool briks_clicked_top(cui_ctx *ui, const char *id) {
+    if (briks_blocked()) return false;
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
+static inline bool briks_hover_top(cui_ctx *ui, const char *id) {
+    if (briks_blocked()) return false;
+    cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
+    return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
+}
 static inline bool briks_hover(cui_ctx *ui, const char *id) {
+    if (briks_blocked() || briks_covered(ui)) return false;
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
 }
 static inline bool briks_clicked(cui_ctx *ui, const char *id) {
+    if (briks_blocked() || briks_covered(ui)) return false;
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, id)); cui_vec2 m = cui_mouse_pos(ui);
     return cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && r.w > 0 && m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h;
 }

@@ -533,7 +533,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
 
     cui_dialog(ui, "Membros", &s->members_open, .width = 460.0f) {
         cui_text(ui, "O dono e os administradores gerenciam canais e membros. Só o dono nomeia administradores.", .size = 12.5f, .color = B_MUTED);
-        cui_scroll(ui, .id = "gm-scroll", .width = CUI_FILL, .height = CUI_PX(260), .pad = 2) {
+        cui_scroll(ui, .id = "gm-scroll", .width = CUI_FILL, .height = CUI_PX(150), .pad = 2) {
             cui_column(ui, .gap = 6, .width = CUI_FILL) {
                 for (int i = 0; i < g->nm; i++) {
                     gmember_t *m = &g->m[i]; const bool owner = !strcmp(m->id, g->owner), me = !strcmp(m->id, s->user_id);
@@ -563,6 +563,23 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         if (g->can_moderate) {
             cui_text(ui, "Convidar amigos", .font = CUI_FONT_MEDIUM, .size = 13);
             cui_input(ui, "ginv-q", s->ginv_q, sizeof s->ginv_q, .placeholder = "Buscar por @nick ou nome", .width = CUI_FILL);
+            cui_text(ui, "Ou convide alguém que ainda não é seu amigo pelo @nick exato:", .size = 12, .color = B_MUTED);
+            cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                int nr = cui_input(ui, "gnick", s->gnick, sizeof s->gnick, .placeholder = "@nick", .width = CUI_FILL);
+                if ((cui_button(ui, "Buscar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM) || (nr & CUI_SUBMITTED)) && s->gnick[0]) {
+                    s->gnick_found = false; snprintf(s->gnick_msg, sizeof s->gnick_msg, "Buscando…");
+                    char esc[80], line[160]; json_escape(s->gnick, esc, sizeof esc); snprintf(line, sizeof line, "{\"cmd\":\"friends.lookup\",\"nick\":\"%s\"}", esc); core_send(line);
+                }
+            }
+            if (s->gnick_msg[0]) cui_text(ui, s->gnick_msg, .size = 12, .color = B_MUTED);
+            if (s->gnick_found && !is_member(g, s->gnick_hit.id)) {
+                cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                    cui_avatar(ui, s->gnick_hit.name, .size = 24);
+                    cui_textf(ui, "%s  @%s", s->gnick_hit.name, s->gnick_hit.nick);
+                    cui_box(ui, .width = CUI_FILL) {}
+                    if (cui_button(ui, "Convidar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .loading = s->busy)) inv = -2;
+                }
+            }
             int shown = 0;
             for (int i = 0; i < s->friend_count; i++) {
                 if (is_member(g, s->friends[i].id)) continue;
@@ -587,6 +604,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     if (rm_ch >= 0) remove_channel(s, gi, rm_ch);
     else if (adm_i >= 0) set_admin(s, gi, adm_i, adm_on);
     else if (rm_mem >= 0) remove_member(s, gi, rm_mem);
+    else if (inv == -2) { person_t p = s->gnick_hit; s->gnick_found = false; s->gnick[0] = 0; s->gnick_msg[0] = 0; add_member(s, gi, &p, true); }
     else if (inv >= 0) { person_t p = s->friends[inv]; add_member(s, gi, &p, true); }
     else if (want_code) send_group_code(s, gi);
 }

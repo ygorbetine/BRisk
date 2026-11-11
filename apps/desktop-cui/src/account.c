@@ -382,6 +382,15 @@ bool account_handle_event(app_state_t *s, const char *line) {
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
     else if (!strcmp(ev, "presence.list")) on_presence(s, j);
+    else if (!strcmp(ev, "friends.lookup")) {
+        s->gnick_found = false; s->gnick_msg[0] = 0;
+        if (jbool(j, "ok")) {
+            const jval *h = json_get(j, "hit"); person_t *p = &s->gnick_hit; memset(p, 0, sizeof *p);
+            copy(p->id, sizeof p->id, json_str(h, "user_id", "")); copy(p->name, sizeof p->name, json_str(h, "display_name", "?"));
+            copy(p->nick, sizeof p->nick, json_str(h, "nick", "")); copy(p->fp, sizeof p->fp, json_str(h, "fingerprint", ""));
+            s->gnick_found = p->id[0] && p->fp[0];
+        } else copy(s->gnick_msg, sizeof s->gnick_msg, !strcmp(json_str(j, "error_code", ""), "server_not_ready") ? "A busca por @nick ainda não está ativa no servidor." : json_str(j, "message", "Não encontrado."));
+    }
     else if (!strncmp(ev, "group.", 6)) groups_core_event(s, j, ev);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));

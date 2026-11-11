@@ -92,3 +92,99 @@ Objetivo do usuário: o SFU deve conectar MUITO mais de 5 pessoas. A malha P2P (
 - IPC: no modo SFU o core não abre malha nem Realtime; o `peer_id` local é a identidade no SFU. `BRIKS_SFU_MESH=1` volta ao híbrido (SFU + malha até 5) de `hybrid.rs`.
 - Teste ao vivo `tests_sfudata::sfu_data_layer_scales_past_five_clients` (`BRIKS_SFU_CLIENTS`, padrão 10): todos autenticam todos com o fp real, todos ouvem voz do dono e do vizinho, status, evento e DM (sem vazar), mudo remoto, expulsão pela dona. Passou com 10, 12, 16 e 20 clientes (20 duas vezes). Com 25 clientes num único processo o teste falha de forma intermitente (presença passa; um DM/evento fica sem chegar). Causa NÃO confirmada: 25 clientes x 24 fluxos de áudio decodificados no mesmo processo saturam a CPU; precisa de teste com clientes em processos separados.
 - Limites: expulsar faz os clientes honestos ignorarem e silenciarem o banido (ele sai sozinho), mas só a API de administração do LiveKit (RemoveParticipant, numa função do Supabase que verifique o dono) o tira do servidor de mídia: NÃO FEITO. Mudo remoto assinado: FEITO só na camada de dados do SFU (a malha P2P responde "só no modo SFU"). Não testado pela UI C nem por `room.join` de ponta a ponta no IPC com SFU puro.
+
+---
+
+# Estado em 2026-11-11 (substitui as listas de "não feito" acima onde houver conflito)
+
+Todos os testes abaixo rodam contra o `livekit-server --dev` oficial em loopback, com fontes sintéticas e codificadores de
+software (sem GPU, sem janela, sem capturar tela). `BRIKS_LIVEKIT_SERVER_BIN` aponta para o binário; `--test-threads=1`.
+
+## Marco: reconexão automática (`sfu.rs`, teste `tests_sfurec`)
+- Gatilhos: WebSocket fechado, servidor mudo além do `ping_timeout`, PeerConnection `Failed`, `Leave` do servidor pedindo reconexão.
+- Tentativas em 0,2 / 0,5 / 1 / 2 / 4 / 5 s (±20%); desiste em 2 min com `signaling.status` "erro" (a sala NÃO fica bloqueada).
+- Token novo uma vez por queda (`TokenFn`: no app, a função `livekit-token` com a sessão da conta) e de novo se o servidor recusar (401/403).
+- Volta do zero (o servidor pode ter reiniciado): PeerConnections novos, as mesmas faixas (microfone, tela, áudio da tela) republicadas
+  sem parar o codificador; quem assistia reassina sozinho; mensagens e estado enviados durante a queda saem ao voltar.
+- 20 s de tolerância depois de voltar antes de anunciar que alguém saiu ou parou de transmitir (a lista não pisca).
+- `Kicked` só para `PARTICIPANT_REMOVED`. Antes, qualquer queda de conexão virava "expulso" e bloqueava a sala na sessão.
+- Prova: servidor morto (kill) e reiniciado 2 vezes com 3 clientes; token de entrada com 6 s de validade (só entra quem renovou);
+  voz nos 6 sentidos, vídeo assistido, DM e status da queda entregues; ninguém "saiu"; saída real ainda é vista. Voltam ~0,5 s depois de o servidor subir.
+- NÃO testado: desistência após 2 min; reconexão com LiveKit Cloud (migração de nó). A retomada de sessão (`reconnect=1`) não é usada: sempre entra de novo.
+
+## Marco: perda, queda e banda sobre o SFU (`tests_sfurede`, CSV em `apps/desktop-cui/provas/sfu/`)
+O proxy UDP do `netsim` fica entre UM cliente e o servidor (candidatos ICE dos dois lados reescritos; nada contorna o proxy).
+720p30, bitrate fixo, codificador `mf-soft` (que estoura o pedido: ~6 Mbps em vez de 3). Rodada que está no CSV:
+
+| cenário | envio (emissor→SFU) qps / p50 | recepção (SFU→espectador) qps / p50 |
+|---|---|---|
+| base | 30,0 / 46 ms | 29,5 / 52 ms |
+| perda 1% | 30,0 / 55 ms | 29,9 / 61 ms |
+| perda 2% | 30,1 / 62 ms | 30,1 / 128 ms |
+| perda 5% | 29,0 / 94 ms | 30,1 / 158 ms |
+| perda 10% | **4,4 / 337 ms** | 29,6 / 199 ms |
+| queda total de 4 s | 1º quadro 1,2 s após a volta, sem reconexão | 1º quadro 1,1 s após a volta, sem reconexão |
+
+- **10% de perda: NÃO resolvido.** No envio a transmissão degrada muito (0,2 a 11 qps conforme a rodada); na recepção variou entre
+  ~29 e 1,5 qps. Na malha P2P, com o mesmo codificador, 10% também degrada (17,6 qps, p50 285 ms). Em 2% houve uma rodada com 23,5 qps.
+  O teste só exige ritmo até 5%; a 10% exige apenas voltar ao normal quando a perda passa.
+- Mudança: o intervalo mínimo entre retransmissões do mesmo pacote para o SFU segue o RTT (30 a 150 ms) em vez dos 150 ms da malha
+  (o LiveKit pede poucas vezes e desiste). Não mostrou ganho mensurável a 10%.
+- Adaptação (`adapt.rs`) com o RR/NACK do SFU como único "par": banda do emissor limitada a 1,2 Mbps → desce para 360p, ~720 kbps
+  (estimativa 922 kbps, motivo "perda" e depois "atraso"); liberada → volta a 720p, ~2,1 Mbps. Recebido enquanto apertado: 7 qps.
+- NÃO feito: TWCC/REMB do servidor como estimativa de banda; simulcast; teste com NVENC sob perda (GPU não usada nesta rodada).
+
+## Marco: regra do Automático sem salas divididas (`sfu_cfg::decide`, `ipc.rs`)
+- Com o SFU configurado e válido, **Automático e "SFU" entram pelo servidor de chamadas** (SFU é o padrão quando configurado).
+- Só entra no SFU quem tem configuração válida E conseguiu o token/entrada. Se falhar, a chamada **não abre em P2P**: `net.mode`
+  com `mode:"none"` e erro em `room.join` com o motivo. Antes a pessoa caía sozinha numa sala P2P que o SFU não enxerga.
+- Reserva P2P só ligada de propósito: `BRIKS_NET_FALLBACK=p2p` ou `"fallback":"p2p"` no `net-mode.json`.
+- Sem configuração: P2P como sempre. "P2P" nunca tenta o SFU. Chat de amigo (`friend`/`chat`) continua na malha.
+- **Decisão a validar com o usuário:** a troca é disponibilidade por consistência. Se o LiveKit/Supabase cair, as chamadas no
+  Automático não abrem até voltar (ou até todos escolherem P2P). A alternativa mais completa (anunciar o modo da sala no Realtime e
+  todos seguirem) NÃO foi feita. Configuração inválida num só aparelho ainda o deixa em P2P (aparece no diagnóstico).
+
+## Marco: IPC de ponta a ponta com SFU puro e mudo remoto (`tests_sfuipc`)
+- Dois cores (IPC), contas no servidor simulado, serviço de tokens simulado, LiveKit real, **sem Realtime**: Automático escolhe o SFU,
+  participantes com impressão digital real, dono, fala, DM, status, evento de chat, `room.mute` (recusado para não-dono; a dona fecha
+  e reabre; o estado local do microfone acompanha), expulsão, volta barrada, e sem conta a chamada não abre.
+- IPC novo: `{"cmd":"room.mute","fp":"…","muted":true}`; evento `room.muted` (+ `mic.state`); `net.mode` pode vir com `mode:"none"`.
+- UI C: "Silenciar para todos" / "Reabrir o microfone dele" no menu do participante (só o dono, só no SFU). Compila. Rodada oculta
+  (`BRIKS_HIDDEN=1`) feita só no caminho de erro: sem conta, a tela mostra "Não foi possível entrar pelo servidor de chamadas…".
+- NÃO feito: chamada completa pela UI C com o SFU (precisa de conta logada no roteiro de teste); clique real no item novo do menu.
+  A UI mostra no máximo 8 participantes (`rtc_peers[8]`): o core aguenta mais, a tela não.
+- O mudo remoto é um pedido: a pessoa silenciada pode reabrir o próprio microfone.
+
+## Marco: falha intermitente com 25 clientes (`tests_sfuproc`, processos separados)
+A máquina de teste (16 threads) estava sendo usada por outras sessões; a carga só foi medida nas últimas rodadas.
+- 25 clientes num processo só (`tests_sfudata`, `BRIKS_SFU_CLIENTS=25`): 5 passaram e 7 falharam em 12 rodadas. As 3 primeiras passaram
+  em ~9 s; as que falharam levaram 32–110 s e pararam cada uma num passo diferente (voz, status, mudo, banimento).
+- 25 clientes em processos separados, todos falando: 4 passaram e 1 falhou em 5 rodadas (na que falhou a voz chegou com 36 de 150 quadros).
+  As duas últimas passaram com a máquina a 57–80% de CPU antes de começar.
+- 8 falando e o resto ouvindo, máquina a 60–80%: **40 clientes: 0 falhas; 60 clientes: 0 falhas** (presença completa em ≤ 10,8 s;
+  voz, status, evento, DM, mudo remoto e expulsão conferidos em todos). 40 clientes todos falando: quebra (voz 0–10 de 150 quadros).
+- O log do servidor nas rodadas de 25 não tem nenhum WARN/ERROR nem descarte de dados.
+- Leitura (inferência, não prova): é falta de CPU/tempo, não erro de lógica na camada de dados. 25 pessoas falando AO MESMO TEMPO custam
+  4 a 6,5 núcleos só nos clientes (cada um decodifica 24 vozes) e ~30 mil pacotes/s no servidor; o teste num processo divide isso em
+  4 threads e tem prazos fixos. O que exatamente atrasa dentro do cliente sob carga NÃO foi isolado.
+- NÃO feito: medir o servidor (CPU/rede) em separado; rodar em máquina ociosa e em máquinas diferentes; limitar no cliente quantas vozes
+  são decodificadas ao mesmo tempo (hoje assina e decodifica todas).
+
+## Marco: função de expulsão `livekit-kick` (escrita e testada; NÃO publicada; o app ainda não chama)
+- `supabase/functions/livekit-kick/index.ts` + `_shared/kick.ts` (regra) + `_shared/livekit-admin.ts` (ListParticipants/RemoveParticipant
+  por Twirp, token de administração de 60 s restrito à sala; sem dependências).
+- Regra: sessão válida; quem pede é sempre o usuário da sessão; precisa estar na sala e ser o **dono = participante mais antigo
+  segundo o LiveKit**; o alvo precisa estar na sala. Limite de requisições por IP e por usuário. Erros internos não vazam.
+- Testes com simulações: `apps/web/src/services/rtc/edge-kick.test.ts` (15 casos, vitest).
+- Teste real local, sem Supabase: `tests_sfukick` roda a mesma regra pelo Node (`supabase/tests/livekit-kick-local-check.ts`) contra o
+  LiveKit real: não-dono 403, dona 200, o removido recebe o aviso e não reconecta, os outros veem a saída.
+  (`BRIKS_NODE_BIN`; as chaves são as públicas do `--dev`, passadas pelo teste.)
+- LIMITES: o dono do servidor é "o mais antigo na sala"; depois de uma reconexão geral a ordem pode mudar e divergir do dono que os apps
+  enxergam (dono fixo exige uma tabela de salas). O expulso pode pedir outro token e voltar: o bloqueio é só no app dele e na lista
+  de banidos dos outros apps. NÃO feito: o app chamar a função ao expulsar; rodar no Deno/Supabase de verdade (`Deno.serve` e os
+  limitadores do `index.ts` não foram executados).
+
+## Ainda NÃO feito (resumo)
+Teste com LiveKit Cloud (sem credenciais); embutir `livekit.json` no instalador; chamada completa pela UI C no SFU; UI para mais de
+8 pessoas; 10% de perda; TWCC/REMB e simulcast; anunciar o modo da sala no Realtime; app chamando `livekit-kick`; dono fixo no servidor.
+Como ligar: `docs/ativar-sfu.md` (seção do app nativo).

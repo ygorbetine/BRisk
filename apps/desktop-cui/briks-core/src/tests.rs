@@ -1203,6 +1203,9 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
     // entrega e digitando
     a.cmd.send(MeshCmd::Chat { to_fp: ib.fingerprint(), text: "oi".into() }).await.unwrap();
     assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::Ack { .. })).await.is_some(), "sem confirmação de entrega");
+    // id escolhido pela UI: a confirmação de entrega volta com o mesmo id (estado "entregue" da mensagem)
+    a.cmd.send(MeshCmd::ChatWithId { to_fp: ib.fingerprint(), text: "oi com id".into(), id: "msg-ui-123".into() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::Ack { id, .. } if id == "msg-ui-123")).await.is_some(), "o ack não voltou com o id da UI");
     b.cmd.send(MeshCmd::Typing).await.unwrap();
     assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Typing { from_fp } if *from_fp == ib.fingerprint())).await.is_some(), "sem digitando");
     let _ = a.cmd.send(MeshCmd::Close).await;

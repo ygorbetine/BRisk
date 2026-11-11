@@ -241,7 +241,9 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     "chat.send" => {
                         let (Some(to), Some(text)) = (v["to_fp"].as_str(), v["text"].as_str()) else { continue };
                         if let Some(c) = &mesh_cmd {
-                            let _ = c.send(MeshCmd::Chat { to_fp: to.into(), text: text.chars().take(crate::identity::MAX_CHAT_CHARS).collect() }).await;
+                            let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
+                            let id = v["id"].as_str().filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
+                            let _ = c.send(match id { Some(id) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, None => MeshCmd::Chat { to_fp: to.into(), text } }).await;
                         }
                     }
                     "file.send" => {

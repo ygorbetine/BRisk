@@ -1,0 +1,15 @@
+wait 5
+to plus:chat 6
+wait 4
+down
+wait 2
+up
+wait 10
+click 688 319
+wait 6
+to zone:chat:right 15
+wait 12
+shot mais-3-arrastando
+click 1000 300
+wait 20
+shot mais-4-encaixado

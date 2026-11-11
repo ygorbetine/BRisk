@@ -1,0 +1,15 @@
+at 1270 790
+wait 10
+shot h0
+to panel:chat 3
+wait 10
+shot h1
+to panel:nav 3
+wait 10
+shot h2
+to header:chat 3
+wait 10
+shot h3
+to header:nav 3
+wait 10
+shot h4

@@ -59,6 +59,10 @@ int script_probe(const char *n) {
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
     if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
+    if (!strcmp(n, "fw_open")) return fw_open();
+    if (!strcmp(n, "fw_choice")) return settings_fw_choice();
+    if (!strcmp(n, "fw_busy")) return fw_busy();
+    if (!strcmp(n, "fw_exists")) return fw_exists();
     if (!strcmp(n, "join_open")) return state.join_open;
     if (!strcmp(n, "join_len")) return (int)strlen(state.join_code);
     if (!strcmp(n, "amg_in_len")) return (int)strlen(state.amg_in);
@@ -89,6 +93,7 @@ static void frame(cui_ctx *ui) {
     profile_tick(&state);
     sys_tick(&state);
     settings_tick();
+    fw_tick();
     hotkeys_tick(ui, &state);
     themes_tick(ui);
     { const char *o = getenv("BRIKS_DEV_OPEN"); if (o && state.screen == SCREEN_SOCIAL) { if (!strncmp(o, "settings", 8)) { state.settings_open = true; if (o[8] == ':') state.settings_tab = atoi(o + 9); } if (!strcmp(o, "add")) state.add_friend_open = true; if (!strncmp(o, "profile", 7)) { state.profile_open = true; if (o[7] == ':') state.profile_tab = atoi(o + 8); } } }
@@ -108,6 +113,7 @@ static void frame(cui_ctx *ui) {
         }
     }
     migrate_dialog(ui, &state);
+    fw_dialog(ui, &state);   /* primeira chamada: liberar o Briks no Firewall (nunca bloqueia a chamada) */
     briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }
 

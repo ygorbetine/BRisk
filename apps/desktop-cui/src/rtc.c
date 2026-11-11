@@ -24,6 +24,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
     copy(s->room_name, sizeof s->room_name, room);
     s->rtc_want_room = true;
     s->in_room = true;
+    fw_maybe_prompt();   /* primeira chamada: pergunta (sem bloquear) se pode liberar o Briks no Firewall */
     copy(s->rtc_state, sizeof s->rtc_state, "conectando");
     s->rtc_msg[0] = 0;
     s->rtc_peer_count = s->rtc_authed_count = 0;

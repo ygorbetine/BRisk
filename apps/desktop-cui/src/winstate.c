@@ -338,6 +338,7 @@ bool sys_script(const char *args) {
     else if (!strcmp(c, "sound") && n > 1) sound_play((sound_kind_t)atoi(t[1]));
     else if (!strcmp(c, "cfg") && n > 2) { bool v = atoi(t[2]) != 0; if (!strcmp(t[1], "close_to_tray")) g_sys.close_to_tray = v; else if (!strcmp(t[1], "nt_msg")) g_sys.nt_msg = v; else if (!strcmp(t[1], "sounds")) g_sys.sounds = v; }
     else if (!strcmp(c, "link") && n > 1) handle_link(t[1]);
+    else if (!strcmp(c, "fwask")) fw_maybe_prompt();   /* o que a primeira chamada faz */
     else if (!strcmp(c, "autostart") && n > 1) sys_autostart_set(atoi(t[1]) != 0);
     else if (!strcmp(c, "msg") && n > 3 && g_s) { char x[300]; snprintf(x, sizeof x, "%s", strstr(rest, t[2]) ? strstr(rest, t[2]) + strlen(t[2]) + 1 : ""); notify_chat_message(g_s, t[1], t[2], x); }   /* msg <canal> <autor> <texto> */
     else if (!strcmp(c, "friend") && g_s) notify_friend(g_s, rest1, false);

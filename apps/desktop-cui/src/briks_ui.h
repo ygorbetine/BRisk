@@ -278,6 +278,9 @@ void rtc_leave_room(app_state_t *s);
 void themes_tab(cui_ctx *ui);                              /* themes.c: aba Temas (gradientes) */
 void themes_tick(cui_ctx *ui);                             /* themes.c: carrega Meus gradientes; BRIKS_THEME_PRESET para capturas */
 void settings_dialog(cui_ctx *ui, app_state_t *s);   /* settings.c: Configurações com lateral de seções */
+int settings_fw_choice(void); void settings_fw_set(int c);   /* escolha do Firewall: 0 nova, 1 liberado, 2 agora não, 3 não perguntar (firewall.c) */
+void fw_maybe_prompt(void); void fw_tick(void); void fw_dialog(cui_ctx *ui, app_state_t *s); void fw_request(bool add); void fw_refresh(void);
+bool fw_busy(void); bool fw_open(void); int fw_exists(void); const char *fw_msg(void); const char *fw_state_text(void);
 int settings_net_pref(void);                               /* 0 Automático, 1 Internet direta, 2 VPN privada */
 int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */

@@ -26,6 +26,7 @@ typedef struct {
     int noise_off;                /* 0 filtro leve de ruído ligado (Padrão), 1 desligado */
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
     bool echo, excl_audio;
+    int fw_choice;                /* Firewall: 0 não decidido, 1 liberado, 2 agora não, 3 não perguntar */
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
     bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
     char key_mute[24], key_deafen[24], key_stream[24], key_ptt[24];
@@ -37,12 +38,14 @@ typedef struct {
 settings_t g_set;
 int settings_call_mode(void) { return g_set.call_mode; }
 int settings_net_pref(void) { return g_set.net_pref; }
+int settings_fw_choice(void) { return g_set.fw_choice; }
+void settings_fw_set(int c) { g_set.fw_choice = c; }
 
 static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 },
     { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
-    { "call_mode", 'i', &g_set.call_mode }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
+    { "call_mode", 'i', &g_set.call_mode }, { "fw_choice", 'i', &g_set.fw_choice }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
     { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
@@ -386,6 +389,17 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, g_set.net_pref == 0 ? "Deixa o WebRTC escolher entre VPN, conexão direta e TURN." : g_set.net_pref == 1 ? "Não oferece os adaptadores de VPN (ZeroTier, Tailscale, WireGuard) à chamada; STUN/TURN seguem disponíveis." : "Mantém os adaptadores de VPN disponíveis junto com a internet.");
                         if (g_set.net_pref == 2) sub(ui, "A prioridade entre VPN e internet ainda é decidida pelo WebRTC; esta opção não bloqueia nenhum adaptador.");
                         else sub(ui, "Vale a partir da próxima chamada.");
+                    }
+                    SCARD(ui, "FIREWALL DO WINDOWS") {
+                        fw_refresh();
+                        sub(ui, fw_state_text());
+                        sub(ui, "A regra vale só para o Briks (entrada), sem abrir porta para mais nada. O Windows pede a sua permissão.");
+                        cui_row(ui, .gap = 8, .width = CUI_FILL, .wrap = true) {
+                            if (cui_button(ui, fw_exists() == 1 ? "Liberar de novo" : "Liberar o Briks", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .loading = fw_busy())) fw_request(true);
+                            if (cui_button(ui, "Remover a regra", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .disabled = fw_exists() != 1 || fw_busy())) fw_request(false);
+                        }
+                        if (fw_msg()[0]) sub(ui, fw_msg());
+                        if (fw_busy()) cui_request_wakeup(ui, 0.3f);
                     }
                     SCARD(ui, "TESTE DE CONEXÃO") {
                         netdiag_t nd = netdiag_get();

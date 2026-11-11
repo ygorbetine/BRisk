@@ -10,6 +10,7 @@
 //!   backup.result   {op: save|restore|delete, ok, message}   (comandos: backup.restore {phrase}, backup.delete, backup.status)
 //!   identity.changed {fingerprint}                 a identidade deste aparelho foi trocada pela recuperada
 //!   friends.list    {friends:[...]} | friends.result {ok, message}
+//!   friends.blocks  {remote, blocks:[{user_id,nick,display_name}]}   (friends.block/unblock/blocks {user_id}); remote=false: servidor sem a 0006, vale a lista local da UI
 //!   local.credentials {email, password, name}      ponte com o banco local (nunca a senha da conta)
 //!   import.result   {state, friends, groups, messages, message}
 use std::path::PathBuf;
@@ -425,6 +426,27 @@ impl Service {
                     let r = acc.backup_delete().await;
                     let _ = tx.send(backup_result("delete", r.map(|_| "Cópia de segurança apagada do servidor."))).await;
                     let _ = tx.send(backup_state(&rt, &acc).await).await;
+                });
+            }
+            "friends.block" | "friends.unblock" | "friends.blocks" => {
+                // bloqueio no servidor (0006). Sem a RPC (`server_not_ready`) a UI segue com a lista local: remote=false
+                let (cmd, user) = (cmd.to_string(), s("user_id"));
+                tokio::spawn(async move {
+                    let r = match cmd.as_str() {
+                        "friends.block" => acc.friend_block(&user).await.map(|_| ()),
+                        "friends.unblock" => acc.friend_unblock(&user).await.map(|_| ()),
+                        _ => Ok(()),
+                    };
+                    let remote = match &r { Ok(_) => true, Err(e) if e.code == "server_not_ready" => false, Err(e) => {
+                        let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
+                        return;
+                    } };
+                    let list = if remote { acc.blocks().await.ok() } else { None };
+                    let remote = remote && list.is_some();
+                    let _ = tx.send(json!({ "ev": "friends.blocks", "remote": remote, "blocks": list.unwrap_or_default() })).await;
+                    if remote && cmd != "friends.blocks" {
+                        if let Ok(f) = acc.friends().await { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; }
+                    }
                 });
             }
             "friends.list" | "friends.request" | "friends.respond" | "friends.remove" => {

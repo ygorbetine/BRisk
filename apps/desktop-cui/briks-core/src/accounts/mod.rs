@@ -386,6 +386,21 @@ impl Accounts {
         let (p, u) = (self.provider.clone(), user_id.to_string());
         blk(move || p.friend_remove(&tok, &u)).await
     }
+    pub async fn friend_block(&self, user_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, u) = (self.provider.clone(), user_id.to_string());
+        blk(move || p.friend_block(&tok, &u)).await
+    }
+    pub async fn friend_unblock(&self, user_id: &str) -> AResult<()> {
+        let tok = self.access_token().await?;
+        let (p, u) = (self.provider.clone(), user_id.to_string());
+        blk(move || p.friend_unblock(&tok, &u)).await
+    }
+    pub async fn blocks(&self) -> AResult<Vec<Friend>> {
+        let tok = self.access_token().await?;
+        let p = self.provider.clone();
+        blk(move || p.blocks(&tok)).await
+    }
 
     /// Credencial do banco LOCAL deste computador para a conta logada (ponte de transição: mensagens e grupos ainda são
     /// guardados pelo backend local, que exige um usuário local). Senha aleatória por conta, cifrada com a DPAPI; não é a

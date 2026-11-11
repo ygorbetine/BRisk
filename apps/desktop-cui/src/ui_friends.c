@@ -9,7 +9,7 @@
 #include <windows.h>
 #include <shlobj.h>
 
-/* ---- lista local de bloqueados ---- */
+/* ---- bloqueados: lista local (cache + fallback) sincronizada com o servidor pelo core quando a 0006 existe ---- */
 static bool blocked_path(char *out, size_t cap) {
     const char *over = getenv("BRIKS_BLOCKED_FILE");
     if (over && over[0]) { snprintf(out, cap, "%s", over); return true; }
@@ -63,6 +63,7 @@ void friends_block(app_state_t *s, const char *id, const char *name) {
     snprintf(s->blocked[s->blocked_count].id, sizeof s->blocked[0].id, "%s", id);
     snprintf(s->blocked[s->blocked_count].name, sizeof s->blocked[0].name, "%s", name);
     s->blocked_count++; blocked_save(s);
+    if (s->acct_user_id[0]) account_block_remote(s, id, true);
     for (int i = 0; i < s->friend_count; i++) if (!strcmp(s->friends[i].id, id)) {   /* some das listas na hora */
         if (s->active_friend == i) s->active_friend = -1; else if (s->active_friend > i) s->active_friend--;
         memmove(&s->friends[i], &s->friends[i + 1], sizeof(person_t) * (size_t)(s->friend_count - i - 1)); s->friend_count--; break;
@@ -75,7 +76,8 @@ void friends_unblock(app_state_t *s, const char *id) {
     for (int i = 0; i < s->blocked_count; i++) if (!strcmp(s->blocked[i].id, id)) {
         memmove(&s->blocked[i], &s->blocked[i + 1], sizeof s->blocked[0] * (size_t)(s->blocked_count - i - 1)); s->blocked_count--; blocked_save(s); break;
     }
-    account_friends(s);   /* a amizade volta pela lista do servidor */
+    if (s->acct_user_id[0]) account_block_remote(s, id, false);   /* o core devolve a lista de amigos atualizada */
+    else account_friends(s);
 }
 
 /* ---- apresentação ---- */

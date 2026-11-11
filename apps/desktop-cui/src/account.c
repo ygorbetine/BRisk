@@ -103,7 +103,19 @@ void account_logout(app_state_t *s) {
     s->backup_phrase_open = s->backup_restore_open = s->backup_delete_open = false;
 }
 
-void account_friends(app_state_t *s) { (void)s; if (core_state() == CORE_READY) core_send("{\"cmd\":\"friends.list\"}"); }
+void account_friends(app_state_t *s) {
+    (void)s; if (core_state() != CORE_READY) return;
+    core_send("{\"cmd\":\"friends.list\"}");
+    core_send("{\"cmd\":\"friends.blocks\"}");   /* lista de bloqueados do servidor (0006); sem a RPC o core responde remote=false e vale a lista local */
+}
+
+/* bloquear/desbloquear no servidor (a lista local é atualizada por quem chama; sem a 0006 o core só confirma remote=false) */
+void account_block_remote(app_state_t *s, const char *user_id, bool block) {
+    (void)s; if (core_state() != CORE_READY || !user_id[0]) return;
+    char id[96], line[200]; json_escape(user_id, id, sizeof id);
+    snprintf(line, sizeof line, "{\"cmd\":\"friends.%s\",\"user_id\":\"%s\"}", block ? "block" : "unblock", id);
+    core_send(line);
+}
 
 void account_add_friend(app_state_t *s) {
     if (!s->add_email[0]) return;
@@ -249,6 +261,22 @@ static void on_state(app_state_t *s, const jval *j) {
     }
 }
 
+/* friends.blocks {remote, blocks:[...]}: com a 0006 o servidor manda; bloqueios que só existiam aqui sobem para ele */
+static void on_blocks(app_state_t *s, const jval *j) {
+    if (!jbool(j, "remote")) return;   /* servidor sem a 0006: fica a lista local */
+    const jval *b = json_get(j, "blocks");
+    char ids[64][48]; int n = 0;
+    for (int i = 0; i < json_len(b) && n < 64; i++) copy(ids[n++], sizeof ids[0], json_str(json_at(b, i), "user_id", ""));
+    for (int i = 0; i < s->blocked_count; i++) {   /* local que o servidor não conhece: sobe */
+        bool known = false; for (int k = 0; k < n; k++) if (!strcmp(ids[k], s->blocked[i].id)) known = true;
+        if (!known) account_block_remote(s, s->blocked[i].id, true);
+    }
+    for (int i = 0; i < json_len(b) && i < 64; i++) {   /* servidor que a lista local não tem (outro computador): entra */
+        const jval *e = json_at(b, i); const char *id = json_str(e, "user_id", "");
+        if (id[0] && !friends_blocked(s, id)) { const char *nm = json_str(e, "display_name", json_str(e, "nick", "?")); friends_block(s, id, nm); }
+    }
+}
+
 static void on_friends(app_state_t *s, const jval *j) {
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
@@ -325,6 +353,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
         copy(s->bridge_pw, sizeof s->bridge_pw, json_str(j, "password", ""));
         /* account_tick conclui quando o backend local estiver pronto */
     } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
+    else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
     else if (!strcmp(ev, "friends.result")) {
         copy(s->notice, sizeof s->notice, json_str(j, "message", ""));
         if (jbool(j, "ok")) s->add_email[0] = 0;

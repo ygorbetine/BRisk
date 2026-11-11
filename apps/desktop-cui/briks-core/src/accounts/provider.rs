@@ -156,4 +156,8 @@ pub trait AuthProvider: Send + Sync {
     fn friend_request(&self, access_token: &str, nick: &str) -> AResult<()>;
     fn friend_respond(&self, access_token: &str, request_id: &str, accept: bool) -> AResult<()>;
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()>;
+    /// Bloqueio (migração 0006). Sem a RPC no servidor o erro é `server_not_ready` e quem chama cai para a lista local.
+    fn friend_block(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
+    fn friend_unblock(&self, _access_token: &str, _user_id: &str) -> AResult<()> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
+    fn blocks(&self, _access_token: &str) -> AResult<Vec<Friend>> { Err(AccountError::new("server_not_ready", "Bloqueio ainda não disponível no servidor.")) }
 }

@@ -34,6 +34,9 @@ pub struct FakeState {
     pub objects: HashMap<String, Vec<u8>>,
     pub backups: HashMap<String, Value>,           // cópia cifrada da identidade por conta         // Storage: "<id>/avatar.jpg" -> bytes
     requests: Vec<(String, String, String, bool)>, // id, de, para, aceito
+    blocks: Vec<(String, String)>,                 // quem bloqueou, quem foi bloqueado (0006)
+    /// simula um servidor sem a migração 0006 (as RPCs de bloqueio não existem)
+    pub no_blocks_rpc: bool,
     /// validade do access token em segundos (testes de renovação usam valores baixos)
     pub expires_in: u64,
     pub autoconfirm: bool,
@@ -408,6 +411,8 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             if other == me {
                 return pg("self_request");
             }
+            if st.blocks.iter().any(|x| x.0 == other && x.1 == me) { return pg("not_found"); }
+            if st.blocks.iter().any(|x| x.0 == me && x.1 == other) { return pg("blocked_by_you"); }
             if let Some(r) = st.requests.iter().find(|r| (r.1 == me && r.2 == other) || (r.1 == other && r.2 == me)) {
                 return pg(if r.3 { "already_friends" } else { "already_requested" });
             }
@@ -419,6 +424,29 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some(i) = st.requests.iter().position(|r| r.0 == id && r.2 == me && !r.3) else { return pg("not_found") };
             if b["p_accept"].as_bool().unwrap_or(false) { st.requests[i].3 = true } else { st.requests.remove(i); }
             ok(Value::Null)
+        }
+        "friend_block" | "friend_unblock" | "friend_blocks_list" if st.no_blocks_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "friend_block" => {
+            let other = b["p_user"].as_str().unwrap_or("").to_string();
+            if other.is_empty() || other == me { return pg("invalid_user"); }
+            if !st.profiles.contains_key(&other) { return pg("not_found"); }
+            if !st.blocks.iter().any(|x| x.0 == me && x.1 == other) { st.blocks.push((me.to_string(), other.clone())); }
+            st.requests.retain(|r| !((r.1 == me && r.2 == other) || (r.1 == other && r.2 == me)));
+            ok(Value::Null)
+        }
+        "friend_unblock" => {
+            let other = b["p_user"].as_str().unwrap_or("");
+            st.blocks.retain(|x| !(x.0 == me && x.1 == other));
+            ok(Value::Null)
+        }
+        "friend_blocks_list" => {
+            let v: Vec<Value> = st.blocks.iter().filter(|x| x.0 == me).map(|x| {
+                let p = st.profiles.get(&x.1).cloned().unwrap_or(json!({}));
+                json!({ "user_id": x.1, "nick": p["nick"], "display_name": p["display_name"], "blocked_at": "2026-01-01T00:00:00Z" })
+            }).collect();
+            ok(json!(v))
         }
         "friend_remove" => {
             let other = b["p_user"].as_str().unwrap_or("");

@@ -421,6 +421,39 @@ async fn profile_publishes_only_the_public_key_and_friends_find_each_other() {
 }
 
 #[tokio::test]
+async fn blocking_removes_the_bond_hides_the_requests_and_falls_back_without_the_rpc() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("bl-a")), accounts(&f, &tmpdir("bl-b")));
+    let SignUpOutcome::SignedIn(_ua) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(ub) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let (ida, idb) = (crate::identity::Identity::generate(), crate::identity::Identity::generate());
+    let pa = a.publish_identity(serde_json::to_value(ida.public_jwk()).unwrap(), &ida.fingerprint()).await.unwrap();
+    b.publish_identity(serde_json::to_value(idb.public_jwk()).unwrap(), &idb.fingerprint()).await.unwrap();
+    b.set_nick("bia_01").await.unwrap();
+
+    a.friend_request("bia_01").await.unwrap();
+    // Bia bloqueia a Ana: o pedido some e a Ana não descobre (a resposta é igual a "@nick inexistente")
+    b.friend_block(&pa.user_id).await.unwrap();
+    assert!(b.friends().await.unwrap().is_empty());
+    let bl = b.blocks().await.unwrap();
+    assert_eq!((bl.len(), bl[0].user_id.as_str(), bl[0].state.as_str()), (1, pa.user_id.as_str(), "blocked"));
+    assert_eq!(a.friend_request("bia_01").await.unwrap_err().code, "not_found");
+    // quem bloqueou não consegue pedir amizade ao bloqueado sem desbloquear
+    assert_eq!(b.friend_request(&pa.nick).await.unwrap_err().code, "blocked_by_you");
+    assert_eq!(b.friend_block(&ub.id).await.unwrap_err().code, "not_found", "não bloqueia a si mesmo (perfil inválido)");
+    b.friend_unblock(&pa.user_id).await.unwrap();
+    assert!(b.blocks().await.unwrap().is_empty());
+    a.friend_request("bia_01").await.unwrap();
+
+    // servidor sem a migração 0006: server_not_ready (a UI mantém a lista local)
+    f.state.lock().unwrap().no_blocks_rpc = true;
+    assert_eq!(b.friend_block(&pa.user_id).await.unwrap_err().code, "server_not_ready");
+    assert_eq!(b.blocks().await.unwrap_err().code, "server_not_ready");
+}
+
+#[tokio::test]
 async fn local_bridge_password_is_stable_per_account_and_encrypted() {
     let _g = FLOW.lock().await;
     let f = fake::start(0).await.unwrap();

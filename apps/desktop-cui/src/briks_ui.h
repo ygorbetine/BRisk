@@ -194,6 +194,7 @@ void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);
 void groups_create_json(const app_state_t *s, char *out, size_t cap);
 void account_friends(app_state_t *s);
+void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
 void account_add_friend(app_state_t *s);
 void account_respond_friend(app_state_t *s, const char *request_id, bool accept);

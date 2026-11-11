@@ -3,6 +3,7 @@
  * é "subclassificada" (SetWindowLongPtr) para interceptar o fechar e as mensagens do ícone da bandeja sem mexer no CUI.
  * Teste automatizado: nunca grava no %APPDATA% real (só com BRIKS_SYS_FILE), nunca mostra janela/aviso, nunca registra autostart real. */
 #include "sysint.h"
+#include "update.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -18,7 +19,8 @@ static bool g_automation, g_headless, g_start_min, g_quitting, g_in_tray, g_tray
 static HWND g_hwnd; static WNDPROC g_orig; static cui_ctx *g_ui; static app_state_t *g_s;
 static HANDLE g_mutex; static UINT g_msg_show, g_msg_taskbar;
 static ULONGLONG g_dirty_at; static int g_show_count, g_restart_dry, g_restored = -1, g_saves;
-static char g_cfg_file[MAX_PATH];
+static char g_link[600]; static wchar_t g_prop[100]; static int g_links;   /* briks://mensagem/<canal>/<id> pendente */
+static char g_cfg_file[MAX_PATH]; static int g_url_ok, g_url_bad;
 
 /* ---------------- configuração ---------------- */
 static bool cfg_path(char *out, size_t cap) {
@@ -53,6 +55,7 @@ void sys_cfg_save(void) {
 }
 
 bool sys_is_headless(void) { return g_headless; }
+bool sys_in_tray(void) { return g_in_tray && !g_headless; }   /* janela escondida: o laço principal desacelera (main.c) */
 void *sys_hwnd(void) { return g_hwnd; }
 bool sys_start_minimized(void) { return g_start_min; }
 bool sys_window_focused(void) {
@@ -72,6 +75,7 @@ bool sys_open_url(const char *url) {
 static const wchar_t *run_key(void) { static wchar_t k[200]; const char *o = getenv("BRIKS_AUTOSTART_KEY"); if (o && o[0]) { MultiByteToWideChar(CP_UTF8, 0, o, -1, k, 200); return k; } return L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; }
 static bool autostart_allowed(void) { return !g_automation || getenv("BRIKS_AUTOSTART_KEY"); }   /* nunca no registro real em teste */
 bool sys_autostart_get(void) {
+    if (!autostart_allowed()) return g_sys.autostart;   /* teste: nem lê o registro real */
     HKEY k; if (RegOpenKeyExW(HKEY_CURRENT_USER, run_key(), 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return false;
     DWORD ty = 0, n = 0; bool ok = RegQueryValueExW(k, L"Briks", NULL, &ty, NULL, &n) == ERROR_SUCCESS && ty == REG_SZ && n > 2;
     RegCloseKey(k); return ok;
@@ -92,6 +96,8 @@ bool sys_autostart_set(bool on) {
 }
 
 /* ---------------- instância única (TRY-05, BAS-15) ---------------- */
+static BOOL CALLBACK find_inst(HWND h, LPARAM lp) { struct { const wchar_t *p; HWND h; } *q = (void *)lp; if (GetPropW(h, q->p)) { q->h = h; return FALSE; } return TRUE; }
+static void handle_link(const char *u) { if (u && !strncmp(u, "briks://", 8)) { snprintf(g_link, sizeof g_link, "%s", u); g_links++; } }
 bool sys_startup(const char *cmd, bool automation) {
     g_automation = automation; g_headless = automation && !getenv("BRIKS_SHOW");
     cfg_load();
@@ -101,20 +107,38 @@ bool sys_startup(const char *cmd, bool automation) {
         if (h) { WaitForSingleObject(h, 15000); CloseHandle(h); }
     }
     g_start_min = cmd && strstr(cmd, "--minimizado") != NULL;
+    { const char *b = cmd ? strstr(cmd, "briks://") : NULL; if (b) { snprintf(g_link, sizeof g_link, "%s", b); g_link[strcspn(g_link, "\" ")] = 0; } }
     const char *id = getenv("BRIKS_INSTANCE_ID");
     if (automation && !id) return true;   /* testes em paralelo não disputam o mutex (só com BRIKS_INSTANCE_ID, usado no teste da instância única) */
     wchar_t mn[120], sn[120], tn[40]; wchar_t wid[64] = L""; if (id) MultiByteToWideChar(CP_UTF8, 0, id, -1, wid, 64);
     swprintf(mn, 120, L"Local\\BriksCUI.Instancia.%ls", wid); swprintf(sn, 120, L"BriksCUI.Mostrar.%ls", wid); (void)tn;
     g_msg_show = RegisterWindowMessageW(sn);
+    swprintf(g_prop, 100, L"BriksInst.%ls", wid);
     g_mutex = CreateMutexW(NULL, FALSE, mn);
     if (g_mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         AllowSetForegroundWindow(ASFW_ANY);
+        if (g_link[0]) { HWND t = NULL; struct { const wchar_t *p; HWND h; } q = { g_prop, NULL }; EnumWindows(find_inst, (LPARAM)&q); t = q.h;
+            if (t) { COPYDATASTRUCT cd = { 0xB21C, (DWORD)strlen(g_link) + 1, g_link }; DWORD_PTR r; SendMessageTimeoutW(t, WM_COPYDATA, 0, (LPARAM)&cd, SMTO_ABORTIFHUNG, 3000, &r); } }
         PostMessageW(HWND_BROADCAST, g_msg_show, 0, 0);   /* a primeira instância mostra a janela */
         CloseHandle(g_mutex); g_mutex = NULL;
         return false;
     }
     g_have_mutex = g_mutex != NULL;
     return true;
+}
+
+/* ---------------- briks:// (TRY-07): registro em HKCU\Software\Classes\briks, so no app real (ou BRIKS_PROTO_KEY em teste) ---------------- */
+bool sys_protocol_register(void) {
+    const char *o = getenv("BRIKS_PROTO_KEY"); if (g_automation && !o) return false;
+    wchar_t base[200] = L"Software\\Classes\\briks"; if (o && o[0]) MultiByteToWideChar(CP_UTF8, 0, o, -1, base, 200);
+    wchar_t exe[MAX_PATH], cmd[MAX_PATH + 20], k[260]; GetModuleFileNameW(NULL, exe, MAX_PATH); swprintf(cmd, MAX_PATH + 20, L"\"%ls\" \"%%1\"", exe);
+    HKEY h; bool ok = true;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, base, 0, NULL, 0, KEY_SET_VALUE, NULL, &h, NULL) != ERROR_SUCCESS) return false;
+    ok &= RegSetValueExW(h, NULL, 0, REG_SZ, (const BYTE *)L"URL:Briks", 20) == ERROR_SUCCESS; ok &= RegSetValueExW(h, L"URL Protocol", 0, REG_SZ, (const BYTE *)L"", 2) == ERROR_SUCCESS; RegCloseKey(h);
+    swprintf(k, 260, L"%ls\\shell\\open\\command", base);
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, k, 0, NULL, 0, KEY_SET_VALUE, NULL, &h, NULL) != ERROR_SUCCESS) return false;
+    ok &= RegSetValueExW(h, NULL, 0, REG_SZ, (const BYTE *)cmd, (DWORD)((wcslen(cmd) + 1) * 2)) == ERROR_SUCCESS; RegCloseKey(h);
+    return ok;
 }
 
 /* ---------------- estado da janela (BAS-16) ---------------- */
@@ -151,7 +175,7 @@ static void restore_window(void) {
 
 /* ---------------- janela: mostrar, fechar, sair, reiniciar ---------------- */
 void sys_show_window(void) {
-    g_in_tray = false; g_show_count++;
+    g_in_tray = false; g_show_count++; tray_taskbar_invalidate();
     if (g_hwnd && !g_headless) {
         if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
         else if (!IsWindowVisible(g_hwnd)) ShowWindow(g_hwnd, g_sys.win_max ? SW_SHOWMAXIMIZED : SW_SHOW);
@@ -190,13 +214,14 @@ static LRESULT CALLBACK sys_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     }
     case WM_CLOSE:
         capture_window();
-        if (!g_quitting && g_sys.close_to_tray && tray_present()) {   /* fechar = bandeja: a chamada continua */
+        if (!g_quitting && g_sys.close_to_tray && tray_present() && update_phase() != UPD_READY) {   /* atualização baixada: fechar encerra de verdade para instalar */   /* fechar = bandeja: a chamada continua */
             if (!g_headless) ShowWindow(h, SW_HIDE);
             g_in_tray = true;
             if (!g_sys.tray_hint_shown) { g_sys.tray_hint_shown = true; sys_cfg_save(); tray_balloon("O Briks continua aberto", "Ele ficou na bandeja do sistema, e a chamada não cai. Para sair de vez, use Sair no menu do ícone."); }
             return 0;
         }
         break;
+    case WM_COPYDATA: { COPYDATASTRUCT *cd = (COPYDATASTRUCT *)l; if (cd && cd->dwData == 0xB21C && cd->lpData && cd->cbData > 8 && cd->cbData < 600) { char b[600]; memcpy(b, cd->lpData, cd->cbData); b[cd->cbData - 1] = 0; handle_link(b); } return TRUE; }
     case WM_TIMER:
         if (w == SYS_TIMER) { if (g_ui && (!IsWindowVisible(h) || IsIconic(h))) cui_request_redraw(g_ui); return 0; }   /* escondida: o app segue recebendo eventos do core */
         break;
@@ -212,19 +237,25 @@ void sys_attach(app_state_t *s, bool automation) {
     if (!g_hwnd) return;
     g_orig = (WNDPROC)SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, (LONG_PTR)sys_proc);
     g_msg_taskbar = RegisterWindowMessageW(L"TaskbarCreated");
+    if (!g_prop[0]) swprintf(g_prop, 100, L"BriksInst."); SetPropW(g_hwnd, g_prop, (HANDLE)1);
     if (!getenv("BRIKS_WINDOW") && !getenv("BRIKS_TEST_WINDOW") && (!automation || getenv("BRIKS_SYS_FILE"))) restore_window();
     if (!automation || getenv("BRIKS_TRAY_TEST")) g_tray_ok = tray_create(g_hwnd, WM_TRAY);
     if (autostart_allowed()) { bool reg = sys_autostart_get(); if (reg != g_sys.autostart) { g_sys.autostart = reg; } if (reg) sys_autostart_set(true); }   /* o registro manda; reescreve o caminho se o exe mudou */
     SetTimer(g_hwnd, SYS_TIMER, 400, NULL);
+    sys_protocol_register();
     if (g_headless) { if (g_start_min && g_tray_ok) g_in_tray = true; return; }
     if (g_start_min && g_tray_ok) { g_in_tray = true; return; }   /* aberto pelo Windows: só na bandeja */
-    ShowWindow(g_hwnd, g_sys.win_max && g_restored >= 0 ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL); UpdateWindow(g_hwnd);
+    ShowWindow(g_hwnd, g_sys.win_max && g_restored >= 0 ? SW_SHOWMAXIMIZED : SW_SHOWDEFAULT); UpdateWindow(g_hwnd);
 }
 
 void sys_tick(app_state_t *s) {
     g_s = s;
     if (g_dirty && GetTickCount64() - g_dirty_at > 1500 && g_hwnd && !IsIconic(g_hwnd)) capture_window();   /* posição/tamanho gravados logo depois de mexer */
     notify_tick(s);
+    if (g_link[0] && s->screen != SCREEN_AUTH) {   /* briks://mensagem/<canal>/<id>: abre a conversa */
+        char l[600]; snprintf(l, sizeof l, "%s", g_link); g_link[0] = 0;
+        if (!strncmp(l, "briks://mensagem/", 17)) { char *ch = l + 17, *sl = strchr(ch, '/'); if (sl) *sl = 0; if (ch[0]) { notify_open_channel(s, ch); sys_show_window(); } }
+    }
 }
 
 void sys_before_destroy(app_state_t *s) {
@@ -259,7 +290,13 @@ int sys_probe(const char *n) {
     if (!strcmp(n, "saves")) return g_saves;
     if (!strcmp(n, "mutex")) return g_have_mutex;
     if (!strcmp(n, "restart_dry")) return g_restart_dry;
+    if (!strcmp(n, "links")) return g_links;
+    if (!strcmp(n, "url_ok")) return g_url_ok; if (!strcmp(n, "url_bad")) return g_url_bad;
     if (!strcmp(n, "mic")) return g_s ? g_s->mic_on : -1;
+    if (!strcmp(n, "active_group")) return g_s ? g_s->active_group : -1;
+    if (!strcmp(n, "active_friend")) return g_s ? g_s->active_friend : -1;
+    if (!strcmp(n, "tray_visible")) return tray_visible();
+    if (!strcmp(n, "tray_icon_badged")) return g_tray_icon_badged;
     return -9999;
 }
 
@@ -278,12 +315,13 @@ bool sys_script(const char *args) {
     else if (!strcmp(c, "move") && n > 4 && g_hwnd) SetWindowPos(g_hwnd, NULL, atoi(t[1]), atoi(t[2]), atoi(t[3]), atoi(t[4]), SWP_NOZORDER | SWP_NOACTIVATE);
     else if (!strcmp(c, "sound") && n > 1) sound_play((sound_kind_t)atoi(t[1]));
     else if (!strcmp(c, "cfg") && n > 2) { bool v = atoi(t[2]) != 0; if (!strcmp(t[1], "close_to_tray")) g_sys.close_to_tray = v; else if (!strcmp(t[1], "nt_msg")) g_sys.nt_msg = v; else if (!strcmp(t[1], "sounds")) g_sys.sounds = v; }
+    else if (!strcmp(c, "link") && n > 1) handle_link(t[1]);
     else if (!strcmp(c, "autostart") && n > 1) sys_autostart_set(atoi(t[1]) != 0);
     else if (!strcmp(c, "msg") && n > 3 && g_s) { char x[300]; snprintf(x, sizeof x, "%s", strstr(rest, t[2]) ? strstr(rest, t[2]) + strlen(t[2]) + 1 : ""); notify_chat_message(g_s, t[1], t[2], x); }   /* msg <canal> <autor> <texto> */
     else if (!strcmp(c, "friend") && g_s) notify_friend(g_s, rest1, false);
     else if (!strcmp(c, "friendcall") && g_s) notify_friend(g_s, rest1, true);
     else if (!strcmp(c, "room") && n > 1 && g_s) g_s->in_room = atoi(t[1]) != 0;   /* simula entrar/sair da sala (sons, regra de "em chamada") */
-    else if (!strcmp(c, "url") && n > 1) return sys_open_url(t[1]);
+    else if (!strcmp(c, "url") && n > 1) { if (sys_open_url(t[1])) g_url_ok++; else g_url_bad++; }
     else return false;
     return true;
 }

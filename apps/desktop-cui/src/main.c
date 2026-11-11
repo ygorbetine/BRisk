@@ -156,6 +156,7 @@ int main(void) {
     briks_glass_init(app);
     bool scripted = script_load();
     while (cui_app_frame(app)) {
+        if (sys_in_tray()) Sleep(100);   /* na bandeja não há o que animar: ~8 quadros por segundo bastam para os eventos do core */
         if (scripted) { script_tick(cui_app_ui(app)); if (g_script_rw) { cui_app_set_size(app, g_script_rw, g_script_rh); g_script_rw = g_script_rh = 0; } }
         frame(cui_app_ui(app));
         if (scripted && script_capture(app)) break;

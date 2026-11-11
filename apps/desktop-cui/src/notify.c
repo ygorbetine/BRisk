@@ -110,7 +110,7 @@ void notify_tick(app_state_t *s) {
         if (in_call) n += snprintf(tip + n, sizeof tip - (size_t)n, " · em chamada");
         if (total) snprintf(tip + n, sizeof tip - (size_t)n, " · %d não lida%s", total, total == 1 ? "" : "s");
         tray_update(tip, total);
-        tray_taskbar_badge(sys_hwnd(), total, (uint32_t)(((unsigned)g_th.c1.r << 16) | ((unsigned)g_th.c1.g << 8) | g_th.c1.b));
     }
+    tray_taskbar_badge(sys_hwnd(), total, (uint32_t)(((unsigned)g_th.c1.r << 16) | ((unsigned)g_th.c1.g << 8) | g_th.c1.b));   /* sai cedo se nada mudou */
     tray_menu_state(s->in_room, s->mic_on);
 }

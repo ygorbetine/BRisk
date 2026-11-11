@@ -29,9 +29,11 @@ void sys_show_window(void);                              /* traz a janela à fre
 void sys_request_quit(void);                             /* sair de verdade (menu da bandeja) */
 void sys_restart(void);                                  /* reiniciar o Briks */
 bool sys_open_url(const char *url);                      /* só http(s) */
+bool sys_protocol_register(void);
 bool sys_autostart_get(void);
 bool sys_autostart_set(bool on);                         /* grava/remove na chave Run (nunca em teste sem BRIKS_AUTOSTART_KEY) */
 void sys_cfg_save(void);
+bool sys_in_tray(void);
 bool sys_is_headless(void);                              /* automação: nunca mostra janela nem aviso de verdade */
 bool sys_window_focused(void);
 void *sys_hwnd(void);
@@ -42,14 +44,16 @@ void sys_settings_system(cui_ctx *ui);                   /* cartão "Sistema" (a
 bool tray_create(void *hwnd, unsigned callback_msg);     /* adiciona o ícone */
 void tray_destroy(void);
 bool tray_present(void);
-bool tray_readd(void);                                   /* explorer reiniciou (TaskbarCreated) */
+bool tray_visible(void);
+bool tray_readd(void);
+void tray_taskbar_invalidate(void);                                   /* explorer reiniciou (TaskbarCreated) */
 void tray_update(const char *tip, int unread);           /* dica e contador (ícone com bolinha) */
 bool tray_balloon(const char *title, const char *text);  /* aviso nativo (balão do Windows) */
 void tray_handle(unsigned lparam_event, void *hwnd, int *cmd_out);   /* evento do ícone (mensagem de retorno); devolve o comando do menu escolhido, 0 = nenhum */
 void tray_menu_state(bool in_call, bool mic_on);
 void tray_taskbar_badge(void *hwnd, int n, uint32_t rgb);   /* ícone de sobreposição na barra de tarefas (0 = tira) */
 enum { TRAY_CMD_NONE = 0, TRAY_CMD_OPEN = 1001, TRAY_CMD_MUTE = 1002, TRAY_CMD_RESTART = 1003, TRAY_CMD_QUIT = 1004 };
-extern int g_tray_balloons, g_tray_badge_ok;             /* contadores de teste */
+extern int g_tray_balloons, g_tray_badge_ok, g_tray_icon_badged;             /* contadores de teste */
 
 /* ---- notify.c ---- */
 void notify_tick(app_state_t *s);                        /* sons da chamada, transmissão iniciada, contador, grace */

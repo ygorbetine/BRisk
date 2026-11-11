@@ -1,0 +1,11 @@
+# briks://mensagem/<canal>/<id> abre a conversa (mesmo caminho do link vindo de outra instância)
+waitms 700
+expect active_group -1
+sys link briks://mensagem/c2/m1
+waitms 400
+expect links 1
+expect active_group 0
+expect shown 1
+sys link http://x.com/nao-e-briks
+waitms 200
+expect links 1

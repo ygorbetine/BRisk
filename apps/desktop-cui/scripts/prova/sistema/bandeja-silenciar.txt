@@ -1,0 +1,13 @@
+# Menu da bandeja > Silenciar microfone: só vale em chamada
+waitms 600
+sys room 1
+waitms 200
+expect mic 1
+sys cmd mute
+expect mic 0
+sys cmd mute
+expect mic 1
+sys room 0
+waitms 200
+sys cmd mute
+expect mic 1

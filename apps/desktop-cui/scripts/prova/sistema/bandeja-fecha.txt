@@ -1,0 +1,25 @@
+# Fechar para a bandeja: a janela some, o app segue, clicar no ícone abre; com a opção desligada, fechar encerra
+waitms 800
+expect tray 1
+expect tray_visible 1
+expect close_tray 1
+sys close
+waitms 500
+expect to_tray 1
+expect balloons 1
+sys tray select
+waitms 300
+expect to_tray 0
+expect shown 1
+sys close
+waitms 400
+expect to_tray 1
+expect balloons 1
+sys cmd open
+waitms 200
+expect to_tray 0
+expect shown 2
+sys cfg close_to_tray 0
+sys close
+wait 60
+signal fim

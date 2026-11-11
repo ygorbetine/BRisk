@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int g_tray_balloons, g_tray_badge_ok;
+int g_tray_balloons, g_tray_badge_ok, g_tray_icon_badged;
 static NOTIFYICONDATAW g_nid;
 static bool g_on;
 static bool g_menu_call, g_menu_mic;
@@ -69,6 +69,11 @@ static HICON badged_icon(HICON base, int n, uint32_t rgb) {
 }
 
 bool tray_present(void) { return g_on; }
+bool tray_visible(void) {   /* o shell conhece o ícone e dá o retângulo dele (confirma que está mesmo na bandeja) */
+    if (!g_on) return false;
+    NOTIFYICONIDENTIFIER id = { sizeof id }; id.hWnd = g_nid.hWnd; id.uID = g_nid.uID; RECT rc;
+    return SUCCEEDED(Shell_NotifyIconGetRect(&id, &rc));
+}
 
 bool tray_create(void *hwnd, unsigned callback_msg) {
     if (g_on) return true;
@@ -96,6 +101,8 @@ bool tray_readd(void) {
     g_on = false; return tray_create(g_nid.hWnd, g_nid.uCallbackMessage);
 }
 
+void tray_taskbar_invalidate(void) { g_overlay_n = -1; }   /* janela voltou a ter botão na barra: reaplica o selo no próximo quadro */
+
 void tray_update(const char *tip, int unread) {
     if (!g_on) return;
     wchar_t t[128]; wide(tip, t, 128);
@@ -105,6 +112,7 @@ void tray_update(const char *tip, int unread) {
     if (badge_changed) {
         HICON old = g_badged; g_badged = NULL;
         if (unread > 0) g_badged = badged_icon(g_base_icon, unread, (uint32_t)(((unsigned)g_th.c1.r << 16) | ((unsigned)g_th.c1.g << 8) | g_th.c1.b));
+        if (g_badged) g_tray_icon_badged++;
         g_nid.hIcon = g_badged ? g_badged : g_base_icon;
         if (old) DestroyIcon(old);   /* só depois de trocar no shell */
         g_last_unread = unread;

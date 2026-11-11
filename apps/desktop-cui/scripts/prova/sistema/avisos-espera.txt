@@ -1,0 +1,11 @@
+# Logo depois de abrir nada é avisado (mas a não lida conta)
+waitms 600
+sys focus 0
+sys msg c1 Rafael cedo demais
+expect notif 0
+expect blocked 1
+expect unread 1
+sys grace 0
+sys msg c1 Rafael agora sim
+expect notif 1
+expect unread 2

@@ -157,7 +157,12 @@ static void list_tab(cui_ctx *ui, app_state_t *s, bool only_online) {
     if (shown) return;
     if (s->friends_q[0]) empty_state(ui, CUI_ICON_SEARCH, "Ninguém encontrado", "Tente outro nome ou @nick.");
     else if (only_online) empty_state(ui, CUI_ICON_USERS, "Ninguém online agora", s->pres_remote ? "Quem estiver com o Briks aberto aparece aqui (e quem está invisível não aparece)." : "Por enquanto “Online” mostra quem está na sua chamada; a presença em tempo real depende de uma atualização do servidor.");
-    else empty_state(ui, CUI_ICON_USER_PLUS, "Nenhum amigo ainda", "Use a aba Adicionar e digite o @nick de quem você quer ter por perto.");
+    else {
+        empty_state(ui, CUI_ICON_USER_PLUS, "Nenhum amigo ainda", "Convide alguém pelo @nick para conversar e entrar em chamadas.");
+        cui_box(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_top = 6) {
+            if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_LG, .icon = CUI_ICON_USER_PLUS)) s->friends_tab = 4;
+        }
+    }
 }
 
 static void pending_tab(cui_ctx *ui, app_state_t *s) {
@@ -237,6 +242,9 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
         cui_tabs(ui, "friends-tabs", items, 5, &s->friends_tab, .variant = CUI_TABS_PILL);
     }
     cui_separator(ui);
+    if (s->friends_tab != 4) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* botão sempre visível no topo da seção, em linha própria (não espreme as abas) */
+        if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .full_width = true)) s->friends_tab = 4;
+    }
     if (s->friends_tab <= 3 && s->friends_tab != 2) {
         cui_box(ui, .width = CUI_FILL, .pad_x = 18, .pad_top = 12) {
             cui_input(ui, "friends-q", s->friends_q, sizeof s->friends_q, .placeholder = "Buscar amigo", .width = CUI_FILL);

@@ -94,4 +94,6 @@ mod tests_sfuipc;
 #[cfg(test)]
 mod tests_sfuproc;
 #[cfg(test)]
+mod tests_sfukick;
+#[cfg(test)]
 mod tests_sfu;

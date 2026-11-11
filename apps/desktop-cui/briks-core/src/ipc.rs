@@ -53,6 +53,24 @@ pub fn config_from_env() -> Config {
     }
 }
 
+/// Variáveis do LiveKit: ambiente e, se houver, o arquivo de `BRIKS_ENV_FILE` (mesma regra do resto da configuração).
+fn net_env(k: &str) -> Option<String> {
+    std::env::var(k).ok().filter(|v| !v.trim().is_empty()).or_else(|| {
+        let f = std::env::var("BRIKS_ENV_FILE").ok()?;
+        read_env_file(&f).get(k).cloned().filter(|v| !v.trim().is_empty())
+    })
+}
+
+/// Tenta entrar na sala pelo SFU: token do Supabase (sessão do usuário), depois sinalização LiveKit. Erro = texto para o diagnóstico.
+pub(crate) async fn try_sfu(sc: &crate::sfu_cfg::SfuConfig, accounts: &crate::accounts::service::Runtime, ns: &str, room: &str, audio: Option<(Arc<Audio>, mpsc::Receiver<crate::audio::AudioEvent>)>) -> Result<crate::sfu::SfuHandle, String> {
+    let acc = accounts.acc.clone().ok_or("entre na sua conta Briks para usar o servidor de chamadas")?;
+    let access = acc.access_token().await.map_err(|e| format!("sessão: {e}"))?;
+    let lk_room = format!("{ns}:{}", &secure_room_id(ns, room)[..32]);
+    let url = sc.token_url.clone();
+    let token = tokio::task::spawn_blocking(move || crate::sfu::fetch_token(&url, &access, &lk_room)).await.map_err(|e| e.to_string())??;
+    crate::sfu::connect(crate::sfu::SfuJoin { url: sc.url.clone(), token, audio }).await.map_err(|e| e.to_string())
+}
+
 pub fn load_or_create_identity(dir: &std::path::Path) -> Result<Identity> {
     std::fs::create_dir_all(dir)?;
     let p = dir.join("core-identity.json");
@@ -154,7 +172,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     out(&mut wr, json!({ "ev": "hello.ok", "version": 1 })).await?;
 
     let (acct_tx, mut acct_rx) = mpsc::channel::<Value>(64);
-    let mut account = crate::accounts::service::Service::new(accounts, acct_tx);   // contas online: account.*, friends.*, import.*
+    let mut account = crate::accounts::service::Service::new(accounts.clone(), acct_tx);   // contas online: account.*, friends.*, import.*
     let mut identity: Option<Arc<Identity>> = None;
     let mut name = String::from("Usuário");
     let mut local_peer = uuid::Uuid::new_v4().to_string();
@@ -188,6 +206,42 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "session.start primeiro" })).await?;
                             continue;
                         };
+                        // Modo de rede (Automático / SFU / P2P): chamadas de voz tentam o SFU quando configurado; P2P é a reserva.
+                        let sfu_ns = v["namespace"].as_str().map(|n| n == "room" || n == "group").unwrap_or(true);
+                        let net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
+                        let mut sfu_err = String::new();
+                        let mut sfu_failed = false;
+                        let sfu_conf = crate::sfu_cfg::resolve(&net_env, &cfg.data_dir);
+                        let sfu_ready = matches!(sfu_conf, Ok(Some(_)));
+                        if let Err(e) = &sfu_conf { sfu_err = e.clone(); }
+                        if sfu_ns && net_mode != crate::sfu_cfg::NetMode::P2p {
+                            if let Ok(Some(sc)) = &sfu_conf {
+                                let (ns, room) = (v["namespace"].as_str().unwrap_or("room").to_string(), v["room"].as_str().unwrap_or("").to_string());
+                                if !room.is_empty() && room.len() <= 200 && !kicked_rooms.contains(&format!("{ns}:{room}")) {
+                                    if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
+                                    let audio_on = std::env::var("BRIKS_CORE_AUDIO").map(|v| v != "off").unwrap_or(true);
+                                    let (au, au_rx) = if audio_on { let (a, r) = Audio::new(Audio::fake_from_env()); (Some(a), Some(r)) } else { (None, None) };
+                                    if let Some(a) = &au { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
+                                    match try_sfu(sc, &accounts, &ns, &room, au.clone().zip(au_rx)).await {
+                                        Ok(h) => {
+                                            audio = au;
+                                            cur_room = format!("{ns}:{room}");
+                                            local_peer = h.identity.clone();
+                                            mesh_cmd = Some(h.cmd);
+                                            mesh_ev = Some(h.events);
+                                            rt_status = None;
+                                            if !profile.0.is_empty() || !profile.1.is_empty() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SetProfile { status: profile.0.clone(), presence: profile.1.clone() }).await; } }
+                                            let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false);
+                                            out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
+                                            out(&mut wr, json!({ "ev": "room.joining", "peer_id": local_peer })).await?;
+                                            out(&mut wr, json!({ "ev": "signaling.status", "state": "conectado", "message": "" })).await?;
+                                            continue;
+                                        }
+                                        Err(e) => { sfu_failed = true; sfu_err = e; }
+                                    }
+                                }
+                            }
+                        }
                         let (Some(url), Some(key)) = (cfg.realtime_url.clone(), cfg.realtime_key.clone()) else {
                             out(&mut wr, json!({ "ev": "signaling.status", "state": "erro", "message": "Supabase Realtime não configurado (VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY)" })).await?;
                             continue;
@@ -201,6 +255,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if kicked_rooms.contains(&format!("{ns}:{room}")) {
                             out(&mut wr, json!({ "ev": "error", "where": "room.join", "message": "você foi removido desta sala nesta sessão" })).await?;
                             continue;
+                        }
+                        if sfu_ns {
+                            let (_, reason) = crate::sfu_cfg::decide(net_mode, sfu_ready, sfu_failed);
+                            out(&mut wr, json!({ "ev": "net.mode", "mode": "p2p", "reason": reason, "error": sfu_err, "configured": sfu_ready, "fallback": sfu_failed })).await?;
                         }
                         cur_room = format!("{ns}:{room}");
                         if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
@@ -307,6 +365,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let key = v["peer"].as_str().unwrap_or("").to_string();
                         let safe: String = key.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareWatch { key, on: v["on"].as_bool().unwrap_or(true), path: cfg.data_dir.join("video").join(format!("remote-{safe}.bin")) }).await; }
+                    }
+                    "net.mode.set" | "net.status" => {
+                        if let Some(m) = v["mode"].as_str().and_then(crate::sfu_cfg::NetMode::parse) { let _ = crate::sfu_cfg::save_mode(&cfg.data_dir, m); }
+                        let (mode, conf) = (crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir), crate::sfu_cfg::resolve(&net_env, &cfg.data_dir));
+                        out(&mut wr, json!({ "ev": "net.config", "mode": mode.name(), "configured": matches!(conf, Ok(Some(_))), "error": conf.err().unwrap_or_default() })).await?;
                     }
                     "ping" => out(&mut wr, json!({ "ev": "pong" })).await?,
                     other => { account.command(other, &v); }

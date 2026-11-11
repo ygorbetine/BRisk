@@ -65,6 +65,12 @@ pub struct SfuStats {
     pub tracks_in: AtomicU64,
     pub tracks_out: AtomicU64,
     pub ws_msgs: AtomicU64,
+    /// feedback RTCP do SFU ao publisher de vídeo (alimenta o adapt.rs): Receiver Reports, NACKs, PLIs, último RTT (µs) e perda (‰)
+    pub rr: AtomicU64,
+    pub nacks: AtomicU64,
+    pub plis: AtomicU64,
+    pub rtt_us: AtomicU64,
+    pub loss_permille: AtomicU64,
 }
 
 pub struct SfuHandle {
@@ -206,7 +212,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let mut actor = Actor {
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
         pending: HashMap::new(), published: HashMap::new(), subscribed: HashSet::new(), known: HashMap::new(), pub_offering: false, pub_dirty: false,
-        pend_ice: [vec![], vec![]], share: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
+        pend_ice: [vec![], vec![]], share: None, vout: None, atrack: None, share_gen: 0, net: Default::default(), idr: Arc::new(AtomicBool::new(true)), mic_sid: None, last_mic_open: true,
         ping_ms: if join.ping_interval > 0 { join.ping_interval as u64 * 1000 } else { 10_000 }, subscriber_primary: join.subscriber_primary,
     };
     actor.handle_join(join).await;
@@ -240,7 +246,7 @@ fn redact(s: &str) -> String {
     match s.find("access_token=") { Some(i) => { let end = s[i..].find(|c: char| c == '&' || c.is_whitespace()).map(|e| i + e).unwrap_or(s.len()); format!("{}access_token=***{}", &s[..i], &s[end..]) } None => s.to_string() }
 }
 
-struct ActiveShare { gen: u64, sender: share::Sender, audio: Option<crate::procaudio::ProcAudio>, vout: share::VideoOut, info: Option<Value> }
+struct ActiveShare { gen: u64, sender: share::Sender, audio: Option<crate::procaudio::ProcAudio>, info: Option<Value> }
 
 struct Actor {
     tx: WsTx,
@@ -262,6 +268,8 @@ struct Actor {
     pub_dirty: bool,
     pend_ice: [Vec<RTCIceCandidateInit>; 2],
     share: Option<ActiveShare>,
+    vout: Option<share::VideoOut>,
+    atrack: Option<Arc<webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample>>,
     share_gen: u64,
     net: Arc<Mutex<crate::adapt::NetShared>>,
     idr: Arc<AtomicBool>,
@@ -275,7 +283,10 @@ struct Actor {
 struct KnownPeer { sid: String, mic: Option<bool>, share: Option<(String, u32, u32)>, name: String }
 
 impl Actor {
-    async fn emit(&self, e: MeshEvent) { let _ = self.ev.send(e).await; }
+    async fn emit(&self, e: MeshEvent) {
+        if let (MeshEvent::Error(m), true) = (&e, std::env::var("BRIKS_SFU_DEBUG").is_ok()) { eprintln!("[sfu {}] ERRO {m}", &self.me.identity[..4.min(self.me.identity.len())]); }
+        let _ = self.ev.send(e).await;
+    }
     async fn send(&mut self, m: rq::Message) {
         if std::env::var("BRIKS_SFU_DEBUG").is_ok() { let d = format!("{m:?}"); eprintln!("[sfu {}] -> {}", &self.me.identity[..4.min(self.me.identity.len())], &d[..d.len().min(1500)]); }
         let _ = self.tx.send(encode_req(m)).await; }
@@ -332,8 +343,8 @@ impl Actor {
             Ok(sender) => {
                 if p.video {
                     self.idr.store(true, Ordering::Relaxed);
-                    let nack = self.share.as_ref().map(|s| s.vout.nack_tx.clone());
-                    spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack);
+                    let nack = self.vout.as_ref().map(|v| v.nack_tx.clone());
+                    spawn_rtcp_reader(sender.clone(), self.net.clone(), self.idr.clone(), nack, self.stats.clone());
                 } else if r.cid == "audio" {
                     self.mic_sid = Some(sid.clone());
                     // o estado de mudo pode ter mudado antes da publicação sair
@@ -440,7 +451,7 @@ impl Actor {
                 if self.subscribed.insert(t.sid.clone()) { want_sub.push((p.sid.clone(), t.sid.clone())); }
             }
             // tela
-            let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32);
+            let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32 && !t.muted);
             let has_audio = p.tracks.iter().any(|t| t.source == lk::TrackSource::ScreenShareAudio as i32);
             let now = scr.map(|t| (t.name.clone(), t.width, t.height));
             if now != k.share {
@@ -556,39 +567,45 @@ impl Actor {
         self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": key, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
     }
 
+    /// A faixa de vídeo (e a de áudio da tela) é publicada uma vez e reaproveitada: parar = silenciar a faixa no servidor, retomar = reabrir.
+    /// (Remover o transceiver e publicar de novo não funciona no webrtc-rs 0.12: o transceiver parado perde as codificações e o
+    /// `add_track` seguinte falha com "same envelope as previous".) Os outros veem a faixa `muted` e tratam como "parou".
     async fn share_start(&mut self, cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
         self.share_stop().await;
         self.share_gen += 1;
         let gen = self.share_gen;
-        let vout = share::VideoOut::new();
+        let first = self.vout.is_none();
+        let vout = self.vout.get_or_insert_with(share::VideoOut::new).clone();
         let (amode, label, h) = (cfg.audio.clone(), cfg.label.clone(), cfg.height as u32);
         match share::start_sender(gen, self.idr.clone(), self.net.clone(), cfg, vout.clone(), self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
-                let atrack = crate::procaudio::new_audio_track();
+                let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack.clone())) } else { None };
-                let track = vout.track.clone();
-                self.share = Some(ActiveShare { gen, sender, audio, vout, info: None });
-                self.publish(share::VIDEO_TRACK_ID, track as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
-                if has_audio { self.publish(share::AUDIO_TRACK_ID, atrack as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await; }
+                self.share = Some(ActiveShare { gen, sender, audio, info: None });
+                if first {
+                    self.publish(share::VIDEO_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, if label.is_empty() { "tela" } else { &label }, h * 16 / 9, h).await;
+                } else { self.set_muted(share::VIDEO_TRACK_ID, false).await; }
+                if has_audio {
+                    if !self.published.contains_key(share::AUDIO_TRACK_ID) && !self.pending.contains_key(share::AUDIO_TRACK_ID) {
+                        self.publish(share::AUDIO_TRACK_ID, atrack as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
+                    } else { self.set_muted(share::AUDIO_TRACK_ID, false).await; }
+                }
             }
             Err(e) => self.emit(MeshEvent::Share(json!({ "ev": "share.local", "state": "off", "reason": e }))).await,
         }
+    }
+
+    async fn set_muted(&mut self, cid: &str, muted: bool) {
+        if let Some(sid) = self.published.get(cid).map(|p| p.sid.clone()) { self.send(rq::Message::Mute(lk::MuteTrackRequest { sid, muted })).await; }
     }
 
     async fn share_stop(&mut self) {
         let Some(sh) = self.share.take() else { return };
         sh.sender.stop();
         if let Some(a) = &sh.audio { a.stop(); }
-        self.pending.remove(share::VIDEO_TRACK_ID);
-        self.pending.remove(share::AUDIO_TRACK_ID);
-        let mut changed = false;
-        if let Some(pc) = self.publisher.clone() {
-            for cid in [share::VIDEO_TRACK_ID, share::AUDIO_TRACK_ID] {
-                if let Some(p) = self.published.remove(cid) { let _ = pc.remove_track(&p.sender).await; changed = true; }
-            }
-        }
-        if changed { self.negotiate_publisher().await; }
+        self.set_muted(share::VIDEO_TRACK_ID, true).await;
+        self.set_muted(share::AUDIO_TRACK_ID, true).await;
     }
 
     async fn on_share_event(&mut self, mut v: Value) {
@@ -604,7 +621,7 @@ impl Actor {
 
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports
 /// (perda/jitter/RTT para o adapt.rs). É a mesma leitura da malha, com a chave "sfu" no lugar do peer.
-fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<mpsc::Sender<Vec<u16>>>) {
+fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::NetShared>>, idr: Arc<AtomicBool>, nack_tx: Option<mpsc::Sender<Vec<u16>>>, stats: Arc<SfuStats>) {
     tokio::spawn(async move {
         use webrtc::rtcp::receiver_report::ReceiverReport;
         use webrtc::rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
@@ -615,7 +632,7 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                 let mut n = net.lock().unwrap();
                 let e = n.peers.entry("sfu".into()).or_insert(crate::adapt::PeerNet { loss: 0.0, rtt_ms: 0.0, jitter_ms: 0.0, updated: std::time::Instant::now(), nacks: 0, plis: 0, rtt_min: 0.0 });
                 if any.downcast_ref::<PictureLossIndication>().is_some() || any.downcast_ref::<FullIntraRequest>().is_some() {
-                    e.plis += 1; idr.store(true, Ordering::Relaxed);
+                    e.plis += 1; stats.plis.fetch_add(1, Ordering::Relaxed); idr.store(true, Ordering::Relaxed);
                 } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                     for r in rr.reports.iter().filter(|r| r.ssrc == ssrc) {
                         e.loss = r.fraction_lost as f32 / 256.0;
@@ -626,13 +643,14 @@ fn spawn_rtcp_reader(sender: Arc<RTCRtpSender>, net: Arc<Mutex<crate::adapt::Net
                             if d < 10 * 65536 { e.rtt_ms = d as f32 * 1000.0 / 65536.0; if e.rtt_min == 0.0 || e.rtt_ms < e.rtt_min { e.rtt_min = e.rtt_ms.max(1.0); } }
                         }
                         e.updated = std::time::Instant::now();
+                        stats.rr.fetch_add(1, Ordering::Relaxed); stats.rtt_us.store((e.rtt_ms * 1000.0) as u64, Ordering::Relaxed); stats.loss_permille.store((e.loss * 1000.0) as u64, Ordering::Relaxed);
                     }
                 } else if let Some(nk) = any.downcast_ref::<TransportLayerNack>() {
                     if nk.media_ssrc == ssrc {
                         let mut seqs = vec![];
                         for p in &nk.nacks { seqs.push(p.packet_id); for b in 0..16 { if p.lost_packets & (1 << b) != 0 { seqs.push(p.packet_id.wrapping_add(b + 1)); } } }
                         seqs.truncate(512);
-                        e.nacks += seqs.len() as u64;
+                        e.nacks += seqs.len() as u64; stats.nacks.fetch_add(seqs.len() as u64, Ordering::Relaxed);
                         if let Some(t) = &nack_tx { let _ = t.try_send(seqs); }
                     }
                 }

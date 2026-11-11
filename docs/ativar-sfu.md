@@ -24,3 +24,11 @@ Siga `infrastructure/livekit/README.md` (Docker + `livekit.yaml`) e depois os pa
 ## Como saber se funcionou
 Em uma sala com mais de 8 pessoas (ou escolhendo SFU), o diagnóstico da conexão mostra "SFU".
 Sem as variáveis, o app continua só com a malha P2P.
+
+## App nativo (CUI)
+O app nativo lê a mesma configuração, sem segredo no cliente: `BRIKS_LIVEKIT_URL` e `BRIKS_LIVEKIT_TOKEN_URL`
+(ou as `VITE_LIVEKIT_*` acima), do ambiente, do arquivo apontado por `BRIKS_ENV_FILE` ou de `livekit.json` na pasta de dados:
+`{"url":"wss://SEU-PROJETO.livekit.cloud","token_url":"https://SEU-PROJETO.supabase.co/functions/v1/livekit-token"}`.
+Só `wss://` e `https://` valem (`ws://`/`http://` apenas para localhost). O token é pedido com a sessão da conta Briks, então é
+preciso estar logado. Em Configurações > Rede, "Modo da chamada" escolhe Automático / Sempre P2P / Sempre SFU; o diagnóstico
+mostra o modo atual e o motivo (ex.: "SFU indisponível: usando P2P"). Detalhes técnicos: `docs/plans/sfu-livekit-nativo.md`.

@@ -16,7 +16,7 @@ Legenda: **Feito** = existe e foi exercitado; **Parcial** = existe só em parte 
 | 8 | Vídeo/câmera na chamada | Falta | 4 | P1 |
 | 9 | Transmissão de tela/janela (qualidade, FPS, bitrate) | Falta (o backend Rust já tem captura de áudio por processo) | 8–12 | P0 |
 | 10 | Áudio só da janela (WASAPI por processo) | Falta no app nativo (existe no `desktop-backend`) | 3 | P1 |
-| 11 | SFU LiveKit como padrão | Falta (CUI só faz malha P2P) | 6–8 | P1 |
+| 11 | SFU LiveKit como padrão | Parcial: modo SFU (áudio, tela, token, Auto/SFU/P2P) testado em loopback; falta NVENC sobre SFU, nomes/chat, reconexão (docs/plans/sfu-livekit-nativo.md) | 6–8 | P1 |
 | 12 | TURN/ICE e rota (direta/VPN) | Falta | 2 | P1 |
 | 13 | Atalhos globais e push-to-talk | Falta | 2 | P1 |
 | 14 | Pedir transmissão / avisos de amigos | Falta (status e presença existem) | 2 | P2 |

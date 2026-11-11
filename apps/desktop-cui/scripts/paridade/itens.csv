@@ -125,27 +125,27 @@ CFG-01|Configurações|Abrir Configurações (engrenagem)|views/HomeView.tsx|ui_
 CFG-02|Configurações|Navegar pelas abas|views/SettingsView.tsx|settings.c (13 abas)|PRESENTE-FUNCIONAL||||
 CFG-03|Configurações|Fechar com X ou Esc|components/Modal.tsx|settings.c cui_dialog|PRESENTE-FUNCIONAL||||
 CFG-04|Configurações|Desconectar na lateral das Configurações|views/HomeView.tsx|settings.c (Desconectar)|PRESENTE-FUNCIONAL||||
-CFG-05|Configurações|Escolher microfone|components/VoiceVideoSettingsPanel.tsx|settings.c lista winmm e grava mic; o core usa o padrão|PRESENTE-SEM-EFEITO|P1|Já existe (dropdown da aba Voz e vídeo); enviar o dispositivo ao core (áudio.rs)|\bmic_name\b¦\bg_set\.mic\b|settings.c
+CFG-05|Configurações|Escolher microfone|components/VoiceVideoSettingsPanel.tsx|settings.c (aba Voz): lista dispositivos e envia o nome ao core (audio.cfg); o core abre o microfone escolhido e avisa se sumiu|PRESENTE-FUNCIONAL||||
 CFG-06|Configurações|Nivel do microfone ao vivo|components/VoiceVideoSettingsPanel.tsx|settings.c (barra ligada a me_level na sala)|PRESENTE-FUNCIONAL||||
-CFG-07|Configurações|Testar o microfone fora da chamada|components/useMicrophoneTest.ts|(o texto da tela diz que 'chega com o áudio nativo')|AUSENTE|P1|Botão 'Testar' no cartão ENTRADA, mesma barra de nivel; captura curta no core|mic_test¦test_mic|
-CFG-08|Configurações|Volume de entrada (ganho)|components/VoiceVideoSettingsPanel.tsx|settings.c slider; só salvo|PRESENTE-SEM-EFEITO|P2|Já existe; aplicar ganho no core (áudio.rs)|\bin_vol\b|settings.c
-CFG-09|Configurações|Escolher saida de áudio|components/VoiceVideoSettingsPanel.tsx|settings.c dropdown; só salvo|PRESENTE-SEM-EFEITO|P1|Já existe; usar o dispositivo na reprodução do core|out_name|settings.c
-CFG-10|Configurações|Volume de saida|components/VoiceVideoSettingsPanel.tsx|settings.c slider; só salvo|PRESENTE-SEM-EFEITO|P2|Já existe; aplicar na reprodução|\bout_vol\b|settings.c
-CFG-11|Configurações|Supressão de ruído (Padrão/RNNoise/Desligada)|components/VoiceVideoSettingsPanel.tsx|settings.c segmentado; só salvo|PRESENTE-SEM-EFEITO|P1|Já existe; processar no core|g_set\.noise|settings.c
-CFG-12|Configurações|Porta de ruído com limite|components/VoiceVideoSettingsPanel.tsx|settings.c; só salvo|PRESENTE-SEM-EFEITO|P2|Já existe; aplicar no core|gate_on¦gate_db|settings.c
-CFG-13|Configurações|Cancelamento de eco|components/VoiceVideoSettingsPanel.tsx|settings.c; só salvo|PRESENTE-SEM-EFEITO|P1|Já existe; AEC no core|g_set\.echo|settings.c
+CFG-07|Configurações|Testar o microfone fora da chamada|components/useMicrophoneTest.ts|settings.c (Voz): botão Testar + medidor; core mic.test (testado com tom falso no roteiro voz-teste-mic)|PRESENTE-FUNCIONAL||||
+CFG-08|Configurações|Volume de entrada (ganho)|components/VoiceVideoSettingsPanel.tsx|settings.c slider; ganho aplicado em audio.rs (push_capture)|PRESENTE-FUNCIONAL||||
+CFG-09|Configurações|Escolher saida de áudio|components/VoiceVideoSettingsPanel.tsx|settings.c dropdown; core abre a saída escolhida (audio.rs, match_device)|PRESENTE-FUNCIONAL||||
+CFG-10|Configurações|Volume de saida|components/VoiceVideoSettingsPanel.tsx|settings.c slider; ganho de saída aplicado em audio.rs|PRESENTE-FUNCIONAL||||
+CFG-11|Configurações|Supressão de ruído (Padrão/RNNoise/Desligada)|components/VoiceVideoSettingsPanel.tsx|settings.c: Padrão (passa-altas + expansor suave, audio.rs NoiseFilter) e Desligada reais; RNNoise NÃO existe|PRESENTE-FUNCIONAL||||
+CFG-12|Configurações|Porta de ruído com limite|components/VoiceVideoSettingsPanel.tsx|settings.c; porta de ruído aplicada em audio.rs|PRESENTE-FUNCIONAL||||
+CFG-13|Configurações|Cancelamento de eco|components/VoiceVideoSettingsPanel.tsx|settings.c: interruptor desabilitado com a nota em breve (sem AEC no core)|AUSENTE|P1|Já existe; AEC no core|echo_cancel¦aec_process|
 CFG-14|Configurações|Salvamento automatico das configurações|components/VoiceVideoSettingsPanel.tsx|settings.c (settings.cfg)|PRESENTE-FUNCIONAL||||
 CFG-15|Configurações|Temas prontos (presets) e troca na hora|components/ThemePanel.tsx|themes.c|PRESENTE-FUNCIONAL||||
 CFG-16|Configurações|Criar, salvar, editar, duplicar e excluir temas personalizados|components/ThemePanel.tsx|themes.c (Meus gradientes)|PRESENTE-FUNCIONAL||||
 CFG-17|Configurações|Restaurar o tema padrão|components/ThemePanel.tsx (Restaurar tema Briks)|themes.c|PRESENTE-FUNCIONAL||||
 CFG-18|Configurações|Uso de disco local|components/LocalStoragePanel.tsx|settings.c (tamanho da pasta)|PRESENTE-FUNCIONAL||||
-CFG-19|Configurações|Divisão do espaco por tipo (mensagens, grupos, anexos)|components/LocalStoragePanel.tsx|settings.c: 'depende do backend de dados'|AUSENTE|P3|Barra segmentada 8 px dentro do cartão USO NESTE COMPUTADOR, legenda 12 px|armazenamento_por_tipo¦storage_by_kind|
-CFG-20|Configurações|Limpar anexos|components/LocalStoragePanel.tsx|settings.c: mostra 'Sem efeito real ainda'|PRESENTE-SEM-EFEITO|P2|Botão já existe; apagar a pasta de anexos pelo core e atualizar o tamanho|clear_attachments¦attachments_clear|settings.c
-CFG-21|Configurações|Apagar histórico de mensagens (com confirmacao)|components/LocalStoragePanel.tsx|settings.c: confirma e não apaga|PRESENTE-SEM-EFEITO|P1|Diálogo de confirmacao já existe; chamar o backend local para apagar|history_clear¦messages_clear¦DELETE.*messages|settings.c
-CFG-22|Configurações|Exportar meus dados|components/LocalStoragePanel.tsx|settings.c: botão sem ação real|PRESENTE-SEM-EFEITO|P2|Botão já existe; abrir 'Salvar como' (GetSaveFileName) e gravar JSON sem senhas/chaves|export_data¦data_export|settings.c
-CFG-23|Configurações|Sobreposição em jogos: interruptor geral|components/OverlaySettingsPanel.tsx|settings.c; briks_overlay.exe existe mas o app não o abre|PRESENTE-SEM-EFEITO|P2|Já existe; iniciar/encerrar briks_overlay.exe e alimenta-lo com quem fala|briks_overlay\.exe¦CreateProcess.*overlay|settings.c
-CFG-24|Configurações|Sobreposição: o que aparece (4 itens) e opacidade|components/OverlaySettingsPanel.tsx|settings.c; só salvo|PRESENTE-SEM-EFEITO|P2|Já existe; repassar ao overlay|ov_opacity¦ov_live|settings.c
-CFG-25|Configurações|Sobreposição: editar posições (arrastar, redimensionar)|components/OverlaySettingsPanel.tsx|settings.c: botão sem ação|PRESENTE-SEM-EFEITO|P3|Botão já existe; modo de edicao do overlay com atalho Ctrl+Shift+O (ATL-06)|overlay_edit¦edit_positions|settings.c
+CFG-19|Configurações|Divisão do espaco por tipo (mensagens, grupos, anexos)|components/LocalStoragePanel.tsx|settings_data.c: barra por tipo (anexos, histórico) medida nas pastas locais|PRESENTE-FUNCIONAL||||
+CFG-20|Configurações|Limpar anexos|components/LocalStoragePanel.tsx|settings_data.c: limpar anexos com confirmação, apaga a pasta e atualiza o tamanho (roteiro dados-limpar-exportar)|PRESENTE-FUNCIONAL||||
+CFG-21|Configurações|Apagar histórico de mensagens (com confirmacao)|components/LocalStoragePanel.tsx|settings_data.c: confirma e apaga os arquivos locais de histórico; apagar no banco do backend NÃO foi testado (sem backend no teste)|PRESENTE-FUNCIONAL||||
+CFG-22|Configurações|Exportar meus dados|components/LocalStoragePanel.tsx|settings_data.c: Salvar como (GetSaveFileName) e JSON com contatos, grupos e ajustes; sem mensagens, anexos nem segredos|PRESENTE-FUNCIONAL||||
+CFG-23|Configurações|Sobreposição em jogos: interruptor geral|components/OverlaySettingsPanel.tsx|overlay_host.c: abre/fecha briks_overlay.exe --stdin na chamada; protocolo testado (overlay-stdin.ps1, --protocol-test)|PRESENTE-FUNCIONAL||||
+CFG-24|Configurações|Sobreposição: o que aparece (4 itens) e opacidade|components/OverlaySettingsPanel.tsx|overlay_host.c: quem está na sala, sala, transmissão, mudo, opacidade e canto vão por stdin (roteiro overlay-quadro)|PRESENTE-FUNCIONAL||||
+CFG-25|Configurações|Sobreposição: editar posições (arrastar, redimensionar)|components/OverlaySettingsPanel.tsx|settings.c: nota em breve; só os 4 cantos são reais (CFG-24)|AUSENTE|P3|Botão já existe; modo de edicao do overlay com atalho Ctrl+Shift+O (ATL-06)|overlay_edit¦edit_positions|
 CFG-26|Configurações|Aba Avisos: lista e limpar|views/SettingsView.tsx|settings.c: lista existe, mas nada gera avisos|PRESENTE-SEM-EFEITO|P3|Cartão já existe; chamar settings_notice() para erros reais (backend, core, atualizacao)|settings_notice\(|settings.c
 CFG-27|Configurações|Sobre: versão, licenca e código-fonte|components/AboutPanel.tsx|settings.c (Sobre)|PRESENTE-FUNCIONAL||||
 CFG-28|Configurações|Telemetria anonima ligar/desligar|components/AboutPanel.tsx; services/telemetry|settings.c; só salvo, nada e enviado|PRESENTE-SEM-EFEITO|P3|Interruptor já existe; contadores diarios no core|g_set\.telemetry|settings.c
@@ -177,11 +177,11 @@ NOT-02|Notificações|Aviso: amigo comecou a transmitir|services/profile/use-fri
 NOT-03|Notificações|Notificação de nova mensagem (DM e grupo) com o app em segundo plano|services/chat/background-manager.ts|(não existe)|AUSENTE|P1|Sem tela própria: recurso de sistema (Win32) em src/main.c, com a opção correspondente num cartão de Configurações e avisos no estilo do banner de atualizacao; texto 'Autor: trecho' como no Electron; toast nativo|NOTIFYICONDATA¦ToastNotification¦NIF_INFO|
 NOT-04|Notificações|Notificação 'pediu para você transmitir'|components/CallWorkspace.tsx|(não existe)|AUSENTE|P2|Junto de CHM-15|pediu para voce transmitir|
 NOT-05|Notificações|Nada e avisado durante a chamada nem logo ao abrir|release 1.2.0|(sem avisos)|AUSENTE|P2|Regra de supressao no mesmo modulo de NOT-01|notify_suppress|
-ATL-01|Atalhos|Atalho global: mutar/desmutar (Ctrl+Shift+M)|services/input/shortcuts.ts; desktop call-shortcuts.ts|settings.c campo de texto; nada registra o atalho|PRESENTE-SEM-EFEITO|P1|Já existe; RegisterHotKey no main.c só durante a chamada; o campo vira captura de teclas (cui_input readonly + Gravar)|RegisterHotKey|
-ATL-02|Atalhos|Atalho global: ensurdecer (Ctrl+Shift+D)|idem|idem|PRESENTE-SEM-EFEITO|P1|Idem ATL-01|RegisterHotKey|
-ATL-03|Atalhos|Atalho global: transmitir/parar|idem|idem|PRESENTE-SEM-EFEITO|P1|Idem ATL-01|RegisterHotKey|
-ATL-04|Atalhos|Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar)|components/ShortcutsPanel.tsx|settings.c; só salvo|PRESENTE-SEM-EFEITO|P1|Já existe; GetAsyncKeyState no core/UI; captura de tecla e botoes do mouse no campo|GetAsyncKeyState¦ptt_pressed|
-ATL-05|Atalhos|Remover atalho e aviso de atalho ocupado|components/ShortcutsPanel.tsx (Remover)|(não existe)|AUSENTE|P2|Botão Remover (ghost, 12 px) ao lado de cada campo + mensagem 'ocupado' em B_DANGER|atalho_ocupado¦hotkey_failed|
+ATL-01|Atalhos|Atalho global: mutar/desmutar (Ctrl+Shift+M)|services/input/shortcuts.ts; desktop call-shortcuts.ts|hotkeys_win.c + hotkeys_rt.c: RegisterHotKey só na chamada; Gravar/Alterar/Remover na aba Atalhos|PRESENTE-FUNCIONAL||||
+ATL-02|Atalhos|Atalho global: ensurdecer (Ctrl+Shift+D)|idem|idem ATL-01|PRESENTE-FUNCIONAL||||
+ATL-03|Atalhos|Atalho global: transmitir/parar|idem|idem ATL-01|PRESENTE-FUNCIONAL||||
+ATL-04|Atalhos|Apertar para falar (tecla, botão do meio/laterais, atraso ao soltar)|components/ShortcutsPanel.tsx|hotkeys_rt.c: PTT por sondagem (GetAsyncKeyState), tecla ou botão do mouse; atraso ao soltar não existe ainda|PRESENTE-FUNCIONAL||||
+ATL-05|Atalhos|Remover atalho e aviso de atalho ocupado|components/ShortcutsPanel.tsx (Remover)|settings.c: Remover, aviso de conflito e de combinação ocupada (hkw_probe)|PRESENTE-FUNCIONAL||||
 ATL-06|Atalhos|Ctrl+Shift+O: editar posições do overlay em qualquer tela|components/OverlaySettingsPanel.tsx|(não existe)|AUSENTE|P3|Depende de CFG-25|overlay_hotkey|
 EXT-01|Extras do CUI (sem equivalente no Electron)|Dock: menu + Painel e adicionar painel|(novo)|dock.c|PRESENTE-FUNCIONAL||||
 EXT-02|Extras do CUI (sem equivalente no Electron)|Dock: fechar painel|(novo)|dock.c|PRESENTE-FUNCIONAL||||

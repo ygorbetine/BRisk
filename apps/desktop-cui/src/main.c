@@ -51,6 +51,11 @@ static void frame(cui_ctx *ui) {
     g_modal_prev = g_modal_now; g_modal_now = false; g_in_modal = 0; g_hot_modal_draw = briks_hot_modal_draw;
     memcpy(g_cov_prev, g_cov_now, sizeof g_cov_now); g_cov_n_prev = g_cov_n_now; g_cov_n_now = 0;
     { static int applied = -1; if (applied != g_text_size) { applied = g_text_size; briks_text_scale_apply(ui); } }
+    if (!g_modal_prev) {   /* BAS-39: Ctrl+mais, Ctrl+menos e Ctrl+0 ajustam o tamanho do texto */
+        if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_EQUAL) || cui_shortcut(ui, CUI_MOD_CTRL | CUI_MOD_SHIFT, CUI_KEY_EQUAL)) settings_text_step(ui, 1);
+        else if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_MINUS)) settings_text_step(ui, -1);
+        else if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_0)) settings_text_step(ui, 0);
+    }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
@@ -76,6 +81,7 @@ static void frame(cui_ctx *ui) {
             case SCREEN_HISTORY: ui_history(ui, &state); break;
             }
             briks_tip_draw(ui);
+            net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */
             update_banner(ui, &state);   /* dentro da pilha: sobrepõe a tela sem ocupar espaço do layout */
             if (getenv("BRIKS_SCRIPT")) script_overlay(ui);
         }

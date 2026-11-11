@@ -1,0 +1,4 @@
+# Sobre > Licencas de software de terceiros abre o dialogo com o texto (demo social, Configuracoes na aba Sobre)
+snap l0
+tap 582 387
+snap l1

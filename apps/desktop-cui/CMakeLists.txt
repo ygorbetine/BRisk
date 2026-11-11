@@ -13,6 +13,7 @@ FetchContent_Declare(cui
 FetchContent_MakeAvailable(cui)
 
 add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c src/ui_friends.c src/ui_groups.c src/winstate.c src/tray.c src/notify.c)
+target_sources(briks_cui PRIVATE src/net_state.c src/accountx.c)   # estado da internet e faixa offline
 if(WIN32)
   target_sources(briks_cui PRIVATE src/briks.rc)
 endif()
@@ -23,7 +24,8 @@ target_link_libraries(briks_cui PRIVATE cui comdlg32 winmm winhttp bcrypt crypt3
 
 # Logos do login (Google e Discord) ao lado do executável.
 add_custom_command(TARGET briks_cui POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/assets/login" $<TARGET_FILE_DIR:briks_cui>/assets/login)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/assets/login" $<TARGET_FILE_DIR:briks_cui>/assets/login
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/licenses.txt" $<TARGET_FILE_DIR:briks_cui>/assets/licenses.txt)
 
 # Copia o backend local (briks-desktop-backend.exe) para ao lado do executável.
 set(BRIKS_BACKEND_EXE "" CACHE FILEPATH "Caminho do briks-desktop-backend.exe")
@@ -67,3 +69,7 @@ add_executable(briks_richtext_test tests/richtext_test.c src/richtext.c)   # tex
 add_executable(briks_overlay WIN32 src/overlay.c)
 target_compile_options(briks_overlay PRIVATE /utf-8)
 target_link_libraries(briks_overlay PRIVATE user32 gdi32 shell32)
+
+add_executable(briks_accountx_test tests/accountx_test.c)
+target_compile_options(briks_accountx_test PRIVATE /utf-8)
+target_link_libraries(briks_accountx_test PRIVATE cui bcrypt shell32 user32 gdi32 opengl32 ws2_32)

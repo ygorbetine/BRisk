@@ -169,6 +169,7 @@ typedef struct {
     int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
     char others_msg[200]; bool others_busy, others_confirm;
     char ice_source[8];                                        /* default | file | env */
+    char birth[16];                                            /* cadastro: data de nascimento digitada (só valida, nunca é guardada) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -309,6 +310,7 @@ void ui_history(cui_ctx *ui, app_state_t *s);
 extern float g_tools_w;   /* largura reservada à direita do cabeçalho para os botões + e × do painel (0 = sem botões) */
 extern int g_text_size;   /* 0 normal, 1 grande (padrão), 2 maior, 3 máximo: Configurações > Temas > Aparência */
 void briks_text_scale_apply(cui_ctx *ui);
+void settings_text_step(cui_ctx *ui, int delta);   /* settings.c: Ctrl+mais/menos/0 mudam o tamanho do texto (delta 0 = padrão) */
 extern float g_panel_w;   /* largura atual do painel que está sendo desenhado (barra de grupos responsiva) */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind);   /* ui_social.c: conteúdo de um painel do dock */
 void dock_render(cui_ctx *ui, app_state_t *s);
@@ -382,6 +384,27 @@ static inline void briks_pop_end(cui_ctx *ui) { g_in_modal--; cui_popover_end(ui
 #define cui_popover(ui, id, ...) CUI__SCOPE_IF(briks_pop_begin((ui), (id), CUI__OPTS(cui_popover_opts, __VA_ARGS__)), briks_pop_end(ui))
 #undef cui_dialog
 #define cui_dialog(ui, title, open, ...) CUI__SCOPE_IF(briks_dlg_begin((ui), (title), (open), CUI__OPTS(cui_dialog_opts, __VA_ARGS__)), briks_dlg_end(ui))
+/* Texto sempre legível (LAY-11): nenhuma etiqueta abaixo de BRIKS_MIN_TEXT px (antes havia 10 a 11 px espalhados). O piso fica aqui, no cui_text, para valer
+   em todos os arquivos; o tamanho do texto ajustável (Configurações > Temas) multiplica por cima (font_scale). size = 0 segue o tema. */
+#define BRIKS_MIN_TEXT 12.0f
+static inline float briks_text_floor(float size) { return (size > 0 && size < BRIKS_MIN_TEXT) ? BRIKS_MIN_TEXT : size; }
+static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
+#undef cui_text
+#define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
+/* account.c: fotos dos amigos no cache local (PRF-03); 0 = sem foto (só iniciais) */
+cui_texture friend_photo(const char *user_id);
+cui_texture friend_photo_by_name(const app_state_t *s, const char *name);
+/* accountx.c: data de nascimento do cadastro e dica de login por @nick */
+bool birth_parse(const char *t, int *d, int *m, int *y);
+int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */
+void login_hint_save(const char *nick, const char *email);
+bool login_hint_lookup(const char *nick, char *email, size_t cap);
+/* net_state.c: estado da internet e faixa persistente (BAS-32) */
+enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };
+int net_status(void);                                                    /* sonda em segundo plano; BRIKS_NET força o estado nos testes */
+void net_retry_now(void);                                                /* "Tentar agora": sonda na hora */
+void net_banner(cui_ctx *ui, app_state_t *s);                            /* pílula no topo: sem conexão, reconectando, restabelecida */
+void net_friendly_error(const char *raw, char *out, size_t cap);         /* erro técnico de rede -> frase compreensível */
 /* clique do próprio controle sobreposto (ignora a cobertura, respeita modal) */
 static inline bool briks_clicked_top(cui_ctx *ui, const char *id) {
     if (briks_blocked()) return false;

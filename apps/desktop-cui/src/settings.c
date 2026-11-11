@@ -162,6 +162,14 @@ static const char *const TAB_ICONS[] = { CUI_ICON_MIC, CUI_ICON_GLOBE, CUI_ICON_
     CUI_ICON_PLUS, CUI_ICON_USERS, CUI_ICON_SETTINGS, CUI_ICON_USER, CUI_ICON_SETTINGS };
 #define NTABS 13
 
+/* Ctrl+mais / Ctrl+menos / Ctrl+0 (BAS-39): muda o tamanho do texto um degrau (0 normal .. 3 máximo); 0 volta ao padrão (grande). Grava junto com as demais configurações. */
+void settings_text_step(cui_ctx *ui, int delta) {
+    int v = delta == 0 ? 1 : g_set.text_size + delta;
+    if (v < 0) v = 0; if (v > 3) v = 3;
+    if (v == g_set.text_size && v == g_text_size) return;
+    g_set.text_size = v; g_text_size = v; briks_text_scale_apply(ui);
+}
+
 void settings_tick(void) {
     static bool loaded; static settings_t last;
     if (!loaded) { loaded = true; load(); enum_devices(); last = g_set; return; }
@@ -169,6 +177,36 @@ void settings_tick(void) {
         snprintf(g_set.mic_name, sizeof g_set.mic_name, "%s", g_set.mic ? in_names[g_set.mic] : "");
         snprintf(g_set.out_name, sizeof g_set.out_name, "%s", g_set.out ? out_names[g_set.out] : "");
         last = g_set; save();
+    }
+}
+
+/* BAS-37: "Licenças de software de terceiros": o texto vem de assets\licenses.txt ao lado do executável (gerado do THIRD_PARTY_NOTICES, LICENSES e Cargo.lock) */
+static bool g_lic_open; static char *g_lic_text;
+static void lic_load(void) {
+    if (g_lic_text) return;
+    char dir[MAX_PATH], path[MAX_PATH + 40]; GetModuleFileNameA(NULL, dir, sizeof dir);
+    char *sl = strrchr(dir, '\\'); if (sl) *sl = 0;
+    snprintf(path, sizeof path, "%s\\assets\\licenses.txt", dir);
+    FILE *f = fopen(path, "rb");
+    if (f) { fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); if (n > 0 && n < (8 << 20)) { g_lic_text = malloc((size_t)n + 1); if (g_lic_text) { size_t r = fread(g_lic_text, 1, (size_t)n, f); g_lic_text[r] = 0; } } fclose(f); }
+    if (!g_lic_text) g_lic_text = _strdup("O texto das licenças não foi encontrado junto do aplicativo.\nO Briks é licenciado sob a GNU Affero General Public License v3.0. Código-fonte e avisos de terceiros: github.com/ygorbetine/Briks (arquivos LICENSE e THIRD_PARTY_NOTICES.md).");
+}
+static void lic_dialog(cui_ctx *ui) {
+    if (!g_lic_open) return;
+    lic_load();
+    cui_vec2 vp = cui_viewport_size(ui);
+    const float w = fminf(760.0f, fmaxf(vp.x - 48.0f, 320.0f)), h = fminf(640.0f, fmaxf(vp.y - 190.0f, 200.0f));
+    cui_dialog(ui, "Licenças de software de terceiros", &g_lic_open, .width = w) {
+        cui_scroll(ui, .id = "lic-scroll", .width = CUI_FILL, .height = CUI_PX(h), .gap = 0, .pad = 4) {
+            const char *c = g_lic_text; int shown = 0;
+            while (*c && shown < 4000) {
+                const char *e = strchr(c, '\n'); size_t n = e ? (size_t)(e - c) : strlen(c);
+                char line[400]; if (n >= sizeof line) n = sizeof line - 1; memcpy(line, c, n); line[n] = 0;
+                if (n && line[n - 1] == '\r') line[n - 1] = 0;
+                if (line[0]) cui_text(ui, line, .size = 13, .color = line[0] == '=' ? B_MUTED : B_TEXT, .width = CUI_FILL); else cui_gap(ui, 6);
+                shown++; c = e ? e + 1 : c + n;
+            }
+        }
     }
 }
 
@@ -391,6 +429,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sw(ui, "Ajudar a melhorar as chamadas", "Envia só contadores anônimos por dia: se a conexão deu certo e se foi direta ou pelo relay. Nunca quem, com quem, sala, IP ou conteúdo.", &g_set.telemetry);
                         tag_nofx(ui);
                         sub(ui, "Feito por Becine Tools · Código-fonte: github.com/ygorbetine/Briks · Licença AGPL");
+                        if (cui_button(ui, "Licenças de software de terceiros", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) g_lic_open = true;
                     }
                     break;
                 case 10: /* Desempenho */
@@ -426,4 +465,5 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
             }
         }
     }
+    lic_dialog(ui);   /* BAS-37: por cima das Configurações */
 }

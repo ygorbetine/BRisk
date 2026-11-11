@@ -1,0 +1,4 @@
+# Offline: a pilula "Sem conexao" fica fixa (BRIKS_NET=offline, sem sondar a rede)
+snap o0
+waitms 1500
+snap o1

@@ -79,6 +79,21 @@
     { "id": "lay-min", "demo": "msgs", "roteiro": "lay-min.txt", "env": { "BRIKS_WINDOW": "560x480" }, "checagens": [
       { "item": "LAY-13", "de": "l0", "para": "l0", "esperado": "igual" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
-      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] }
+      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
+    { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [
+      { "item": "BAS-32", "de": "o0", "para": "o1", "esperado": "igual", "regiao": [700, 0, 240, 45] } ] },
+    { "id": "net-restaurada", "demo": "social", "roteiro": "net-restaurada.txt", "env": { "BRIKS_NET": "restored" }, "checagens": [
+      { "item": "BAS-32", "de": "r0", "para": "r1", "esperado": "muda", "regiao": [400, 0, 480, 45], "min": 150 } ] },
+    { "id": "auth-nasc", "demo": "login", "roteiro": "auth-nasc.txt", "env": { "BRIKS_DEV_ACCT": "signup" }, "checagens": [
+      { "item": "AUT-03", "de": "n1", "para": "n2", "esperado": "muda", "min": 800 } ] },
+    { "id": "auth-nick", "demo": "login", "roteiro": "auth-nick.txt", "env": { "BRIKS_DEV_ACCT": "login", "BRIKS_LOGIN_HINTS_FILE": "nao-existe-hints.txt" }, "checagens": [
+      { "item": "AUT-11", "de": "q1", "para": "q2", "esperado": "muda", "min": 800 } ] },
+    { "id": "config-licencas", "demo": "social", "roteiro": "config-licencas.txt", "env": { "BRIKS_DEV_OPEN": "settings:9" }, "checagens": [
+      { "item": "BAS-37", "de": "l0", "para": "l1", "esperado": "muda", "min": 2000 } ] },
+    { "id": "config-texto", "demo": "social", "roteiro": "config-texto.txt", "env": { "BRIKS_DEV_OPEN": "settings:2" }, "checagens": [
+      { "item": "BAS-39", "de": "t0", "para": "t1", "esperado": "muda", "min": 2000 },
+      { "item": "BAS-39", "de": "t1", "para": "t2", "esperado": "muda", "min": 2000 } ] },
+    { "id": "perfil-fotos", "demo": "social", "roteiro": "perfil-fotos.txt", "env": { "BRIKS_DEV_FPHOTO": "assets/login/discord.png", "BRIKS_DEV_FPHOTO_DELAY": "1300" }, "checagens": [
+      { "item": "PRF-03", "de": "p0", "para": "p1", "esperado": "muda", "regiao": [270, 500, 230, 140], "min": 150 } ] }
   ]
 }

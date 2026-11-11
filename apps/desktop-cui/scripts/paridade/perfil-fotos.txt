@@ -1,0 +1,4 @@
+# Fotos dos outros: a foto do amigo chega depois e aparece na lista, no cabecalho e nas mensagens (BRIKS_DEV_FPHOTO simula o download)
+snap p0
+waitms 2500
+snap p1

@@ -266,7 +266,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
-                if (person_row(ui, &s->friends[i], s->active_friend == i)) app_open_friend(s, i);
+                if (person_row_ex(ui, &s->friends[i], s->active_friend == i, friend_photo(s->friends[i].id))) app_open_friend(s, i);
                 cui_pop_id(ui);
             }
         }
@@ -325,7 +325,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
     cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
-        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar(ui, m->author, .size = 32); } }   /* avatar sem relevo; agrupada: só o espaço */
+        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar_ex(ui, m->author, &(cui_avatar_opts){ .size = 32, .image = friend_photo_by_name(s, m->author) }); } }   /* avatar sem relevo; agrupada: só o espaço */
         if (m->mine) {
             if (interactive) msgui_arrow(ui, m);   /* seta do lado de dentro, como no WhatsApp: à esquerda do nosso balão */
             /* nosso: roxo padrão; só a quina superior direita mais reta */
@@ -405,11 +405,11 @@ static void content(cui_ctx *ui, app_state_t *s) {
                 .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a), .align = CUI_ALIGN_CENTER) {
             cui_icon(ui, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, 18, B_MUTED);
             cui_text(ui, title, .font = CUI_FONT_MEDIUM, .nowrap = true);
-            if (g_panel_w >= 620.0f) { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
-              cui_text(ui, sub, .size = 12, .color = B_MUTED, .nowrap = true); }
+            { char sub[96]; if (group && s->groups[s->active_group].nch) snprintf(sub, sizeof sub, "Grupo P2P · #%s", s->groups[s->active_group].ch[s->groups[s->active_group].active_ch].name); else snprintf(sub, sizeof sub, "%s", group ? "Grupo P2P" : "Mensagem direta P2P");
+              if (g_panel_w >= 620.0f * cui_theme_get(ui)->font_scale) cui_text(ui, sub, .size = 12, .color = B_MUTED, .nowrap = true); }   /* painel estreito ou texto grande: a legenda sai, o título fica inteiro */
             if (group) groups_header(ui, s);
             if (!group) briks_status_pill(ui, s->friends[s->active_friend].status);   /* só se o amigo tiver status */
-            { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3); }
+            { const char *ty = attach_typing_label(s); if (ty) cui_text(ui, ty, .size = 12, .color = B_C3, .nowrap = true); }
             msgui_pinned_button(ui, s);
             attach_search_button(ui);
         }
@@ -485,9 +485,9 @@ static void panel_members(cui_ctx *ui, app_state_t *s) {
         panel_shell(ui, "Membros", CUI_ICON_USERS);
         g_bclip = cui_get_rect(ui, cui_make_id(ui, "members-scroll"));
         cui_scroll(ui, .id = "members-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 9) {
-            person_t me; memset(&me, 0, sizeof me); snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");   /* zera: status/presença sem lixo de memória */
-            person_row(ui, &me, false);
-            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row(ui, &s->friends[i], false); cui_pop_id(ui); }
+            person_t me; memset(&me, 0, sizeof me); snprintf(me.name, sizeof me.name, "%s", s->user_name[0] ? s->user_name : "Você");
+            person_row_ex(ui, &me, false, s->user_photo);
+            for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 7500 + i); person_row_ex(ui, &s->friends[i], false, friend_photo(s->friends[i].id)); cui_pop_id(ui); }
         }
     }
 }

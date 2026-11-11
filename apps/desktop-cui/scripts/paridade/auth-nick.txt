@@ -1,0 +1,10 @@
+# Entrar digitando @nick desconhecido: mensagem clara (demo login)
+snap q0
+tap 640 371
+type @fulano
+tap 600 444
+type senha12345
+snap q1
+key enter
+waitms 300
+snap q2

@@ -25,3 +25,8 @@ NÃO FEITO: teste de instalar em PC limpo; investigação do tooltip "Sair"; mon
 - Versão do app: `BRIKS_VERSION` (CMake, padrão 1.3.0) e `-Version` do `build-installer.ps1`; o `latest.yml` sai de `installer-out` com sha512 base64. O Electron 1.2.2 (electron-updater) lê o mesmo `latest.yml` e o instalador, então um release v1.3.0 com `Briks-Setup-1.3.0.exe` + `latest.yml` atualiza as instalações antigas.
 - Passo exato de release (NÃO executado, aguarda ok final): `build-installer.ps1 -Version 1.3.0` (sem -Test) → conferir sha → commit/merge em brisk-dev → `git tag v1.3.0` + push → criar release v1.3.0 no GitHub com `Briks-Setup-1.3.0.exe` e `latest.yml` como assets → ligar o atualizador por padrão se desejado.
 - cui-transmissao: 39 commits à frente de brisk-dev, HEAD 1e6eeba; ainda não reportado pronto, portanto não mesclado.
+
+## Release: script e efeito sobre o Electron 1.2.2
+- `scripts/release-cui.ps1 -Version 1.3.0`: ensaio (monta instalador, confere sha512 do latest.yml, imprime SHA-256 e os comandos). `-Publish` só funciona com `BRIKS_RELEASE_OK=1`, árvore limpa e `gh` autenticado. Reverter: `gh release delete v1.3.0 --cleanup-tag --yes`.
+- Efeito: o electron-updater do 1.2.2 consulta `releases/latest/download/latest.yml`; com `v1.3.0` como último release ele baixa o `Briks-Setup-1.3.0.exe` (sha512 conferido) e roda o instalador, que desinstala o Electron em silêncio (dados em `%APPDATA%\@briks` preservados, não importados) e instala o app nativo, mesmo appId, pasta e atalhos. Perde-se: identidade P2P antiga e, se a transmissão não estiver no build, o compartilhamento de tela. Sem assinatura de código (SmartScreen).
+- Atualizador do CUI continua desligado por padrão (precisa de mudança de código para ligar).

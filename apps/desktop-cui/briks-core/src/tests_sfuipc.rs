@@ -14,8 +14,12 @@ use crate::accounts::{fake, supabase::SupabaseProvider, Accounts, SignUpOutcome}
 use crate::tests_sfu::dev_token;
 use crate::tests_sfurec::start_server;
 
+/// Pedidos recebidos pela função `livekit-kick` simulada: (Bearer, corpo JSON).
+type Kicks = Arc<Mutex<Vec<(String, Value)>>>;
+
 /// Serviço de tokens simulado: `Bearer <sessão>` conhecido -> token de dev com a identidade daquele usuário; senão 401.
-fn token_service(users: Arc<Mutex<HashMap<String, String>>>) -> u16 {
+/// O mesmo servidor responde por `…/livekit-kick` (a irmã da função de tokens): registra o pedido e devolve 200 (ou 500 se `kick_fails`).
+fn token_service(users: Arc<Mutex<HashMap<String, String>>>, kicks: Kicks, kick_fails: Arc<std::sync::atomic::AtomicBool>) -> u16 {
     use std::io::{Read, Write};
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -29,6 +33,13 @@ fn token_service(users: Arc<Mutex<HashMap<String, String>>>) -> u16 {
             let bearer = req.lines().find(|l| l.to_ascii_lowercase().starts_with("authorization:")).and_then(|l| l.split_whitespace().last()).unwrap_or("").to_string();
             let room = req.split("\"room\":\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("").to_string();
             let ident = users.lock().unwrap().get(&bearer).cloned();
+            if req.starts_with("POST /functions/v1/livekit-kick") {
+                let body_json: Value = req.split("\r\n\r\n").nth(1).and_then(|b| serde_json::from_str(b).ok()).unwrap_or(Value::Null);
+                kicks.lock().unwrap().push((bearer.clone(), body_json.clone()));
+                let (status, body) = if kick_fails.load(std::sync::atomic::Ordering::Relaxed) { ("500 Internal Server Error", json!({ "message": "falha simulada" }).to_string()) } else { ("200 OK", json!({ "removed": body_json["identity"] }).to_string()) };
+                let _ = write!(s, "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+                continue;
+            }
             let (status, body) = match ident {
                 Some(i) if !room.is_empty() => ("200 OK", json!({ "token": dev_token(&i, &room), "ttl": 3600 }).to_string()),
                 _ => ("401 Unauthorized", json!({ "message": "Entre na sua conta Briks para usar o servidor de chamadas." }).to_string()),
@@ -97,10 +108,12 @@ async fn ipc_room_join_pure_sfu_end_to_end_with_remote_mute_and_kick() {
     let f = fake::start(0).await.unwrap();
     f.state.lock().unwrap().autoconfirm = true;
     let users = Arc::new(Mutex::new(HashMap::new()));
-    let tport = token_service(users.clone());
+    let kicks: Kicks = Default::default();
+    let kick_fails = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tport = token_service(users.clone(), kicks.clone(), kick_fails.clone());
     let (mut a, sa, da) = app("a", &f.url(), Some("ana@exemplo.com"), "Ana", tport).await;
     let (mut b, sb, db) = app("b", &f.url(), Some("beto@exemplo.com"), "Beto", tport).await;
-    users.lock().unwrap().insert(sa, IA.into());
+    users.lock().unwrap().insert(sa.clone(), IA.into());
     users.lock().unwrap().insert(sb, IB.into());
     let room = format!("sala-e2e-{}", uuid::Uuid::new_v4().simple());
     let t0 = Instant::now();
@@ -163,9 +176,31 @@ async fn ipc_room_join_pure_sfu_end_to_end_with_remote_mute_and_kick() {
     assert_eq!((last["muted"].as_bool(), last["microphone"].as_bool()), (Some(true), Some(false)), "o core esqueceu o mudo pedido pela dona: {last}");
     eprintln!("mudo remoto (room.mute): recusado para não-dono, aplicado e desfeito pela dona, estado local coerente");
 
-    // 6) expulsão: o B é avisado e sai; a dona registra o banimento; o B não volta nesta sessão
+    // 6) expulsão: o B é avisado e sai; a dona registra o banimento; o B não volta nesta sessão.
+    // Quem não é dono não chama a função do servidor (e o pedido assinado dele é recusado pelos outros)
+    b.send(json!({ "cmd": "peer.kick", "fp": fa, "reason": "abuso" })).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(kicks.lock().unwrap().is_empty(), "não-dono chamou a função de expulsão");
+    assert_eq!(a.count(|v| v["ev"] == "kicked"), 0);
     a.send(json!({ "cmd": "peer.kick", "fp": fb, "reason": "teste" })).await;
     b.wait(15, "B expulso", |v| v["ev"] == "kicked").await;
+    // a dona também pediu ao servidor (função livekit-kick): sessão DELA no Bearer, sala do LiveKit e identidade do B no corpo
+    let nk = a.wait(15, "resultado do pedido ao servidor", |v| v["ev"] == "net.kick").await;
+    assert_eq!(nk["ok"], true, "{nk}");
+    {
+        let k = kicks.lock().unwrap();
+        assert_eq!(k.len(), 1, "a função de expulsão devia ser chamada uma vez: {k:?}");
+        assert_eq!(k[0].0, sa, "Bearer não é a sessão da dona");
+        let lk_room = format!("room:{}", &crate::signaling::secure_room_id("room", &room)[..32]);
+        assert_eq!(k[0].1, json!({ "room": lk_room, "identity": IB }));
+    }
+    // falha do serviço (função não publicada, 500, sem rede) não é erro para o usuário: o aviso por dados já valeu
+    kick_fails.store(true, std::sync::atomic::Ordering::Relaxed);
+    let url = format!("http://127.0.0.1:{tport}/functions/v1/livekit-kick");
+    let e = tokio::task::spawn_blocking(move || crate::sfu::kick_remote(&url, "x", "room:a", IB)).await.unwrap().err().expect("500 devia virar erro");
+    assert!(e.contains("500") && e.contains("falha simulada"), "{e}");
+    assert!(crate::sfu::kick_remote("http://exemplo.com/k", "x", "room:a", IB).is_err(), "http fora de loopback: a sessão nem sai");
+    assert_eq!(a.count(|v| v["ev"] == "error" && v["message"].as_str().unwrap_or("").contains("expuls")), 0);
     a.wait(15, "A registra o banimento", |v| v["ev"] == "peer.banned" && v["fp"] == fb.as_str()).await;
     b.send(json!({ "cmd": "room.join", "namespace": "room", "room": room })).await;
     b.wait(10, "volta barrada", |v| v["ev"] == "error" && v["where"] == "room.join" && v["message"].as_str().unwrap_or("").contains("removido")).await;

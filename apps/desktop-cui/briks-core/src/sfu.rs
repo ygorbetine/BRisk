@@ -303,6 +303,23 @@ pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<St
     }
 }
 
+/// Pede à função `livekit-kick` do Supabase para tirar `identity` da sala no servidor de mídia (só o dono consegue; a função confere).
+/// Autenticado com a sessão do usuário, como o pedido de token. Bloqueante: chame de `spawn_blocking`.
+pub fn kick_remote(kick_url: &str, access_token: &str, room: &str, identity: &str) -> Result<(), String> {
+    crate::sfu_cfg::check_token_url(kick_url)?;
+    let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(8)).build()
+        .post(kick_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
+        .send_json(json!({ "room": room, "identity": identity }));
+    match resp {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, r)) => {
+            let msg = r.into_json::<Value>().ok().and_then(|v| v["message"].as_str().map(String::from)).unwrap_or_default();
+            Err(format!("serviço de expulsão recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()))
+        }
+        Err(e) => Err(format!("serviço de expulsão inacessível: {}", e.to_string().chars().take(160).collect::<String>())),
+    }
+}
+
 /// A URL de conexão carrega o token: tira da mensagem de erro qualquer trecho `access_token=…`.
 fn redact(s: &str) -> String {
     match s.find("access_token=") { Some(i) => { let end = s[i..].find(|c: char| c == '&' || c.is_whitespace()).map(|e| i + e).unwrap_or(s.len()); format!("{}access_token=***{}", &s[..i], &s[end..]) } None => s.to_string() }

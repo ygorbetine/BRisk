@@ -72,6 +72,18 @@ pub fn resolve(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> Result<
     }
 }
 
+/// URL da função `livekit-kick` (expulsão de verdade no servidor de mídia): `BRIKS_LIVEKIT_KICK_URL`, `kick_url` no `livekit.json`
+/// ou, sem nada disso, a irmã da função de tokens (`…/livekit-token` -> `…/livekit-kick`). None = não há como chamar (segue só o
+/// aviso assinado pela camada de dados). Mesmas regras de esquema da URL de tokens.
+pub fn kick_url(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path, token_url: &str) -> Option<String> {
+    let explicit = env("BRIKS_LIVEKIT_KICK_URL").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
+        std::fs::read_to_string(data_dir.join("livekit.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok())
+            .and_then(|v| v["kick_url"].as_str().map(|s| s.trim().to_string())).filter(|v| !v.is_empty())
+    });
+    let u = match explicit { Some(u) => u, None => format!("{}/livekit-kick", token_url.strip_suffix("/livekit-token")?) };
+    check_token_url(&u).ok().map(|_| u)
+}
+
 /// Modo escolhido pelo usuário: `BRIKS_NET_MODE` ou `net-mode.json` {"mode":"auto|sfu|p2p"} na pasta de dados (a UI grava esse arquivo
 /// por `net.mode.set`). Padrão: Automático.
 pub fn load_mode(env: &dyn Fn(&str) -> Option<String>, data_dir: &Path) -> NetMode {
@@ -162,6 +174,19 @@ mod t {
         save_mode(&d, NetMode::Sfu).unwrap();
         assert_eq!(load_mode(&env_of(vec![]), &d), NetMode::Sfu);
         assert_eq!(load_mode(&env_of(vec![("BRIKS_NET_MODE", "p2p")]), &d), NetMode::P2p);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kick_url_is_derived_from_the_token_url_or_set_explicitly() {
+        let d = std::env::temp_dir().join(format!("briks-kickurl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(kick_url(&env_of(vec![]), &d, "https://a.supabase.co/functions/v1/livekit-token").as_deref(), Some("https://a.supabase.co/functions/v1/livekit-kick"));
+        assert_eq!(kick_url(&env_of(vec![]), &d, "https://a.b/outro-nome"), None, "sem nome conhecido não adivinha");
+        assert_eq!(kick_url(&env_of(vec![("BRIKS_LIVEKIT_KICK_URL", "https://k.x/kick")]), &d, "https://a.b/outro").as_deref(), Some("https://k.x/kick"));
+        assert_eq!(kick_url(&env_of(vec![("BRIKS_LIVEKIT_KICK_URL", "http://fora.com/kick")]), &d, "https://a.b/livekit-token"), None, "http só em loopback");
+        std::fs::write(d.join("livekit.json"), r#"{"url":"wss://f.g","token_url":"https://h.i/t","kick_url":"https://h.i/k"}"#).unwrap();
+        assert_eq!(kick_url(&env_of(vec![]), &d, "https://h.i/t").as_deref(), Some("https://h.i/k"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

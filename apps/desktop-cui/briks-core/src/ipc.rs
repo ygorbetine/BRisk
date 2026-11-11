@@ -198,6 +198,11 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
     let mut profile: (String, String) = (String::new(), String::new());   // status e presença locais, reenviados ao entrar numa sala
+    // SFU puro: sala no LiveKit e URL da função de expulsão; impressão digital -> identidade no SFU; sou o dono?
+    let mut sfu_room: Option<(String, Option<String>)> = None;
+    let mut fp_ident: std::collections::HashMap<String, String> = Default::default();
+    let mut owner_me = false;
+    let (kick_tx, mut kick_rx) = mpsc::channel::<Value>(8);
 
     loop {
         tokio::select! {
@@ -259,6 +264,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                                             let (_, reason) = crate::sfu_cfg::decide(net_mode, true, false, false);
                                             out(&mut wr, json!({ "ev": "net.mode", "mode": "sfu", "reason": reason, "server": h.server, "configured": true })).await?;
                                             cur_room = format!("{ns}:{room}");
+                                            sfu_room = Some((format!("{ns}:{}", &secure_room_id(&ns, &room)[..32]), crate::sfu_cfg::kick_url(&net_env, &cfg.data_dir, &sc.token_url)));
+                                            fp_ident.clear(); owner_me = false;
                                             local_peer = h.identity.clone();
                                             audio = au.clone();
                                             mesh_cmd = Some(h.cmd);
@@ -307,6 +314,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             out(&mut wr, json!({ "ev": "net.mode", "mode": "p2p", "reason": reason, "error": sfu_err, "configured": sfu_ready, "fallback": sfu_failed })).await?;
                         }
                         cur_room = format!("{ns}:{room}");
+                        sfu_room = None; fp_ident.clear(); owner_me = false;
                         if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
                         local_peer = uuid::Uuid::new_v4().to_string();
                         let topic = topic_name(&ns, &secure_room_id(&ns, &room));
@@ -339,6 +347,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
                         mesh_ev = None;
                         rt_status = None;
+                        sfu_room = None; fp_ident.clear(); owner_me = false;
                         out(&mut wr, json!({ "ev": "signaling.status", "state": "desconectado" })).await?;
                     }
                     "chat.send" => {
@@ -369,6 +378,18 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     }
                     "peer.kick" => {
                         let fp = v["fp"].as_str().unwrap_or("").to_string();
+                        // No SFU, além do aviso assinado (que os apps honestos obedecem), o dono pede ao servidor para derrubar a conexão:
+                        // função `livekit-kick` com a sessão da conta. Se falhar (função não publicada, sem rede), fica só o aviso.
+                        if let (true, Some((lk_room, Some(url))), Some(ident), Some(acc)) = (owner_me, sfu_room.clone(), fp_ident.get(&fp).cloned(), accounts.acc.clone()) {
+                            let tx = kick_tx.clone();
+                            tokio::spawn(async move {
+                                let r = match acc.access_token().await {
+                                    Ok(access) => tokio::task::spawn_blocking(move || crate::sfu::kick_remote(&url, &access, &lk_room, &ident)).await.unwrap_or_else(|e| Err(e.to_string())),
+                                    Err(e) => Err(format!("sessão: {e}")),
+                                };
+                                let _ = tx.send(json!({ "ev": "net.kick", "ok": r.is_ok(), "message": r.err().unwrap_or_default() })).await;
+                            });
+                        }
                         if let (false, Some(c)) = (fp.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::Kick { fp, reason: v["reason"].as_str().unwrap_or("").to_string() }).await; }
                     }
                     "room.allow" => {
@@ -429,13 +450,14 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                 }
             }
             Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
+            Some(ev) = kick_rx.recv() => out(&mut wr, ev).await?,   // resultado do pedido ao servidor (diagnóstico; a UI não precisa reagir)
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
                     Some(MeshEvent::ChatEvent { from_fp, wire, local }) => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
                     Some(MeshEvent::Chat { channel, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
-                    Some(MeshEvent::PeerInfo { peer_id, fp, name }) => out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await?,
-                    Some(MeshEvent::Owner { fp, me }) => out(&mut wr, json!({ "ev": "room.owner", "fp": fp, "me": me })).await?,
+                    Some(MeshEvent::PeerInfo { peer_id, fp, name }) => { fp_ident.insert(fp.clone(), peer_id.clone()); out(&mut wr, json!({ "ev": "peer.info", "peer_id": peer_id, "fp": fp, "name": name })).await? }
+                    Some(MeshEvent::Owner { fp, me }) => { owner_me = me; out(&mut wr, json!({ "ev": "room.owner", "fp": fp, "me": me })).await? }
                     Some(MeshEvent::Banned { fp }) => out(&mut wr, json!({ "ev": "peer.banned", "fp": fp })).await?,
                     Some(MeshEvent::Kicked { reason }) => {
                         kicked_rooms.insert(cur_room.clone());

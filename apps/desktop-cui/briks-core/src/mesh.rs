@@ -90,6 +90,10 @@ pub enum MeshCmd {
     SendFile { path: String, to_fp: Option<String> },
     /// Cancela uma transferência (minha ou recebida) pelo id.
     CancelFile { id: String },
+    /// Aceita uma oferta recebida (começa o download).
+    AcceptFile { id: String },
+    /// Pausa ou retoma uma transferência (minha ou recebida).
+    PauseFile { id: String, paused: bool },
     /// Avisa os peers autenticados que estou digitando.
     Typing,
     Event { channel: String, target: String, action: String, content: Option<String>, reference: Option<String>, emoji: Option<String> },
@@ -189,7 +193,8 @@ struct Actor {
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
     seen_msgs: HashSet<String>,
     incoming: HashMap<String, (String, crate::filetransfer::Incoming, u64)>,   // id -> (peer, estado, último progresso emitido)
-    outgoing: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,        // id -> cancelar
+    outgoing: HashMap<String, Arc<Ctl>>,                                   // id -> controle (aceitar, pausar, cancelar)
+    pending: HashMap<String, (String, crate::filetransfer::Offer)>,       // ofertas recebidas aguardando "Baixar": id -> (peer, oferta)
     recv_dir: std::path::PathBuf,
     ev_last_ts: u64,                // relógio monotônico dos meus eventos de chat
     seen_events: HashSet<String>,
@@ -217,7 +222,7 @@ impl Actor {
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), dead: false, blocked: HashSet::new(), share: None, share_gen: 0, net: Default::default(), idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), vtrack: None, atrack: None, sev_tx, sev_rx: Some(sev_rx) }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -483,8 +488,36 @@ impl Actor {
                 for id in ids { self.dc_send(&id, json!({ "version": 2, "type": "chat.typing", "fromPeerId": self.cfg.local_peer })).await; }
             }
             MeshCmd::SendFile { path, to_fp } => self.send_file(path, to_fp).await,
+            MeshCmd::AcceptFile { id } => {
+                let Some((peer, off)) = self.pending.remove(&id) else { return };
+                let fp = self.peers.get(&peer).and_then(|p| p.fp.clone()).unwrap_or_default();
+                match crate::filetransfer::Incoming::start(&self.recv_dir, off.clone()) {
+                    Ok(inc) => {
+                        self.incoming.insert(id.clone(), (peer.clone(), inc, 0));
+                        self.dc_send(&peer, json!({ "version": 1, "type": "file.accept", "id": id })).await;
+                        self.emit(MeshEvent::File(json!({ "kind": "accepted", "id": id, "peer_fp": fp, "name": off.name, "size": off.size, "mine": false }))).await;
+                    }
+                    Err(e) => {
+                        self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                        self.emit(MeshEvent::File(json!({ "kind": "failed", "id": id, "peer_fp": fp, "error": e.to_string() }))).await;
+                    }
+                }
+            }
+            MeshCmd::PauseFile { id, paused } => {
+                if let Some(ctl) = self.outgoing.get(&id) { ctl.paused_all.store(paused, std::sync::atomic::Ordering::SeqCst); self.emit(MeshEvent::File(json!({ "kind": if paused { "paused" } else { "resumed" }, "id": id, "mine": true }))).await; }
+                if let Some((peer, _, _)) = self.incoming.get(&id) {
+                    let peer = peer.clone();
+                    self.dc_send(&peer, json!({ "version": 1, "type": if paused { "file.pause" } else { "file.resume" }, "id": id })).await;
+                    self.emit(MeshEvent::File(json!({ "kind": if paused { "paused" } else { "resumed" }, "id": id, "mine": false }))).await;
+                }
+            }
             MeshCmd::CancelFile { id } => {
-                if let Some(f) = self.outgoing.get(&id) { f.store(true, std::sync::atomic::Ordering::SeqCst); }
+                if let Some(f) = self.outgoing.get(&id) { f.cancel.store(true, std::sync::atomic::Ordering::SeqCst); }
+                if let Some((peer, off)) = self.pending.remove(&id) {   // recusar uma oferta ainda não aceita
+                    self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
+                    let fp = self.peers.get(&peer).and_then(|p| p.fp.clone()).unwrap_or_default();
+                    self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "name": off.name, "peer_fp": fp }))).await;
+                }
                 if let Some((peer, inc, _)) = self.incoming.remove(&id) {
                     let name = inc.offer.name.clone(); inc.abort();
                     self.dc_send(&peer, json!({ "version": 1, "type": "file.cancel", "id": id })).await;
@@ -717,6 +750,7 @@ impl Actor {
     async fn drop_peer(&mut self, id: &str) {
         self.net.lock().unwrap().peers.remove(id);
         if let Some(a) = &self.audio { a.remove_peer(id); }
+        self.pending.retain(|_, (pe, _)| pe != id);
         let gone: Vec<String> = self.incoming.iter().filter(|(_, (pe, _, _))| pe == id).map(|(k, _)| k.clone()).collect();
         for k in gone { if let Some((_, inc, _)) = self.incoming.remove(&k) { inc.abort(); self.emit(MeshEvent::File(json!({ "kind": "failed", "id": k, "error": "conexão encerrada" }))).await; } }
         if let Some(p) = self.peers.remove(id) { let _ = p.pc.close().await; self.emit(MeshEvent::Peer { peer_id: id.into(), state: "fechado".into() }).await; }
@@ -737,22 +771,31 @@ impl Actor {
         if targets.is_empty() { self.emit(MeshEvent::File(json!({ "kind": "failed", "id": "", "name": name, "error": "ninguém conectado para receber" }))).await; return; }
         let id = uuid::Uuid::new_v4().to_string();
         let offer = ft::Offer::sign(&self.identity, ft::Offer { id: id.clone(), name: name.clone(), size, mime: mime.clone(), sha256: sha, from_peer: self.identity.fingerprint(), timestamp: now_ms(), signature: String::new() });
-        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        self.outgoing.insert(id.clone(), cancel.clone());
+        let ctl = Arc::new(Ctl::default());
+        self.outgoing.insert(id.clone(), ctl.clone());
         self.emit(MeshEvent::File(json!({ "kind": "offer", "id": id, "name": name, "size": size, "mime": mime, "mine": true, "path": path }))).await;
         let wire = offer.to_wire();
         for (dc, fp) in targets {
-            let (wire, cancel, ev, path, id) = (wire.clone(), cancel.clone(), self.ev.clone(), path.clone(), id.clone());
+            let (wire, ctl, ev, path, id) = (wire.clone(), ctl.clone(), self.ev.clone(), path.clone(), id.clone());
             tokio::spawn(async move {
                 use base64::Engine;
                 use std::sync::atomic::Ordering::SeqCst;
                 let fail = |why: &str| MeshEvent::File(json!({ "kind": "failed", "id": id, "peer_fp": fp, "error": why }));
                 if dc.send_text(wire.to_string()).await.is_err() { let _ = ev.send(fail("falha ao enviar a oferta")).await; return; }
+                // espera o "Baixar" do outro lado (até 15 min); cancelar antes disso encerra
+                let waited = std::time::Instant::now();
+                loop {
+                    if ctl.cancel.load(SeqCst) { let _ = dc.send_text(json!({ "version": 1, "type": "file.cancel", "id": id }).to_string()).await; let _ = ev.send(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; return; }
+                    if ctl.accepted.lock().unwrap().contains(&fp) { break; }
+                    if waited.elapsed() > std::time::Duration::from_secs(15 * 60) { let _ = ev.send(fail("ninguém aceitou a tempo")).await; return; }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
                 let Ok(mut f) = tokio::fs::File::open(&path).await else { let _ = ev.send(fail("não consegui abrir o arquivo")).await; return };
                 let mut buf = vec![0u8; ft::CHUNK_BYTES];
                 let (mut seq, mut sent, mut last) = (0u64, 0u64, 0u64);
                 loop {
-                    if cancel.load(SeqCst) {
+                    while (ctl.paused_all.load(SeqCst) || ctl.paused.lock().unwrap().contains(&fp)) && !ctl.cancel.load(SeqCst) { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+                    if ctl.cancel.load(SeqCst) {
                         let _ = dc.send_text(json!({ "version": 1, "type": "file.cancel", "id": id }).to_string()).await;
                         let _ = ev.send(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await;
                         return;
@@ -762,7 +805,7 @@ impl Actor {
                         match tokio::io::AsyncReadExt::read(&mut f, &mut buf[n..]).await { Ok(0) => break, Ok(k) => n += k, Err(_) => { let _ = ev.send(fail("erro de leitura")).await; return; } }
                     }
                     if n == 0 { break; }
-                    while dc.buffered_amount().await > 1024 * 1024 { if cancel.load(SeqCst) { break; } tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
+                    while dc.buffered_amount().await > 1024 * 1024 { if ctl.cancel.load(SeqCst) { break; } tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
                     let msg = json!({ "version": 1, "type": "file.chunk", "id": id, "seq": seq, "data": base64::engine::general_purpose::STANDARD.encode(&buf[..n]) });
                     if dc.send_text(msg.to_string()).await.is_err() { let _ = ev.send(fail("conexão perdida")).await; return; }
                     seq += 1; sent += n as u64;
@@ -791,14 +834,13 @@ impl Actor {
                     self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": offer.id })).await;
                     return;
                 }
-                let name = ft::sanitize_name(&offer.name);
-                match ft::Incoming::start(&self.recv_dir, offer.clone()) {
-                    Ok(inc) => {
-                        self.emit(MeshEvent::File(json!({ "kind": "offer", "id": offer.id, "peer_fp": fp, "name": name, "size": offer.size, "mime": offer.mime, "mine": false }))).await;
-                        self.incoming.insert(offer.id.clone(), (peer.to_string(), inc, 0));
-                    }
-                    Err(e) => { self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": offer.id })).await; self.emit(MeshEvent::Error(format!("anexo: {e}"))).await; }
+                if self.pending.contains_key(&offer.id) || self.pending.values().filter(|(pe, _)| pe == peer).count() >= 8 {
+                    self.dc_send(peer, json!({ "version": 1, "type": "file.cancel", "id": offer.id })).await; return;
                 }
+                // nada é gravado até o usuário clicar em "Baixar" (AcceptFile)
+                let name = ft::sanitize_name(&offer.name);
+                self.emit(MeshEvent::File(json!({ "kind": "offer", "id": offer.id, "peer_fp": fp, "name": name, "size": offer.size, "mime": offer.mime, "mine": false }))).await;
+                self.pending.insert(offer.id.clone(), (peer.to_string(), offer));
             }
             "file.chunk" => {
                 let Some(data) = v["data"].as_str().and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok()) else { return };
@@ -833,8 +875,17 @@ impl Actor {
                     Err(e) => self.emit(failed(e.to_string())).await,
                 }
             }
+            "file.accept" | "file.pause" | "file.resume" => {
+                let Some(ctl) = self.outgoing.get(&id).cloned() else { return };
+                let t = v["type"].as_str().unwrap_or("");
+                if t == "file.accept" { ctl.accepted.lock().unwrap().insert(fp.clone()); }
+                else if t == "file.pause" { ctl.paused.lock().unwrap().insert(fp.clone()); }
+                else { ctl.paused.lock().unwrap().remove(&fp); }
+                self.emit(MeshEvent::File(json!({ "kind": match t { "file.accept" => "accepted", "file.pause" => "paused", _ => "resumed" }, "id": id, "peer_fp": fp, "mine": true }))).await;
+            }
             "file.cancel" => {
-                if let Some(f) = self.outgoing.get(&id) { f.store(true, std::sync::atomic::Ordering::SeqCst); }
+                if self.pending.get(&id).is_some_and(|(pe, _)| pe == peer) { self.pending.remove(&id); self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; }
+                if let Some(f) = self.outgoing.get(&id) { f.cancel.store(true, std::sync::atomic::Ordering::SeqCst); }
                 if let Some((pe, inc, last)) = self.incoming.remove(&id) {
                     if pe == peer { inc.abort(); self.emit(MeshEvent::File(json!({ "kind": "cancelled", "id": id, "peer_fp": fp }))).await; }
                     else { self.incoming.insert(id, (pe, inc, last)); }
@@ -928,14 +979,17 @@ impl Actor {
             "chat.message.ack" => {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
-                if let Some(id) = v["messageId"].as_str() { self.emit(MeshEvent::Ack { id: id.chars().take(64).collect(), from_fp: fp }).await; }
+                if let Some(id) = v["messageId"].as_str() {
+                    if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); }   // entregue: sai da outbox
+                    self.emit(MeshEvent::Ack { id: id.chars().take(64).collect(), from_fp: fp }).await;
+                }
             }
             "chat.typing" => {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
                 self.emit(MeshEvent::Typing { from_fp: fp }).await;
             }
-            "file.offer" | "file.chunk" | "file.done" | "file.cancel" => self.on_file_msg(peer, &v).await,
+            "file.offer" | "file.chunk" | "file.done" | "file.cancel" | "file.accept" | "file.pause" | "file.resume" => self.on_file_msg(peer, &v).await,
             "chat.event" => {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
@@ -1002,10 +1056,6 @@ impl Actor {
                 if !on { if let Some(p) = self.peers.get(peer) { p.recv.watching.store(false, std::sync::atomic::Ordering::Relaxed); } }
                 self.emit(MeshEvent::Share(m)).await;
             }
-            "chat.message.ack" => {
-                let id = v["messageId"].as_str().unwrap_or("");
-                if let Some(fp) = self.peers.get(peer).and_then(|p| p.fp.clone()) { if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); } }
-            }
             _ => {}
         }
     }
@@ -1026,6 +1076,15 @@ impl Actor {
 }
 
 fn peer_remote(v: &Value) -> &str { v["fromPeerId"].as_str().unwrap_or("") }
+/// Controle de um envio: quem aceitou, quem pausou e o cancelamento (compartilhado com as tarefas de envio de cada peer).
+#[derive(Default)]
+struct Ctl {
+    cancel: std::sync::atomic::AtomicBool,
+    accepted: std::sync::Mutex<HashSet<String>>,   // fps que aceitaram
+    paused: std::sync::Mutex<HashSet<String>>,     // fps que pausaram
+    paused_all: std::sync::atomic::AtomicBool,     // eu pausei
+}
+
 fn recv_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("BRIKS_RECV_DIR") { return d.into(); }
     let base = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());

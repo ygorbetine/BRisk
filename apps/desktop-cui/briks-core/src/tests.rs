@@ -1050,6 +1050,10 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
     let off = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer")).await.expect("B não viu a oferta");
     let MeshEvent::File(o) = off else { unreachable!() };
     assert_eq!(o["name"], "dados.bin"); assert_eq!(o["size"], 600_000); assert_eq!(o["mine"], false);
+    // nada é gravado antes do "Baixar"
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!recv.exists() || std::fs::read_dir(&recv).unwrap().next().is_none(), "gravou antes de aceitar");
+    b.cmd.send(MeshCmd::AcceptFile { id: o["id"].as_str().unwrap().into() }).await.unwrap();
     assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some());
     let done = wait_for(&mut b, 30, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done")).await.expect("B não concluiu");
     let MeshEvent::File(d) = done else { unreachable!() };
@@ -1060,6 +1064,9 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
 
     // imagem: miniatura chega junto
     a.cmd.send(MeshCmd::SendFile { path: src.join("foto.png").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off2 = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "foto.png")).await.expect("sem oferta da imagem");
+    let MeshEvent::File(o2) = off2 else { unreachable!() };
+    b.cmd.send(MeshCmd::AcceptFile { id: o2["id"].as_str().unwrap().into() }).await.unwrap();
     let d2 = wait_for(&mut b, 30, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "done" && j["name"] == "foto.png")).await.expect("B não recebeu a imagem");
     let MeshEvent::File(d2) = d2 else { unreachable!() };
     assert_eq!(d2["thumb"]["w"], 96); assert_eq!(d2["thumb"]["h"], 48);
@@ -1070,6 +1077,13 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
         from_peer: ia.fingerprint(), timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64, signature: String::new() });
     b.cmd.send(MeshCmd::RawDc { text: forged.to_wire().to_string() }).await.unwrap();
     assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::Error(m) if m.contains("anexo rejeitado"))).await.is_some(), "oferta forjada aceita");
+    // recusar uma oferta: o remetente recebe o cancelamento
+    std::fs::write(src.join("recusar.bin"), vec![3u8; 1000]).unwrap();
+    a.cmd.send(MeshCmd::SendFile { path: src.join("recusar.bin").to_string_lossy().into(), to_fp: None }).await.unwrap();
+    let off3 = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "recusar.bin")).await.expect("sem oferta recusar");
+    let MeshEvent::File(o3) = off3 else { unreachable!() };
+    b.cmd.send(MeshCmd::CancelFile { id: o3["id"].as_str().unwrap().into() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "cancelled")).await.is_some(), "recusa não chegou ao remetente");
     a.cmd.send(MeshCmd::SendFile { path: src.join("nao-existe.bin").to_string_lossy().into(), to_fp: None }).await.unwrap();
     assert!(wait_for(&mut a, 10, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "failed")).await.is_some());
 
@@ -1079,6 +1093,17 @@ async fn file_attachments_travel_with_progress_integrity_limits_and_cancel() {
     let off = wait_for(&mut b, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "offer" && j["name"] == "grande.bin")).await.expect("sem oferta grande");
     let MeshEvent::File(o) = off else { unreachable!() };
     let id = o["id"].as_str().unwrap().to_string();
+    b.cmd.send(MeshCmd::AcceptFile { id: id.clone() }).await.unwrap();
+    assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "accepted")).await.is_some(), "o remetente não soube do aceite");
+    // pausar: o progresso para; retomar: volta
+    assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some());
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: true }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    while let Ok(Some(_)) = timeout(Duration::from_millis(50), b.events.recv()).await {}   // descarrega o que já estava a caminho
+    let stalled = wait_for(&mut b, 2, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await;
+    assert!(stalled.is_none(), "continuou recebendo pausado");
+    b.cmd.send(MeshCmd::PauseFile { id: id.clone(), paused: false }).await.unwrap();
+    assert!(wait_for(&mut b, 20, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "progress")).await.is_some(), "não retomou");
     b.cmd.send(MeshCmd::CancelFile { id: id.clone() }).await.unwrap();
     assert!(wait_for(&mut a, 15, |e| matches!(e, MeshEvent::File(j) if j["kind"] == "cancelled")).await.is_some(), "o remetente não soube do cancelamento");
 

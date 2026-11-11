@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-pub const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024 * 1024;   // o mesmo limite de 20 GiB do chat do Electron
 pub const CHUNK_BYTES: usize = 32 * 1024;
 pub const MAX_INCOMING_PER_PEER: usize = 3;
 pub const OFFER_SKEW_MS: i64 = 5 * 60 * 1000;
@@ -74,11 +74,13 @@ impl Offer {
 }
 
 /// Lê o arquivo uma vez para obter tamanho e SHA-256. Bloqueante.
-pub fn describe(path: &Path) -> Result<(String, u64, String, String)> {
+pub fn describe(path: &Path) -> Result<(String, u64, String, String)> { describe_max(path, MAX_FILE_BYTES) }
+
+pub fn describe_max(path: &Path, max: u64) -> Result<(String, u64, String, String)> {
     let meta = std::fs::metadata(path)?;
     if !meta.is_file() { return Err(anyhow!("não é um arquivo")); }
     if meta.len() == 0 { return Err(anyhow!("arquivo vazio")); }
-    if meta.len() > MAX_FILE_BYTES { return Err(anyhow!("arquivo maior que {} MB", MAX_FILE_BYTES / 1024 / 1024)); }
+    if meta.len() > max { return Err(anyhow!("arquivo maior que o limite de {} MB", max / 1024 / 1024)); }
     let mut f = File::open(path)?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -206,7 +208,8 @@ mod tests {
         assert!(describe(&d.join("vazio.txt")).is_err());
         assert!(describe(&d).is_err(), "pasta");
         assert!(describe(&d.join("nao-existe")).is_err());
-        let f = File::create(d.join("grande.bin")).unwrap(); f.set_len(MAX_FILE_BYTES + 1).unwrap();
-        assert!(describe(&d.join("grande.bin")).is_err());
+        std::fs::write(d.join("grande.bin"), vec![1u8; 2000]).unwrap();
+        assert!(describe_max(&d.join("grande.bin"), 1000).is_err(), "acima do teto");
+        assert!(describe_max(&d.join("grande.bin"), 2000).is_ok());
     }
 }

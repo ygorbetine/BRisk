@@ -83,6 +83,10 @@
     { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [
       { "item": "BAS-32", "de": "o0", "para": "o1", "esperado": "igual", "regiao": [700, 0, 240, 45] } ] },
     { "id": "net-restaurada", "demo": "social", "roteiro": "net-restaurada.txt", "env": { "BRIKS_NET": "restored" }, "checagens": [
-      { "item": "BAS-32", "de": "r0", "para": "r1", "esperado": "muda", "regiao": [400, 0, 480, 45], "min": 150 } ] }
+      { "item": "BAS-32", "de": "r0", "para": "r1", "esperado": "muda", "regiao": [400, 0, 480, 45], "min": 150 } ] },
+    { "id": "auth-nasc", "demo": "login", "roteiro": "auth-nasc.txt", "env": { "BRIKS_DEV_ACCT": "signup" }, "checagens": [
+      { "item": "AUT-03", "de": "n1", "para": "n2", "esperado": "muda", "min": 800 } ] },
+    { "id": "auth-nick", "demo": "login", "roteiro": "auth-nick.txt", "env": { "BRIKS_DEV_ACCT": "login", "BRIKS_LOGIN_HINTS_FILE": "nao-existe-hints.txt" }, "checagens": [
+      { "item": "AUT-11", "de": "q1", "para": "q2", "esperado": "muda", "min": 800 } ] }
   ]
 }

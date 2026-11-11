@@ -1,7 +1,7 @@
 ﻿id|area|item|eletron|cui|classe|prioridade|encaixe_layout_novo|sonda|excluir
 AUT-01|Auth|Entrar com e-mail e senha|views/AuthView.tsx|ui_auth.c + account.c (account.login)|PRESENTE-FUNCIONAL||||
 AUT-02|Auth|Criar conta com e-mail (nome, e-mail, senha, repetir senha)|views/AuthView.tsx|ui_auth.c (signup)|PRESENTE-FUNCIONAL||||
-AUT-03|Auth|Data de nascimento no cadastro (só maiores de 18)|views/AuthView.tsx; services/account/age.ts|(não existe)|AUSENTE|P2|Campo no formulario de criar conta (ui_auth.c, modo signup), mesmo cui_input da senha; texto de ajuda 13 px; a data não e guardada|nascimento¦birth¦age_gate|
+AUT-03|Auth|Data de nascimento no cadastro (só maiores de 18)|views/AuthView.tsx; services/account/age.ts|Campo Data de nascimento no cadastro (accountx.c, ui_auth.c): só maiores de 18; valida na hora e a data não é guardada|PRESENTE-FUNCIONAL|P2|Campo no formulario de criar conta (ui_auth.c, modo signup), mesmo cui_input da senha; texto de ajuda 13 px; a data não e guardada|nascimento¦birth¦age_gate|
 AUT-04|Auth|Esqueci minha senha (e-mail de recuperação)|views/AuthView.tsx|ui_auth.c (recover)|PRESENTE-FUNCIONAL||||
 AUT-05|Auth|Código de 6 digitos / link de recuperação e nova senha|views/AuthView.tsx|ui_auth.c (code, recovery)|PRESENTE-FUNCIONAL||||
 AUT-06|Auth|Continuar com Google (navegador)|components/AccountPanel.tsx; services/account/account-service.ts|ui_auth.c account_oauth(google); não testado com provedor real|PRESENTE-FUNCIONAL||||
@@ -9,7 +9,7 @@ AUT-07|Auth|Continuar com Discord (navegador)|components/AccountPanel.tsx|ui_aut
 AUT-08|Auth|Cancelar a espera do navegador|views/AuthView.tsx|ui_auth.c (Cancelar / account.cancel)|PRESENTE-FUNCIONAL||||
 AUT-09|Auth|Mostrar/ocultar a senha (olho)|views/AuthView.tsx|ui_auth.c (cui_input password)|PRESENTE-FUNCIONAL||||
 AUT-10|Auth|Alternar entre entrar, criar conta e Google/Discord|views/AuthView.tsx|ui_auth.c (links)|PRESENTE-FUNCIONAL||||
-AUT-11|Auth|Entrar digitando o @nick (dica local de e-mail)|services/account/login-hints.ts|(não existe)|AUSENTE|P2|Aceitar @nick no campo de e-mail do formulario de entrar (ui_auth.c); dica 12 px abaixo do campo; sem tela nova|login_hint¦login-hint¦rememberLogin|
+AUT-11|Auth|Entrar digitando o @nick (dica local de e-mail)|services/account/login-hints.ts|Campo de e-mail do login aceita @nick (dica guardada só neste computador em login-hints.txt, accountx.c); @nick desconhecido mostra mensagem clara|PRESENTE-FUNCIONAL|P2|Aceitar @nick no campo de e-mail do formulario de entrar (ui_auth.c); dica 12 px abaixo do campo; sem tela nova|login_hint¦login-hint¦rememberLogin|
 AUT-12|Auth|Tela de carregamento ao restaurar a sessao|App.tsx (Restaurando sua sessao)|ui_auth.c (Preparando seu espaco)|PRESENTE-FUNCIONAL||||
 AUT-13|Auth|Sair da conta (rodape, Perfil e Configurações)|views/HomeView.tsx (Sair, Desconectar)|ui_social.c / settings.c / app.c app_logout|PRESENTE-FUNCIONAL||||
 AUT-14|Auth|Erros de login em português claro|views/auth-errors.ts|account.c (mensagens)|PRESENTE-FUNCIONAL||||

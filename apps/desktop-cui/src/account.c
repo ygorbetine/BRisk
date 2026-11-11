@@ -65,11 +65,16 @@ void account_submit(app_state_t *s) {
         send_kv("account.password", "password", s->password, NULL, NULL, NULL, NULL);
         return;
     }
+    if (s->acct_view == AV_LOGIN && (s->email[0] == '@' || (s->email[0] && !strchr(s->email, '@')))) {   /* AUT-11: @nick -> e-mail guardado neste computador */
+        char em[96]; if (login_hint_lookup(s->email, em, sizeof em)) copy(s->email, sizeof s->email, em);
+        else { copy(s->acct_error, sizeof s->acct_error, "Não conheço esse @nick neste computador. Entre com o e-mail desta vez; da próxima você pode usar o @nick."); return; }
+    }
     if (!strchr(s->email, '@')) { copy(s->acct_error, sizeof s->acct_error, "Digite um e-mail válido, como voce@exemplo.com."); return; }
     if (s->acct_view == AV_SIGNUP) {
         if (!s->name[0]) { copy(s->acct_error, sizeof s->acct_error, "Diga como devemos chamar você."); return; }
         if (strlen(s->password) < 8) { copy(s->acct_error, sizeof s->acct_error, "A senha precisa ter pelo menos 8 caracteres."); return; }
         if (strcmp(s->password, s->confirm)) { copy(s->acct_error, sizeof s->acct_error, "As senhas não conferem."); return; }
+        { SYSTEMTIME st; GetLocalTime(&st); if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->acct_error, sizeof s->acct_error)) return; }   /* AUT-03: só maiores de 18; a data não é enviada nem guardada */
     }
     if (s->acct_view == AV_LOGIN && !s->password[0]) { copy(s->acct_error, sizeof s->acct_error, "Digite sua senha."); return; }
     if (!need_core(s)) return;
@@ -363,7 +368,7 @@ bool account_handle_event(app_state_t *s, const char *line) {
     if (!strcmp(ev, "account.state")) on_state(s, j);
     else if (!strcmp(ev, "account.profile")) {
         copy(s->acct_nick, sizeof s->acct_nick, json_str(j, "nick", ""));
-        if (s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, s->acct_nick);
+        if (s->acct_nick[0]) { copy(s->user_nick, sizeof s->user_nick, s->acct_nick); if (!s->acct_demo) login_hint_save(s->acct_nick, s->user_email); }   /* dica de login por @nick (AUT-11) */
         if (json_str(j, "display_name", "")[0]) copy(s->user_name, sizeof s->user_name, json_str(j, "display_name", ""));   /* vale o nome do perfil (pode ter sido trocado) */
         if (json_str(j, "message", "")[0]) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
         if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }

@@ -169,6 +169,7 @@ typedef struct {
     int ice_test_level;                                        /* 0 sem teste, 1 nada respondeu, 2 só STUN, 3 TURN respondeu */
     char others_msg[200]; bool others_busy, others_confirm;
     char ice_source[8];                                        /* default | file | env */
+    char birth[16];                                            /* cadastro: data de nascimento digitada (só valida, nunca é guardada) */
 } app_state_t;
 
 /* migrate.c: importação dos dados do Electron */
@@ -387,6 +388,11 @@ static inline float briks_text_floor(float size) { return (size > 0 && size < BR
 static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_opts *o) { cui_text_opts c = *o; c.size = briks_text_floor(c.size); cui_text_ex(ui, text, &c); }
 #undef cui_text
 #define cui_text(ui, text, ...) briks_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
+/* accountx.c: data de nascimento do cadastro e dica de login por @nick */
+bool birth_parse(const char *t, int *d, int *m, int *y);
+int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */
+void login_hint_save(const char *nick, const char *email);
+bool login_hint_lookup(const char *nick, char *email, size_t cap);
 /* net_state.c: estado da internet e faixa persistente (BAS-32) */
 enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };
 int net_status(void);                                                    /* sonda em segundo plano; BRIKS_NET força o estado nos testes */

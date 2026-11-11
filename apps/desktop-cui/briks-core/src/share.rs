@@ -238,6 +238,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             // ---- uma vez por segundo: mede, estima a banda, decide o nível e publica a telemetria ----
             if win_t.elapsed() >= Duration::from_secs(1) {
                 let secs = win_t.elapsed().as_secs_f64();
+                if secs > 1.5 && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] janela de medição durou {secs:.2} s"); }
                 let cpu = cpu_ms();
                 let sent_bps = bytes as f64 * 8.0 / secs;
                 let sent_fps = frames as f64 / secs;
@@ -322,7 +323,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             let (tw, th) = (yuv.w, yuv.h);
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
-                match H264Enc::new(tw, th, fps as f32, bps) {
+                let tc = Instant::now();
+                let made = H264Enc::new(tw, th, fps as f32, bps);
+                if tc.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] criar codificador {tw}x{th}: {} ms", tc.elapsed().as_millis()); }
+                match made {
                     Ok(e) => { id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; }   // codificador novo já começa com quadro-chave
                     Err(e) => { closed_reason = format!("codificador: {e}"); break; }
                 }
@@ -342,6 +346,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
             let au = e.encode(&yuv);
+            if t0.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] codificar: {} ms", t0.elapsed().as_millis()); }
             held = Some(yuv);   // guardado para o reenvio de tela parada
             enc_ns += t0.elapsed().as_nanos();
             match au {

@@ -203,6 +203,15 @@ impl GraphicsCaptureApiHandler for Handler {
 pub fn window_pid(hwnd: isize) -> u32 { Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void).process_id().unwrap_or(0) }
 
 /// Quadro sintético: degradê + xadrez + barra móvel + contador em blocos (determinístico por `t`). BGRA.
+/// Trava dos testes automáticos: com `BRIKS_SHARE_NO_PRIMARY` definida, o MONITOR PRINCIPAL do usuário nunca é capturado (o core
+/// recusa o `share.start` e `Capture::start`), qualquer que seja o roteiro ou o clique que tenha escolhido a fonte.
+pub fn refuses_primary(hm: isize) -> bool {
+    if std::env::var_os("BRIKS_SHARE_NO_PRIMARY").is_none() { return false; }
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+    let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    unsafe { !GetMonitorInfoW(HMONITOR(hm as *mut std::ffi::c_void), &mut mi).as_bool() || mi.dwFlags & 1 == 1 }   // não deu para saber = recusa
+}
+
 pub fn test_pattern(w: usize, h: usize, t: usize) -> Vec<u8> {
     let mut f = vec![255u8; w * h * 4];
     for y in 0..h { for x in 0..w {
@@ -300,6 +309,7 @@ impl Capture {
                 Handle::Thread
             }
             SourceKind::Screen(h) => {
+                if refuses_primary(h) { return Err(anyhow!("teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)")); }
                 let m = Monitor::from_raw_hmonitor(h as *mut std::ffi::c_void);
                 let s = Settings::new(m, CursorCaptureSettings::WithCursor, DrawBorderSettings::Default, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
                 let c: CaptureControl<Handler, _> = Handler::start_free_threaded(s).map_err(|e| anyhow!("captura de tela: {e}"))?;
@@ -427,5 +437,28 @@ mod tests {
         c.stop();
         eprintln!("quadros em 1,5 s: {n} ({w}x{h})");
         assert!(n >= 1 && w > 0 && h > 0);
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    /// A trava impede capturar o monitor principal e deixa a 2ª tela passar. Só consulta os monitores (não captura nada).
+    #[test]
+    fn primary_monitor_is_refused_when_the_guard_is_on() {
+        let dir = std::env::temp_dir().join(format!("briks-guard-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let list = super::list_sources(&dir);
+        let _ = std::fs::remove_dir_all(&dir);   // as miniaturas da enumeração não ficam no disco
+        let screens = list["screens"].as_array().unwrap().clone();
+        std::env::set_var("BRIKS_SHARE_NO_PRIMARY", "1");
+        let mut saw_primary = false;
+        for s in &screens {
+            let hm: isize = s["id"].as_str().unwrap().parse().unwrap();
+            if s["primary"] == true { saw_primary = true; assert!(super::refuses_primary(hm), "o monitor principal NÃO foi recusado"); }
+            else { assert!(!super::refuses_primary(hm), "uma tela secundária foi recusada"); }
+        }
+        assert!(saw_primary, "sem monitor principal na enumeração");
+        std::env::remove_var("BRIKS_SHARE_NO_PRIMARY");
+        for s in &screens { assert!(!super::refuses_primary(s["id"].as_str().unwrap().parse().unwrap()), "com a trava desligada nada é recusado"); }
     }
 }

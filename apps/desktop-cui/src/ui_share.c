@@ -305,6 +305,7 @@ static void demo_frame(char *path, size_t cap, const char *name, int W, int H, i
     free(row); fclose(f);
 }
 
+bool overlay_live_wanted(int slot);   /* overlay_host.c */
 void share_tick(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
     for (int i = 0; i < g_ntrash; i++) cui_image_destroy(ui, g_trash[i]);
@@ -327,7 +328,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
             q->remote2[i].watching = want2;
             if (!want2) { q->remote2[i].has_frame = false; fv_close(&g_fv[FV2(i)]); }
         }
-        bool want = viewing && q->remote[i].on;
+        bool want = (viewing || overlay_live_wanted(i)) && q->remote[i].on;   /* a miniatura do overlay (jogo na frente) também pede o decodificador */
         if (want != q->remote[i].watching) {
             char line[200], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
             snprintf(line, sizeof line, "{\"cmd\":\"share.watch\",\"peer\":\"%s\",\"on\":%s}", id, want ? "true" : "false");

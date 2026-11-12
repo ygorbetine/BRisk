@@ -1,0 +1,24 @@
+# Miniatura ao vivo no overlay: com a opção Transmissão ligada e uma live na sala, o app lê o quadro do receptor, reduz (~320 px) e escreve na
+# memória compartilhada do overlay; pede ao receptor que decodifique o slot (overlay_want_slot) e PARA de enviar quando o item é desligado.
+# Teste oculto: o briks_overlay.exe NÃO é aberto. Demo "call" + BRIKS_DEMO_PEERS=1 + BRIKS_DEV_SHARE=demo-zoom (quadro sintético 1280x720 do participante 0).
+waitms 1800
+expect overlay_lives 1
+expect overlay_want_slot 0
+expect overlay_has_oplive 1
+expect overlay_has_map 1
+expect overlay_live_img 1
+expect overlay_live_w 320
+expect overlay_live_h 180
+expect overlay_img_sent 1
+sys ovl line widget live 0
+waitms 700
+expect overlay_live_img 0
+expect overlay_want_slot -1
+expect overlay_has_oplive 0
+expect overlay_live_w 0
+sys ovl line widget live 1
+waitms 900
+expect overlay_live_img 1
+expect overlay_img_sent 2
+expect overlay_want_slot 0
+snap l0

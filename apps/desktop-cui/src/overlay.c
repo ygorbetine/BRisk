@@ -7,6 +7,8 @@
  *   place <monitor> <x> <y> <largura>        posição salva (x,y relativos à área útil do monitor); monitor ausente = canto do monitor principal
  *   edit <0|1>                             modo de edição: o painel aceita o mouse (arrastar, canto inferior direito ou roda do mouse redimensionam) e aparece a barra de edição (2ª janela, embaixo da tela)
  *   flags <0-15>                           itens ligados (1 transmissão, 2 quem está na sala, 4 sala conectada, 8 aviso de mudo): estado dos botões da barra
+ *   livemap <nome>                        memória compartilhada com a miniatura da transmissão (cabeçalho 'BOVL', seq, w, h, n; BGRA reduzido a ~320 px)
+ *   v <nome>                               miniatura ao vivo de <nome> (selo "Ao vivo"); sem imagem ainda mostra "Carregando transmissão…"
  *   lives <n>                              quantas transmissões ao vivo há na sala (n > 1 mostra "Trocar transmissão")
  *   begin                                  começa um quadro novo (apaga as linhas)
  *   p <0|1> <nome>                         pessoa na sala (1 = falando)
@@ -28,9 +30,9 @@
 #include <stdarg.h>
 
 #define MAXR 12
-enum { R_IDLE, R_SPEAK, R_INFO, R_WARN };
+enum { R_IDLE, R_SPEAK, R_INFO, R_WARN, R_LIVE };
 typedef struct { wchar_t text[64]; int kind; } row_t;
-typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, flags, lives; char pdev[40]; int pvalid, px, py, pw; } frame_t;
+typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, flags, lives; char lmap[48]; char pdev[40]; int pvalid, px, py, pw; } frame_t;
 #define W_DEF 260
 #define W_MIN 216
 #define W_MAX 640
@@ -57,6 +59,8 @@ static int apply_line(frame_t *build, frame_t *out, const char *ln) {
     wchar_t w[128];
     if (!strncmp(ln, "cfg ", 4)) { int o = 92, c = 0; sscanf(ln + 4, "%d %d", &o, &c); build->opacity = o < 0 ? 0 : o > 100 ? 100 : o; build->corner = c < 0 || c > 3 ? 0 : c; return 0; }
     if (!strncmp(ln, "edit ", 5)) { build->edit = atoi(ln + 5) != 0; return 0; }
+    if (!strncmp(ln, "livemap ", 8)) { snprintf(build->lmap, sizeof build->lmap, "%s", ln + 8); return 0; }
+    if (ln[0] == 'v' && ln[1] == ' ') { MultiByteToWideChar(CP_UTF8, 0, ln + 2, -1, w, 128); add_row(build, R_LIVE, w); return 0; }
     if (!strncmp(ln, "flags ", 6)) { int v = atoi(ln + 6); build->flags = v < 0 ? 0 : v > 15 ? 15 : v; return 0; }
     if (!strncmp(ln, "lives ", 6)) { int v = atoi(ln + 6); build->lives = v < 0 ? 0 : v > 99 ? 99 : v; return 0; }
     if (!strncmp(ln, "place ", 6)) {
@@ -130,14 +134,50 @@ static void snap_keep(int i, const unsigned *px, int w, int h, int x, int y) {
     memcpy(g_snap[i].px, px, (size_t)w * h * 4); g_snap[i].w = w; g_snap[i].h = h; g_snap[i].x = x; g_snap[i].y = y;
 }
 
+static void px_rr(unsigned *px, int w, int h, RECT r, float rad, COLORREF c, float a, float ring);
+static HFONT bar_font(int px, int weight);
+
+/* ---- miniatura ao vivo: o app escreve quadros BGRA reduzidos numa memória compartilhada (nome vindo em "livemap"); aqui só se lê ---- */
+#define LV_MAXW 320
+#define LV_MAXH 240
+static HANDLE g_lvh; static const unsigned char *g_lvp; static char g_lvname[48];
+static unsigned *g_lvpx; static int g_lvw, g_lvh_, g_lvvalid; static unsigned long long g_lvn;
+static void lv_close(void) { if (g_lvp) UnmapViewOfFile(g_lvp); if (g_lvh) CloseHandle(g_lvh); g_lvp = NULL; g_lvh = NULL; g_lvname[0] = 0; g_lvvalid = 0; g_lvn = 0; }
+static void lv_open(const char *name) {
+    if (!name[0]) { if (g_lvp) lv_close(); return; }
+    if (g_lvp && !strcmp(name, g_lvname)) return;
+    lv_close();
+    wchar_t wn[64]; MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 64);
+    g_lvh = OpenFileMappingW(FILE_MAP_READ, FALSE, wn); if (!g_lvh) return;
+    g_lvp = (const unsigned char *)MapViewOfFile(g_lvh, FILE_MAP_READ, 0, 0, 0);
+    if (!g_lvp) { CloseHandle(g_lvh); g_lvh = NULL; return; }
+    snprintf(g_lvname, sizeof g_lvname, "%s", name);
+    if (!g_lvpx) g_lvpx = (unsigned *)malloc((size_t)LV_MAXW * LV_MAXH * 4);
+}
+/* 1 se há quadro novo copiado (e válido); trata o início/fim do escritor (seq ímpar = escrevendo) */
+static int lv_poll(void) {
+    if (!g_lvp || !g_lvpx) return 0;
+    const volatile unsigned *seq = (const volatile unsigned *)(g_lvp + 4); unsigned a = *seq;
+    if (memcmp(g_lvp, "BOVL", 4) || (a & 1)) return 0;
+    int w = *(const int *)(g_lvp + 8), h = *(const int *)(g_lvp + 12); unsigned long long n = *(const unsigned long long *)(g_lvp + 16);
+    if (n == 0 || w <= 0 || h <= 0 || w > LV_MAXW || h > LV_MAXH) { int ch = g_lvvalid; g_lvvalid = 0; g_lvn = 0; return ch; }
+    if (n == g_lvn) return 0;
+    memcpy(g_lvpx, g_lvp + 64, (size_t)w * h * 4);
+    if (*seq != a) return 0;   /* o escritor mexeu no meio da cópia: tenta no próximo ciclo */
+    g_lvw = w; g_lvh_ = h; g_lvn = n; g_lvvalid = 1; return 1;
+}
+static RECT g_tile;   /* retângulo da miniatura no painel (teste) */
+
 static void paint(const frame_t *f) {
     frame_t tmp;
     if (f->edit && !f->n) { tmp = *f; add_row(&tmp, R_INFO, L"Pré-visualização da sobreposição"); f = &tmp; }
-    if (!f->n) { if (!g_noshow) ShowWindow(hwnd, SW_HIDE); g_edit = f->edit; paint_bar(f); return; }
+    if (!f->n) { KillTimer(hwnd, 1); if (!g_noshow) ShowWindow(hwnd, SW_HIDE); g_edit = f->edit; paint_bar(f); return; }
     const int w = g_dragging && g_pw ? g_pw : (f->pvalid && f->pw ? f->pw : W_DEF);
     const float sc = (float)w / (float)W_DEF;
     const int rowh = (int)(30 * sc + 0.5f), pad = (int)(12 * sc + 0.5f), ebar = 0;
-    const int h = pad * 2 + f->n * rowh + ebar;
+    const int tileh = (int)((w - 2 * pad) * 9 / 16);
+    int h = pad * 2 + ebar; for (int i = 0; i < f->n; i++) h += f->r[i].kind == R_LIVE ? tileh + (int)(6 * sc) : rowh;
+    lv_open(f->lmap);
     const int fh = (int)(15 * sc + 0.5f) < 12 ? 12 : (int)(15 * sc + 0.5f);
     g_pw = w; g_ph = h; g_edit = f->edit;
     HDC screen = GetDC(NULL), mem = CreateCompatibleDC(screen);
@@ -151,8 +191,11 @@ static void paint(const frame_t *f) {
     HFONT font = CreateFontW(-fh, 0, 0, 0, FW_MEDIUM, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
     HGDIOBJ oldf = SelectObject(mem, font);
     const int dot = (int)(16 * sc + 0.5f);
+    int yy = pad, tile_i = -1; RECT tile = { 0, 0, 0, 0 };
     for (int i = 0; i < f->n; i++) {
-        int y = pad + i * rowh, k = f->r[i].kind;
+        int y = yy, k = f->r[i].kind;
+        if (k == R_LIVE) { tile_i = i; tile = (RECT){ pad, y, w - pad, y + tileh }; yy += tileh + (int)(6 * sc); continue; }
+        yy += rowh;
         if (k == R_IDLE || k == R_SPEAK) {
             HBRUSH db = CreateSolidBrush(k == R_SPEAK ? ACCENT : RGB(0x4a, 0x3a, 0x5c));
             HGDIOBJ ob = SelectObject(mem, db), op = SelectObject(mem, GetStockObject(NULL_PEN));
@@ -163,6 +206,43 @@ static void paint(const frame_t *f) {
         RECT tr = { pad + (k <= R_SPEAK ? (int)(30 * sc + 0.5f) : 4), y, w - pad, y + rowh };
         DrawTextW(mem, f->r[i].text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
+    memset(&g_tile, 0, sizeof g_tile);
+    if (tile_i >= 0) {   /* miniatura ao vivo: cantos arredondados, selo "Ao vivo" e nome de quem transmite */
+        GdiFlush(); g_tile = tile;
+        const int tw = tile.right - tile.left, th = tile.bottom - tile.top; const float rad = 10.0f * sc;
+        const float hw = tw * 0.5f, hh = th * 0.5f;
+        const int have = g_lvvalid && g_lvpx && g_lvw > 0;
+        int iw = tw, ih = th, ix0 = tile.left, iy0 = tile.top;   /* imagem encaixada (sem cortar) e centralizada */
+        if (have) { if (g_lvw * th > g_lvh_ * tw) { ih = g_lvh_ * tw / g_lvw; iy0 += (th - ih) / 2; } else { iw = g_lvw * th / g_lvh_; ix0 += (tw - iw) / 2; } }
+        for (int y = tile.top; y < tile.bottom; y++) for (int x = tile.left; x < tile.right; x++) {
+            float d = rr_dist(x + 0.5f - (tile.left + hw), y + 0.5f - (tile.top + hh), hw, hh, rad);
+            float cov = 0.5f - d; cov = cov < 0 ? 0 : cov > 1 ? 1 : cov; if (cov <= 0) continue;
+            unsigned c = 0x0c0414;
+            if (have && x >= ix0 && x < ix0 + iw && y >= iy0 && y < iy0 + ih) {
+                int sx = (x - ix0) * g_lvw / iw, sy = (y - iy0) * g_lvh_ / ih; c = g_lvpx[sy * g_lvw + sx] & 0xffffff;
+            }
+            unsigned o = px[y * w + x];
+            int R = (int)((o >> 16) & 255), G = (int)((o >> 8) & 255), B = (int)(o & 255);
+            R += (int)((((int)(c >> 16) & 255) - R) * cov + 0.5f); G += (int)((((int)(c >> 8) & 255) - G) * cov + 0.5f); B += (int)(((int)(c & 255) - B) * cov + 0.5f);
+            px[y * w + x] = ((unsigned)R << 16) | ((unsigned)G << 8) | (unsigned)B;
+        }
+        px_rr(px, w, h, tile, rad, RGB(255, 255, 255), 0.16f, 1);
+        const int bm = (int)(6 * sc + 0.5f), bh = (int)(20 * sc + 0.5f) < 18 ? 18 : (int)(20 * sc + 0.5f), bw = (int)(66 * sc + 0.5f);
+        RECT badge = { tile.left + bm, tile.top + bm, tile.left + bm + bw, tile.top + bm + bh };
+        px_rr(px, w, h, badge, bh / 2.0f, RGB(0xdc, 0x26, 0x26), 0.95f, 0);
+        RECT bdot = { badge.left + bh / 2 - 3, badge.top + bh / 2 - 3, badge.left + bh / 2 + 3, badge.top + bh / 2 + 3 }; px_rr(px, w, h, bdot, 3, RGB(255, 255, 255), 1.0f, 0);
+        HFONT sf = bar_font(bh - 8 < 11 ? 11 : bh - 8, FW_SEMIBOLD); HGDIOBJ osf = SelectObject(mem, sf);
+        SetTextColor(mem, RGB(255, 255, 255)); RECT bt = { badge.left + bh / 2 + 6, badge.top, badge.right - 4, badge.bottom }; DrawTextW(mem, L"Ao vivo", -1, &bt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        /* nome: pílula escura embaixo, à esquerda, com a largura do texto (limitada à miniatura, com reticências) */
+        SelectObject(mem, font); const wchar_t *nm = f->r[tile_i].text; RECT mr = { 0, 0, 0, 0 }; DrawTextW(mem, nm, -1, &mr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        int nw = mr.right + 16, nmax = tw - 2 * bm; if (nw > nmax) nw = nmax;
+        RECT np = { tile.left + bm, tile.bottom - bm - bh, tile.left + bm + nw, tile.bottom - bm };
+        px_rr(px, w, h, np, bh / 2.0f, RGB(0, 0, 0), 0.62f, 0);
+        RECT nt = { np.left + 8, np.top, np.right - 8, np.bottom }; DrawTextW(mem, nm, -1, &nt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+        if (!have) { SelectObject(mem, font); SetTextColor(mem, MUTED); RECT lt = { tile.left, tile.top, tile.right, tile.bottom }; DrawTextW(mem, L"Carregando transmissão…", -1, &lt, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS); SelectObject(mem, osf); }
+        SelectObject(mem, osf); DeleteObject(sf);
+    }
+    if (tile_i >= 0) SetTimer(hwnd, 1, 250, NULL); else KillTimer(hwnd, 1);
     memset(&g_grip, 0, sizeof g_grip);
     if (f->edit) {   /* canto inferior direito = redimensionar (a barra de ferramentas é outra janela, embaixo da tela) */
         g_grip.left = w - (int)(22 * sc + 0.5f); g_grip.top = h - (int)(22 * sc + 0.5f); g_grip.right = w; g_grip.bottom = h;
@@ -461,6 +541,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEMOVE: drag_move(); return 0;
     case WM_LBUTTONUP: case WM_CAPTURECHANGED: drag_end(); return 0;
     case WM_DISPLAYCHANGE: paint(&cur); return 0;
+    case WM_TIMER: if (w == 1 && !g_dragging && lv_poll()) paint(&cur); return 0;   /* ~4 quadros/s da miniatura; só roda com a miniatura na tela */
     case WM_MOUSEWHEEL: wheel_step((short)HIWORD(w) > 0 ? 1 : -1); return 0;
     case WM_FRAME: { frame_t nw; EnterCriticalSection(&cs); nw = ready; LeaveCriticalSection(&cs); adopt_frame(&nw); if (!g_dragging) paint(&cur); return 0; }
     case WM_DESTROY: PostQuitMessage(0); return 0;
@@ -607,6 +688,51 @@ static int bar_selftest(frame_t *b, frame_t *o) {
     (void)b; return f;
 }
 
+/* escreve um quadro de cor lisa (BGRA) na memória compartilhada de teste, como o app faz */
+static void lv_fake_write(unsigned char *m, int w, int h, unsigned long long n, unsigned bgr) {
+    volatile unsigned *seq = (volatile unsigned *)(m + 4); *seq += 1;
+    memcpy(m, "BOVL", 4); memcpy(m + 8, &w, 4); memcpy(m + 12, &h, 4); memcpy(m + 16, &n, 8);
+    for (int i = 0; i < w * h; i++) ((unsigned *)(m + 64))[i] = 0xff000000u | bgr;
+    *seq += 1;
+}
+static unsigned snap_px(int x, int y) { return g_snap[0].px[y * g_snap[0].w + x]; }
+
+/* Miniatura ao vivo: leitura da memória compartilhada, tile 16:9 arredondado, selo/nome, sem imagem, troca de quadro. */
+static int live_selftest(frame_t *b, frame_t *o) {
+    int f = 0; char nm[64]; snprintf(nm, sizeof nm, "Local\\BriksOvlTest-%lu", (unsigned long)GetCurrentProcessId());
+    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 64 + LV_MAXW * LV_MAXH * 4, nm);
+    unsigned char *m = mh ? (unsigned char *)MapViewOfFile(mh, FILE_MAP_WRITE, 0, 0, 0) : NULL;
+    f += check(m != NULL, "memória compartilhada de teste criada");
+    if (!m) return f;
+    memset(m, 0, 64); lv_fake_write(m, 160, 90, 1, 0xff0000);   /* vermelho (0xRRGGBB) */
+    char ln[200]; apply_line(b, o, "edit 0"); apply_line(b, o, "flags 15"); snprintf(ln, sizeof ln, "livemap %s", nm); apply_line(b, o, ln);
+    apply_line(b, o, "begin"); apply_line(b, o, "i Sala conectada"); apply_line(b, o, "v Rafael Lima Souza de Albuquerque Montenegro Filho"); apply_line(b, o, "p 1 Marina"); apply_line(b, o, "end");
+    f += check(o->n == 3 && o->r[1].kind == R_LIVE && !strcmp(o->lmap, nm), "linha 'v <nome>' vira miniatura e 'livemap' entra no quadro");
+    cur = *o; paint(&cur); lv_poll(); paint(&cur);
+    const int pad = (int)(12 * ((float)g_pw / W_DEF) + 0.5f);
+    f += check(g_tile.right > g_tile.left && g_tile.left == pad && g_tile.right == g_pw - pad && (g_tile.bottom - g_tile.top) == (g_pw - 2 * pad) * 9 / 16, "miniatura 16:9 na largura útil do painel");
+    f += check(g_tile.bottom <= g_ph - pad, "a miniatura cabe no painel");
+    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255, G = (c >> 8) & 255;
+      f += check(g_lvvalid && R > 120 && G < 40, "o quadro da memória aparece no centro da miniatura (vermelho)"); }
+    { unsigned c = snap_px(g_tile.left, g_tile.top), c2 = snap_px(g_tile.right - 1, g_tile.bottom - 1); int R = (c >> 16) & 255, R2 = (c2 >> 16) & 255;
+      f += check(R < 100 && R2 < 100, "cantos da miniatura arredondados: a quina não é pintada com a imagem (nada de canto reto)"); }
+    { unsigned c = snap_px(g_tile.left + 14, g_tile.top + 22); int R = (c >> 16) & 255, G = (c >> 8) & 255; f += check(R > 150 && G < 90, "selo 'Ao vivo' vermelho no canto superior esquerdo"); }
+    f += check(snap_px(0, 0) >> 24 < 8 && snap_px(g_pw - 1, g_ph - 1) >> 24 < 8, "painel com miniatura mantém as quinas transparentes");
+    lv_fake_write(m, 160, 90, 2, 0x00ff00);   /* verde, quadro novo */
+    f += check(lv_poll() == 1 && g_lvn == 2, "quadro novo na memória é detectado");
+    f += check(lv_poll() == 0, "sem quadro novo não repinta (baixo consumo)");
+    paint(&cur);
+    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255, G = (c >> 8) & 255; f += check(G > 120 && R < 40, "o quadro novo (verde) aparece"); }
+    lv_fake_write(m, 160, 90, 0, 0);   /* o app parou de mandar (n = 0) */
+    f += check(lv_poll() == 1 && !g_lvvalid, "n = 0 (app parou de enviar) apaga a imagem");
+    paint(&cur);
+    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255; f += check(R < 60, "sem imagem o tile fica escuro (\"Carregando transmissão…\")"); }
+    { int bw = 4000; unsigned long long n9 = 9; memcpy(m + 8, &bw, 4); memcpy(m + 12, &bw, 4); memcpy(m + 16, &n9, 8); } f += check(lv_poll() == 0 && !g_lvvalid, "cabeçalho com dimensão absurda é ignorado");
+    apply_line(b, o, "livemap "); apply_line(b, o, "begin"); apply_line(b, o, "i x"); apply_line(b, o, "end"); cur = *o; paint(&cur);
+    f += check(g_lvp == NULL && g_tile.right == 0, "sem 'v' e sem livemap: solta a memória e esconde a miniatura");
+    UnmapViewOfFile(m); CloseHandle(mh); return f;
+}
+
 /* Teste do modo de edição, sem mostrar janela e com o cursor injetado: arrastar, redimensionar, Concluir, por monitor. */
 static int edit_selftest(void) {
     int f = 0; g_noshow = 1; g_capture_out = 1; g_inject = 1; g_snap_on = 1;
@@ -647,6 +773,7 @@ static int edit_selftest(void) {
     f += check(r.right == wa.right - 20 && r.top == wa.top + 20, "monitor salvo que sumiu: volta ao canto escolhido do principal");
     snprintf(ln, sizeof ln, "place %s 99999 99999 260", dev); apply_line(&b, &o, ln); apply_line(&b, &o, "end"); cur = o; paint(&cur); GetWindowRect(hwnd, &r);
     f += check(r.right <= mi.rcWork.right && r.bottom <= mi.rcWork.bottom, "posição salva fora da tela é trazida para dentro");
+    f += live_selftest(&b, &o);
     return f;
 }
 
@@ -663,10 +790,22 @@ static void blend_snap(unsigned char *rgb, int cw, int ch, int k, int ox, int oy
 static int shot_main(const wchar_t *path) {
     g_noshow = 1; g_capture_out = 1; g_inject = 1; g_snap_on = 1;
     frame_t b, o; memset(&b, 0, sizeof b); memset(&o, 0, sizeof o);
+    char mn[64]; snprintf(mn, sizeof mn, "Local\\BriksOvlShot-%lu", (unsigned long)GetCurrentProcessId());
+    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 64 + LV_MAXW * LV_MAXH * 4, mn);
+    unsigned char *mm = mh ? (unsigned char *)MapViewOfFile(mh, FILE_MAP_WRITE, 0, 0, 0) : NULL;
+    if (mm) {   /* "jogo" de mentira de 16:9: céu, chão e um personagem */
+        lv_fake_write(mm, 320, 180, 1, 0);
+        for (int y = 0; y < 180; y++) for (int x = 0; x < 320; x++) {
+            unsigned r = y < 120 ? 60 + y / 2 : 40, g = y < 120 ? 120 + y / 3 : 150 - (y - 120), bl = y < 120 ? 220 - y / 2 : 60;
+            if (x > 140 && x < 180 && y > 70 && y < 140) { r = 240; g = 190; bl = 60; }
+            ((unsigned *)(mm + 64))[y * 320 + x] = 0xff000000u | (r << 16) | (g << 8) | bl;
+        }
+        char lm[100]; snprintf(lm, sizeof lm, "livemap %s", mn); apply_line(&b, &o, lm);
+    }
     apply_line(&b, &o, "cfg 86 0"); apply_line(&b, &o, "edit 1"); apply_line(&b, &o, "flags 11"); apply_line(&b, &o, "lives 2");
-    apply_line(&b, &o, "begin"); apply_line(&b, &o, "i Sala conectada"); apply_line(&b, &o, "i Ao vivo: Rafael Lima"); apply_line(&b, &o, "p 1 Marina Costa"); apply_line(&b, &o, "p 0 Rafael Lima"); apply_line(&b, &o, "p 0 Você");
+    apply_line(&b, &o, "begin"); apply_line(&b, &o, "i Sala conectada"); apply_line(&b, &o, "v Rafael Lima"); apply_line(&b, &o, "p 1 Marina Costa"); apply_line(&b, &o, "p 0 Rafael Lima"); apply_line(&b, &o, "p 0 Você");
     apply_line(&b, &o, "end");
-    cur = o; g_bhover = B_W1; paint(&cur);
+    cur = o; g_bhover = B_W1; paint(&cur); lv_poll(); paint(&cur);
     RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0); const int cw = wa.right - wa.left, ch = wa.bottom - wa.top;
     unsigned char *rgb = (unsigned char *)malloc((size_t)cw * ch * 3); if (!rgb) return 1;
     for (int y = 0; y < ch; y++) for (int x = 0; x < cw; x++) {   /* "jogo": céu em degradê com blocos */

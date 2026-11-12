@@ -19,7 +19,7 @@ $b = [Drawing.Bitmap]::FromFile($bmp)
 try {
     $b.Save((Join-Path $Saida "overlay-barra-edicao.png"), [Drawing.Imaging.ImageFormat]::Png)
     $w = [Math]::Min(700, $b.Width); $bar = $b.Clone([Drawing.Rectangle]::new([int](($b.Width - $w) / 2), $b.Height - 170, $w, 170), $b.PixelFormat); $bar.Save((Join-Path $Saida "overlay-barra.png")); $bar.Dispose()
-    $pan = $b.Clone([Drawing.Rectangle]::new($b.Width - 320, 0, 320, 260), $b.PixelFormat); $pan.Save((Join-Path $Saida "overlay-painel-edicao.png")); $pan.Dispose()
+    $pan = $b.Clone([Drawing.Rectangle]::new($b.Width - 320, 0, 320, 340), $b.PixelFormat); $pan.Save((Join-Path $Saida "overlay-painel-edicao.png")); $pan.Dispose()
 } finally { $b.Dispose() }
 Remove-Item $bmp
 "PNGs em $Saida"

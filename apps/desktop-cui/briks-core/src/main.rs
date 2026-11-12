@@ -122,3 +122,5 @@ mod tests_sfuapps;
 mod tests_sfu;
 #[cfg(test)]
 mod tests_dm;
+#[cfg(test)]
+mod tests_sons;

@@ -112,7 +112,7 @@ fn short(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 impl Layer {
     pub fn new(cfg: DataCfg, sfu_id: String) -> Self {
         let fp = cfg.identity.fingerprint();
-        let sons = crate::sonsnet::Net::new(&fp, &cfg.room_hash, crate::sons::shared());
+        let sons = crate::sonsnet::Net::new(&fp, &cfg.room_hash, crate::sons::store_for(&fp));
         Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(), dm_off: HashSet::new(),
             seen_msgs: HashSet::new(), sons, seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
             rate: HashMap::new(), owner_sent: None, server_owner: None, tick_n: 0, resend: vec![],
@@ -623,6 +623,39 @@ mod t {
         }
         assert!(a.on_packet("idb", &vec![b'x'; MAX_PACKET + 1]).is_empty(), "grande demais");
         assert!(a.on_packet("", &bytes(&st)).is_empty() && a.on_packet("ida", &bytes(&st)).is_empty(), "sem remetente / eco");
+    }
+
+    #[test]
+    fn sound_play_and_file_transfer_work_over_the_data_layer() {
+        let (mut a, mut b) = pair();
+        let mk = || { let dir = std::env::temp_dir().join(format!("briks-sfusons-{}", uuid::Uuid::new_v4())); std::fs::create_dir_all(&dir).unwrap(); Arc::new(std::sync::Mutex::new(crate::sons::Store::open(&dir))) };
+        let (sa, sb) = (mk(), mk());
+        a.sons = crate::sonsnet::Net::new(&a.fp, "sala-x", sa.clone());
+        b.sons = crate::sonsnet::Net::new(&b.fp, "sala-x", sb.clone());
+        let it = sa.lock().unwrap().import_bytes(&crate::sons::testutil::wav(1200, 0.4), "Buzina", "📯", "me", "").unwrap();
+        let mut q: std::collections::VecDeque<(bool, Out)> = a.on_cmd(MeshCmd::SoundPlay { hash: it.hash.clone() }, (true, false)).unwrap().into_iter().map(|o| (true, o)).collect();
+        let (mut evs_a, mut evs_b) = (vec![], vec![]);
+        while let Some((from_a, o)) = q.pop_front() {
+            match o {
+                Out::Ev(MeshEvent::Sound(e)) => if from_a { evs_a.push(e) } else { evs_b.push(e) },
+                Out::Send { msg, .. } => {
+                    let r = if from_a { b.on_packet("ida", &bytes(&msg)) } else { a.on_packet("idb", &bytes(&msg)) };
+                    for x in r { q.push_back((!from_a, x)); }
+                }
+                _ => {}
+            }
+        }
+        assert!(evs_a.iter().any(|e| e["ev"] == "sound.play" && e["self"] == true), "quem dispara ouve: {evs_a:?}");
+        assert!(evs_b.iter().any(|e| e["ev"] == "sound.play" && e["self"] == false), "B ouve depois de baixar: {evs_b:?}");
+        assert!(sb.lock().unwrap().has(&it.hash), "arquivo verificado por hash chegou a B");
+        // intervalo mínimo: o segundo disparo de A em seguida é barrado em A mesmo
+        let again = a.on_cmd(MeshCmd::SoundPlay { hash: it.hash.clone() }, (true, false)).unwrap();
+        assert!(again.iter().any(|o| matches!(o, Out::Ev(MeshEvent::Sound(e)) if e["ev"] == "sound.denied")));
+        // um pacote de som de quem não fez hello é descartado
+        let (mut x, mut y) = (layer("Xis", "idx", None, 1), layer("Yps", "idy", None, 2));
+        x.sons = crate::sonsnet::Net::new(&x.fp, "sala-x", sa.clone());
+        let o = x.on_cmd(MeshCmd::SoundPlay { hash: it.hash.clone() }, (true, false)).unwrap();
+        for out in o { if let Out::Send { msg, .. } = out { assert!(y.on_packet("idx", &bytes(&msg)).is_empty()); } }
     }
 
     #[test]

@@ -480,6 +480,17 @@ pub fn shared() -> Arc<Mutex<Store>> {
     s
 }
 
+/// Armazenamento de um nó (por impressão digital): nos testes vários nós vivem no mesmo processo e cada um precisa do seu; em produção é o do processo.
+#[cfg(test)]
+static OVERRIDES: OnceLock<Mutex<HashMap<String, Arc<Mutex<Store>>>>> = OnceLock::new();
+#[cfg(test)]
+pub fn register_store(fp: &str, st: &Arc<Mutex<Store>>) { OVERRIDES.get_or_init(Default::default).lock().unwrap().insert(fp.to_string(), st.clone()); }
+pub fn store_for(_fp: &str) -> Arc<Mutex<Store>> {
+    #[cfg(test)]
+    if let Some(s) = OVERRIDES.get().and_then(|m| m.lock().unwrap().get(_fp).cloned()) { return s; }
+    shared()
+}
+
 #[cfg(test)]
 pub mod testutil {
     /// WAV PCM 16 bits mono de `ms` ms com um tom de amplitude `amp` (0..1).

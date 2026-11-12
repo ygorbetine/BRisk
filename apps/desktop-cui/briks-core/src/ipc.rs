@@ -428,6 +428,12 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
                             let id = v["id"].as_str().filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
                             let _ = c.send(match id { Some(id) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, None => MeshCmd::Chat { to_fp: to.into(), text } }).await;
+                        } else if let (Some(idn), Some(id)) = (&identity, v["id"].as_str().filter(|i| crate::dmlink::valid_id(i)).filter(|_| crate::dmlink::valid_fp(to))) {
+                            // sem canal nem sala (o canal direto não abriu): a mensagem não se perde, fica na caixa de saída deste PC e segue quando o canal abrir
+                            let my_fp = idn.fingerprint();
+                            let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
+                            let m = crate::identity::sign_message(idn, crate::identity::ChatWire { version: 2, kind: "chat.message".into(), channel_id: crate::identity::dm_channel(&my_fp, to), id: id.into(), author_peer_id: my_fp, author: name.clone(), content: text, timestamp: mesh::now_ms() as u64, signature: String::new() });
+                            crate::outbox::shared().lock().unwrap().add(to, &m);
                         }
                     }
                     "file.send" => {

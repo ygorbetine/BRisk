@@ -274,6 +274,38 @@ async fn outbox_waits_for_peer_then_delivers() {
     assert!(matches!(got, Some(MeshEvent::Chat { content, .. }) if content == "mensagem antiga"), "a outbox não entregou");
 }
 
+/// Fila persistente: três mensagens escritas com o amigo ausente, o remetente fecha e reabre (nova malha, mesma fila), o amigo entra:
+/// recebe as três, na ordem, UMA vez cada, e depois do ACK a fila fica vazia (nada é reenviado).
+#[tokio::test]
+async fn pending_messages_survive_a_restart_arrive_once_in_order_and_clear_on_ack() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let a = node(port, PA, "Ana", "sala-fila-persist", ia.clone());
+    for (i, t) in ["um", "dois", "tres"].iter().enumerate() {
+        a.cmd.send(MeshCmd::ChatWithId { to_fp: ib.fingerprint(), text: (*t).into(), id: format!("fila-{i:04}") }).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    a.cmd.send(MeshCmd::Close).await.unwrap();   // "reinício" do remetente
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let _a2 = node(port, PA, "Ana", "sala-fila-persist", ia.clone());
+    let mut b = node(port, PB, "Beto", "sala-fila-persist", ib.clone());
+    let mut got: Vec<String> = Vec::new();
+    let end = tokio::time::Instant::now() + Duration::from_secs(40);
+    let mut quiet_until: Option<tokio::time::Instant> = None;
+    while tokio::time::Instant::now() < end {
+        match tokio::time::timeout(Duration::from_millis(500), b.events.recv()).await {
+            Ok(Some(MeshEvent::Chat { id, .. })) => { got.push(id); if got.len() >= 3 && quiet_until.is_none() { quiet_until = Some(tokio::time::Instant::now() + Duration::from_secs(8)); } }
+            Ok(Some(_)) | Err(_) => {}
+            Ok(None) => break,
+        }
+        if quiet_until.is_some_and(|q| tokio::time::Instant::now() > q) { break; }
+    }
+    assert_eq!(got, ["fila-0000", "fila-0001", "fila-0002"], "ordem certa e uma vez só (os reenvios do remetente não duplicam)");
+    let st = crate::outbox::shared().lock().unwrap().state();
+    let pend: Vec<String> = st["pending"].as_array().unwrap().iter().filter(|p| p["to_fp"] == ib.fingerprint().as_str()).map(|p| p["id"].as_str().unwrap().to_string()).collect();
+    assert!(pend.is_empty(), "o ACK limpou a fila: {pend:?}");
+}
+
 async fn ipc_line(rd: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>) -> serde_json::Value {
     let l = timeout(Duration::from_secs(10), rd.next_line()).await.expect("tempo").expect("io").expect("fim");
     serde_json::from_str(&l).unwrap()

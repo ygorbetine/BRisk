@@ -302,6 +302,10 @@ void chat_in_pump(app_state_t *s);                                          /* a
 void chat_in_done(app_state_t *s);                                          /* a gravação terminou: recarrega a conversa aberta */
 void chat_dm_wake(app_state_t *s, const char *fp);                          /* dm.wake: um amigo me tocou */
 bool chat_dm_wants_session(const app_state_t *s);                           /* a sessão do core (identidade) é precisa para receber DMs */
+bool chat_outbox_event(app_state_t *s, const struct jval *j);                /* outbox.state do core: refaz os tiques das mensagens na tela */
+void chat_outbox_acked(const char *id);                                      /* chat.ack: a mensagem foi entregue */
+int  chat_pending_for_fp(const char *fp);                                    /* quantas mensagens minhas esperam esse amigo (fila neste PC) */
+void chat_dm_channel(const app_state_t *s, const char *peer, char *out, size_t cap);   /* canal "dm-a-b" da conversa com o amigo */
 void chat_dm_tick(app_state_t *s);                                          /* abre a minha caixa de chegada ao entrar na conta */
 void chat_dm_reset(app_state_t *s);                                         /* saiu da conta: fecha caixa e canais */
 void app_load_groups(app_state_t *s, const char *body);

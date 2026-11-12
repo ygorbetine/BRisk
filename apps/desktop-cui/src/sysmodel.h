@@ -63,7 +63,7 @@ static inline bool sm_toast_allowed(notify_kind_t k, const sm_ctx *c) {
 
 /* ---------- não lidas por conversa ---------- */
 #define SM_UNREAD_MAX 64
-typedef struct { char key[64]; int n; } sm_unread_e;
+typedef struct { char key[160]; int n; } sm_unread_e;   /* 160: canal de DM entre contas tem 76 */
 typedef struct { sm_unread_e e[SM_UNREAD_MAX]; int count; } sm_unread;
 static inline void sm_unread_add(sm_unread *u, const char *key) {
     if (!key || !key[0]) return;

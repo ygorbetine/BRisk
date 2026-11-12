@@ -311,7 +311,10 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "outbox.state")) {   /* fila de envio guardada no PC (pendentes/entregues/falhas) */
+        changed = chat_outbox_event(s, j);
     } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack") || !strcmp(ev, "chat.sent")) {
+        if (!strcmp(ev, "chat.ack")) chat_outbox_acked(json_str(j, "id", ""));
         changed = attach_event(s, ev, j);
     } else if (!strcmp(ev, "chat.link")) {   /* chat privado fechado/reaberto pelo core (AMI-16) */
         const jval *on = json_get(j, "on"); friends_dm_link(s, json_str(j, "fp", ""), on && on->type == J_BOOL && on->b); changed = true;

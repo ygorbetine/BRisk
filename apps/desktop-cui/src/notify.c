@@ -2,6 +2,7 @@
  * O balão em si é do tray.c (balão nativo do Windows pelo ícone da bandeja); aqui ficam as regras (sm_toast_allowed em sysmodel.h):
  * respeita os interruptores de Configurações, não avisa com a janela em foco na conversa, durante a chamada nem logo ao abrir. */
 #include "sysint.h"
+#include "storage.h"
 #include <windows.h>
 #include <mmsystem.h>
 #include <stdio.h>
@@ -11,9 +12,30 @@
 int g_notify_shown, g_notify_blocked, g_sound_played;
 static sm_unread g_un;
 static ULONGLONG g_grace_until;
-static char g_click_chan[64];
+static char g_click_chan[160];
+static bool g_un_loaded;
 static int g_force_focus = -1;   /* roteiro: sys focus 0|1 (a janela oculta de teste nunca é a ativa) */
 static int g_last_total = -1, g_last_in_call = -1;
+
+/* ---- não lidas persistem entre aberturas do app (unread.txt na pasta de dados: só "n<TAB>canal", nunca texto de mensagem) ---- */
+static void un_path(char *out, size_t cap) { char d[MAX_PATH], h[MAX_PATH], r[MAX_PATH]; storage_dirs(d, h, r, sizeof d); snprintf(out, cap, "%s\\unread.txt", d); }
+static void un_load(void) {
+    g_un_loaded = true; char p[MAX_PATH + 16]; un_path(p, sizeof p);
+    FILE *f = fopen(p, "r"); if (!f) return;
+    char line[260];
+    while (fgets(line, sizeof line, f)) {
+        int n = atoi(line); char *t = strchr(line, '\t'); if (!t || n <= 0) continue;
+        t++; t[strcspn(t, "\r\n")] = 0; if (!t[0]) continue;
+        for (int i = 0; i < n && i < 999; i++) sm_unread_add(&g_un, t);
+    }
+    fclose(f);
+}
+static void un_save(void) {
+    char p[MAX_PATH + 16]; un_path(p, sizeof p);
+    FILE *f = fopen(p, "w"); if (!f) return;
+    for (int i = 0; i < g_un.count; i++) fprintf(f, "%d\t%s\n", g_un.e[i].n, g_un.e[i].key);
+    fclose(f);
+}
 
 void notify_set_force_focus(int v) { g_force_focus = v; }
 int notify_force_focus(void) { return g_force_focus; }
@@ -102,9 +124,11 @@ void notify_tick(app_state_t *s) {
         if (on && !prev_share[i]) { char t[140]; snprintf(t, sizeof t, "%s começou a transmitir", s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Alguém"); notify_post(s, NT_STREAM, NULL, "Briks", t); }
         prev_share[i] = on;
     }
+    if (!g_un_loaded) { un_load(); g_last_total = -1; }
     notify_chat_opened(s);
     int total = sm_unread_total(&g_un), in_call = s->in_room ? 1 : 0;
     if (total != g_last_total || in_call != g_last_in_call) {
+        if (total != g_last_total) un_save();
         g_last_total = total; g_last_in_call = in_call;
         char tip[100]; int n = snprintf(tip, sizeof tip, "Briks");
         if (in_call) n += snprintf(tip + n, sizeof tip - (size_t)n, " · em chamada");

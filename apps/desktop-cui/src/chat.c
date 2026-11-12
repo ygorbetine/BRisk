@@ -74,8 +74,10 @@ static void dm_open_link(app_state_t *s, const person_t *f) {
 bool chat_dm_wants_session(const app_state_t *s) { return s->acct_user_id[0] && !s->acct_demo && core_state() == CORE_READY; }
 
 static char g_inbox_for[64];
+static void ob_tick(app_state_t *s);
 void chat_dm_tick(app_state_t *s) {
     if (!s->rtc_session_ready || !chat_dm_wants_session(s)) { if (!s->rtc_session_ready) g_inbox_for[0] = 0; return; }
+    ob_tick(s);
     if (!strcmp(g_inbox_for, s->acct_user_id)) return;
     snprintf(g_inbox_for, sizeof g_inbox_for, "%s", s->acct_user_id);
     char uid[100], line[200]; json_escape(s->acct_user_id, uid, sizeof uid);
@@ -100,6 +102,69 @@ void chat_dm_wake(app_state_t *s, const char *fp) {
     char e[160], line[320]; json_escape(f->fp, e, sizeof e);
     snprintf(line, sizeof line, "{\"cmd\":\"dm.open\",\"fp\":\"%s\"}", e);
     core_send(line);
+}
+
+/* ---- fila de envio no aparelho (outbox.rs do core): pendente -> enviada (saiu pelo canal) -> entregue (ACK) ou falhou ----
+ * O core guarda, cifrado neste PC, o que ainda não foi entregue; aqui ficam só os ids e para quem, para os tiques e para reabrir o canal
+ * direto quando o amigo ficar online. Nada de conteúdo sobe ao servidor. */
+#define OB_N 512
+static struct { char id[72], fp[72]; } g_pend[OB_N]; static int g_pend_n;
+static char g_dlv[OB_N][72]; static int g_dlv_n;
+static char g_fld[OB_N][72]; static int g_fld_n;
+static bool ob_in(char (*a)[72], int n, const char *id) { for (int i = 0; i < n; i++) if (!strcmp(a[i], id)) return true; return false; }
+static void ob_push(char (*a)[72], int *n, const char *id) {
+    if (!id[0] || ob_in(a, *n, id)) return;
+    if (*n >= OB_N) { memmove(a[0], a[1], 72 * (OB_N - 1)); (*n)--; }
+    snprintf(a[(*n)++], 72, "%s", id);
+}
+static void ob_del(char (*a)[72], int *n, const char *id) { for (int i = 0; i < *n; i++) if (!strcmp(a[i], id)) { memmove(a[i], a[i + 1], 72 * (size_t)(*n - i - 1)); (*n)--; return; } }
+static int pend_find(const char *id) { for (int i = 0; i < g_pend_n; i++) if (!strcmp(g_pend[i].id, id)) return i; return -1; }
+static void pend_add(const char *id, const char *fp) {
+    if (!id[0] || pend_find(id) >= 0) return;
+    if (g_pend_n >= OB_N) { memmove(&g_pend[0], &g_pend[1], sizeof g_pend[0] * (OB_N - 1)); g_pend_n--; }
+    snprintf(g_pend[g_pend_n].id, 72, "%s", id); snprintf(g_pend[g_pend_n].fp, 72, "%s", fp); g_pend_n++;
+}
+int chat_pending_for_fp(const char *fp) { int n = 0; for (int i = 0; i < g_pend_n; i++) if (!strcmp(g_pend[i].fp, fp)) n++; return n; }
+
+/* refaz relógio/tiques das mensagens que estão na tela (depois de reabrir o app ou quando o estado do core chega) */
+static bool ob_apply(app_state_t *s) {
+    bool ch = false;
+    for (int i = 0; i < s->msg_count; i++) {
+        if (!s->msgs[i].mine) continue;
+        const char *id = s->msgs[i].id; const int st = attach_state(id);
+        const int want = pend_find(id) >= 0 ? ATT_SENT : ob_in(g_dlv, g_dlv_n, id) ? ATT_DELIVERED : ob_in(g_fld, g_fld_n, id) ? ATT_FAILED : 0;
+        if (!want || st == want || st == ATT_SENDING) continue;
+        if (want == ATT_SENT && (st == ATT_WIRE || st == ATT_DELIVERED)) continue;   /* já mais adiante nesta sessão */
+        attach_mark(id, want); ch = true;
+    }
+    return ch;
+}
+bool chat_outbox_event(app_state_t *s, const jval *j) {   /* outbox.state do core */
+    g_pend_n = g_dlv_n = g_fld_n = 0;
+    const jval *p = json_get(j, "pending"), *d = json_get(j, "delivered"), *f = json_get(j, "failed");
+    for (int i = 0; p && i < json_len(p); i++) { const jval *e = json_at(p, i); pend_add(json_str(e, "id", ""), json_str(e, "to_fp", "")); }
+    for (int i = 0; d && i < json_len(d); i++) { const jval *e = json_at(d, i); if (e && e->type == J_STR) ob_push(g_dlv, &g_dlv_n, e->str); }
+    for (int i = 0; f && i < json_len(f); i++) { const jval *e = json_at(f, i); if (e && e->type == J_STR) ob_push(g_fld, &g_fld_n, e->str); }
+    return ob_apply(s);
+}
+void chat_outbox_acked(const char *id) {   /* chat.ack: entregue */
+    const int k = id[0] ? pend_find(id) : -1;
+    if (k >= 0) { memmove(&g_pend[k], &g_pend[k + 1], sizeof g_pend[0] * (size_t)(g_pend_n - k - 1)); g_pend_n--; }
+    if (id[0]) { ob_push(g_dlv, &g_dlv_n, id); ob_del(g_fld, &g_fld_n, id); }
+}
+
+/* a cada ~4 s: com mensagem pendente para um amigo que está online (presença) e fora da sala, reabre o canal direto (toque na caixa dele);
+ * é o caminho da 1.4.1/1.4.2 (dm.open, malha só de DataChannel) e o core entrega a fila ao autenticar. A cada 30 s relê a fila do core
+ * (o que passou de 30 dias vira "falhou"). */
+static void ob_tick(app_state_t *s) {
+    static ULONGLONG t_open, t_get; const ULONGLONG now = GetTickCount64();
+    if (!t_get || now - t_get > 30000) { t_get = now; core_send("{\"cmd\":\"outbox.get\"}"); }
+    if (now - t_open < 4000 || !g_pend_n) return;
+    t_open = now;
+    for (int i = 0; i < g_pend_n; i++) {
+        const person_t *f = friend_by_fp(s, g_pend[i].fp);
+        if (f && friends_online(s, f) && !in_call_with(s, f->fp)) dm_open_link(s, f);
+    }
 }
 
 /* mensagens recebidas: fila gravada no backend local (INSERT OR IGNORE: o mesmo id nunca duplica) */
@@ -187,6 +252,7 @@ void app_send_message(app_state_t *s) {
      * (toque na caixa de chegada dele, depois malha P2P só de DataChannel); sem ele online a mensagem espera na caixa de saída deste PC.
      * Estados da mensagem: só neste PC (check) -> enviada (chat.sent) -> entregue (chat.ack, check duplo). */
     if (s->active_friend >= 0 && s->active_friend < s->friend_count && s->friends[s->active_friend].fp[0] && core_state() == CORE_READY) {
+        pend_add(id, s->friends[s->active_friend].fp);   /* pendente até o ACK (o core guarda a cópia assinada em disco) */
         if (!in_call_with(s, s->friends[s->active_friend].fp)) dm_open_link(s, &s->friends[s->active_friend]);
         char fp[160], t[1100], line[1500]; json_escape(s->friends[s->active_friend].fp, fp, sizeof fp); json_escape(c_text, t, sizeof t);
         snprintf(line, sizeof line, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
@@ -228,6 +294,7 @@ void app_load_messages(app_state_t *s, const char *body) {
             add_msg(s, json_str(m, "id", ""), author, json_str(m, "content", ""), json_str(m, "createdAt", ""), !strcmp(author, s->user_name));
     }
     json_free(j);
+    ob_apply(s);   /* depois de reabrir o app: relógio/tiques voltam do que o core guardou */
 }
 
 void app_create_group(app_state_t *s) {

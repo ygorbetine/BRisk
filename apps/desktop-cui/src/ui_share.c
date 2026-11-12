@@ -716,7 +716,9 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_column(ui, .gap = 1, .width = CUI_FILL) {
                 wrap_line(ui, "Codec de vídeo", 13, B_MUTED);
-                wrap_line(ui, q->codec ? "Se alguém não decodificar, cai para H.264" : "H.264: o mais compatível (padrão)", 11, CUI_RGBA(0xa592b8aa));
+                wrap_line(ui, q->codec == 1 ? "VP9: imagem mais nítida com a mesma internet, mas pesa mais no processador. Só vale entre amigos ligados direto (P2P); se alguém não conseguir abrir, o Briks volta sozinho ao H.264."
+                     : q->codec == 2 ? "VP8: mais antigo e leve, bom para PCs fracos, com qualidade um pouco menor. Só entre amigos ligados direto (P2P); se alguém não conseguir abrir, volta ao H.264."
+                     : "H.264: o mais comum. Funciona em qualquer PC, usa a placa de vídeo para não pesar e vale também no servidor de chamadas. Na dúvida, fique com ele.", 11, CUI_RGBA(0xa592b8aa));
             }
             static const char *const cd[3] = { "H.264", "VP9", "VP8" };
             ch |= seg(ui, "codec", cd, NULL, 3, &q->codec);
@@ -889,7 +891,7 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
             const cui_rect pr = cui_get_rect(ui, pan);
             float ph = pr.h > 0 ? pr.h : 560.0f;
             g_qw = side_w - 32.0f - 8.0f;
-            cui_popover(ui, "shqd", .placement = CUI_PLACE_RIGHT_START, .width = side_w, .pad = 16, .gap = 12, .anchor = pan, .sticky = true) {
+            cui_popover(ui, "shqd", .placement = CUI_PLACE_RIGHT_START, .width = side_w, .pad = 16, .gap = 12, .anchor = pan, .sticky = true, .offset_x = off_x) {
                 cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
                 const cui_rect qin = cui_get_rect(ui, cui_make_id(ui, "shqd-in"));
                 const float maxh = fmaxf(ph - 32.0f - 24.0f - 10.0f, 120.0f);

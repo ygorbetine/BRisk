@@ -1,0 +1,74 @@
+diff --git a/include/cui/cui.h b/include/cui/cui.h
+index ac45a44..76dbe2c 100644
+--- a/include/cui/cui.h
++++ b/include/cui/cui.h
+@@ -706,7 +706,7 @@ typedef enum cui_placement {
+ 
+ /* Popover anchored to the previous component. Toggle it with
+  * cui_popover_toggle / cui_popover_open. */
+-typedef struct cui_popover_opts { int _; cui_placement placement; float width; float pad; float gap; cui_id anchor; bool sticky; } cui_popover_opts;   /* Briks: anchor = id do componente ao qual o painel gruda (0 = o anterior); sticky = clique fora nao fecha (so Esc / fechar explicito) */
++typedef struct cui_popover_opts { int _; cui_placement placement; float width; float pad; float gap; cui_id anchor; bool sticky; float offset_x; } cui_popover_opts;   /* Briks: anchor = id do componente ao qual o painel gruda (0 = o anterior); sticky = clique fora nao fecha (so Esc / fechar explicito) */
+ CUI_API bool cui_popover_begin(cui_ctx *ui, const char *id, const cui_popover_opts *opts);
+ CUI_API void cui_popover_end(cui_ctx *ui);
+ 
+diff --git a/src/cui_internal.h b/src/cui_internal.h
+index 14814af..40154e9 100644
+--- a/src/cui_internal.h
++++ b/src/cui_internal.h
+@@ -282,6 +282,7 @@ typedef struct cui_node {
+     float opacity;
+     float scale;              /* transform around center, 1 = none */
+     float tx, ty;             /* translation */
++    float anchor_dx;          /* Briks: desloca o ancora (ex.: dialogo deslocado por tx) antes de posicionar o painel flutuante */
+ 
+     /* custom paint */
+     cui__paint_fn paint;
+diff --git a/src/cui_layout.c b/src/cui_layout.c
+index c8f2613..159d4d8 100644
+--- a/src/cui_layout.c
++++ b/src/cui_layout.c
+@@ -862,7 +862,7 @@ static void cui__layout_float(cui_ctx *ui, int i) {
+     else if (n->placement == CUI__PLACE_CENTER) { x = (vw - W) * 0.5f; y = (vh - H) * 0.5f; }
+     else if (n->placement == CUI__PLACE_POINT) { x = n->fx; y = n->fy; }
+     else {
+-        cui_rect A = cui__anchor_rect(ui, n->anchor);
++        cui_rect A = cui__anchor_rect(ui, n->anchor); A.x += n->anchor_dx;
+         switch (n->placement) {
+         case CUI_PLACE_BOTTOM_START: case CUI_PLACE_BOTTOM: case CUI_PLACE_BOTTOM_END:
+             y = A.y + A.h + off;
+diff --git a/src/cui_overlay.c b/src/cui_overlay.c
+index 77fdc6b..2ceb457 100644
+--- a/src/cui_overlay.c
++++ b/src/cui_overlay.c
+@@ -83,6 +83,7 @@ static void cui__panel_style(cui_ctx *ui, cui_node *n, float pad) {
+     n->pad[0] = n->pad[1] = n->pad[2] = n->pad[3] = pad;
+ }
+ 
++static float g_pop_tx;   /* Briks: deslocamento horizontal do painel (o diálogo ao qual ele gruda está deslocado por tx, que o layout não enxerga) */
+ bool cui__popup_begin(cui_ctx *ui, cui_id id, cui_id anchor, int placement, float width, float pad, float gap, bool menu) {
+     cui_popup *p = cui__popup_get(ui, id, false);
+     if (!p) return false;
+@@ -119,11 +120,12 @@ bool cui__popup_begin(cui_ctx *ui, cui_id id, cui_id anchor, int placement, floa
+     if (width > 0) n->w = CUI_PX(width);
+     else if (anchor && cui__has_prev_rect(ui, anchor)) n->min_w = cui__prev_rect(ui, anchor).w;
+     n->min_w = CUI_MAX(n->min_w, menu ? 180.0f : 0.0f);
+-    n->max_h = width >= 480.0f ? CUI_MAX(420.0f, ui->vh - 48.0f) : 420;   /* Briks: paineis largos (qualidade da transmissao) podem crescer ate a janela; os demais seguem em 420 */
++    n->max_h = width >= 440.0f ? CUI_MAX(420.0f, ui->vh - 48.0f) : 420;   /* Briks: paineis largos (qualidade da transmissao) podem crescer ate a janela; os demais seguem em 420 */
+     n->opacity = t;
+     n->scale = CUI__ENTER_SCALE + (1.0f - CUI__ENTER_SCALE) * t;
+     bool up = placement >= CUI_PLACE_TOP_START && placement <= CUI_PLACE_TOP_END;
+     n->ty = (1.0f - t) * (up ? 6.0f : -6.0f);
++    n->anchor_dx = g_pop_tx;
+     cui__popup_build *b = &ui->pb_stack[ui->pb_depth < 16 ? ui->pb_depth : 15];
+     if (ui->pb_depth < 16) ui->pb_depth++;
+     b->id = id;
+@@ -165,7 +167,8 @@ bool cui_popover_begin(cui_ctx *ui, const char *id, const cui_popover_opts *o) {
+     anchor = p->anchor;
+     p->sticky = o->sticky;
+     if (o->anchor) { anchor = o->anchor; p->anchor = o->anchor; }
+-    return cui__popup_begin(ui, pid, anchor, o->placement, o->width, o->pad > 0 ? o->pad : 16, o->gap > 0 ? o->gap : 10, false);
++    g_pop_tx = o->offset_x;
++    { bool r = cui__popup_begin(ui, pid, anchor, o->placement, o->width, o->pad > 0 ? o->pad : 16, o->gap > 0 ? o->gap : 10, false); g_pop_tx = 0; return r; }
+ }
+ 
+ void cui_popover_end(cui_ctx *ui) { cui__popup_end(ui); }

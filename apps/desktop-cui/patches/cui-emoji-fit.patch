@@ -1,0 +1,34 @@
+diff --git a/src/cui_emoji.c b/src/cui_emoji.c
+index c15f341..e01d85e 100644
+--- a/src/cui_emoji.c
++++ b/src/cui_emoji.c
+@@ -603,16 +603,21 @@ static bool cui__em_outline(cui_ctx *ui, cui__emoji *e, int gid, int px, uint8_t
+     if (nl == 0 && !e->mono_font) return false;
+     int count = nl ? nl : 1;
+     /* the box of all layers, centered */
+-    int bx0 = 1 << 30, by0 = 1 << 30, bx1 = -(1 << 30), by1 = -(1 << 30);
++    int bx0, by0, bx1, by1;
+     uint32_t lo_ = CUI__T32(c, CL, 8);
+-    for (int k = 0; k < count; k++) {
+-        int lg = nl ? CUI__T16(c, CL, lo_ + (uint32_t)(first + k) * 4) : gid;
+-        int x0, y0, x1, y1;
+-        if (!cui__tt_box(e->tt, lg, scale, &x0, &y0, &x1, &y1)) continue;
+-        bx0 = CUI_MIN(bx0, x0); by0 = CUI_MIN(by0, y0); bx1 = CUI_MAX(bx1, x1); by1 = CUI_MAX(by1, y1);
++    for (int pass = 0; pass < 2; pass++) {   /* a glyph taller than the font's ascent would be cut at the top: shrink it to fit, then center its own box */
++        bx0 = 1 << 30; by0 = 1 << 30; bx1 = -(1 << 30); by1 = -(1 << 30);
++        for (int k = 0; k < count; k++) {
++            int lg = nl ? CUI__T16(c, CL, lo_ + (uint32_t)(first + k) * 4) : gid;
++            int x0, y0, x1, y1;
++            if (!cui__tt_box(e->tt, lg, scale, &x0, &y0, &x1, &y1)) continue;
++            bx0 = CUI_MIN(bx0, x0); by0 = CUI_MIN(by0, y0); bx1 = CUI_MAX(bx1, x1); by1 = CUI_MAX(by1, y1);
++        }
++        if (bx1 <= bx0) return false;
++        const int bw = bx1 - bx0, bh = by1 - by0;
++        if (pass == 0 && (bw > px || bh > px)) scale *= (float)px / (float)CUI_MAX(bw, bh); else break;
+     }
+-    if (bx1 <= bx0) return false;
+-    int ox = (px - (bx1 - bx0)) / 2 - bx0, oy = (int)(asc * scale + (px - (asc - desc) * scale) * 0.5f);
++    int ox = (px - (bx1 - bx0)) / 2 - bx0, oy = (px - (by1 - by0)) / 2 - by0;
+     const uint8_t *p = e->cpal;
+     uint32_t PL = e->cpal_len, recs = CUI__T32(p, PL, 8), pal0 = CUI__T16(p, PL, 12);
+     for (int k = 0; k < count; k++) {

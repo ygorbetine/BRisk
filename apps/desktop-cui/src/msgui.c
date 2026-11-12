@@ -315,6 +315,7 @@ static const char *const NAMES[NCAT][48] = {
  { "coracao vermelho amor", "coracao laranja", "coracao amarelo", "coracao verde", "coracao azul", "coracao roxo", "coracao preto", "coracao branco", "coracao partido", "dois coracoes", "coracoes girando", "coracao batendo", "coracao crescendo", "coracao brilhante", "cem 100", "raiva", "explosao", "tontura", "gotas suor", "zzz sono", "brilho", "estrela", "estrela brilhante", "fogo", "festa confete", "confete", "joinha like positivo", "negativo dislike", "palmas aplausos", "maos para cima", "obrigado rezando", "forca musculo", "ok", "paz vitoria", "dedos cruzados sorte", "maos coracao", "olhos olhando", "cerebro", "tchau acenando", "aperto de mao" },
  { "bandeira branca", "bandeira preta", "bandeira chegada corrida", "bandeira vermelha", "brasil", "portugal", "estados unidos eua", "reino unido inglaterra", "franca", "alemanha", "italia", "espanha", "japao", "coreia do sul", "china", "argentina", "mexico", "canada", "australia", "india", "certo check sim", "errado x nao", "interrogacao pergunta", "exclamacao" },
 };
+static const char *const CAT_TITLE[NCAT] = { "Carinhas e emoções", "Animais e natureza", "Comida e bebida", "Atividades e jogos", "Viagem e lugares", "Objetos", "Símbolos e gestos", "Bandeiras" };
 static const char *const CAT_KW[NCAT] = { "rostos carinhas emocoes expressoes pessoas", "animais natureza plantas bichos", "comida bebida frutas", "esportes jogos musica diversao", "viagem lugares transporte veiculos", "objetos tecnologia ferramentas", "simbolos gestos maos emojis amor", "bandeiras paises simbolos" };
 /* minúsculas e sem acento (UTF-8 latino básico): "Coração" == "coracao" */
 static void fold(const char *in, char *out, size_t cap) {
@@ -565,6 +566,7 @@ static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
                         cui_pop_id(ui);
                     }
                 }
+                if (!searching) cui_text(ui, CAT_TITLE[cat], .size = 12, .color = B_C3, .nowrap = true);
                 const int cols = 8; const float gh = fminf(204.0f, (float)(n > 0 ? (n + cols - 1) / cols : 1) * 42.0f);   /* só a altura que a lista usa: sem faixa vazia embaixo */
                 cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(gh), .scroll_y = true, .gap = 2) {
                     if (searching && n == 0) cui_text(ui, "Nenhum emoji com esse nome.", .size = 12, .color = B_MUTED);

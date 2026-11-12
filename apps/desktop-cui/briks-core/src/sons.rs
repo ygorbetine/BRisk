@@ -4,7 +4,7 @@
 //! o hash do catálogo/disparo identifica o arquivo sem ambiguidade). O índice `sons.json` guarda nome, emoji, favorito, uso e as
 //! preferências (volume, silenciados, intervalo). Nada sai do aparelho aqui: a rede está em `sonsnet.rs`.
 //!
-//! Limites (decisão do usuário, 2026-11-12): mp3/wav/ogg, até 8 s, até 512 KB, até 50 sons por grupo. A validação NÃO decodifica: lê
+//! Limites (decisão do usuário, 2026-11-12): mp3/wav/ogg, até 15 s, até 512 KB, até 50 sons por grupo. A validação NÃO decodifica: lê
 //! os cabeçalhos (WAV, quadros MP3, páginas OGG) para saber formato e duração, então é barata e roda igual para o que vem da rede.
 //! O pico é limitado na importação (WAV PCM 16 bits é reescrito; mp3/ogg têm o pico limitado na hora de tocar, pela UI).
 use std::collections::{BTreeSet, HashMap};
@@ -17,7 +17,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const MAX_BYTES: u64 = 512 * 1024;
-pub const MAX_MS: u32 = 8_000;
+pub const MAX_MS: u32 = 15_000;
+/// folga de codificador: um MP3 de exatamente 15 s sai com ~50 ms de preenchimento do próprio codificador
+const MP3_PAD_MS: u32 = 150;
 pub const MAX_PER_GROUP: usize = 50;
 pub const MAX_MINE: usize = 200;
 pub const MAX_NAME_CHARS: usize = 32;
@@ -46,7 +48,7 @@ pub fn probe(b: &[u8]) -> Result<Probe> {
     if b.len() as u64 > MAX_BYTES { return Err(anyhow!("o arquivo passa de 512 KB")); }
     let p = if b.starts_with(b"RIFF") { probe_wav(b)? } else if b.starts_with(b"OggS") { probe_ogg(b)? } else { probe_mp3(b)? };
     if p.dur_ms == 0 { return Err(anyhow!("o som não tem duração")); }
-    if p.dur_ms > MAX_MS { return Err(anyhow!("o som passa de 8 segundos ({:.1} s)", p.dur_ms as f64 / 1000.0)); }
+    if p.dur_ms > MAX_MS + MP3_PAD_MS { return Err(anyhow!("o som passa de 15 segundos ({:.1} s)", p.dur_ms as f64 / 1000.0)); }
     Ok(p)
 }
 
@@ -551,8 +553,8 @@ mod tests {
     fn probe_rejects_bad_long_big_or_unknown() {
         assert!(probe(b"").is_err());
         assert!(probe(b"isto nao e audio nenhum, so texto").is_err());
-        assert!(probe(&wav(8001, 0.3)).unwrap_err().to_string().contains("8 segundos"), "acima de 8 s");
-        assert!(probe(&wav(8000, 0.3)).is_ok(), "8 s exatos valem");
+        assert!(probe(&wav(15200, 0.3)).unwrap_err().to_string().contains("15 segundos"), "acima de 15 s");
+        assert!(probe(&wav(15000, 0.3)).is_ok(), "15 s exatos valem");
         let big = vec![0u8; MAX_BYTES as usize + 1];
         assert!(probe(&big).unwrap_err().to_string().contains("512 KB"));
         assert!(probe(&mp3(1, false)).is_err(), "um quadro só não prova nada");
@@ -618,7 +620,7 @@ mod tests {
         assert!(s.put_received(&"0".repeat(64), &w).unwrap_err().to_string().contains("hash"), "hash diferente é recusado");
         assert!(!s.has(&h));
         assert!(s.put_received(&h, &w).is_ok() && s.has(&h));
-        let long = wav(9000, 0.3);
+        let long = wav(16000, 0.3);
         assert!(s.put_received(&sha256_hex(&long), &long).is_err(), "hash certo mas longo demais");
         let junk = b"nao e som".to_vec();
         assert!(s.put_received(&sha256_hex(&junk), &junk).is_err(), "hash certo mas não é áudio");
@@ -712,5 +714,13 @@ mod tests_ipc {
         assert_eq!(rm[0]["items"].as_array().unwrap().len(), 0);
         assert!(handle(&st, &json!({ "cmd": "sound.path", "hash": hash }), "fp")[0]["path"].is_null());
         let _ = std::fs::remove_dir_all(&d);
+    }
+    /// Utilitário manual (ignorado): confere um arquivo gerado pelo editor da UI. BRIKS_PROBE_FILE=<caminho> cargo test probe_file_from_env -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_file_from_env() {
+        let p = std::env::var("BRIKS_PROBE_FILE").expect("defina BRIKS_PROBE_FILE");
+        let b = std::fs::read(&p).unwrap();
+        match probe(&b) { Ok(x) => println!("OK {} bytes, {} ms, formato {}", b.len(), x.dur_ms, x.format.ext()), Err(e) => panic!("recusado: {e}") }
     }
 }

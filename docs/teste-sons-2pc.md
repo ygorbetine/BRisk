@@ -6,7 +6,7 @@ Plano e decisões: `docs/plans/painel-de-sons.md`. Código: `briks-core/src/{son
 ## Preparação
 - PC A e PC B com o mesmo build (core em nível 3: `CORE_PROTO` = 3; versão antiga avisa "motor de outra versão").
 - Duas contas, amigas entre si, e um **grupo** com A como dono e B como membro (B não é administrador).
-- Três arquivos de teste: `curto.wav` (1 s), `longo.mp3` (7 s, volume alto) e `grande.ogg` (acima de 512 KB, para o teste de recusa).
+- Arquivos de teste: `curto.wav` (1 s), `longo.mp3` (7 s, volume alto), um áudio de 40 s (ou um vídeo `.mp4` com som) e um `.txt` renomeado para `.mp3`.
 - Fones ou caixas nos dois PCs. Faça uma rodada com os PCs na mesma rede (P2P) e outra com um deles em outra rede/4G (SFU, se o servidor de chamadas estiver ativo).
 
 ## 1. Meus sons (pessoal)
@@ -17,10 +17,13 @@ Plano e decisões: `docs/plans/painel-de-sons.md`. Código: `briks-core/src/{son
 4. A clica de novo logo em seguida. Esperado: nada toca (intervalo de 3 s por pessoa) e aparece a nota do intervalo.
 5. A clica passados 3 s: toca de novo nos dois.
 
-## 2. Limites e arquivos inválidos
-- `grande.ogg` (> 512 KB): recusado com mensagem clara ("o arquivo passa de 512 KB").
-- Um arquivo de 9 s ou um `.txt` renomeado para `.mp3`: recusado. Nada entra no painel.
-- `longo.mp3` com volume alto: toca, mas **sem estourar** (pico limitado a -3 dBFS na reprodução).
+## 2. Mini editor, limites e conversão
+- O botão **Adicionar** aceita áudio (mp3, wav, ogg, m4a, flac…) **ou vídeo** (mp4, webm, mov…): o áudio é extraído. O editor mostra a onda, "Início" e "Fim" (o trecho nunca passa de **15 s**) e o volume.
+- Áudio de 40 s: o trecho padrão já vem com 15 s; mover "Início" empurra o "Fim" (e vice-versa) para manter no máximo 15 s e no mínimo 0,2 s. **Testar** toca só o trecho, com o volume escolhido, só em você.
+- Ao adicionar, o trecho é convertido para MP3 (44,1 kHz) e **comprimido**: 15 s ficam em ~240 KB. O limite final é 512 KB. Sem alterar nada (arquivo mp3/wav/ogg de até 15 s e 512 KB), vai o arquivo original.
+- Um `.txt` renomeado para `.mp3`: o editor recusa ("Não consegui ler o áudio"). Nada entra no painel.
+- `longo.mp3` com volume alto: toca, mas **sem estourar** (pico limitado a -3 dBFS).
+- Volume do editor em 40%: o som sai mais baixo nos dois PCs e fica assim gravado no arquivo.
 
 ## 3. Sons de grupo (permissão)
 1. A (dono) abre Sons > Adicionar, escolhe `curto.wav`, destino **Grupo · (nome)**. B, ao entrar na chamada do **canal de voz do grupo**, vê o som aparecer sozinho (catálogo no manifesto assinado) e o arquivo chega por P2P.
@@ -49,5 +52,7 @@ Depois dos testes acima, nos três jeitos de sair (menu Sair, fechar a janela, e
 - **Versões misturadas:** quem está na 1.4.4 reserializa o snapshot do grupo sem o campo `sounds`; a assinatura de um catálogo com sons não confere lá e o app antigo **ignora a atualização**. Todo o grupo deve estar na 1.5 para usar sons de grupo. Grupos sem sons mantêm as assinaturas antigas intactas.
 - **Catálogo grande:** o snapshot com sons é limitado a 14000 bytes para caber num pacote do canal de dados do SFU (15000). Isso dá folga para o limite de 50 sons por grupo com nomes curtos; nomes longos + emoji + muitos membros podem estourar e a edição é recusada com aviso.
 - O som toca no dispositivo de saída escolhido nas configurações (waveOut), **não** é misturado ao microfone: quem tem fone e mic separados ouve normal; ninguém ouve o som "pela voz" de A, cada aparelho toca o seu.
-- O limite de pico de mp3/ogg é aplicado na reprodução (decodificado); no WAV PCM16 o arquivo é reescrito já limitado na importação.
+- O limite de pico (-3 dBFS) vale para tudo que passa pelo editor (já gravado no arquivo convertido); um mp3/ogg importado sem alteração é limitado na reprodução.
+- OGG precisa do decodificador do Windows ("Extensões de mídia da Web"); sem ele o editor avisa que não conseguiu ler o áudio. MP3, WAV, vídeos e a maioria dos formatos comuns funcionam sem nada extra.
+- O editor lê até os primeiros 120 s do arquivo.
 - Atalho de teclado para os sons: só dentro do app, e fica para depois da 1.5.

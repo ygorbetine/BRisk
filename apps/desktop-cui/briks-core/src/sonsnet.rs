@@ -386,11 +386,11 @@ mod tests {
         let junk = b"isto nao e audio".to_vec(); let hj = sons::sha256_hex(&junk);
         ns[1].net.fetch(&hj, vec!["n0".into()], 4000);
         assert!(matches!(&ns[1].net.on_msg(&p0, "sound.data", &data_for(&hj, &junk), 4100)[0], NetOut::Ev(e) if e["ev"] == "sound.fail"));
-        let long = wav(9000, 0.3); let hl = sons::sha256_hex(&long);
+        let long = wav(16000, 0.3); let hl = sons::sha256_hex(&long);
         ns[1].net.fetch(&hl, vec!["n0".into()], 5000);
         let mut last = vec![];
         for (i, c) in long.chunks(CHUNK).enumerate() { last = ns[1].net.on_msg(&p0, "sound.data", &json!({ "hash": hl, "seq": i, "size": long.len(), "last": (i + 1) * CHUNK >= long.len(), "data": B64.encode(c) }), 5100); }
-        assert!(last.iter().any(|o| matches!(o, NetOut::Ev(e) if e["ev"] == "sound.fail")), "som de 9 s não entra: {last:?}");
+        assert!(last.iter().any(|o| matches!(o, NetOut::Ev(e) if e["ev"] == "sound.fail")), "som de 16 s não entra: {last:?}");
         clean(&ns);
     }
     fn data_for(h: &str, b: &[u8]) -> Value { json!({ "hash": h, "seq": 0, "size": b.len(), "last": true, "data": B64.encode(b) }) }

@@ -170,6 +170,7 @@ static void bubbles_draw(cui_ctx *ui) {
     for (int i = 0; i < g_bub_n; i++) {
         cui_push_id_int(ui, 9100 + i);
         cui_rect a = g_bub[i].av; const char *t = g_bub[i].text;
+        a.y -= titlebar_height() + 3.0f;   /* os rects vêm em coordenada de tela; o desenho do balão parte da área abaixo da barra de título + filete (mesmo g_oy do dock) */
         cui_text_metrics m = cui_measure_text(ui, CUI_FONT_BODY, 13, t, (int)strlen(t));
         float w = fminf(m.width, 190.0f) + 30, h = 32;
         const float up = 8.0f;   /* balão e bolinhas sobem juntos: respiro entre a cauda e o avatar */
@@ -299,18 +300,18 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
         /* rodapé do usuário (paridade com o .account-bar do Electron): foto, nome + status/@nick, e três ícones: @ (Perfil e conta), configurações, sair */
         cui_box(ui, .width = CUI_FILL, .pad = 10, .pad_top = s->user_status[0] ? 58 : 10) {   /* com status: o rodapé reserva a altura do balão, que nunca cobre a lista */
             const bool f_compact = g_panel_w < 220.0f;   /* painel estreito: sai o texto (nome/status), ficam a foto e os três ícones, sem nada cortado */
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 6, .pad_right = 8, .gap = g_panel_w < 300.0f ? 4 : 8, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .pad_right = 8, .gap = g_panel_w < 300.0f ? 4 : 8, .radius = 18, .bg = B_GLASS_CARD, .clip = true,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                 cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
                 if (briks_clicked_r(ui, "avatar", 16.0f)) { s->profile_open = true; s->profile_tab = 0; }
                 bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
                 if (f_compact) cui_box(ui, .width = CUI_FILL) {}
-                else cui_box(ui, .id = "ident", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 4) {
+                else cui_box(ui, .id = "ident", .dir = CUI_COLUMN, .gap = 1, .width = CUI_FILL, .pad_x = 2) {
                     cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 14, .nowrap = true);
                     /* linha de status: presença em uso > status digitado > "Disponível" (verde) */
                     const char *mine = s->rp_enabled ? s->user_presence : "";
-                    if (s->user_status[0]) cui_text(ui, s->user_status, .size = 11, .color = B_MUTED, .nowrap = true);
-                    else if (mine[0]) cui_text(ui, mine, .size = 11, .color = B_MUTED, .nowrap = true);
+                    /* o status digitado vai só no balão (acima do card); sob o nome: presença em uso > @nick > Disponível */
+                    if (mine[0]) cui_text(ui, mine, .size = 11, .color = B_MUTED, .nowrap = true);
                     else if (s->acct_user_id[0] && s->user_nick[0]) { char nk[48]; nick_text(s, nk, sizeof nk); cui_text(ui, nk, .size = 11, .color = B_MUTED, .nowrap = true); }   /* como no Electron: conta online mostra o @nick */
                     else cui_row(ui, .gap = 5, .align = CUI_ALIGN_CENTER) {
                         cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}

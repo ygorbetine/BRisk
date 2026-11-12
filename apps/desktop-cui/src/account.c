@@ -591,6 +591,7 @@ void account_tick(app_state_t *s) {
             }
         }
     }
+    if (s->acct_demo) { static bool my_done; const char *mp = getenv("BRIKS_DEV_PHOTO"); if (!my_done && mp && mp[0]) { my_done = true; set_photo(s, mp); } }   /* captura: BRIKS_DEV_PHOTO põe essa imagem como a MINHA foto (sem conta) */
     if (s->acct_demo) {   /* captura: BRIKS_DEV_FPHOTO=caminho põe essa imagem como foto do primeiro amigo (nada baixado) */
         static bool fp_done; static ULONGLONG t0; const char *fp = getenv("BRIKS_DEV_FPHOTO"), *dl = getenv("BRIKS_DEV_FPHOTO_DELAY");   /* _DELAY: ms até a foto chegar (teste antes/depois) */
         if (!t0) t0 = GetTickCount64();

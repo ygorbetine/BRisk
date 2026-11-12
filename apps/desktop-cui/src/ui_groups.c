@@ -670,7 +670,7 @@ void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo 
                             cui_box(ui, .width = CUI_FILL, .gap = 3) {
                                 cui_box(ui, .dir = CUI_ROW, .gap = 6, .align = CUI_ALIGN_CENTER) {
                                     cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}   /* ponto verde: há gente na sala */
-                                    cui_avatar(ui, who[w].name, .size = 16);
+                                    cui_avatar_ex(ui, who[w].name, &(cui_avatar_opts){ .size = 16, .image = person_photo(s, NULL, who[w].name) });
                                     cui_text(ui, who[w].name, .size = 13, .color = (mine && w == 0) ? B_ONLINE : B_MUTED, .nowrap = true);
                                 }
                                 if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
@@ -831,7 +831,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
                     gmember_t *m = &g->m[i]; const bool owner = !strcmp(m->id, g->owner), me = !strcmp(m->id, s->user_id);
                     cui_push_id_int(ui, 2800 + i);
                     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 6, .gap = 10, .radius = 12, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
-                        cui_avatar(ui, m->name, .size = 30);
+                        cui_avatar_ex(ui, m->name, &(cui_avatar_opts){ .size = 30, .image = person_photo(s, m->id, m->name) });
                         cui_column(ui, .gap = 0, .width = CUI_FILL) {
                             cui_text(ui, m->name, .nowrap = true);
                             cui_text(ui, role_of(g, m), .size = 11, .color = owner ? B_C3 : B_MUTED);
@@ -866,7 +866,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
             if (s->gnick_msg[0]) cui_text(ui, s->gnick_msg, .size = 12, .color = B_MUTED);
             if (s->gnick_found && !is_member(g, s->gnick_hit.id)) {
                 cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-                    cui_avatar(ui, s->gnick_hit.name, .size = 24);
+                    cui_avatar_ex(ui, s->gnick_hit.name, &(cui_avatar_opts){ .size = 24, .image = person_photo(s, s->gnick_hit.id, s->gnick_hit.name) });
                     cui_textf(ui, "%s  @%s", s->gnick_hit.name, s->gnick_hit.nick);
                     cui_box(ui, .width = CUI_FILL) {}
                     if (cui_button(ui, "Convidar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .loading = s->busy)) inv = -2;
@@ -881,7 +881,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
                     if (!strstr(hay, q)) continue; }
                 cui_push_id_int(ui, 2900 + i);
                 cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-                    cui_avatar(ui, s->friends[i].name, .size = 24);
+                    cui_avatar_ex(ui, s->friends[i].name, &(cui_avatar_opts){ .size = 24, .image = friend_photo(s->friends[i].id) });
                     cui_text(ui, s->friends[i].name, .width = CUI_FILL, .nowrap = true);
                     if (cui_button(ui, "Convidar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .loading = s->busy)) inv = i;
                 }
@@ -945,7 +945,7 @@ bool groups_members_panel(cui_ctx *ui, app_state_t *s) {
             for (int f = 0; !online && f < s->friend_count; f++) if (!strcmp(s->friends[f].id, m->id)) online = friends_online(s, &s->friends[f]);
             cui_push_id_int(ui, 7600 + i);
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 14, .align = CUI_ALIGN_CENTER) {
-                cui_avatar(ui, m->name, .size = 34);
+                cui_avatar_ex(ui, m->name, &(cui_avatar_opts){ .size = 34, .image = person_photo(s, m->id, m->name) });
                 cui_column(ui, .gap = 2, .width = CUI_FILL) {
                     cui_text(ui, m->name, .nowrap = true, .size = 14);
                     cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {

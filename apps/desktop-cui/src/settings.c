@@ -8,6 +8,7 @@
 #include "sysint.h"
 #include "hotkeys.h"
 #include "storage.h"
+#include "callhist.h"
 #include "json.h"
 void update_settings_cards(cui_ctx *ui, app_state_t *s); int update_probe(const char *n);   /* ui_update.c */
 int overlay_tile_count(void); const char *overlay_tile_name(int j); bool overlay_tile_enabled(int j); void overlay_tile_enable(int j, bool on);   /* overlay_host.c */
@@ -32,6 +33,7 @@ typedef struct {
     bool echo, excl_audio;
     int idle_min;                 /* CHM-35: minutos sem falar até sair da chamada (0 = nunca); padrão 60 */
     int fw_choice;                /* Firewall: 0 não decidido, 1 liberado, 2 agora não, 3 não perguntar */
+    bool call_mode_set;           /* o usuário escolheu o modo da chamada (sem isso, 2/SFU gravado é o padrão antigo e migra para Automático) */
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
     bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute, ov_selfshare; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
     char key_mute[24], key_deafen[24], key_stream[24], key_ptt[24];
@@ -68,7 +70,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "mic", 'i', &g_set.mic }, { "out", 'i', &g_set.out }, { "mic_name", 's', g_set.mic_name, 64 }, { "out_name", 's', g_set.out_name, 64 }, { "cam_name", 's', g_set.cam_name, 96 },
     { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
-    { "call_mode", 'i', &g_set.call_mode }, { "fw_choice", 'i', &g_set.fw_choice }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
+    { "call_mode", 'i', &g_set.call_mode }, { "call_mode_set", 'b', &g_set.call_mode_set }, { "fw_choice", 'i', &g_set.fw_choice }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
     { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_selfshare", 'b', &g_set.ov_selfshare }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
@@ -95,6 +97,7 @@ static bool cfg_path(char *out, size_t cap) {
 }
 static void load(void);
 static void load_inner(void);
+static void save(void);
 static void load(void) { load_inner(); g_text_size = g_set.text_size < 0 ? 0 : g_set.text_size > 3 ? 3 : g_set.text_size; }
 static void load_inner(void) {
     defaults();
@@ -111,6 +114,8 @@ static void load_inner(void) {
         }
     }
     fclose(f);
+    const int cm = settings_migrate_call_mode(g_set.call_mode, g_set.call_mode_set);   /* padrão antigo "Sempre SFU" -> Automático (uma vez; quem escolheu fica) */
+    if (cm != g_set.call_mode) { g_set.call_mode = cm; save(); }
 }
 static void save(void) {
     char p[MAX_PATH]; if (getenv("BRIKS_DEMO") || !cfg_path(p, sizeof p)) return;
@@ -518,6 +523,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                     SCARD(ui, "MODO DA CHAMADA") {
                         static int pend_cm = -1;   /* troca pedida com a chamada aberta: espera a confirmação (reconecta) */
                         { const int before = g_set.call_mode; seg(ui, "cfg-cm", CM, 3, &g_set.call_mode);
+                          if (g_set.call_mode != before) g_set.call_mode_set = true;   /* escolha explícita do usuário */
                           if (g_set.call_mode != before && s->in_room) { pend_cm = g_set.call_mode; g_set.call_mode = before; } }
                         if (!s->in_room) pend_cm = -1;
                         if (pend_cm >= 0 && pend_cm != g_set.call_mode) {

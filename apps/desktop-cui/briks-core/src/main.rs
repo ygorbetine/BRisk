@@ -24,6 +24,7 @@ mod ice;
 mod atrest;
 mod history;
 mod outbox;
+mod attachq;
 mod identity;
 mod filetransfer;
 mod import;

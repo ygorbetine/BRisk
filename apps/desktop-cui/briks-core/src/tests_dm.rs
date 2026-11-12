@@ -133,3 +133,62 @@ async fn a_32kb_group_invite_round_trips_byte_for_byte_as_a_structured_field() {
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(b.count(|v| v["ev"] == "chat.invite" && v["id"] == id.as_str()), 1, "uma vez só");
 }
+
+/// Anexo na DM (sem sala): A escolhe um arquivo para B com B ainda fora; vira "queued" na fila local de A; quando o canal direto
+/// autentica, B recebe a OFERTA (nada é gravado antes de aceitar), aceita, o arquivo chega inteiro (SHA-256 conferido pelo transporte)
+/// e a fila de A esvazia. Também: arquivo vazio, inexistente e acima do teto são recusados com aviso (`rejected`), sem entrar na fila.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dm_attachment_waits_in_the_local_queue_then_transfers_after_the_friend_accepts() {
+    let port = crate::mock::start(0).await.unwrap();
+    let dir = std::env::temp_dir().join(format!("briks-dmatt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    let recv = dir.join("recebidos");
+    std::env::set_var("BRIKS_RECV_DIR", &recv);
+    let (mut a, mut b) = (app("ata", port, "Ana").await, app("atb", port, "Beto").await);
+    let ub = "22222222-bbbb-4bbb-8bbb-000000000002";
+    let data: Vec<u8> = (0..150_000u32).map(|i| (i % 251) as u8).collect();
+    let src = dir.join("foto.jpg"); std::fs::write(&src, &data).unwrap();
+
+    // recusas visíveis: vazio, inexistente, grande demais (arquivo esparso de 3 GB só para o teto), pasta
+    std::fs::write(dir.join("vazio.pdf"), b"").unwrap();
+    let big = std::fs::File::create(dir.join("enorme.mp4")).unwrap(); big.set_len(3 * 1024 * 1024 * 1024).unwrap(); drop(big);
+    for (name, code) in [("vazio.pdf", "empty"), ("nao-existe.png", "missing"), ("enorme.mp4", "toobig")] {
+        a.send(json!({ "cmd": "file.send", "dm": true, "to_fp": b.fp, "path": dir.join(name).to_str().unwrap() })).await;
+        let r = a.wait(10, "rejected", |v| v["ev"] == "file" && v["kind"] == "rejected" && v["code"] == code).await;
+        assert!(r["error"].as_str().is_some_and(|e| !e.is_empty()), "o aviso explica o motivo");
+    }
+    assert_eq!(a.count(|v| v["kind"] == "queued"), 0, "nada recusado entra na fila");
+
+    // B fora: o anexo espera na fila de A
+    a.send(json!({ "cmd": "file.send", "dm": true, "to_fp": b.fp, "path": src.to_str().unwrap() })).await;
+    let q = a.wait(10, "queued", |v| v["ev"] == "file" && v["kind"] == "queued").await;
+    assert_eq!((q["name"].as_str(), q["size"].as_u64(), q["peer_fp"].as_str()), (Some("foto.jpg"), Some(150_000), Some(b.fp.as_str())));
+    a.send(json!({ "cmd": "file.send", "dm": true, "to_fp": b.fp, "path": src.to_str().unwrap() })).await;
+    a.wait(10, "duplicado recusado", |v| v["kind"] == "rejected" && v["code"] == "queue").await;
+    a.send(json!({ "cmd": "dm.open", "fp": b.fp, "user_id": ub })).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(b.count(|v| v["ev"] == "file"), 0, "B nem observa a caixa ainda");
+
+    // B aparece: oferta chega; antes do aceite nada é gravado
+    b.send(json!({ "cmd": "dm.inbox", "user_id": ub })).await;
+    let wake = b.wait(15, "dm.wake em B", |v| v["ev"] == "dm.wake").await;
+    b.send(json!({ "cmd": "dm.open", "fp": wake["fp"] })).await;
+    let off = b.wait(40, "oferta em B", |v| v["ev"] == "file" && v["kind"] == "offer" && v["mine"] == false).await;
+    assert_eq!((off["name"].as_str(), off["size"].as_u64(), off["peer_fp"].as_str()), (Some("foto.jpg"), Some(150_000), Some(a.fp.as_str())));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!recv.exists() || std::fs::read_dir(&recv).unwrap().next().is_none(), "nada foi baixado antes do aceite");
+    let mine = a.wait(10, "oferta de A com qid", |v| v["ev"] == "file" && v["kind"] == "offer" && v["mine"] == true).await;
+    assert_eq!(mine["qid"], q["id"], "a oferta liga o cartão da fila ao id do transporte");
+
+    b.send(json!({ "cmd": "file.accept", "id": off["id"] })).await;
+    let done = b.wait(60, "arquivo completo em B", |v| v["ev"] == "file" && v["kind"] == "done" && v["mine"] == false).await;
+    assert_eq!(std::fs::read(done["path"].as_str().unwrap()).unwrap(), data, "bytes idênticos (SHA-256 conferido)");
+    assert!(std::path::Path::new(done["path"].as_str().unwrap()).starts_with(&recv), "cai na pasta de quarentena");
+    a.wait(20, "envio concluído em A", |v| v["ev"] == "file" && v["kind"] == "done" && v["mine"] == true).await;
+    // a fila de A esvaziou: pedir de novo não reapresenta nada
+    let before = a.count(|v| v["kind"] == "queued");
+    a.send(json!({ "cmd": "attach.queue" })).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(a.count(|v| v["kind"] == "queued"), before, "fila vazia depois de entregar");
+    let _ = std::fs::remove_dir_all(&dir);
+}

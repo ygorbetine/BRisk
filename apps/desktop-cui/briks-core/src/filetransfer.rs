@@ -38,6 +38,9 @@ pub fn mime_for(name: &str) -> &'static str {
     match name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).as_deref() {
         Some("png") => "image/png", Some("jpg") | Some("jpeg") => "image/jpeg", Some("gif") => "image/gif", Some("webp") => "image/webp",
         Some("pdf") => "application/pdf", Some("txt") => "text/plain", Some("zip") => "application/zip", Some("mp4") => "video/mp4", Some("mp3") => "audio/mpeg",
+        Some("mkv") => "video/x-matroska", Some("mov") => "video/quicktime", Some("webm") => "video/webm", Some("avi") => "video/x-msvideo",
+        Some("wav") => "audio/wav", Some("ogg") | Some("opus") => "audio/ogg", Some("m4a") => "audio/mp4", Some("flac") => "audio/flac",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _ => "application/octet-stream",
     }
 }

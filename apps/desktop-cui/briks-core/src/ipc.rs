@@ -19,6 +19,17 @@ use crate::signaling::{secure_room_id, topic_name};
 /// Canal direto de DM com um amigo (dmlink.rs): a malha so de DataChannel, ao lado da malha da chamada.
 struct DmLink { cmd: mpsc::Sender<MeshCmd>, knock: Option<realtime::Realtime>, authed: bool, seq: u64 }
 
+fn queued_ev(e: &crate::attachq::Entry, replaces: &str) -> Value {
+    json!({ "ev": "file", "kind": "queued", "id": e.qid, "name": e.name, "size": e.size, "peer_fp": e.fp, "mine": true, "path": e.path, "replaces": replaces })
+}
+
+/// Oferece ao amigo (canal direto autenticado) os anexos que esperavam na fila.
+async fn flush_attach(dm_links: &std::collections::HashMap<String, DmLink>, fp: &str) {
+    let Some(l) = dm_links.get(fp) else { return };
+    let ready = crate::attachq::shared().lock().unwrap().take_ready(fp);
+    for e in ready { let _ = l.cmd.send(MeshCmd::SendFile { path: e.path, to_fp: Some(fp.into()) }).await; }
+}
+
 pub struct Config {
     pub data_dir: PathBuf,
     pub realtime_url: Option<String>,
@@ -443,13 +454,46 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     }
                     "file.send" => {
                         let Some(path) = v["path"].as_str() else { continue };
-                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SendFile { path: path.into(), to_fp: v["to_fp"].as_str().map(|x| x.to_string()) }).await; }
+                        let to = v["to_fp"].as_str().filter(|f| crate::dmlink::valid_fp(f));
+                        if v["dm"].as_bool() == Some(true) {
+                            // anexo numa DM (fora da sala): fila local; segue pelo canal direto assim que o amigo estiver autenticado
+                            let Some(to) = to else { continue };
+                            let reject = |name: &str, code: &str, why: &str| json!({ "ev": "file", "kind": "rejected", "to_fp": to, "name": name, "code": code, "error": why });
+                            match crate::attachq::check(path) {
+                                Err((code, why)) => out(&mut wr, reject(path.rsplit(['/', '\\']).next().unwrap_or(path), code, &why)).await?,
+                                Ok((nm, size)) => {
+                                    let r = crate::attachq::shared().lock().unwrap().add(to, path, &nm, size, mesh::now_ms() as u64);
+                                    match r {
+                                        Err(why) => out(&mut wr, reject(&nm, "queue", &why)).await?,
+                                        Ok(e) => {
+                                            out(&mut wr, queued_ev(&e, "")).await?;
+                                            if dm_links.get(to).is_some_and(|l| l.authed) { flush_attach(&dm_links, to).await; }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::SendFile { path: path.into(), to_fp: to.map(String::from) }).await; }
                     }
                     "file.cancel" => {
-                        if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::CancelFile { id: id.into() }).await; }
+                        if let Some(id) = v["id"].as_str() {
+                            let q = crate::attachq::shared();
+                            let removed = q.lock().unwrap().remove(id);   // ainda na fila (sem oferta): só tira
+                            if let Some(e) = removed { out(&mut wr, json!({ "ev": "file", "kind": "cancelled", "id": e.qid, "name": e.name, "peer_fp": e.fp, "mine": true })).await?; }
+                            else {
+                                if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::CancelFile { id: id.into() }).await; }
+                                for l in dm_links.values() { let _ = l.cmd.send(MeshCmd::CancelFile { id: id.into() }).await; }
+                            }
+                        }
                     }
-                    "file.accept" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } }
-                    "file.pause" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: v["paused"].as_bool().unwrap_or(true) }).await; } }
+                    "file.accept" => { if let Some(id) = v["id"].as_str() { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } for l in dm_links.values() { let _ = l.cmd.send(MeshCmd::AcceptFile { id: id.into() }).await; } } }
+                    "file.pause" => { if let Some(id) = v["id"].as_str() { let p = v["paused"].as_bool().unwrap_or(true); if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: p }).await; } for l in dm_links.values() { let _ = l.cmd.send(MeshCmd::PauseFile { id: id.into(), paused: p }).await; } } }
+                    // a UI reabriu ou entrou na conta: reapresenta os anexos que esperam na fila deste PC
+                    "attach.queue" => {
+                        let gone = crate::attachq::shared().lock().unwrap().expire(mesh::now_ms() as u64);
+                        for e in gone { out(&mut wr, json!({ "ev": "file", "kind": "failed", "id": e.qid, "name": e.name, "peer_fp": e.fp, "mine": true, "error": "passou de 30 dias na fila" })).await?; }
+                        let items = crate::attachq::shared().lock().unwrap().list();
+                        for e in items { out(&mut wr, queued_ev(&e, "")).await?; }
+                    }
                     // caixa de saída persistente (outbox.rs): a UI refaz relógio/tiques depois de reabrir e sabe quem tem pendência
                     "outbox.get" => {
                         let st = { let o = crate::outbox::shared(); let mut g = o.lock().unwrap(); g.expire(mesh::now_ms() as u64); g.state() };
@@ -733,6 +777,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             continue;
                         }
                         let (Some(id), Some(url), Some(key)) = (identity.clone(), cfg.realtime_url.clone(), cfg.realtime_key.clone()) else { continue };
+                        if crate::dmlink::valid_id(uid) { let items = crate::attachq::shared().lock().unwrap().list(); for e in items { let _ = out(&mut wr, queued_ev(&e, "")).await; } }
                         if crate::dmlink::valid_id(uid) { inbox = Some(crate::dmlink::watch_inbox(RealtimeCfg::new(&url, &key), uid, id.fingerprint(), ev_tx.clone())); }
                     }
                     "dm.open" => {
@@ -823,9 +868,42 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     MeshEvent::Invite { channel, from_fp, id, package } => out(&mut wr, json!({ "ev": "chat.invite", "channel": channel, "from_fp": from_fp, "id": id, "package": package })).await?,
                     MeshEvent::DmLink { fp, on } => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,
                     MeshEvent::ChatEvent { from_fp, wire, local } => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
+                    // anexos da DM (file.offer/progress/done...): o transporte e o da sala, so que pelo canal direto. Eventos meus ganham o `qid` da fila local.
+                    MeshEvent::File(mut j) => {
+                        j["peer_fp"] = fp.clone().into();
+                        let (kind, id) = (j["kind"].as_str().unwrap_or("").to_string(), j["id"].as_str().unwrap_or("").to_string());
+                        if j["mine"] == true {
+                            let q = crate::attachq::shared();
+                            let mut extra: Option<Value> = None;
+                            {
+                                let mut g = q.lock().unwrap();
+                                match kind.as_str() {
+                                    "offer" => { if let Some(qid) = j["path"].as_str().and_then(|p| g.bind(&fp, p, &id)) { j["qid"] = qid.into(); } }
+                                    "done" | "cancelled" => { j["qid"] = g.qid_of(&id).map(Value::from).unwrap_or(Value::Null); g.finish(&id); }
+                                    "failed" => {
+                                        // conexão caiu, ninguém aceitou a tempo... o anexo volta para a fila (se o arquivo ainda existe) e segue quando o amigo voltar
+                                        if let Some(e) = g.requeue_mid(&id) {
+                                            if std::fs::metadata(&e.path).is_ok() { extra = Some(queued_ev(&e, &id)); } else { g.remove(&e.qid); }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            out(&mut wr, { let mut x = j; x["ev"] = "file".into(); x }).await?;
+                            if let Some(e) = extra { out(&mut wr, e).await?; }
+                        } else {
+                            out(&mut wr, { let mut x = j; x["ev"] = "file".into(); x }).await?;
+                        }
+                    }
                     MeshEvent::Peer { state, .. } => {
                         if state == "autenticado" {
                             if let Some(l) = dm_links.get_mut(&fp) { l.authed = true; if let Some(k) = l.knock.take() { k.close().await; } }   // achou o amigo: o toque na caixa dele nao e mais preciso
+                            flush_attach(&dm_links, &fp).await;   // o amigo apareceu: segue a fila de anexos
+                        } else if state == "fechado" || state == "falhou" {
+                            // canal caiu: o que estava sendo oferecido volta para a fila (a UI troca o cartao por "na fila")
+                            let back = crate::attachq::shared().lock().unwrap().requeue_fp(&fp);
+                            if let Some(l) = dm_links.get_mut(&fp) { l.authed = false; }
+                            for (e, old) in back { if !old.is_empty() { let _ = out(&mut wr, queued_ev(&e, &old)).await; } }
                         }
                         out(&mut wr, json!({ "ev": "dm.state", "fp": fp, "state": state })).await?;
                     }

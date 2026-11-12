@@ -400,7 +400,12 @@ void groups_resend(app_state_t *s) {
 }
 
 static void leave_or_delete(app_state_t *s, int gi);
+#define GINV_SHORT_TIMEOUT_MS 25000ull
 void groups_tick(app_state_t *s) {
+    if (s->ginv_short_st == 1) {   /* core que não responde (órfão de versão antiga, travado): o botão não fica em "Gerando…" para sempre */
+        if (GetTickCount64() - s->ginv_short_t0 > GINV_SHORT_TIMEOUT_MS) { s->ginv_short_st = 3; s->ginv_short[0] = 0; snprintf(s->ginv_short_msg, sizeof s->ginv_short_msg, "Não foi possível gerar o código curto. Use o convite longo."); }
+        else cui_request_redraw(cui_app_ui(s->app));
+    }
     if (s->busy) return;
     for (int i = 0; i < 6; i++) {
         gpend_t *p = &g_pend[i]; if (!p->kind) continue;
@@ -744,7 +749,7 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
         } else {
             if (s->ginv_short_st == 3) cui_text(ui, s->ginv_short_msg, .size = 12, .color = CUI_RGB(0xf5d9a0));
             if (cui_button(ui, s->ginv_short_st == 1 ? "Gerando…" : "Gerar código curto (BRK-XXXX-XXXX)", .variant = CUI_BUTTON_PRIMARY, .loading = s->ginv_short_st == 1) && s->ginv_short_st != 1 && s->ginv_code) {
-                s->ginv_short_st = 1; s->ginv_short_msg[0] = 0;
+                s->ginv_short_st = 1; s->ginv_short_msg[0] = 0; s->ginv_short_t0 = GetTickCount64();   /* groups_tick desiste em 25 s se o core não responder */
                 sbuf jb = { 0 }; sb_put(&jb, "{\"cmd\":\"group.invite.short\",\"package\":"); sb_str(&jb, s->ginv_code); sb_put(&jb, "}");
                 if (!core_send(jb.p)) { s->ginv_short_st = 3; snprintf(s->ginv_short_msg, sizeof s->ginv_short_msg, "O motor do Briks ainda não está pronto. Tente de novo em instantes."); }
                 free(jb.p);

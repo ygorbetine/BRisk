@@ -6,6 +6,7 @@
 #include "media_preview.h"
 #include "backend.h"
 #include "core.h"
+#include "ginvite.h"
 #include "sysint.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -67,6 +68,10 @@ int script_probe(const char *n) {
     if (!strcmp(n, "win_w") || !strcmp(n, "win_h")) { RECT r; if (state.app && GetClientRect((HWND)cui_app_native_window(state.app), &r)) return n[4] == 'w' ? (int)(r.right - r.left) : (int)(r.bottom - r.top); return -1; }
     if (!strncmp(n, "media_", 6)) { int mp = media_probe(n + 6); if (mp != -9999) return mp; }   /* 1.4.3: state, playing, pos_ms, dur_ms, frames */
     if (!strncmp(n, "attach_", 7)) return attach_probe(n + 7);   /* pending, pending_img, search_on, search_len, palette, pal_len */
+    if (!strcmp(n, "ginv_total")) return ginvite_pending_total();                      /* convites de grupo esperando resposta */
+    if (!strcmp(n, "ginv_from0")) return state.friend_count ? ginvite_pending_from(state.friends[0].id) : 0;
+    if (!strcmp(n, "ginv_st")) { for (int i = state.msg_count - 1; i >= 0; i--) if (ginvite_is(state.msgs[i].content)) return ginvite_state(state.msgs[i].id); return -9; }   /* estado do cartão mais recente */
+    if (!strcmp(n, "pend_fp0")) return state.friend_count && state.friends[0].fp[0] ? chat_pending_for_fp(state.friends[0].fp) : 0;   /* mensagens esperando o amigo 0 (fila do PC) */
     if (!strcmp(n, "draft_len")) return (int)strlen(state.draft);
     if (!strncmp(n, "draft_is:", 9) || !strncmp(n, "clip_is:", 8)) {   /* '+' = espaço (o roteiro separa por espaço): draft_is:ola+mundo */
         char want[200]; const char *src = n[0] == 'd' ? n + 9 : n + 8; size_t i = 0;

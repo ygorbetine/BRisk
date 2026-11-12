@@ -1,0 +1,21 @@
+# 1.4.4: fila de envio no aparelho. O core lembra o que ainda não foi entregue (outbox.state) e a UI refaz relógio/tiques ao reabrir.
+waitms 600
+expect screen 1
+shot fila0-sem-estado
+coreev {"ev":"outbox.state","pending":[{"id":"m2","to_fp":"fp-demo-0"}],"delivered":[],"failed":[]}
+waitms 300
+expect attach_mine_state0 2
+expect pend_fp0 1
+shot fila1-pendente
+coreev {"ev":"chat.sent","id":"m2","to_fp":"fp-demo-0"}
+waitms 300
+expect attach_mine_state0 5
+coreev {"ev":"chat.ack","id":"m2","from_fp":"fp-demo-0"}
+waitms 300
+expect attach_mine_state0 4
+expect pend_fp0 0
+shot fila2-entregue
+coreev {"ev":"outbox.state","pending":[],"delivered":[],"failed":["m2"]}
+waitms 300
+expect attach_mine_state0 3
+shot fila3-falhou

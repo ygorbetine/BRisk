@@ -187,6 +187,12 @@
     { "id": "dm-sem-sala", "demo": "social", "roteiro": "dm-sem-sala.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
       { "item": "MSG-22", "de": "dm1-recebida", "para": "dm2-enviada", "esperado": "muda", "min": 5 },
       { "item": "MSG-22", "de": "dm2-enviada", "para": "dm3-entregue", "esperado": "muda", "min": 5 } ] },
+    { "id": "dm-fila", "demo": "social", "roteiro": "dm-fila.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
+      { "item": "MSG-22", "de": "fila0-sem-estado", "para": "fila1-pendente", "esperado": "muda", "min": 5 },
+      { "item": "MSG-22", "de": "fila1-pendente", "para": "fila2-entregue", "esperado": "muda", "min": 5 },
+      { "item": "MSG-22", "de": "fila2-entregue", "para": "fila3-falhou", "esperado": "muda", "min": 5 } ] },
+    { "id": "dm-convite", "demo": "social", "roteiro": "dm-convite.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
+      { "item": "MSG-22", "de": "conv0-sem", "para": "conv1-cartao", "esperado": "muda", "min": 50 } ] },
     { "id": "amigos-pendentes-indicador", "demo": "social", "roteiro": "amigos-pendentes-indicador.txt", "env": { "BRIKS_DEMO_FTAB": "0" }, "checagens": [
       { "item": "AMI-30", "de": "p0", "para": "p1", "esperado": "muda", "min": 100 } ] },
     { "id": "msg-rico", "demo": "msgs", "roteiro": "msg-rico.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1", "BRIKS_DEMO_ATTACH": "1" }, "checagens": [

@@ -224,6 +224,10 @@ async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
     Ok(())
 }
 
+/// Nível do protocolo UI<->core. A UI (BRIKS_CORE_PROTO_MIN em core.h) avisa quando o core em execução é mais antigo que o programa
+/// (core órfão ou briks-core.exe de outra versão ao lado do app). Suba junto com a UI quando um comando/evento novo passar a ser exigido.
+pub const CORE_PROTO: u32 = 2;
+
 async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     s.set_nodelay(true).ok();
     let (rd, mut wr) = s.into_split();
@@ -234,7 +238,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
         let _ = out(&mut wr, json!({ "ev": "error", "where": "hello", "message": "token inválido" })).await;
         return Ok(());
     }
-    out(&mut wr, json!({ "ev": "hello.ok", "version": 1 })).await?;
+    out(&mut wr, json!({ "ev": "hello.ok", "version": 1, "core_proto": CORE_PROTO, "core_build": env!("CARGO_PKG_VERSION") })).await?;
 
     let (acct_tx, mut acct_rx) = mpsc::channel::<Value>(64);
     let turn_rt = accounts.clone();   // cache do TURN da conta

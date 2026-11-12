@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <process.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,9 @@ static bool g_lock_init;
 static char *g_q[Q_CAP];
 static int g_qh, g_qt;
 
+static volatile LONG g_proto;
+int core_proto(void) { return (int)g_proto; }
+void core_set_proto(int p) { InterlockedExchange(&g_proto, p); }
 core_status_t core_state(void) { return (core_status_t)g_state; }
 const char *core_error(void) { return g_error; }
 
@@ -65,6 +69,25 @@ bool core_send(const char *json_line) {
     return ok;
 }
 
+/* Core órfão (de uma versão antiga que não vigiava o pai): um briks-core.exe DESTA pasta cujo processo pai já não existe. Encerra só esses;
+ * os que têm pai vivo (outra janela do Briks) e os de outras pastas ficam como estão. */
+static void kill_orphan_cores(const char *exe) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32 pe = { sizeof pe };
+    for (BOOL ok = Process32First(snap, &pe); ok; ok = Process32Next(snap, &pe)) {
+        if (_stricmp(pe.szExeFile, "briks-core.exe") != 0 || pe.th32ProcessID == GetCurrentProcessId()) continue;
+        HANDLE par = OpenProcess(SYNCHRONIZE, FALSE, pe.th32ParentProcessID);
+        const bool parent_alive = par && WaitForSingleObject(par, 0) == WAIT_TIMEOUT;
+        if (par) CloseHandle(par);
+        if (parent_alive) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID); if (!h) continue;
+        char path[MAX_PATH]; DWORD n = sizeof path;
+        if (QueryFullProcessImageNameA(h, 0, path, &n) && _stricmp(path, exe) == 0) TerminateProcess(h, 1);
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+}
+
 static unsigned __stdcall start_thread(void *unused) {
     (void)unused;
     WSADATA wsa;
@@ -81,6 +104,7 @@ static unsigned __stdcall start_thread(void *unused) {
     else snprintf(exe, sizeof exe, "%s\\briks-core.exe", dir);
     if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) { fail("briks-core.exe não encontrado ao lado do executável."); return 0; }
 
+    kill_orphan_cores(exe);
     SetEnvironmentVariableA("BRIKS_CORE_TOKEN", token);
     /* segunda trava contra core órfão (além do Job Object, que falha se a UI já roda dentro de um job sem aninhamento):
        o core vigia este processo e sai quando ele morre, por qualquer motivo */

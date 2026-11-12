@@ -249,9 +249,11 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
     } else if (!strcmp(ev, "share.local")) {
         if (!strcmp(json_str(j, "state", ""), "on")) {
             if (!q->active && s->screen == SCREEN_CALL) s->call_mode = 1;   /* começou a MINHA transmissão: aba Transmissão, uma vez por início (o usuário pode voltar e não é puxado de novo) */
+            if (!q->active) q->audio_muted = false;   /* transmissão nova: o core começa com áudio */
             q->active = true; q->starting = false;
             q->w = jint(j, "w"); q->h = jint(j, "h"); q->cur_fps = jint(j, "fps"); q->kbps = jint(j, "kbps");
             q->audio_on = jbool(j, "audio"); q->hardware = jbool(j, "hardware");
+            if (q->audio_on && q->audio_muted) cmd("{\"cmd\":\"share.audio.mute\",\"muted\":true}");   /* o codificador reiniciou (mudou a qualidade): o mudo continua valendo */
             copy(q->encoder, sizeof q->encoder, json_str(j, "encoder", ""));
         } else {
             q->active = false; q->starting = false; q->black = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
@@ -619,11 +621,19 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             }
             if (!modal && briks_clicked_r(ui, "b2", 25.0f)) { if (on2) share_stop_second(s); else { share_open_dialog(s); q->pick_second = true; } }
         }
-        if (q->active) {
+        if (q->active) {   /* "Com áudio" / "Sem áudio": liga e desliga o áudio da transmissão AO VIVO (a faixa continua aberta: nada é renegociado) */
             vsep(ui);
-            cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-                cui_icon(ui, q->audio_on ? CUI_ICON_VOLUME_2 : CUI_ICON_VOLUME_X, 14, q->audio_on ? CUI_RGB(0x7be8a8) : B_MUTED);
-                cui_text(ui, q->audio_on ? "Com áudio" : "Sem áudio", .size = 12, .color = q->audio_on ? CUI_RGB(0x7be8a8) : B_MUTED, .nowrap = true);
+            const bool snd = q->audio_on && !q->audio_muted;   /* só a 1ª tela leva áudio; sem áudio desde o início não há faixa para ligar */
+            const cui_color ac = snd ? CUI_RGB(0x7be8a8) : q->audio_on ? CUI_RGB(0xe88a8a) : B_MUTED;
+            cui_box(ui, .id = "ba", .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {   /* sem fundo próprio: nada reto vaza no contorno arredondado */
+                cui_icon(ui, snd ? CUI_ICON_VOLUME_2 : CUI_ICON_VOLUME_X, 14, ac);
+                cui_text(ui, snd ? "Com áudio" : "Sem áudio", .size = 12, .color = ac, .nowrap = true);
+            }
+            cui_tooltip(ui, !q->audio_on ? "Esta transmissão começou sem áudio. Pare e compartilhe de novo escolhendo o áudio para poder ligar aqui."
+                                         : snd ? "Desligar o áudio da transmissão (a imagem continua)" : "Ligar o áudio da transmissão");
+            if (!modal && q->audio_on && briks_clicked_r(ui, "ba", 25.0f)) {
+                q->audio_muted = !q->audio_muted;
+                cmd(q->audio_muted ? "{\"cmd\":\"share.audio.mute\",\"muted\":true}" : "{\"cmd\":\"share.audio.mute\",\"muted\":false}");
             }
         }
         vsep(ui);
@@ -759,6 +769,8 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_mode")) return s->call_mode;
     if (!strcmp(n, "share_tiles")) return g_tiles;
     if (!strcmp(n, "share_mine")) return s->sh.active;
+    if (!strcmp(n, "share_muted")) return s->sh.audio_muted;
+    if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */

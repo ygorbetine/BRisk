@@ -61,7 +61,7 @@ pub async fn spawn(mesh: MeshHandle, sfu: SfuHandle, audio: Option<Arc<Audio>>) 
                         MeshCmd::ShareWatch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::ShareWatch { key: k, on, path }).await; }
                         MeshCmd::CamWatch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::CamWatch { key: k, on, path }).await; }
                         MeshCmd::Share2Watch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::Share2Watch { key: k, on, path }).await; }
-                        c @ (MeshCmd::ShareStart { .. } | MeshCmd::ShareStop | MeshCmd::Share2Start { .. } | MeshCmd::Share2Stop | MeshCmd::ShareAudio { .. } | MeshCmd::CamStart { .. } | MeshCmd::CamStop) => { let _ = sfu_cmd.send(c).await; }
+                        c @ (MeshCmd::ShareStart { .. } | MeshCmd::ShareStop | MeshCmd::Share2Start { .. } | MeshCmd::Share2Stop | MeshCmd::ShareAudio { .. } | MeshCmd::ShareAudioMute { .. } | MeshCmd::CamStart { .. } | MeshCmd::CamStop) => { let _ = sfu_cmd.send(c).await; }
                         c => { let _ = mesh_cmd.send(c).await; }   // chat, eventos, status/presença, expulsar/permitir
                     }
                 }

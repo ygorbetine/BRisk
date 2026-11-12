@@ -171,11 +171,15 @@ pub struct AudioStats {
 pub struct ProcAudio {
     stop: Arc<AtomicBool>,
     mode: Arc<Mutex<AudioMode>>,
+    /// 1.4.1: "Sem áudio" ao vivo. A faixa continua aberta (nada a renegociar): só deixa de sair som, na hora e sem esperar a varredura de 2 s.
+    muted: Arc<AtomicBool>,
     pub stats: Arc<AudioStats>,
 }
 impl ProcAudio {
     pub fn stop(&self) { self.stop.store(true, Ordering::Relaxed); }
     pub fn set_mode(&self, m: AudioMode) { *self.mode.lock().unwrap() = m; }
+    pub fn set_muted(&self, m: bool) { self.muted.store(m, Ordering::Relaxed); }
+    pub fn is_muted(&self) -> bool { self.muted.load(Ordering::Relaxed) }
 }
 impl Drop for ProcAudio { fn drop(&mut self) { self.stop(); } }
 
@@ -201,7 +205,8 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
     let mode = Arc::new(Mutex::new(mode));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     tokio::spawn(async move { while let Some(p) = rx.recv().await { let _ = track.write_sample(&Sample { data: Bytes::from(p), duration: Duration::from_millis(20), ..Default::default() }).await; } });
-    let (st, sts, md) = (stop.clone(), stats.clone(), mode.clone());
+    let muted = Arc::new(AtomicBool::new(false));
+    let (st, sts, md, mu) = (stop.clone(), stats.clone(), mode.clone(), muted.clone());
     std::thread::spawn(move || {
         let mut enc = match opus::Encoder::new(RATE, opus::Channels::Stereo, opus::Application::Audio) { Ok(e) => e, Err(_) => return };
         let _ = enc.set_bitrate(opus::Bitrate::Bits(128_000));
@@ -232,6 +237,7 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
             if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
             next += Duration::from_millis(20);
             if next + Duration::from_millis(200) < now { next = now; }
+            if mu.load(Ordering::Relaxed) { for s in srcs.values() { s.ring.lock().unwrap().clear(); } continue; }   // sem áudio: descarta o que chegou e não envia nada
             mix.iter_mut().for_each(|v| *v = 0.0);
             let mut any = false;
             if beep {
@@ -257,12 +263,34 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
         }
         for s in srcs.values() { s.stop.store(true, Ordering::Relaxed); }
     });
-    ProcAudio { stop, mode, stats }
+    ProcAudio { stop, mode, muted, stats }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 1.4.1: ligar/desligar o áudio da transmissão ao vivo: mudo, nenhum quadro sai; desmutado, volta a sair; a faixa é a mesma.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn muting_stops_frames_and_unmuting_resumes_them() {
+        let track = new_audio_track();
+        let pa = start(AudioMode::TestBeep, track);
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let f0 = pa.stats.frames.load(Ordering::Relaxed);
+        assert!(f0 > 5, "com áudio saem quadros ({f0})");
+        pa.set_muted(true);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let f1 = pa.stats.frames.load(Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let f2 = pa.stats.frames.load(Ordering::Relaxed);
+        assert_eq!(f1, f2, "mudo: nenhum quadro novo ({f1} -> {f2})");
+        assert!(pa.is_muted());
+        pa.set_muted(false);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let f3 = pa.stats.frames.load(Ordering::Relaxed);
+        assert!(f3 > f2 + 5, "desmutado volta a sair ({f2} -> {f3})");
+        pa.stop();
+    }
 
     #[test]
     fn exclusion_list_covers_briks_and_discord() {

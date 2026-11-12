@@ -71,6 +71,7 @@ typedef struct {
     int content;                               /* prioridade no aperto: 0 nitidez (cede FPS), 1 fluidez (cede resolução) */
     /* transmissão local */
     bool active, starting, audio_on, hardware;
+    bool audio_muted;   /* 1.4.1: "Sem áudio" ao vivo pelo botão da barra (a faixa continua aberta no core); volta a falso a cada início */
     int w, h, cur_fps, kbps, cpu, audio_sources;
     float stat_fps, enc_ms, audio_peak; int stat_kbps;
     /* laço de adaptação ao vivo (share.stats) */

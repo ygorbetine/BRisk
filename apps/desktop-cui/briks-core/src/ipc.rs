@@ -662,6 +662,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let mode = audio_mode(&v, &crate::capture::SourceKind::Test);
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareAudio { mode }).await; }
                     }
+                    // "Com áudio"/"Sem áudio" ao vivo (só a 1ª transmissão leva áudio): a faixa continua aberta, nada é renegociado
+                    "share.audio.mute" => {
+                        if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareAudioMute { muted: v["muted"].as_bool().unwrap_or(false) }).await; }
+                    }
                     "share.volume" => {
                         let key = v["peer"].as_str().unwrap_or("").to_string();
                         if let (false, Some(c)) = (key.is_empty(), &mesh_cmd) { let _ = c.send(MeshCmd::ShareVolume { key, gain: v["volume"].as_f64().unwrap_or(1.0) as f32 }).await; }

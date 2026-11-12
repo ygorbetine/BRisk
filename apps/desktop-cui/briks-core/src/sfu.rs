@@ -1076,6 +1076,7 @@ impl Actor {
             MeshCmd::CamStop => self.cam_stop().await,
             MeshCmd::CamWatch { key, on, path } => self.watch_cam(&key, on, path).await,
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share[0].as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
+            MeshCmd::ShareAudioMute { muted } => { if let Some(a) = self.share[0].as_ref().and_then(|s| s.audio.as_ref()) { a.set_muted(muted); } }
             MeshCmd::ShareWatch { key, on, path } => self.watch(&key, on, path, 0).await,
             MeshCmd::Share2Watch { key, on, path } => self.watch(&key, on, path, 1).await,
             MeshCmd::AudioCfg(c) => { if let Some(a) = &self.audio { a.apply_cfg(&c); } }

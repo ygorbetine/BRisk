@@ -1,0 +1,25 @@
+# 1.4.1 (CHM-31): botão "Com áudio" da barra de transmissão liga/desliga o áudio ao vivo (verde "Com áudio" / vermelho "Sem áudio"); sem áudio desde o início fica desabilitado
+waitms 1200
+coreev {"ev":"share.local","state":"on","w":1280,"h":720,"fps":30,"kbps":4000,"audio":true}
+waitms 800
+expect share_audio 1
+shot u0-com
+click 876 688
+waitms 500
+expect share_audio 0
+expect share_muted 1
+shot u1-sem
+click 876 688
+waitms 500
+expect share_audio 1
+expect share_muted 0
+shot u2-com
+coreev {"ev":"share.local","state":"off"}
+waitms 500
+coreev {"ev":"share.local","state":"on","w":1280,"h":720,"fps":30,"kbps":4000,"audio":false}
+waitms 800
+expect share_audio 0
+click 876 688
+waitms 400
+expect share_muted 0
+shot u3-sem-faixa

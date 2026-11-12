@@ -156,6 +156,8 @@ pub enum MeshCmd {
     ShareVolume { key: String, gain: f32 },
     /// Troca os processos capturados durante a transmissão ("Escolher apps"); só vale se ela começou com áudio.
     ShareAudio { mode: crate::procaudio::AudioMode },
+    /// "Com áudio" / "Sem áudio" ao vivo da transmissão (a faixa de áudio continua aberta)
+    ShareAudioMute { muted: bool },
     /// Liga/desliga a decodificação do vídeo de um peer e define o arquivo de quadro compartilhado.
     ShareWatch { key: String, on: bool, path: std::path::PathBuf },
     Close,
@@ -722,6 +724,7 @@ impl Actor {
                 if let Some(a) = &self.audio { let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key); a.set_screen_gain(&id, gain); }
             }
             MeshCmd::ShareAudio { mode } => { if let Some(a) = self.share[0].as_ref().and_then(|s| s.audio.as_ref()) { a.set_mode(mode); } }
+            MeshCmd::ShareAudioMute { muted } => { if let Some(a) = self.share[0].as_ref().and_then(|s| s.audio.as_ref()) { a.set_muted(muted); } }
             c @ (MeshCmd::ShareWatch { .. } | MeshCmd::Share2Watch { .. }) => {
                 let (key, on, path, slot) = match c { MeshCmd::ShareWatch { key, on, path } => (key, on, path, 0usize), MeshCmd::Share2Watch { key, on, path } => (key, on, path, 1usize), _ => unreachable!() };
                 let found = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, p)| (k.clone(), p.recv[slot].clone()));

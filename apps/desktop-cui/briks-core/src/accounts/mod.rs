@@ -431,6 +431,14 @@ impl Accounts {
         if !invite_code::package_ok(pkg) { return Err(AccountError::new("server", "Resposta inesperada do servidor de contas.")); }
         Ok(pkg.to_string())
     }
+    /// Publica o status personalizado (texto, emoji, validade em segundos; 0 = sem validade). Texto vazio apaga.
+    pub async fn set_status(&self, status: &str, emoji: &str, ttl_seconds: u32) -> AResult<()> {
+        let status: String = status.trim().chars().take(64).collect();
+        let emoji: String = emoji.trim().chars().take(8).collect();
+        let tok = self.access_token().await?;
+        let (p, ttl) = (self.provider.clone(), ttl_seconds.min(7 * 24 * 3600));
+        blk(move || p.set_status(&tok, &status, &emoji, ttl)).await
+    }
     pub async fn presence_beat(&self, invisible: bool) -> AResult<()> {
         let tok = self.access_token().await?;
         let p = self.provider.clone();

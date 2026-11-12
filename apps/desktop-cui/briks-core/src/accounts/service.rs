@@ -574,6 +574,17 @@ impl Service {
                     let _ = tx.send(ev).await;
                 });
             }
+            "account.status.set" => {
+                // status personalizado (0012): {status, emoji, ttl_s}. Sem a RPC nova só o texto sobe; sem nenhuma, `server_not_ready` e a UI segue só com o balão local/P2P
+                let (status, emoji, ttl) = (s("status"), s("emoji"), v["ttl_s"].as_u64().unwrap_or(0) as u32);
+                tokio::spawn(async move {
+                    let ev = match acc.set_status(&status, &emoji, ttl).await {
+                        Ok(()) => json!({ "ev": "account.status", "ok": true }),
+                        Err(e) => json!({ "ev": "account.status", "ok": false, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
             "presence.beat" | "presence.friends" | "presence.clear" => {
                 // batimento de presença (0007): o app manda a cada ~60 s; sem a RPC (`server_not_ready`) remote=false e a UI usa só "na chamada"
                 let (cmd, invisible) = (cmd.to_string(), v["invisible"].as_bool().unwrap_or(false));

@@ -1417,3 +1417,47 @@ async fn short_group_invite_code_roundtrip_expiry_uses_and_missing_table() {
     assert_eq!(b.group_invite_create(&pkg, 24, 10).await.unwrap_err().code, "server_not_ready");
     assert_eq!(b.group_invite_lookup("BRK-ABCD-EFGH").await.unwrap_err().code, "server_not_ready");
 }
+
+async fn seen_status(acc: &Accounts) -> Option<(Option<String>, Option<String>)> {
+    acc.friends().await.unwrap().into_iter().find(|x| x.state == "friend").map(|x| (x.status, x.status_emoji))
+}
+
+/// 1.4.3: status personalizado (0012): amigo aceito vê texto + emoji; some quando vence; servidor só com a 0003 recebe só o texto.
+#[tokio::test]
+async fn custom_status_reaches_accepted_friends_expires_and_degrades_without_0012() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("st-a")), accounts(&f, &tmpdir("st-b")));
+    let SignUpOutcome::SignedIn(_) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    for (acc, nick) in [(&a, "ana_01"), (&b, "bia_01")] {
+        let id = crate::identity::Identity::generate();
+        acc.publish_identity(serde_json::to_value(id.public_jwk()).unwrap(), &id.fingerprint()).await.unwrap();
+        acc.set_nick(nick).await.unwrap();
+    }
+    a.friend_request("bia_01").await.unwrap();
+    let req = b.friends().await.unwrap().into_iter().find(|x| x.state == "incoming").unwrap();
+    b.friend_respond(req.request_id.as_deref().unwrap(), true).await.unwrap();
+    // texto + emoji aparecem para o amigo; texto é cortado em 64
+    a.set_status(&"x".repeat(80), "🎮", 3600).await.unwrap();
+    let (st, em) = seen_status(&b).await.unwrap();
+    assert_eq!((st.unwrap().chars().count(), em.as_deref()), (64, Some("🎮")));
+    a.set_status("Jogando", "🎮", 3600).await.unwrap();
+    assert_eq!(seen_status(&b).await.unwrap().0.as_deref(), Some("Jogando"));
+    // vencido: some para o amigo, sem o dono fazer nada
+    f.state.lock().unwrap().clock_skew = 3700;
+    assert_eq!(seen_status(&b).await.unwrap(), (None, None));
+    f.state.lock().unwrap().clock_skew = 0;
+    // sem validade fica; texto vazio apaga (e o emoji junto)
+    a.set_status("Ausente", "💤", 0).await.unwrap();
+    f.state.lock().unwrap().clock_skew = 10 * 24 * 3600;
+    assert_eq!(seen_status(&b).await.unwrap().0.as_deref(), Some("Ausente"));
+    a.set_status("", "💤", 0).await.unwrap();
+    assert_eq!(seen_status(&b).await.unwrap(), (None, None));
+    // servidor sem a 0012: o texto ainda sobe (função de 1 argumento), o emoji não
+    f.state.lock().unwrap().clock_skew = 0;
+    f.state.lock().unwrap().status_v1_only = true;
+    a.set_status("Estudando", "📚", 3600).await.unwrap();
+    assert_eq!(seen_status(&b).await.unwrap(), (Some("Estudando".to_string()), None));
+}

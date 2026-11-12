@@ -472,11 +472,12 @@ void rtc_pump(app_state_t *s) {
             }
         }
         {   /* status e presença (programa em uso, se ligado) seguem para o core; ele anuncia aos peers autenticados da sala */
-            static char sent_st[64], sent_pr[64]; static bool sent_once;
+            static char sent_st[96], sent_pr[64]; static bool sent_once;
             const char *pr = s->rp_enabled ? s->user_presence : "";
-            if (!sent_once || strcmp(sent_st, s->user_status) || strcmp(sent_pr, pr)) {
-                sent_once = true; copy(sent_st, sizeof sent_st, s->user_status); copy(sent_pr, sizeof sent_pr, pr);
-                char extra[320], a[140], b[140]; json_escape(s->user_status, a, sizeof a); json_escape(pr, b, sizeof b);
+            char comp[96]; if (s->user_status[0] && s->user_emoji[0]) snprintf(comp, sizeof comp, "%s %s", s->user_emoji, s->user_status); else copy(comp, sizeof comp, s->user_status);   /* o emoji viaja junto do texto */
+            if (!sent_once || strcmp(sent_st, comp) || strcmp(sent_pr, pr)) {
+                sent_once = true; copy(sent_st, sizeof sent_st, comp); copy(sent_pr, sizeof sent_pr, pr);
+                char extra[360], a[200], b[140]; json_escape(comp, a, sizeof a); json_escape(pr, b, sizeof b);
                 snprintf(extra, sizeof extra, "\"status\":\"%s\",\"presence\":\"%s\"", a, b);
                 send_cmd("profile.set", extra);
             }

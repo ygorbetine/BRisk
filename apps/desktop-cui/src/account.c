@@ -156,6 +156,21 @@ void account_friends_poll(app_state_t *s) {
     core_send("{\"cmd\":\"friends.list\"}");
 }
 
+/* 1.4.3 (0012): o status personalizado sobe para a conta quando muda (e uma vez ao entrar), com a validade que sobrou; os amigos o recebem na lista.
+ * Sem a migração no servidor o core cai na função antiga (só o texto) ou devolve server_not_ready: o balão local e o da chamada continuam. */
+void account_status_sync(app_state_t *s) {
+    static char who[48], sent_st[72], sent_em[16]; static long long sent_exp; static bool sent;
+    if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo || getenv("BRIKS_DEMO_STATUS") || getenv("BRIKS_DEMO")) { who[0] = 0; sent = false; return; }
+    const bool entered = strcmp(who, s->acct_user_id) != 0;
+    if (!entered && sent && !strcmp(sent_st, s->user_status) && !strcmp(sent_em, s->user_emoji) && sent_exp == s->status_expires) return;
+    if (entered && !s->user_status[0] && !s->user_emoji[0]) { copy(who, sizeof who, s->acct_user_id); sent = true; sent_st[0] = sent_em[0] = 0; sent_exp = s->status_expires; return; }   /* nada a publicar: não gasta chamada */
+    copy(who, sizeof who, s->acct_user_id); sent = true; copy(sent_st, sizeof sent_st, s->user_status); copy(sent_em, sizeof sent_em, s->user_emoji); sent_exp = s->status_expires;
+    long long ttl = 0; if (s->status_expires > 0) { ttl = s->status_expires - (long long)time(NULL); if (ttl < 1) ttl = 1; }
+    char st[200], em[40], line[320]; json_escape(s->user_status, st, sizeof st); json_escape(s->user_emoji, em, sizeof em);
+    snprintf(line, sizeof line, "{\"cmd\":\"account.status.set\",\"status\":\"%s\",\"emoji\":\"%s\",\"ttl_s\":%lld}", st, em, ttl);
+    core_send(line);
+}
+
 void account_friends(app_state_t *s) {
     (void)s; if (core_state() != CORE_READY) return;
     core_send("{\"cmd\":\"friends.list\"}");
@@ -432,7 +447,8 @@ static void on_friends(app_state_t *s, const jval *j) {
         copy(d->name, sizeof d->name, json_str(p, "display_name", "?"));
         copy(d->request_id, sizeof d->request_id, json_str(p, "request_id", ""));
         copy(d->nick, sizeof d->nick, json_str(p, "nick", ""));
-        copy(d->status, sizeof d->status, json_str(p, "status", ""));
+        { const char *st = json_str(p, "status", ""), *em = json_str(p, "status_emoji", "");   /* 1.4.3: status personalizado = emoji + texto (0012) */
+          if (st[0] && em[0]) snprintf(d->status, sizeof d->status, "%s %s", em, st); else copy(d->status, sizeof d->status, st); }
         copy(d->fp, sizeof d->fp, json_str(p, "fingerprint", ""));
         const jval *pk = json_get(p, "public_key");
         if (pk && json_str(pk, "x", "")[0] && json_str(pk, "y", "")[0]) snprintf(d->jwk, sizeof d->jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(pk, "x", ""), json_str(pk, "y", ""));
@@ -595,6 +611,7 @@ void account_tick(app_state_t *s) {
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
     account_presence_tick(s);
     account_friends_poll(s);
+    account_status_sync(s);
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */

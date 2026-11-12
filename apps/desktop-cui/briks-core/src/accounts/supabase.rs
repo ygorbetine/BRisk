@@ -295,6 +295,13 @@ impl AuthProvider for SupabaseProvider {
     fn group_invite_lookup(&self, access_token: &str, code: &str) -> AResult<Value> {
         self.rpc(access_token, "group_invite_lookup", json!({ "p_code": code }))
     }
+    fn set_status(&self, access_token: &str, status: &str, emoji: &str, ttl_seconds: u32) -> AResult<()> {
+        let args = json!({ "p_status": status, "p_emoji": if emoji.is_empty() { Value::Null } else { json!(emoji) }, "p_ttl_seconds": if ttl_seconds == 0 { Value::Null } else { json!(ttl_seconds) } });
+        match self.rpc(access_token, "account_set_status", args) {
+            Err(e) if e.code == "server_not_ready" => self.rpc(access_token, "account_set_status", json!({ "p_status": status })).map(|_| ()),   // servidor sem a 0012: só o texto
+            r => r.map(|_| ()),
+        }
+    }
     fn presence_beat(&self, access_token: &str, invisible: bool) -> AResult<()> {
         self.rpc(access_token, "presence_beat", json!({ "p_invisible": invisible })).map(|_| ())
     }

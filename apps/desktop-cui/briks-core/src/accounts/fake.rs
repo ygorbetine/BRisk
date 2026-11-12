@@ -44,6 +44,8 @@ pub struct FakeState {
     /// presença (0007): user_id -> (último batimento em segundos, invisível)
     presence: HashMap<String, (u64, bool)>,
     pub no_presence_rpc: bool,
+    /// simula servidor só com a função de status de 1 argumento (0003, sem a 0012)
+    pub status_v1_only: bool,
     /// buscas por @nick feitas por conta (0008: máximo 30 por hora) e servidor sem a 0008
     lookups: HashMap<String, u32>,
     pub no_lookup_rpc: bool,
@@ -380,12 +382,18 @@ fn route(st: &mut FakeState, method: &str, path: &str, q: &HashMap<String, Strin
     }
 }
 
+fn status_expired(st: &FakeState, p: &Value) -> bool {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+    p["status_expires"].as_u64().map(|e| e <= now).unwrap_or(false)
+}
+
 fn friend_view(st: &FakeState, other: &str, state: &str, request_id: Option<&str>) -> Value {
     let p = st.profiles.get(other).cloned().unwrap_or(json!({ "user_id": other }));
     let accepted = state == "friend";
     json!({ "user_id": other, "nick": p["nick"], "display_name": p["display_name"], "avatar_url": p["avatar_url"],
         "fingerprint": if accepted { p["fingerprint"].clone() } else { Value::Null }, "public_key": if accepted { p["public_key"].clone() } else { Value::Null },
-        "status": if accepted { p["status"].clone() } else { Value::Null }, "state": state, "request_id": request_id })
+        "status": if accepted && !status_expired(st, &p) { p["status"].clone() } else { Value::Null },
+        "status_emoji": if accepted && !status_expired(st, &p) && !st.status_v1_only { p["status_emoji"].clone() } else { Value::Null }, "state": state, "request_id": request_id })
 }
 
 fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
@@ -530,6 +538,19 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some(i) = st.invites.iter().position(|v| v.0 == want && v.3 > now && v.4 < v.5) else { return pg("invite_not_found") };
             st.invites[i].4 += 1;
             ok(json!({ "package": st.invites[i].1, "uses_left": st.invites[i].5 - st.invites[i].4 }))
+        }
+        "account_set_status" if st.status_v1_only && b.get("p_emoji").is_some() => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "account_set_status" => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let Some(p) = st.profiles.get_mut(me) else { return pg("no_profile") };
+            let text: String = b["p_status"].as_str().unwrap_or("").trim().chars().take(64).collect();
+            let emoji: String = b["p_emoji"].as_str().unwrap_or("").trim().chars().take(8).collect();
+            p["status"] = if text.is_empty() { Value::Null } else { json!(text) };
+            p["status_emoji"] = if text.is_empty() || emoji.is_empty() { Value::Null } else { json!(emoji) };
+            p["status_expires"] = match b["p_ttl_seconds"].as_u64() { Some(t) if t > 0 && !text.is_empty() => json!(now + t.min(7 * 24 * 3600)), _ => Value::Null };
+            ok(Value::Null)
         }
         "presence_beat" | "presence_friends" | "presence_clear" if st.no_presence_rpc => {
             ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))

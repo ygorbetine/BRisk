@@ -255,6 +255,7 @@ int groups_probe(const app_state_t *s, const char *name);                      /
 bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
 void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
+void account_status_sync(app_state_t *s);   /* 1.4.3: sobe o status personalizado (texto, emoji, validade) para a conta quando muda */
 void account_friends_poll(app_state_t *s);   /* a cada 30 s e ao voltar o foco: convites novos aparecem sem reiniciar */
 void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */

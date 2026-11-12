@@ -152,6 +152,9 @@ pub struct Friend {
     pub public_key: Option<Value>,
     #[serde(default)]
     pub status: Option<String>,
+    /// Emoji do status personalizado (0012); `None` em servidor sem a migração.
+    #[serde(default)]
+    pub status_emoji: Option<String>,
     /// friend | incoming | outgoing
     pub state: String,
     #[serde(default)]
@@ -196,6 +199,8 @@ pub trait AuthProvider: Send + Sync {
     fn group_invite_create(&self, _access_token: &str, _package: &str, _ttl_hours: u32, _max_uses: u32) -> AResult<Value> { Err(AccountError::new("server_not_ready", "Código curto de convite ainda não disponível no servidor.")) }
     /// Resolve um código curto exato para o pacote assinado (0010). Inexistente, vencido e esgotado respondem `invite_not_found`.
     fn group_invite_lookup(&self, _access_token: &str, _code: &str) -> AResult<Value> { Err(AccountError::new("server_not_ready", "Código curto de convite ainda não disponível no servidor.")) }
+    /// Status personalizado (texto até 64, emoji, validade em segundos; 0 = sem validade). Sem a 0012 só o texto sobe (função de 1 argumento da 0003).
+    fn set_status(&self, _access_token: &str, _status: &str, _emoji: &str, _ttl_seconds: u32) -> AResult<()> { Err(AccountError::new("server_not_ready", "Status ainda não disponível no servidor.")) }
     /// Presença por batimento (migração 0007). Sem a RPC o erro é `server_not_ready` e a UI mantém só "na chamada".
     fn presence_beat(&self, _access_token: &str, _invisible: bool) -> AResult<()> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
     fn presence_friends(&self, _access_token: &str) -> AResult<Vec<Presence>> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }

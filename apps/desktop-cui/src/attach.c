@@ -607,6 +607,7 @@ void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) { g_ps = s;
     }
 }
 
+void attach_script_bind(app_state_t *s) { g_ps = s; }
 void attach_script_event(const char *line) { if (g_ps && line) rtc_handle_event(g_ps, line); }
 
 void attach_script_state(app_state_t *s, int n, const char *state) {

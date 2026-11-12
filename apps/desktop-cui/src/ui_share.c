@@ -758,6 +758,7 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_cy")) return (int)g_zoom[0].cy;
     if (!strcmp(n, "share_mode")) return s->call_mode;
     if (!strcmp(n, "share_tiles")) return g_tiles;
+    if (!strcmp(n, "share_mine")) return s->sh.active;
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */

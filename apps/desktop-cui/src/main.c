@@ -96,6 +96,7 @@ static void frame(cui_ctx *ui) {
         else if (cui_shortcut(ui, CUI_MOD_CTRL, CUI_KEY_0)) settings_text_step(ui, 0);
     }
     if (briks_theme_poll()) briks_apply_theme(ui);   /* hot reload do theme.json */
+    { extern void attach_script_bind(app_state_t *s); attach_script_bind(&state); }   /* roteiros: coreev funciona em qualquer tela */
     { static bool demo_done; const char *d = getenv("BRIKS_DEMO"); if (d && !demo_done) { demo_done = true; app_demo(&state, d); } }
     dev_autologin();
     { const char *r = getenv("BRIKS_DEV_ROOM"); if (r && r[0] && !state.in_room && !state.rtc_session_sent) rtc_join_room(&state, r); }   /* teste: entra na sala sem clicar */

@@ -9,6 +9,7 @@
 void settings_overlay(bool *on, float *opacity, int *flags, int *corner);
 bool settings_ovl_place(char *dev, size_t cap, int *x, int *y, int *w);        /* settings.c: posição do monitor ativo */
 void settings_ovl_set(const char *dev, int x, int y, int w);
+bool settings_ovl_selfshare(void);
 bool settings_ovl_widget(const char *id, bool on); void settings_ovl_opacity(int pct);   /* settings.c: botões da barra de edição do overlay */
 bool settings_tile_place(const char *key, char *dev, size_t cap, int *x, int *y, int *pct); void settings_tile_set(const char *key, const char *dev, int x, int y, int pct);
 bool settings_tile_enabled(const char *key); void settings_tile_enable(const char *key, bool on);   /* settings.c: miniaturas de transmissão */
@@ -221,7 +222,7 @@ static void compose(const app_state_t *s, float opacity, int flags, int corner, 
         snprintf(out + n, cap - n, "end\n"); g_last_lines = lines; return;
     }
     if ((flags & 4) && s->in_room) { n += (size_t)snprintf(out + n, cap - n, "i Sala conectada\n"); lines++; }
-    if ((flags & 1) && s->sh.active) { n += (size_t)snprintf(out + n, cap - n, "i Você está transmitindo a tela\n"); lines++; }
+    if ((flags & 1) && s->sh.active && settings_ovl_selfshare()) { n += (size_t)snprintf(out + n, cap - n, "i Você está transmitindo a tela\n"); lines++; }
     if ((flags & 8) && s->deaf) { n += (size_t)snprintf(out + n, cap - n, "w Ensurdecido\n"); lines++; }   /* independentes: com os dois, aparecem os dois avisos */
     if ((flags & 8) && !s->mic_on) { n += (size_t)snprintf(out + n, cap - n, "w Microfone mudo\n"); lines++; }
     if (flags & 2) {

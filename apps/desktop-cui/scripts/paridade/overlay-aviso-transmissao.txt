@@ -1,0 +1,17 @@
+# 1.4.1 (CFG-26): o aviso "Você está transmitindo a tela" da sobreposição pode ser desligado (Configurações > Sobreposição); desligado, nem é desenhado
+waitms 1500
+expect cfg_ov_selfshare 1
+coreev {"ev":"share.local","state":"on","w":1280,"h":720,"fps":30,"kbps":4000,"audio":true}
+waitms 1200
+expect share_mine 1
+shot a0-ligado
+expect overlay_lines 6
+sys ovl line widget selfshare 0
+waitms 1200
+expect cfg_ov_selfshare 0
+expect overlay_lines 5
+shot a1-desligado
+sys ovl line widget selfshare 1
+waitms 1200
+expect cfg_ov_selfshare 1
+expect overlay_lines 6

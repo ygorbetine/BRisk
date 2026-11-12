@@ -32,7 +32,7 @@ typedef struct {
     bool echo, excl_audio;
     int fw_choice;                /* Firewall: 0 não decidido, 1 liberado, 2 agora não, 3 não perguntar */
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
-    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
+    bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute, ov_selfshare; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
     char key_mute[24], key_deafen[24], key_stream[24], key_ptt[24];
     bool ptt_on; float ptt_delay;
     bool nt_online, nt_stream;
@@ -54,7 +54,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "in_vol", 'f', &g_set.in_vol }, { "out_vol", 'f', &g_set.out_vol }, { "noise_off", 'i', &g_set.noise_off }, { "gate_on", 'b', &g_set.gate_on },
     { "gate_db", 'f', &g_set.gate_db }, { "echo", 'b', &g_set.echo }, { "excl_audio", 'b', &g_set.excl_audio }, { "net_pref", 'i', &g_set.net_pref },
     { "call_mode", 'i', &g_set.call_mode }, { "fw_choice", 'i', &g_set.fw_choice }, { "ov_on", 'b', &g_set.ov_on }, { "ov_opacity", 'f', &g_set.ov_opacity }, { "ov_live", 'b', &g_set.ov_live },
-    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_corner", 'i', &g_set.ov_corner },
+    { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_selfshare", 'b', &g_set.ov_selfshare }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
@@ -67,7 +67,7 @@ static void defaults(void) {
     memset(&g_set, 0, sizeof g_set);
     g_set.text_size = 1;
     g_set.in_vol = 100; g_set.out_vol = 100; g_set.gate_db = -50; g_set.echo = true; g_set.excl_audio = true;
-    g_set.ov_on = true; g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = true;
+    g_set.ov_on = true; g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = g_set.ov_selfshare = true;
     g_set.nt_online = g_set.nt_stream = true; g_set.ptt_delay = 200;
     snprintf(g_set.key_mute, sizeof g_set.key_mute, "Ctrl+Shift+M"); snprintf(g_set.key_deafen, sizeof g_set.key_deafen, "Ctrl+Shift+D");
     snprintf(g_set.key_stream, sizeof g_set.key_stream, "Ctrl+Shift+S");
@@ -151,6 +151,7 @@ void settings_overlay(bool *on, float *opacity, int *flags, int *corner) {
     *on = g_set.ov_on; *opacity = g_set.ov_opacity; *corner = g_set.ov_corner < 0 || g_set.ov_corner > 3 ? 0 : g_set.ov_corner;
     *flags = (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
 }
+bool settings_ovl_selfshare(void) { return g_set.ov_selfshare; }   /* 1.4.1: aviso "Você está transmitindo a tela" por cima do jogo (padrão ligado) */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db) { *in_gain = g_set.in_vol / 100.0f; *out_gain = g_set.out_vol / 100.0f; *gate_on = g_set.gate_on; *gate_db = g_set.gate_db; }
 /* Posições da sobreposição por monitor (CFG-25): lista "dev|x|y|w;dev|x|y|w" e o monitor ativo (onde o painel foi solto por último). */
 bool settings_ovl_place(char *dev, size_t cap, int *x, int *y, int *w) {
@@ -182,6 +183,7 @@ bool settings_ovl_widget(const char *id, bool on) {
     if (all || !strcmp(id, "voice")) { g_set.ov_voice = on; hit = true; }
     if (all || !strcmp(id, "status")) { g_set.ov_status = on; hit = true; }
     if (all || !strcmp(id, "mute")) { g_set.ov_mute = on; hit = true; }
+    if (all || !strcmp(id, "selfshare")) { g_set.ov_selfshare = on; hit = true; }
     return hit;
 }
 void settings_ovl_opacity(int pct) { g_set.ov_opacity = (float)(pct < 10 ? 10 : pct > 100 ? 100 : pct); }
@@ -316,6 +318,7 @@ int settings_probe(const char *n, app_state_t *s) {
     if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
     if (!strcmp(n, "cfg_ov_tiles")) { int c = 0; for (const char *p = g_set.ov_tiles; *p; p++) if (*p == ';') c++; return g_set.ov_tiles[0] ? c + 1 : 0; }
     if (!strcmp(n, "cfg_ov_toff")) { int c = 0; for (const char *p = g_set.ov_toff; *p; p++) if (*p == ';') c++; return g_set.ov_toff[0] ? c + 1 : 0; }
+    if (!strcmp(n, "cfg_ov_selfshare")) return g_set.ov_selfshare;
     if (!strcmp(n, "cfg_ov_flags")) return (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
     if (!strcmp(n, "cfg_ov_opacity")) return (int)(g_set.ov_opacity + 0.5f);
     if (!strcmp(n, "rec_slot")) return rec_slot;
@@ -610,6 +613,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                                 if (on != was) overlay_tile_enable(j, on);
                             }
                         }
+                        sw(ui, "Aviso \"Você está transmitindo a tela\"", "Uma linha por cima do jogo enquanto você divide a sua tela. Desligado, o texto nem é desenhado (as miniaturas continuam).", &g_set.ov_selfshare);
                         sw(ui, "Aviso de mudo", "Mostra quando seu microfone está mudo ou você está ensurdecido.", &g_set.ov_mute);
                         cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 10, 100);
                         static const char *COR[] = { "Sup. direito", "Sup. esquerdo", "Inf. direito", "Inf. esquerdo" };

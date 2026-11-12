@@ -151,7 +151,7 @@ void briks_gradient_bar(cui_ctx *ui) {
     cui_canvas(ui, "topbar", CUI_FILL, CUI_PX(3), paint_bar, NULL, 0);
 }
 
-bool briks_logo(cui_ctx *ui, float px) {
+cui_texture briks_logo_tex(cui_ctx *ui) {
     static cui_texture tex; static bool tried;
     if (!tried) {
         tried = true;
@@ -161,6 +161,11 @@ bool briks_logo(cui_ctx *ui, float px) {
         snprintf(path, sizeof path, "%s\\assets\\logo\\briks-logo-128.png", dir);
         if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) tex = cui_image_load(ui, path, &w, &h);
     }
+    return tex;
+}
+
+bool briks_logo(cui_ctx *ui, float px) {
+    cui_texture tex = briks_logo_tex(ui);
     if (!tex) return false;
     cui_image(ui, tex, .width = CUI_PX(px), .height = CUI_PX(px));
     return true;

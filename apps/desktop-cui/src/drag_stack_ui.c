@@ -158,8 +158,12 @@ static void art_servers(cui_ctx *ui, const app_state_t *s, cui_rect c) {
         bool last = i == g.cells - 1;
         cui_corners r7 = CUI_CORNERS(7);
         if (i == 0) {
-            cui_draw_rect_gradient(ui, t, r7, CUI_RGBA(0xb01fcfff), CUI_RGBA(0x6d5cf6ff));
-            cui_draw_text(ui, CUI_FONT_MEDIUM, side * 0.5f, (cui_vec2){ t.x + side * 0.5f - tw(side * 0.5f, "B") * 0.5f, t.y + side * 0.24f }, CUI_RGBA(0xffffffff), "B", -1);
+            cui_texture lg = briks_logo_tex(ui);
+            if (lg) cui_draw_image(ui, lg, t, (cui_rect){ 0, 0, 1, 1 }, CUI_CORNERS(0), CUI_RGBA(0xffffffff));   /* logo nova: cantos já transparentes */
+            else {
+                cui_draw_rect_gradient(ui, t, r7, CUI_RGBA(0xb01fcfff), CUI_RGBA(0x6d5cf6ff));
+                cui_draw_text(ui, CUI_FONT_MEDIUM, side * 0.5f, (cui_vec2){ t.x + side * 0.5f - tw(side * 0.5f, "B") * 0.5f, t.y + side * 0.24f }, CUI_RGBA(0xffffffff), "B", -1);
+            }
         } else if (last && g.plus_n > 0) {
             char b[12]; snprintf(b, sizeof b, "+%d", g.plus_n);
             cui_draw_rect_border(ui, t, r7, CUI_RGBA(0x3a1d56ff), WHITE(0x1c), 1.0f);

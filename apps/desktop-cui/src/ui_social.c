@@ -90,11 +90,15 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
     cui_color bg = active ? B_C3 : dashed ? CUI_RGBA(0x8b5cf60b) : CUI_RGBA(0xffffff16);
     cui_color bd = active ? CUI_RGBA(0xffffff40) : dashed ? CUI_RGBA(0x8b5cf666) : CUI_RGBA(0xffffff26);
     float itemw = wide ? W - 20.0f : icon;
+    const bool logo = id == 0 && briks_logo_tex(ui) != 0;   /* espaço Briks/Início: a logo nova (cantos transparentes: nada de canto reto por baixo) */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_PX(itemw), .height = CUI_PX(icon), .gap = 10, .radius = rad,
-            .bg = wide ? CUI_RGBA(0x00000000) : bg, .border = wide ? 0 : 1, .border_color = bd, .clip = true,
+            .bg = wide || logo ? CUI_RGBA(0x00000000) : bg, .border = wide || logo ? 0 : 1, .border_color = bd, .clip = true,
             .align = CUI_ALIGN_CENTER, .justify = wide ? CUI_JUSTIFY_START : CUI_JUSTIFY_CENTER) {
         if (wide) {
-            cui_box(ui, .width = CUI_PX(icon), .height = CUI_PX(icon), .radius = rad, .bg = bg, .border = 1, .border_color = bd,
+            if (logo) {   /* ativo: anel fino violeta por fora da arte (a arte tem cantos transparentes; o anel acompanha o canto dela) */
+                cui_box(ui, .width = CUI_PX(icon), .height = CUI_PX(icon), .radius = icon * 0.2f, .border = active ? 2 : 0, .border_color = B_C3, .clip = true) { briks_logo(ui, icon); }
+            }
+            else cui_box(ui, .width = CUI_PX(icon), .height = CUI_PX(icon), .radius = rad, .bg = bg, .border = 1, .border_color = bd,
                     .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 cui_text(ui, label, .size = icon * 0.26f, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xe6dcff));
             }
@@ -106,6 +110,8 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
                 cui_text(ui, nm, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true, .color = active ? B_TEXT : CUI_RGB(0xe6dcff));
                 if (sb[0]) cui_text(ui, sb, .size = 11, .nowrap = true, .color = B_MUTED);
             }
+        } else if (logo) {
+            cui_box(ui, .width = CUI_PX(icon), .height = CUI_PX(icon), .radius = icon * 0.2f, .border = active ? 2 : 0, .border_color = B_C3, .clip = true) { briks_logo(ui, icon); }
         } else {
             cui_text(ui, label, .size = icon * 0.3f, .color = active ? CUI_RGB(0xffffff) : dashed ? B_C3 : CUI_RGB(0xe6dcff));
         }

@@ -19,6 +19,7 @@ pub struct Store {
     by_channel: HashMap<String, Vec<ChatWire>>,   // ordenado por (timestamp, id)
     ids: HashSet<String>,
     dir: Option<PathBuf>,
+    lines: HashMap<String, usize>,   // linhas no arquivo de cada canal (para compactar quando passa de 1,5x o teto)
 }
 
 fn file_for(dir: &std::path::Path, channel: &str) -> PathBuf {
@@ -27,21 +28,44 @@ fn file_for(dir: &std::path::Path, channel: &str) -> PathBuf {
 }
 
 impl Store {
-    /// `dir` = onde guardar (um .jsonl por canal); None = só memória. Linhas inválidas são ignoradas.
+    /// `dir` = onde guardar (um .jsonl por canal, uma linha cifrada por mensagem; ver `atrest`); None = só memória.
+    /// Linhas inválidas são ignoradas; arquivos antigos em texto aberto ou acima do teto são regravados cifrados e compactados.
     pub fn open(dir: Option<PathBuf>) -> Self {
-        let mut s = Store { by_channel: HashMap::new(), ids: HashSet::new(), dir: dir.clone() };
+        let mut s = Store { by_channel: HashMap::new(), ids: HashSet::new(), dir: dir.clone(), lines: HashMap::new() };
         if let Some(d) = dir {
             let _ = std::fs::create_dir_all(&d);
+            let mut rewrite: Vec<String> = Vec::new();
             if let Ok(rd) = std::fs::read_dir(&d) {
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.extension().and_then(|x| x.to_str()) != Some("jsonl") { continue; }
                     let Ok(txt) = std::fs::read_to_string(&p) else { continue };
-                    for line in txt.lines() { if let Ok(m) = serde_json::from_str::<ChatWire>(line) { s.insert_mem(m); } }
+                    let (mut n, mut plain, mut chans) = (0usize, false, HashSet::new());
+                    for line in txt.lines() {
+                        let Some((json, was_plain)) = crate::atrest::open_line(line) else { continue };
+                        let Ok(m) = serde_json::from_str::<ChatWire>(&json) else { continue };
+                        n += 1; plain |= was_plain; chans.insert(m.channel_id.clone());
+                        s.insert_mem(m);
+                    }
+                    for c in &chans { s.lines.insert(c.clone(), n); if plain || n > MAX_PER_CHANNEL * 3 / 2 { rewrite.push(c.clone()); } }
                 }
             }
+            for c in rewrite { s.compact(&c); }
         }
         s
+    }
+
+    /// Regrava o arquivo do canal só com o que está na memória (já limitado ao teto), cifrado, de forma atômica.
+    fn compact(&mut self, channel: &str) {
+        let Some(d) = &self.dir else { return };
+        let mut out = String::new();
+        for m in self.by_channel.get(channel).map(|v| v.as_slice()).unwrap_or(&[]) {
+            let Ok(j) = serde_json::to_string(m) else { continue };
+            let Some(l) = crate::atrest::seal_line(&j) else { return };   // sem cifra: mantém o arquivo como está
+            out.push_str(&l); out.push('\n');
+        }
+        let f = file_for(d, channel); let tmp = f.with_extension("tmp");
+        if std::fs::write(&tmp, out).is_ok() && std::fs::rename(&tmp, &f).is_ok() { self.lines.insert(channel.to_string(), self.count(channel)); }
     }
 
     fn insert_mem(&mut self, m: ChatWire) -> bool {
@@ -57,9 +81,11 @@ impl Store {
     pub fn add(&mut self, m: &ChatWire) -> bool {
         if !self.insert_mem(m.clone()) { return false; }
         if let Some(d) = &self.dir {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file_for(d, &m.channel_id)) {
-                if let Ok(line) = serde_json::to_string(m) { let _ = writeln!(f, "{line}"); }
+            if let (Ok(line), Ok(mut f)) = (serde_json::to_string(m), std::fs::OpenOptions::new().create(true).append(true).open(file_for(d, &m.channel_id))) {
+                if let Some(sealed) = crate::atrest::seal_line(&line) { let _ = writeln!(f, "{sealed}"); }
             }
+            let n = { let e = self.lines.entry(m.channel_id.clone()).or_insert(0); *e += 1; *e };
+            if n > MAX_PER_CHANNEL * 3 / 2 { self.compact(&m.channel_id.clone()); }
         }
         true
     }
@@ -153,6 +179,31 @@ mod tests {
         let s2 = Store::open(Some(dir.clone()));
         assert_eq!(s2.count("dm-persist"), 2);
         assert!(s2.has("m-00000001") && s2.has("m-00000002"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn disk_is_encrypted_legacy_plain_is_migrated_and_files_are_compacted() {
+        let id = Identity::generate();
+        let dir = std::env::temp_dir().join(format!("briks-hist-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // arquivo antigo em texto aberto
+        { let mut o = std::fs::File::create(file_for(&dir, "dm-old")).unwrap(); for n in 1..=3 { writeln!(o, "{}", serde_json::to_string(&msg(&id, "dm-old", n, "texto-secreto")).unwrap()).unwrap(); } }
+        let s = Store::open(Some(dir.clone()));
+        assert_eq!(s.count("dm-old"), 3);
+        assert!(!std::fs::read_to_string(file_for(&dir, "dm-old")).unwrap().contains("texto-secreto"), "migrado para cifrado");
+        drop(s);
+        let mut s = Store::open(Some(dir.clone()));
+        assert_eq!(s.count("dm-old"), 3, "relê o arquivo cifrado");
+        s.add(&msg(&id, "dm-new", 9, "outro-segredo"));
+        assert!(!std::fs::read_to_string(file_for(&dir, "dm-new")).unwrap().contains("outro-segredo"));
+        // rotação: passou de 1,5x o teto -> compacta para o teto
+        for n in 0..(MAX_PER_CHANNEL as u64 * 3 / 2 + 5) { s.add(&msg(&id, "dm-big", n, "x")); }
+        let lines = std::fs::read_to_string(file_for(&dir, "dm-big")).unwrap().lines().count();
+        assert!(lines <= MAX_PER_CHANNEL + 5, "arquivo compactado ({lines} linhas)");
+        drop(s);
+        assert_eq!(Store::open(Some(dir.clone())).count("dm-big"), lines.min(MAX_PER_CHANNEL));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

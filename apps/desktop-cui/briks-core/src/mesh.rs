@@ -220,7 +220,7 @@ pub struct MeshHandle {
     pub events: mpsc::Receiver<MeshEvent>,
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
@@ -323,7 +323,7 @@ impl Actor {
                 cv = crx.recv() => if let Some(v) = cv { self.on_cam_event(v).await },
                 _ = retry.tick() => {
                     // mensagens sem ACK são reenviadas (o receptor deduplica por id)
-                    let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();
+                    let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();   // (flush_outbox relê a fila em disco)
                     for fp in fps { self.flush_outbox(&fp).await; }
                     self.retry_auth().await;
                 },
@@ -561,7 +561,7 @@ impl Actor {
             version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id,
             author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
         self.hist.add(&m);
-        self.outbox.entry(to_fp.clone()).or_default().push(m);
+        crate::outbox::shared().lock().unwrap().add(&to_fp, &m);   // persistente: sobrevive a reinício e a canal fechado
         self.flush_outbox(&to_fp).await;
     }
 
@@ -1186,7 +1186,11 @@ impl Actor {
 
     async fn flush_outbox(&mut self, fp: &str) {
         if self.dm_off.contains(fp) { return; }
-        let Some(list) = self.outbox.get(fp) else { return };
+        let pend = crate::outbox::shared().lock().unwrap().for_fp(fp);   // a fila em disco é a fonte da verdade (várias malhas, reinícios)
+        if pend.is_empty() { self.outbox.remove(fp); return; }
+        let list = self.outbox.entry(fp.to_string()).or_default();
+        *list = pend;
+        let list = &*list;
         let Some(peer) = self.peers.values().find(|p| p.fp.as_deref() == Some(fp) && p.sent_proof && p.proven) else { return };
         let Some(dc) = peer.dc.clone() else { return };
         let mut fresh: Vec<String> = Vec::new();
@@ -1292,6 +1296,7 @@ impl Actor {
                 let (true, Some(fp)) = (p.proven && p.sent_proof, p.fp.clone()) else { return };
                 if let Some(id) = v["messageId"].as_str() {
                     if let Some(l) = self.outbox.get_mut(&fp) { l.retain(|m| m.id != id); }   // entregue: sai da outbox
+                    crate::outbox::shared().lock().unwrap().ack(id);
                     self.emit(MeshEvent::Ack { id: id.chars().take(64).collect(), from_fp: fp }).await;
                 }
             }

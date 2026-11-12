@@ -439,6 +439,12 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     }
                     "file.accept" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } }
                     "file.pause" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: v["paused"].as_bool().unwrap_or(true) }).await; } }
+                    // caixa de saída persistente (outbox.rs): a UI refaz relógio/tiques depois de reabrir e sabe quem tem pendência
+                    "outbox.get" => {
+                        let st = { let o = crate::outbox::shared(); let mut g = o.lock().unwrap(); g.expire(mesh::now_ms() as u64); g.state() };
+                        let mut ev = st; ev["ev"] = "outbox.state".into();
+                        out(&mut wr, ev).await?;
+                    }
                     "chat.disconnect" => { if let (Some(fp), Some(c)) = (v["fp"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::DmDisconnect { fp: fp.into() }).await; } }
                     "typing.send" => {
                         let route = v["to_fp"].as_str().and_then(|f| dm_links.get(f)).map(|l| l.cmd.clone()).or_else(|| mesh_cmd.clone());

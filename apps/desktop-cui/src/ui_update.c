@@ -20,6 +20,13 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.4.2", {
+        "Amigos: pedidos e amizades aparecem na hora para a outra pessoa (aviso sem dados pela caixa de chegada), com a consulta a cada 30 s como reserva.",
+        "Chat: imagens anexadas (PNG, JPG, BMP) aparecem com pré-visualização dentro da conversa.",
+        "Transmissão: quem assiste vê o texto mais nítido quando a tela aparece pequena na grade (redução do quadro por média, sem borrar).",
+        "Grupos: a lateral lembra quais grupos você recolheu depois de fechar o Briks; tentativas erradas do código curto agora contam no limite por hora.",
+        "Atualização do instalador e do fluxo de assinatura de código (SignPath) integrados ao projeto.",
+        NULL } },
     { "1.4.1", {
         "Mensagens: conversa direta sem precisar estar na mesma sala de voz, com o estado de cada mensagem (só neste PC, enviada, entregue); caixa de texto sempre à mão e troca de conversa confiável.",
         "Amigos e grupos: indicador de pedidos pendentes, convites visíveis com o app aberto, atualização ao voltar para a janela, painel Amigos que se adapta a larguras estreitas.",

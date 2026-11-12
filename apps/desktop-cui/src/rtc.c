@@ -102,10 +102,11 @@ void rtc_mic_test(app_state_t *s, bool on) {
     (void)s;
 }
 void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
-/* silenciar uma pessoa = ganho zero só para ela (por peer_id) */
+static void pv_remember_mute(const char *fp, bool muted);
+/* silenciar uma pessoa = ganho zero só para ela (por peer_id); lembrado por identidade entre chamadas */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0]) return;
-    s->rtc_peers[slot].muted_by_me = muted;
+    s->rtc_peers[slot].muted_by_me = muted; pv_remember_mute(s->rtc_peers[slot].fp, muted);
     char extra[160], id[96]; json_escape(s->rtc_peers[slot].id, id, sizeof id);
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"muted\":%s", id, muted ? "true" : "false");
     if (core_state() == CORE_READY) send_cmd("peer.mute", extra);
@@ -113,7 +114,7 @@ void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
 /* CHM-14: volume por pessoa lembrado entre chamadas. Chave = impressão digital da identidade (estável); arquivo de linhas "fp=ganho" em
  * %APPDATA%\Briks-CUI\peer-volumes.txt (BRIKS_PEERVOL_FILE nos testes). Só guarda o que difere de 100%. */
 #define PV_MAX 128
-static struct { char fp[96]; float gain; } g_pv[PV_MAX]; static int g_pv_n; static bool g_pv_loaded;
+static struct { char fp[96]; float gain; bool muted; } g_pv[PV_MAX];   /* muted: 'Silenciar para mim' também é lembrado (linha "fp=ganho,1") */ static int g_pv_n; static bool g_pv_loaded;
 static bool pv_path(char *out, size_t cap) {
     const char *o = getenv("BRIKS_PEERVOL_FILE"); if (o && o[0]) { snprintf(out, cap, "%s", o); return true; }
     const char *ad = getenv("APPDATA"); if (!ad || !ad[0]) return false;
@@ -127,14 +128,15 @@ static void pv_load(void) {
     while (g_pv_n < PV_MAX && fgets(line, sizeof line, f)) {
         char *eq = strchr(line, '='); if (!eq) continue; *eq = 0;
         float g = (float)atof(eq + 1); if (g < 0 || g > 2) continue;
-        snprintf(g_pv[g_pv_n].fp, sizeof g_pv[0].fp, "%s", line); g_pv[g_pv_n].gain = g; g_pv_n++;
+        const char *cm = strchr(eq + 1, ',');
+        snprintf(g_pv[g_pv_n].fp, sizeof g_pv[0].fp, "%s", line); g_pv[g_pv_n].gain = g; g_pv[g_pv_n].muted = cm && atoi(cm + 1) != 0; g_pv_n++;
     }
     fclose(f);
 }
 static void pv_save(void) {
     char p[MAX_PATH]; if (!pv_path(p, sizeof p)) return;
     FILE *f = fopen(p, "wb"); if (!f) return;
-    for (int i = 0; i < g_pv_n; i++) fprintf(f, "%s=%.2f\n", g_pv[i].fp, g_pv[i].gain);
+    for (int i = 0; i < g_pv_n; i++) fprintf(f, g_pv[i].muted ? "%s=%.2f,1\n" : "%s=%.2f\n", g_pv[i].fp, g_pv[i].gain);
     fclose(f);
 }
 float rtc_saved_volume(const char *fp) {   /* ganho lembrado (0..2) para essa identidade; 1 = normal */
@@ -148,8 +150,22 @@ static void pv_remember(const char *fp, float gain) {
     const bool normal = gain > 0.995f && gain < 1.005f;
     if (k >= 0 && fabsf(g_pv[k].gain - gain) < 0.004f) return;
     if (k < 0 && normal) return;
-    if (k < 0) { if (g_pv_n >= PV_MAX) return; k = g_pv_n++; snprintf(g_pv[k].fp, sizeof g_pv[0].fp, "%s", fp); }
-    if (normal) { g_pv[k] = g_pv[--g_pv_n]; } else g_pv[k].gain = gain;
+    if (k < 0) { if (g_pv_n >= PV_MAX) return; k = g_pv_n++; snprintf(g_pv[k].fp, sizeof g_pv[0].fp, "%s", fp); g_pv[k].muted = false; }
+    if (normal && !g_pv[k].muted) { g_pv[k] = g_pv[--g_pv_n]; } else g_pv[k].gain = gain;
+    pv_save();
+}
+bool rtc_saved_mute(const char *fp) {   /* "Silenciar para mim" lembrado para essa identidade */
+    if (!fp || !fp[0]) return false; pv_load();
+    for (int i = 0; i < g_pv_n; i++) if (!strcmp(g_pv[i].fp, fp)) return g_pv[i].muted;
+    return false;
+}
+static void pv_remember_mute(const char *fp, bool muted) {
+    if (!fp || !fp[0] || strchr(fp, '=') || strchr(fp, '\n') || strchr(fp, ',')) return; pv_load();
+    int k = -1; for (int i = 0; i < g_pv_n; i++) if (!strcmp(g_pv[i].fp, fp)) k = i;
+    if (k < 0 && !muted) return;
+    if (k < 0) { if (g_pv_n >= PV_MAX) return; k = g_pv_n++; snprintf(g_pv[k].fp, sizeof g_pv[0].fp, "%s", fp); g_pv[k].gain = 1.0f; }
+    g_pv[k].muted = muted;
+    if (!muted && g_pv[k].gain > 0.995f && g_pv[k].gain < 1.005f) g_pv[k] = g_pv[--g_pv_n];
     pv_save();
 }
 
@@ -157,6 +173,7 @@ static void pv_remember(const char *fp, float gain) {
 static void peer_volume_restore(app_state_t *s, int slot) {
     float g = rtc_saved_volume(s->rtc_peers[slot].fp);
     if (fabsf(g - 1.0f) > 0.004f) { s->rtc_peers[slot].volume = g * 100.0f; s->rtc_peers[slot].vol_set = true; rtc_set_peer_volume(s, slot, g); }
+    if (rtc_saved_mute(s->rtc_peers[slot].fp) && !s->rtc_peers[slot].muted_by_me) rtc_mute_peer(s, slot, true);   /* quem eu silenciei continua silenciado */
 }
 
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
@@ -364,12 +381,14 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
 static void idle_tick(app_state_t *s) {
     const ULONGLONG now = GetTickCount64();
     if (!s->in_room) { s->idle_last = 0; s->idle_phase_now = IDLE_ACTIVE; return; }
-    if (!s->idle_last || (s->mic_on && s->me_level > 0.05f) || s->sh.active) s->idle_last = now;
-    long long rem = 0; int ph = idle_phase((long long)(now - s->idle_last), &rem);
+    bool watching = false; if (s->call_mode == 1) for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (share_peer_live(s, i)) watching = true;   /* assistir a uma transmissão também conta como presença */
+    if (!s->idle_last || (s->mic_on && s->me_level > 0.05f) || s->sh.active || watching) s->idle_last = now;
+    const long long lim = idle_limit_for(settings_idle_min());
+    long long rem = 0; int ph = idle_phase_lim((long long)(now - s->idle_last), lim, &rem);
     s->idle_phase_now = ph; s->idle_left_ms = rem;
     if (ph == IDLE_EXPIRED) {
         rtc_leave_room(s); s->idle_last = 0; s->idle_phase_now = IDLE_ACTIVE;
-        copy(s->idle_notice, sizeof s->idle_notice, "Você saiu da chamada por inatividade (1 hora sem falar).");
+        { char m[120]; const long long mn = lim / 60000; if (mn >= 60 && mn % 60 == 0) snprintf(m, sizeof m, "Você saiu da chamada por inatividade (%lld %s sem falar).", mn / 60, mn == 60 ? "hora" : "horas"); else snprintf(m, sizeof m, "Você saiu da chamada por inatividade (%lld min sem falar).", mn > 0 ? mn : 1); copy(s->idle_notice, sizeof s->idle_notice, m); }
         if (s->screen == SCREEN_CALL) s->screen = SCREEN_SOCIAL;
         return;
     }
@@ -412,6 +431,11 @@ void rtc_pump(app_state_t *s) {
             rtc_set_peer_volume(s, 0, (float)atof(getenv("BRIKS_DEMO_PEERVOL")));
             s->rtc_peers[0].volume = 100.0f; s->rtc_peers[0].vol_set = false;
             g_pv_loaded = false; g_pv_n = 0;
+            peer_volume_restore(s, 0);
+        }
+        if (getenv("BRIKS_DEMO_PEERMUTE")) {   /* prova do CHM-36: silencia um, "volta à chamada" relendo o arquivo: continua silenciado */
+            rtc_mute_peer(s, 0, true);
+            s->rtc_peers[0].muted_by_me = false; g_pv_loaded = false; g_pv_n = 0;
             peer_volume_restore(s, 0);
         }
         if (getenv("BRIKS_DEMO_NETFAIL")) { s->net_failed = true; copy(s->rtc_state, sizeof s->rtc_state, "erro"); copy(s->rtc_msg, sizeof s->rtc_msg, "Não foi possível entrar pelo servidor de chamadas: serviço de tokens inacessível"); }

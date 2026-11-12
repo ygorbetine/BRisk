@@ -30,6 +30,7 @@ typedef struct {
     int noise_off;                /* 0 filtro leve de ruído ligado (Padrão), 1 desligado */
     bool gate_on; float gate_db;  /* porta de ruído, -70..-20 dB */
     bool echo, excl_audio;
+    int idle_min;                 /* CHM-35: minutos sem falar até sair da chamada (0 = nunca); padrão 60 */
     int fw_choice;                /* Firewall: 0 não decidido, 1 liberado, 2 agora não, 3 não perguntar */
     int net_pref, call_mode;      /* conexão: auto/internet direta/VPN privada; chamada: auto/P2P/SFU */
     bool ov_on; float ov_opacity; bool ov_live, ov_voice, ov_status, ov_mute, ov_selfshare; int ov_corner;   /* sobreposição: canto 0 sup. direito, 1 sup. esquerdo, 2 inf. direito, 3 inf. esquerdo */
@@ -43,6 +44,7 @@ typedef struct {
 } settings_t;
 settings_t g_set;
 int settings_call_mode(void) { return g_set.call_mode; }
+int settings_idle_min(void) { return g_set.idle_min < 0 ? 0 : g_set.idle_min; }
 int settings_net_pref(void) { return g_set.net_pref; }
 int settings_fw_choice(void) { return g_set.fw_choice; }
 void settings_fw_set(int c) { g_set.fw_choice = c; }
@@ -57,7 +59,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "ov_voice", 'b', &g_set.ov_voice }, { "ov_status", 'b', &g_set.ov_status }, { "ov_mute", 'b', &g_set.ov_mute }, { "ov_selfshare", 'b', &g_set.ov_selfshare }, { "ov_corner", 'i', &g_set.ov_corner },
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
-    { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
+    { "telemetry", 'b', &g_set.telemetry }, { "idle_min", 'i', &g_set.idle_min }, { "text_size", 'i', &g_set.text_size },
     { "ov_lay", 's', g_set.ov_lay, 190 }, { "ov_dev", 's', g_set.ov_dev, 48 },
     { "ov_tiles", 's', g_set.ov_tiles, 480 }, { "ov_toff", 's', g_set.ov_toff, 120 },
 };
@@ -65,7 +67,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
 
 static void defaults(void) {
     memset(&g_set, 0, sizeof g_set);
-    g_set.text_size = 1;
+    g_set.text_size = 1; g_set.idle_min = 60;
     g_set.in_vol = 100; g_set.out_vol = 100; g_set.gate_db = -50; g_set.echo = true; g_set.excl_audio = true;
     g_set.ov_on = true; g_set.ov_opacity = 92; g_set.ov_live = g_set.ov_voice = g_set.ov_status = g_set.ov_mute = g_set.ov_selfshare = true;
     g_set.nt_online = g_set.nt_stream = true; g_set.ptt_delay = 200;
@@ -83,7 +85,8 @@ static void load_inner(void);
 static void load(void) { load_inner(); g_text_size = g_set.text_size < 0 ? 0 : g_set.text_size > 3 ? 3 : g_set.text_size; }
 static void load_inner(void) {
     defaults();
-    { const char *ts = getenv("BRIKS_TEXT_SIZE"); if (ts) g_set.text_size = atoi(ts); }   /* capturas */
+    { const char *ts = getenv("BRIKS_TEXT_SIZE"); if (ts) g_set.text_size = atoi(ts); }
+    { const char *im = getenv("BRIKS_IDLE_MIN"); if (im) g_set.idle_min = atoi(im); }   /* testes: prazo de inatividade em minutos (0 = nunca) */   /* capturas */
     char p[MAX_PATH]; if (getenv("BRIKS_DEMO") || !cfg_path(p, sizeof p)) return;
     FILE *f = fopen(p, "rb"); if (!f) return;
     char ln[200];
@@ -485,6 +488,15 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_switch(ui, "Excluir áudio do Briks da transmissão", &g_set.excl_audio);
                         cui_pop_disabled(ui);
                         soon(ui, "excluir o áudio do Briks da transmissão (o interruptor fica desligado até lá)");
+                    }
+                    SCARD(ui, "CHAMADA") {   /* CHM-35: desconexão por inatividade configurável */
+                        static const char *const IDL[] = { "Nunca", "15 min", "30 min", "1 hora", "2 horas" };
+                        static const int IDM[] = { 0, 15, 30, 60, 120 };
+                        int k = 3; for (int i = 0; i < 5; i++) if (IDM[i] == g_set.idle_min) k = i;
+                        cui_text(ui, "Sair da chamada depois de ficar sem falar", .size = 12, .color = B_MUTED);
+                        const int before = k; seg(ui, "cfg-idle", IDL, 5, &k);
+                        if (k != before) g_set.idle_min = IDM[k];
+                        sub(ui, g_set.idle_min ? "Faltando 5 minutos (ou 1/3 do prazo) aparece um aviso com o botão Continuar. Falar, transmitir a tela ou assistir a uma transmissão zera a contagem. Vale na hora." : "Você só sai da chamada quando decidir sair.");
                     }
                     break;
                 case 1: { /* Rede */

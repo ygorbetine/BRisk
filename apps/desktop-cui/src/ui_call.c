@@ -12,6 +12,7 @@
 
 call_ui_t g_call = { .focus = -1 };
 
+static app_state_t *g_tile_s;   /* estado para o menu do bloco (slider de volume por pessoa) */
 typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; bool deaf; } tile_t;
 enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TILE_ROOM_MUTE };
 #define SLOT_ME (BRIKS_MAX_PEERS + 1)
@@ -211,6 +212,15 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
+                    if (g_tile_s && t->slot >= 0 && t->slot < BRIKS_MAX_PEERS) {   /* CHM-36: volume por pessoa no próprio menu do bloco (lembrado entre chamadas) */
+                        float *vp = &g_tile_s->rtc_peers[t->slot].volume; if (!g_tile_s->rtc_peers[t->slot].vol_set) { g_tile_s->rtc_peers[t->slot].vol_set = true; *vp = 100.0f; }
+                        cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
+                            const float before = *vp; cui_icon(ui, CUI_ICON_VOLUME_2, 14, B_MUTED);
+                            cui_slider(ui, "##tvol", vp, 0, 200, .step = 5, .width = CUI_FILL);
+                            if (fabsf(before - *vp) > 0.01f) rtc_set_peer_volume(g_tile_s, t->slot, *vp / 100.0f);
+                            char pct[12]; snprintf(pct, sizeof pct, "%d%%", (int)(*vp + 0.5f)); cui_text(ui, pct, .size = 11, .color = B_MUTED, .nowrap = true);
+                        }
+                    }
                     /* só o dono, só no servidor de chamadas: fecha (ou pede para reabrir) o microfone da pessoa para todos */
                     if (g_can_room_mute && t->can_kick && cui_menu_item(ui, t->muted ? "Reabrir o microfone dele" : "Silenciar para todos", .icon = CUI_ICON_VOLUME_X)) act = TILE_ROOM_MUTE;
                     if (cui_menu_item(ui, "Destacar (modo Foco)", .icon = CUI_ICON_MAXIMIZE_2)) act = TILE_FOCUS;
@@ -460,7 +470,7 @@ static void stage_chat(cui_ctx *ui, app_state_t *s) {
 
 /* ---------- palco: participantes (grade ou foco) ---------- */
 static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float h, bool mic_eff) {
-    cui_push_id_int(ui, 700 + t->slot);
+    cui_push_id_int(ui, 700 + t->slot); g_tile_s = s;
     const int act = tile(ui, t, w, h, t->me ? mic_eff : true);
     const int i = t->slot;
     if (act == TILE_FOCUS) {

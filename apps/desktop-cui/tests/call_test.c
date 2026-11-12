@@ -1,5 +1,6 @@
 /* Testes da lógica pura da chamada (src/callhist.c): histórico, duração, grade de participantes e indicador de rede. Sem janela. */
 #include "../src/callhist.h"
+#include "../src/call_idle.h"
 #include <stdio.h>
 #include <string.h>
 static int fails;
@@ -13,7 +14,21 @@ static call_rec_t rec(long long t, int dur, const char *title, const char *peopl
     return r;
 }
 
+/* CHM-35: prazo de inatividade configurável */
+static void idle_tests(void) {
+    long long rem = 0;
+    OK(idle_limit_for(0) == 0 && idle_phase_lim(99999999LL, 0, &rem) == IDLE_ACTIVE, "inatividade: 'Nunca' nunca expira");
+    OK(idle_limit_for(60) == 3600000LL && idle_limit_for(15) == 900000LL, "inatividade: prazos de 15 min e 1 h");
+    OK(idle_phase_lim(0, 3600000LL, &rem) == IDLE_ACTIVE && rem == 3600000LL, "inatividade: recém-falou, ativo");
+    OK(idle_phase_lim(3600000LL - 299000LL, 3600000LL, &rem) == IDLE_WARNING && rem == 299000LL, "inatividade: avisa nos 5 min finais");
+    OK(idle_phase_lim(3600000LL, 3600000LL, &rem) == IDLE_EXPIRED && rem == 0, "inatividade: no prazo, expira");
+    OK(idle_phase_lim(4 * 60000LL, 15 * 60000LL, &rem) == IDLE_ACTIVE, "inatividade: 15 min, aos 4 min ainda ativo");
+    OK(idle_phase_lim(11 * 60000LL, 15 * 60000LL, &rem) == IDLE_WARNING, "inatividade: 15 min, aos 11 min avisa");
+    OK(idle_phase_lim(0, 6 * 60000LL, &rem) == IDLE_ACTIVE && idle_phase_lim(4 * 60000LL, 6 * 60000LL, &rem) == IDLE_WARNING, "inatividade: prazo curto avisa em 1/3 (nunca desde o início)");
+}
+
 int main(void) {
+    idle_tests();
     static callhist_t h, g; static char buf[CALLHIST_MAX * 760 + 256]; char b[64];
 
     /* histórico: ordem, opção de guardar, apagar */

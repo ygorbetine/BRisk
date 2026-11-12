@@ -1,0 +1,6 @@
+# CHM-35: o prazo de inatividade vem das Configurações (settings.cfg idle_min); 0 = nunca desconecta (a chamada continua aberta depois do prazo de teste)
+waitms 800
+expect idle_min 0
+waitms 6000
+expect call_in_room 1
+snap n0

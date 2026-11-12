@@ -1,0 +1,5 @@
+# CHM-36: "Silenciar para mim" também é lembrado entre chamadas (por identidade); BRIKS_DEMO_PEERMUTE=1 faz a "chamada anterior". Volume e mudo coexistem no menu do bloco
+waitms 800
+expect peer_muted_0 1
+expect peer_vol_0 50
+snap m0

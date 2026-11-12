@@ -315,6 +315,7 @@ int settings_fw_choice(void); void settings_fw_set(int c);   /* escolha do Firew
 void fw_maybe_prompt(void); void fw_tick(void); void fw_dialog(cui_ctx *ui, app_state_t *s); void fw_request(bool add); void fw_refresh(void);
 bool fw_busy(void); bool fw_open(void); int fw_exists(void); const char *fw_msg(void); const char *fw_state_text(void);
 int settings_net_pref(void);                               /* 0 Automático, 1 Internet direta, 2 VPN privada */
+int settings_idle_min(void);                              /* CHM-35: minutos sem falar até sair da chamada (0 = nunca) */
 int settings_call_mode(void);                              /* 0 Automático, 1 P2P, 2 SFU (Configurações > Rede) */
 void settings_audio(float *in_gain, float *out_gain, bool *gate_on, float *gate_db);   /* ganhos 0..1 (1 = normal) e porta de ruído, para o core */
 void settings_audio_ex(char *mic, size_t mic_cap, char *out, size_t out_cap, int *noise_off);   /* dispositivos escolhidos (nome; vazio = padrão) e supressão de ruído (1 = desligada) */
@@ -344,6 +345,7 @@ float rtc_saved_volume(const char *fp);                          /* volume lembr
 void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só para quem escuta, 0..2 (1 = normal) */
 void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
+bool rtc_saved_mute(const char *fp);                       /* 'Silenciar para mim' lembrado para essa identidade (CHM-36) */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_join_p2p(app_state_t *s);                          /* reentra na mesma sala pedindo P2P de propósito (depois de o SFU falhar) */
 void rtc_room_mute(app_state_t *s, int slot, bool muted);   /* só o dono, só no SFU: fecha/reabre o microfone da pessoa para todos */

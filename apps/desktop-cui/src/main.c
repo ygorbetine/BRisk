@@ -75,6 +75,9 @@ int script_probe(const char *n) {
     if (!strncmp(n, "open_is:", 8)) return strstr(attach_last_open(), n + 8) != NULL;   /* link aberto por clique contém o texto (teste) */
     if (!strcmp(n, "clip_len")) return (int)strlen(briks_clip_probe());
     if (!strncmp(n, "grp_", 4)) return groups_probe(&state, n);
+    if (!strcmp(n, "peer_muted_0")) return state.rtc_peers[0].muted_by_me;
+    if (!strcmp(n, "call_in_room")) return state.in_room;
+    if (!strcmp(n, "idle_min")) return settings_idle_min();
     if (!strcmp(n, "peer_vol_0")) return (int)(state.rtc_peers[0].volume + 0.5f);
     if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
     if (!strcmp(n, "fw_open")) return fw_open();

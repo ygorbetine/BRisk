@@ -22,6 +22,7 @@ static bool jbool(const jval *j, const char *k) { const jval *v = json_get(j, k)
 static void cmd(const char *json) { if (core_state() == CORE_READY) core_send(json); }
 
 /* zoom de quem assiste, por transmissão (zerado = encaixada), e o aviso "X começou a transmitir · Assistir" */
+static share_aspect_t g_aspect[2 * (BRIKS_MAX_PEERS + 1)];   /* razão de aspecto suavizada de cada tile (mesmo índice de g_fv) */
 static cui_image_view g_zoom[2 * (BRIKS_MAX_PEERS + 1)];   /* mesmo índice de g_fv: cada transmissão tem o próprio zoom */
 static int g_zoom_pct[2 * (BRIKS_MAX_PEERS + 1)];
 static int g_stage_toggles;   /* roteiros: quantas vezes um clique em área vazia alternou grade/foco */
@@ -823,19 +824,25 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
     cui_box(ui, .id = "vt", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             if (tex && tw > 0 && th > 0 && r.w > 60 && r.h > 60) {
-                float aw = r.w - 16, ah = r.h - 16, sc = fminf(aw / tw, ah / th);
-                if (key >= 0 && key < 2 * FV_N) g_fv[key].want = (zv && zv->zoom > sc * 1.01f) ? 0 : (int)floorf(tw * sc);   /* com zoom, o quadro inteiro; senão, o tamanho em que aparece */
+                /* O retângulo exibido sai do container e da razão de aspecto SUAVIZADA, nunca do tamanho do quadro decodificado: trocar a
+                   resolução da fonte (1080p <-> 720p), a redução ou a textura não faz a imagem diminuir/aumentar (a textura antiga fica até a nova chegar) */
+                float aw = r.w - 16, ah = r.h - 16, dw, dh;
+                const float ar = (key >= 0 && key < 2 * FV_N) ? share_aspect_update(&g_aspect[key], tw, th) : (float)tw / (float)th;
+                share_fit_rect(aw, ah, ar, &dw, &dh);
+                const float sc = dw / (float)tw;
+                if (key >= 0 && key < 2 * FV_N) g_fv[key].want = (zv && zv->zoom > sc * 1.01f) ? 0 : (int)floorf(dw);   /* com zoom, o quadro inteiro; senão, o tamanho em que aparece */
                 /* a imagem tem o próprio raio e fica 8 px para dentro da moldura (raio 20): cantos sempre curvos, nada reto vaza */
                 if (zv) {
                     /* quem assiste: roda do mouse ou pinça ampliam em torno do ponteiro, arrastar move; a moldura fica do tamanho
                        da imagem encaixada (cantos curvos, nada vaza) e o zoom nunca fica abaixo do encaixe */
-                    cui_box(ui, .width = CUI_PX(floorf(tw * sc)), .height = CUI_PX(floorf(th * sc)), .radius = 13, .clip = true) {
-                        cui_image_viewer_ex(ui, "zv", tex, tw, th, zv, &(cui_image_viewer_opts){ .width = CUI_FILL, .height = CUI_PX(floorf(th * sc)), .max_zoom = sc * 8, .no_toolbar = true });
+                    cui_box(ui, .width = CUI_PX(floorf(dw)), .height = CUI_PX(floorf(dh)), .radius = 13, .clip = true) {
+                        cui_image_viewer_ex(ui, "zv", tex, tw, th, zv, &(cui_image_viewer_opts){ .width = CUI_FILL, .height = CUI_PX(floorf(dh)), .max_zoom = sc * 8, .no_toolbar = true });
                     }
                     if (share_zoom_clamp(&zv->zoom, &zv->cx, &zv->cy, sc, 8)) zoom_pct = share_zoom_pct(zv->zoom, sc);
                     if (key >= 0 && key < 2 * FV_N) g_zoom_pct[key] = zoom_pct;
-                } else cui_image(ui, tex, .width = CUI_PX(floorf(tw * sc)), .height = CUI_PX(floorf(th * sc)), .radius = 13);
+                } else cui_image(ui, tex, .width = CUI_PX(floorf(dw)), .height = CUI_PX(floorf(dh)), .radius = 13);
             } else {
+                if (key >= 0 && key < 2 * FV_N && !tex) share_aspect_reset(&g_aspect[key]);   /* tile sem imagem: a próxima transmissão começa do zero */
                 cui_icon(ui, CUI_ICON_MONITOR, 34, B_C3);
                 cui_text(ui, wait, .size = 14, .color = B_MUTED);
             }

@@ -48,4 +48,17 @@ int share_zoom_pct(float zoom, float fit);
 bool share_zoom_clamp(float *zoom, float *cx, float *cy, float fit, float max_mult);
 int share_ds_steps(int w, int want);   /* quantas metades (0..3) do quadro de largura w ainda ficam >= 1,25x da largura em que aparece (want; 0 = sem redução) */
 void share_box_down(const unsigned char *src, int w, int k, int ow, int oh, unsigned char *dst);   /* média de blocos (2^k)^2 de pixels de 4 bytes */
+/* Encaixe estável do vídeo no tile. Quem assiste via a transmissão "diminuir e aumentar" quando a resolução da fonte mudava (1080p <-> 720p,
+ * redução do quadro, textura recriada): o retângulo exibido não pode depender do tamanho do quadro decodificado, só da razão de aspecto
+ * e do container. share_aspect_t guarda a razão suavizada por transmissão: diferenças de até 2% (arredondamento de resolução) são
+ * ignoradas e uma razão realmente nova só vale depois de `SHARE_ASPECT_FRAMES` quadros seguidos. ar = 0 depois de share_aspect_reset. */
+/* Modo da chamada (0 Automático, 1 P2P, 2 SFU). "Sempre SFU" sem servidor configurado deixava a pessoa sem chamada e com um alerta
+ * âmbar: quem tem 2 gravado SEM tê-lo escolhido (call_mode_set = 0: valor de uma versão em que o SFU era o padrão) volta ao Automático;
+ * quem escolheu manualmente (call_mode_set = 1) fica como está. */
+int settings_migrate_call_mode(int mode, bool chosen);
+#define SHARE_ASPECT_FRAMES 8
+typedef struct { float ar; float pend; int n; } share_aspect_t;
+void share_aspect_reset(share_aspect_t *st);
+float share_aspect_update(share_aspect_t *st, int tw, int th);                 /* razão a usar (largura/altura) */
+void share_fit_rect(float aw, float ah, float ar, float *dw, float *dh);       /* maior retângulo de razão `ar` dentro de aw x ah */
 #endif

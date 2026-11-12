@@ -160,3 +160,23 @@ void share_box_down(const unsigned char *src, int w, int k, int ow, int oh, unsi
         o[0] = (unsigned char)(s0 >> sh); o[1] = (unsigned char)(s1 >> sh); o[2] = (unsigned char)(s2 >> sh); o[3] = (unsigned char)(s3 >> sh);
     }
 }
+
+void share_aspect_reset(share_aspect_t *st) { st->ar = 0; st->pend = 0; st->n = 0; }
+float share_aspect_update(share_aspect_t *st, int tw, int th) {
+    if (tw <= 0 || th <= 0) return st->ar > 0 ? st->ar : 16.0f / 9.0f;
+    const float a = (float)tw / (float)th;
+    if (st->ar <= 0) { st->ar = a; st->n = 0; return st->ar; }
+    const float d = (a - st->ar) / st->ar;
+    if (d < 0.02f && d > -0.02f) { st->n = 0; return st->ar; }   /* mesma razão (1080p/720p, arredondamento, redução): nada muda */
+    if (st->n > 0 && ((a - st->pend) / st->pend < 0.02f && (a - st->pend) / st->pend > -0.02f)) st->n++; else { st->pend = a; st->n = 1; }
+    if (st->n >= SHARE_ASPECT_FRAMES) { st->ar = a; st->n = 0; }
+    return st->ar;
+}
+void share_fit_rect(float aw, float ah, float ar, float *dw, float *dh) {
+    if (ar <= 0 || aw <= 0 || ah <= 0) { *dw = 0; *dh = 0; return; }
+    float w = aw, h = aw / ar;
+    if (h > ah) { h = ah; w = ah * ar; }
+    *dw = w; *dh = h;
+}
+
+int settings_migrate_call_mode(int mode, bool chosen) { if (mode < 0 || mode > 2) return 0; return (mode == 2 && !chosen) ? 0 : mode; }

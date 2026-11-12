@@ -1,9 +1,9 @@
 # Gera o instalador Windows do app nativo (NSIS, instalacao por usuario, mesmo appId/pasta/atalhos do Electron 1.x).
-# Uso (raiz do repositorio): powershell -NoProfile -File scripts/build-installer.ps1 [-Version 1.4.0] [-Test]
+# Uso (raiz do repositorio): powershell -NoProfile -File scripts/build-installer.ps1 [-Version 1.4.1] [-Test]
 #   -Test  usa outro GUID e outra pasta de instalacao ("@briksdesktop-test"), para testar sem tocar na instalacao real do Briks.
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
 # So compila e grava em disco: nao publica, nao cria tag/release e nao executa o instalador.
-param([string]$Version = "1.4.0", [switch]$Test, [string]$SupabaseJson = "")
+param([string]$Version = "1.4.1", [switch]$Test, [string]$SupabaseJson = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"

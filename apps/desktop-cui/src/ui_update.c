@@ -20,6 +20,14 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.4.1", {
+        "Mensagens: conversa direta sem precisar estar na mesma sala de voz, com o estado de cada mensagem (só neste PC, enviada, entregue); caixa de texto sempre à mão e troca de conversa confiável.",
+        "Amigos e grupos: indicador de pedidos pendentes, convites visíveis com o app aberto, atualização ao voltar para a janela, painel Amigos que se adapta a larguras estreitas.",
+        "Grupos: código curto de convite (BRK-XXXX-XXXX) além do convite longo, e lateral reorganizada com TEXTO e VOZ, canal ativo em destaque e não lidas por canal.",
+        "Transmissão: qualidade separada para cada tela, botão Com áudio/Sem áudio ao vivo, clique no espaço vazio alterna grade e foco, e a imagem some quando quem transmite sai.",
+        "Chamada: botão Menu para voltar sem sair da chamada, Ensurdecer verde/vermelho e opção de ocultar o aviso de que você está transmitindo.",
+        "Ao fechar o Briks, o serviço de chamadas e os auxiliares são encerrados por completo, e o instalador encerra os do próprio diretório.",
+        NULL } },
     { "1.4.0", {
         "Conta e amigos: entrar com Google, Discord ou e-mail (com @nick e data de nascimento); foto, nome e @nick; abas Todos, Online, Pendentes, Bloqueados, Adicionar e Atividade.",
         "Grupos: canais de texto e salas de voz, cargos, membros, convite por código, personalizar, sair e apagar.",

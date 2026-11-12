@@ -58,10 +58,39 @@ pub fn check_token_url(u: &str) -> Result<(), String> { check(u, "https://", "ht
 /// `livekit.json`: primeiro o da pasta de dados do usuário (o que a pessoa editou vence); sem ele, o que o instalador deixou ao lado do
 /// executável (só URLs públicas, sem segredo; mesmo esquema do `supabase.json`).
 fn read_file(data_dir: &Path) -> serde_json::Value {
-    let exe_side = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("livekit.json")));
-    [Some(data_dir.join("livekit.json")), exe_side].into_iter().flatten()
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf()));
+    read_file_from(data_dir, exe_dir.as_deref())
+}
+
+fn read_file_from(data_dir: &Path, exe_dir: Option<&Path>) -> serde_json::Value {
+    [Some(data_dir.join("livekit.json")), exe_dir.map(|d| d.join("livekit.json"))].into_iter().flatten()
         .find_map(|p| std::fs::read_to_string(p).ok().and_then(|t| if t.len() <= 8 * 1024 { serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok() } else { None }))
         .unwrap_or(serde_json::Value::Null)
+}
+
+#[cfg(test)]
+mod padrao_tests {
+    use super::*;
+    fn tmp(n: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("briks-lkcfg-{n}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    #[test]
+    fn arquivo_ao_lado_do_exe_vale_sem_o_do_usuario_e_o_do_usuario_vence() {
+        let (data, exe) = (tmp("data"), tmp("exe"));
+        std::fs::write(exe.join("livekit.json"), "\u{feff}{\"url\":\"wss://padrao.example\",\"token_url\":\"https://x.supabase.co/functions/v1/livekit-token\"}").unwrap();
+        assert_eq!(read_file_from(&data, Some(&exe))["url"], "wss://padrao.example");
+        assert!(read_file_from(&data, None).is_null());
+        std::fs::write(data.join("livekit.json"), r#"{"url":"wss://meu.example","token_url":"https://y.example/livekit-token"}"#).unwrap();
+        assert_eq!(read_file_from(&data, Some(&exe))["url"], "wss://meu.example");
+        // arquivo do usuario quebrado: cai no padrao do instalador
+        std::fs::write(data.join("livekit.json"), "{nao e json").unwrap();
+        assert_eq!(read_file_from(&data, Some(&exe))["url"], "wss://padrao.example");
+        let _ = std::fs::remove_dir_all(&data);
+        let _ = std::fs::remove_dir_all(&exe);
+    }
 }
 
 /// `Ok(None)` = não configurado (modo P2P puro); `Err` = configurado mas inválido (aparece no diagnóstico, não derruba nada).

@@ -66,9 +66,21 @@ if (Test-Path $SupabaseJson) {
 # livekit.json (so URLs publicas: servidor wss:// e funcao de tokens https://) ao lado do Briks.exe; o core le dali quando a pasta de dados nao tem um.
 # So entra se a variavel de ambiente BRIKS_LIVEKIT_JSON_SRC apontar para o arquivo de origem; sem ela o instalador sai como antes.
 # NUNCA leva chave/segredo: so as chaves url, token_url e kick_url passam, com esquema validado; qualquer outra chave faz o script recusar.
+# Alternativa mais simples: BRIKS_LIVEKIT_URL (wss://...) e, opcionalmente, BRIKS_LIVEKIT_TOKEN_URL (https://.../functions/v1/livekit-token;
+# sem ele, deriva da URL do supabase.json incluido) e BRIKS_LIVEKIT_KICK_URL. Sem nenhuma das duas formas, o instalador sai so com P2P.
+$ljObj = $null
 if ($env:BRIKS_LIVEKIT_JSON_SRC) {
     if (-not (Test-Path $env:BRIKS_LIVEKIT_JSON_SRC)) { throw "BRIKS_LIVEKIT_JSON_SRC aponta para um arquivo que nao existe." }
-    $lj = Get-Content $env:BRIKS_LIVEKIT_JSON_SRC -Raw | ConvertFrom-Json
+    $ljObj = Get-Content $env:BRIKS_LIVEKIT_JSON_SRC -Raw | ConvertFrom-Json
+} elseif ($env:BRIKS_LIVEKIT_URL -or $env:BRIKS_LIVEKIT_TOKEN_URL) {
+    $tu = $env:BRIKS_LIVEKIT_TOKEN_URL
+    if (-not $tu -and (Test-Path "$stage\supabase.json")) { $tu = ((Get-Content "$stage\supabase.json" -Raw | ConvertFrom-Json).url.TrimEnd('/')) + "/functions/v1/livekit-token" }
+    $tmp = [ordered]@{ url = $env:BRIKS_LIVEKIT_URL; token_url = $tu }
+    if ($env:BRIKS_LIVEKIT_KICK_URL) { $tmp.kick_url = $env:BRIKS_LIVEKIT_KICK_URL }
+    $ljObj = [pscustomobject]$tmp
+}
+if ($ljObj) {
+    $lj = $ljObj
     $allowed = @("url", "token_url", "kick_url")
     foreach ($p in $lj.PSObject.Properties) { if ($allowed -notcontains $p.Name) { throw "livekit.json: a chave '$($p.Name)' nao e permitida (so url, token_url, kick_url; nunca segredo)." } }
     if ($lj.url -notmatch '^wss://[^\s/]+') { throw "livekit.json: 'url' deve ser wss://..." }

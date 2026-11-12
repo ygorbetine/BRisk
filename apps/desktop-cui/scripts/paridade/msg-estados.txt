@@ -1,5 +1,6 @@
 # MSG-14: ícones de estado da mensagem própria (relógio, check, check duplo, alerta)
 snap e0
+waitms 400
 msgstate 0 sending
 waitms 300
 expect attach_mine_state0 1
@@ -19,3 +20,10 @@ shot e4
 msgstate 0 ack
 waitms 200
 expect attach_mine_state0 3
+# 1.4.1: estado intermediario "enviada" (saiu pelo canal direto); o ack depois vira entregue e nada rebaixa
+msgstate 0 sent
+waitms 200
+expect attach_mine_state0 2
+coreev {"ev":"chat.sent","id":"m2","to_fp":"fp-demo-0"}
+waitms 300
+shot e5-enviada

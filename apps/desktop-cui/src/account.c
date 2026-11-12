@@ -129,6 +129,7 @@ void account_cancel(app_state_t *s) {
 void account_retry(app_state_t *s) { s->acct_asked = false; s->acct_state = ACCT_UNKNOWN; s->acct_error[0] = 0; }
 
 void account_logout(app_state_t *s) {
+    chat_dm_reset(s);
     if (core_state() == CORE_READY) { core_send("{\"cmd\":\"presence.clear\"}"); core_send("{\"cmd\":\"account.logout\"}"); s->pres_n = 0; }
     s->acct_state = ACCT_OUT; s->acct_view = AV_MAIN; s->acct_bridge = BRIDGE_NONE;
     s->acct_user_id[0] = s->acct_nick[0] = s->acct_error[0] = s->acct_info[0] = 0;

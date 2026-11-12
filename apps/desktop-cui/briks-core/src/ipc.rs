@@ -16,6 +16,9 @@ use crate::mesh::{self, MeshCfg, MeshCmd, MeshEvent};
 use crate::realtime::{self, RealtimeCfg};
 use crate::signaling::{secure_room_id, topic_name};
 
+/// Canal direto de DM com um amigo (dmlink.rs): a malha so de DataChannel, ao lado da malha da chamada.
+struct DmLink { cmd: mpsc::Sender<MeshCmd>, knock: Option<realtime::Realtime>, authed: bool, seq: u64 }
+
 pub struct Config {
     pub data_dir: PathBuf,
     pub realtime_url: Option<String>,
@@ -238,6 +241,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let ev_tx = acct_tx.clone();   // eventos de tarefas em segundo plano (teste de rede)
     let mut account = crate::accounts::service::Service::new(accounts.clone(), acct_tx);   // contas online: account.*, friends.*, import.*
     let mut roster_ch: std::collections::HashMap<String, realtime::Realtime> = std::collections::HashMap::new();   // grupo -> canal de presença (GRP-17)
+    let mut dm_links: std::collections::HashMap<String, DmLink> = Default::default();   // fp do amigo -> canal direto (DM sem sala de voz)
+    let (dm_tx, mut dm_rx) = mpsc::channel::<(String, MeshEvent)>(256);
+    let mut dm_seq = 0u64;
+    let mut inbox: Option<realtime::Realtime> = None;   // a minha caixa de chegada: quem quer falar comigo aparece como dm.wake
     let mut identity: Option<Arc<Identity>> = None;
     let mut name = String::from("Usuário");
     let mut local_peer = uuid::Uuid::new_v4().to_string();
@@ -415,7 +422,9 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     }
                     "chat.send" => {
                         let (Some(to), Some(text)) = (v["to_fp"].as_str(), v["text"].as_str()) else { continue };
-                        if let Some(c) = &mesh_cmd {
+                        // canal direto aberto com esse amigo (DM fora da sala) tem prioridade; senão vale a malha da chamada, como antes
+                        let route = dm_links.get(to).map(|l| l.cmd.clone()).or_else(|| mesh_cmd.clone());
+                        if let Some(c) = &route {
                             let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
                             let id = v["id"].as_str().filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
                             let _ = c.send(match id { Some(id) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, None => MeshCmd::Chat { to_fp: to.into(), text } }).await;
@@ -431,7 +440,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     "file.accept" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::AcceptFile { id: id.into() }).await; } }
                     "file.pause" => { if let (Some(id), Some(c)) = (v["id"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::PauseFile { id: id.into(), paused: v["paused"].as_bool().unwrap_or(true) }).await; } }
                     "chat.disconnect" => { if let (Some(fp), Some(c)) = (v["fp"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::DmDisconnect { fp: fp.into() }).await; } }
-                    "typing.send" => { if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::Typing).await; } }
+                    "typing.send" => {
+                        let route = v["to_fp"].as_str().and_then(|f| dm_links.get(f)).map(|l| l.cmd.clone()).or_else(|| mesh_cmd.clone());
+                        if let Some(c) = &route { let _ = c.send(MeshCmd::Typing).await; }
+                    }
                     // chat da sala (aba Chat da chamada) e pedido de transmissão: só para quem está autenticado na sala
                     "room.chat.send" => {
                         if let (Some(id), Some(text), Some(c)) = (v["id"].as_str(), v["text"].as_str(), &mesh_cmd) { let _ = c.send(MeshCmd::RoomChat { id: id.into(), text: text.into() }).await; }
@@ -688,6 +700,56 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                             if room.len() <= 96 { let _ = rt.track(crate::grouproster::meta(&id.fingerprint(), room, v["live"].as_bool().unwrap_or(false))).await; }
                         }
                     }
+                    // DM fora da sala de voz (dmlink.rs): a minha caixa de chegada e o canal direto com cada amigo
+                    "dm.inbox" => {
+                        if let Some(r) = inbox.take() { r.close().await; }
+                        let uid = v["user_id"].as_str().unwrap_or("");
+                        if uid.is_empty() {   // saiu da conta: fecha tudo
+                            for (_, l) in dm_links.drain() { let _ = l.cmd.send(MeshCmd::Close).await; if let Some(k) = l.knock { k.close().await; } }
+                            continue;
+                        }
+                        let (Some(id), Some(url), Some(key)) = (identity.clone(), cfg.realtime_url.clone(), cfg.realtime_key.clone()) else { continue };
+                        if crate::dmlink::valid_id(uid) { inbox = Some(crate::dmlink::watch_inbox(RealtimeCfg::new(&url, &key), uid, id.fingerprint(), ev_tx.clone())); }
+                    }
+                    "dm.open" => {
+                        let fp = v["fp"].as_str().unwrap_or("").to_string();
+                        let (Some(id), Some(url), Some(key)) = (identity.clone(), cfg.realtime_url.clone(), cfg.realtime_key.clone()) else {
+                            out(&mut wr, json!({ "ev": "dm.state", "fp": fp, "state": "indisponivel" })).await?;
+                            continue;
+                        };
+                        let my_fp = id.fingerprint();
+                        if !crate::dmlink::valid_fp(&fp) || fp == my_fp { continue; }
+                        let wake = v["user_id"].as_str().filter(|u| crate::dmlink::valid_id(u)).map(String::from);
+                        if let Some(l) = dm_links.get_mut(&fp) {
+                            // ja existe: se o amigo ainda nao chegou, toca de novo (ele pode ter aberto o Briks depois)
+                            if !l.authed {
+                                if let Some(u) = &wake { if let Some(k) = l.knock.take() { k.close().await; } l.knock = Some(crate::dmlink::knock(RealtimeCfg::new(&url, &key), u, &my_fp)); }
+                            }
+                            out(&mut wr, json!({ "ev": "dm.state", "fp": fp, "state": if l.authed { "autenticado" } else { "conectando" } })).await?;
+                            continue;
+                        }
+                        if dm_links.len() >= crate::dmlink::MAX_LINKS {
+                            if let Some(old) = dm_links.iter().min_by_key(|(_, l)| l.seq).map(|(k, _)| k.clone()) {
+                                if let Some(l) = dm_links.remove(&old) { let _ = l.cmd.send(MeshCmd::Close).await; if let Some(k) = l.knock { k.close().await; } out(&mut wr, json!({ "ev": "dm.state", "fp": old, "state": "fechado" })).await?; }
+                            }
+                        }
+                        let room = crate::identity::dm_channel(&my_fp, &fp);
+                        let peer = uuid::Uuid::new_v4().to_string();
+                        let joined_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                        let topic = topic_name("chat", &secure_room_id("chat", &room));
+                        let (rt, rt_rx) = realtime::connect(RealtimeCfg::new(&url, &key), topic, peer.clone(), json!({ "peerId": peer, "joinedAt": joined_at, "clientVersion": "native-0.1" }));
+                        let (ice_list, _) = crate::ice::load_with(&|k| std::env::var(k).ok(), &cfg.data_dir, &turn_rt.turn.servers());
+                        let mut h = mesh::spawn(MeshCfg { namespace: "chat".into(), room, local_peer: peer, display_name: name.clone(), ice_servers: ice_list, audio: None, owner_fp: None, joined_at }, id, rt, rt_rx);
+                        let (fwd, fpc) = (dm_tx.clone(), fp.clone());
+                        tokio::spawn(async move { while let Some(e) = h.events.recv().await { if fwd.send((fpc.clone(), e)).await.is_err() { break; } } });
+                        dm_seq += 1;
+                        let knock = wake.map(|u| crate::dmlink::knock(RealtimeCfg::new(&url, &key), &u, &my_fp));
+                        dm_links.insert(fp.clone(), DmLink { cmd: h.cmd, knock, authed: false, seq: dm_seq });
+                        out(&mut wr, json!({ "ev": "dm.state", "fp": fp, "state": "conectando" })).await?;
+                    }
+                    "dm.close" => {
+                        if let Some(l) = v["fp"].as_str().and_then(|f| dm_links.remove(f)) { let _ = l.cmd.send(MeshCmd::Close).await; if let Some(k) = l.knock { k.close().await; } }
+                    }
                     "net.mode.set" | "net.status" => {
                         if let Some(m) = v["mode"].as_str().and_then(crate::sfu_cfg::NetMode::parse) { let _ = crate::sfu_cfg::save_mode(&cfg.data_dir, m); }
                         if let Some(p) = v["pref"].as_u64() { crate::sfu_cfg::set_pref(p as u8); }
@@ -717,12 +779,33 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
             Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
             Some(ev) = kick_rx.recv() => out(&mut wr, ev).await?,   // resultado do pedido ao servidor (diagnóstico; a UI não precisa reagir)
             Some(j) = link_rx.recv() => out(&mut wr, j).await?,
+            Some((fp, e)) = dm_rx.recv() => {
+                // eventos dos canais diretos de DM: so o que a conversa usa (nada de arquivo, transmissao ou sala)
+                match e {
+                    MeshEvent::Chat { channel, from_fp, author, content, id, ts } => out(&mut wr, json!({ "ev": "chat.message", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts, "via": "dm" })).await?,
+                    MeshEvent::History { channel, from_fp, author, content, id, ts, mine } => out(&mut wr, json!({ "ev": "chat.history", "channel": channel, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts, "mine": mine, "via": "dm" })).await?,
+                    MeshEvent::Ack { id, from_fp } => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
+                    MeshEvent::Sent { id, to_fp } => out(&mut wr, json!({ "ev": "chat.sent", "id": id, "to_fp": to_fp })).await?,
+                    MeshEvent::Typing { from_fp } => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
+                    MeshEvent::DmLink { fp, on } => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,
+                    MeshEvent::ChatEvent { from_fp, wire, local } => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
+                    MeshEvent::Peer { state, .. } => {
+                        if state == "autenticado" {
+                            if let Some(l) = dm_links.get_mut(&fp) { l.authed = true; if let Some(k) = l.knock.take() { k.close().await; } }   // achou o amigo: o toque na caixa dele nao e mais preciso
+                        }
+                        out(&mut wr, json!({ "ev": "dm.state", "fp": fp, "state": state })).await?;
+                    }
+                    MeshEvent::Error(m) => out(&mut wr, json!({ "ev": "error", "where": "dm", "message": m })).await?,
+                    _ => {}
+                }
+            }
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
                     Some(MeshEvent::File(j)) => { let mut j = j; j["ev"] = "file".into(); out(&mut wr, j).await? }
                     Some(MeshEvent::Ack { id, from_fp }) => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
                     Some(MeshEvent::DmLink { fp, on }) => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,
+                    Some(MeshEvent::Sent { id, to_fp }) => out(&mut wr, json!({ "ev": "chat.sent", "id": id, "to_fp": to_fp })).await?,
                     Some(MeshEvent::Typing { from_fp }) => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
                     Some(MeshEvent::RoomChat { peer_id, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "room.chat", "peer_id": peer_id, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
                     Some(MeshEvent::StreamRequest { peer_id, name }) => out(&mut wr, json!({ "ev": "stream.request", "peer_id": peer_id, "name": name })).await?,
@@ -773,6 +856,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
         }
     }
     for (_, r) in roster_ch.drain() { r.close().await; }
+    for (_, l) in dm_links.drain() { let _ = l.cmd.send(MeshCmd::Close).await; if let Some(k) = l.knock { k.close().await; } }
+    if let Some(r) = inbox.take() { r.close().await; }
     if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
     Ok(())
 }

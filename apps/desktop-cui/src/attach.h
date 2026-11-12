@@ -17,10 +17,11 @@ const char *attach_typing_label(const app_state_t *s);             /* "Nome est�
 void attach_search_button(cui_ctx *ui);                            /* cabeçalho do chat: botão e campo de busca */
 bool attach_search_is_on(void);                                         /* roteiro: a busca da conversa está aberta? */
 bool attach_search_match(const char *text);                        /* true se não há busca ou o texto contém o termo */
-enum { ATT_SENDING = 1, ATT_SENT, ATT_FAILED, ATT_DELIVERED };   /* relógio, check, alerta, check duplo */
+enum { ATT_SENDING = 1, ATT_SENT, ATT_FAILED, ATT_DELIVERED, ATT_WIRE };   /* relógio, check (só neste PC), alerta, check duplo (entregue), check claro (enviada: saiu pelo canal direto) */
 void attach_mark(const char *msg_id, int state);                   /* estado de envio de uma mensagem minha */
 int  attach_state(const char *msg_id);
 void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m);   /* ícone de 12 px: relógio (enviando), check (enviada), check duplo (entregue), alerta (falhou; clique reenvia) */
+void attach_script_event(const char *json_line);                  /* teste: entrega um evento do core à UI (chat.message, chat.sent, chat.ack, dm.wake…) */
 void attach_script_state(app_state_t *s_or_null, int n, const char *state);   /* teste: força o estado da n-ésima mensagem minha, de trás para a frente ("ack" simula o chat.ack do core) */
 void attach_rich(cui_ctx *ui, const char *id, const char *text);   /* texto da mensagem: **negrito**, `código`, links clicáveis, menções */
 void attach_mentions(cui_ctx *ui, app_state_t *s);                 /* sugestões de @menção acima do campo de texto */

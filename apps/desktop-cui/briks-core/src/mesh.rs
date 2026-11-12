@@ -54,6 +54,8 @@ pub enum MeshEvent {
     File(Value),
     /// Confirmação de entrega de uma mensagem de DM que enviei.
     Ack { id: String, from_fp: String },
+    /// A mensagem de DM saiu pelo canal direto até `to_fp` (ainda não confirmada: o `Ack` vem depois). Uma vez por id.
+    Sent { id: String, to_fp: String },
     /// O peer está digitando.
     Typing { from_fp: String },
     /// Mensagem do chat da sala (aba Chat da chamada): vale só durante a chamada, de um peer autenticado.
@@ -243,6 +245,7 @@ struct Actor {
     irx: Option<mpsc::Receiver<Internal>>,
     next_gen: u32,
     outbox: HashMap<String, Vec<ChatWire>>,   // por fp de destino
+    sent_notified: HashSet<String>,            // ids de DM cujo "saiu" já foi avisado à UI
     dm_off: HashSet<String>,                   // fps cujo chat privado o usuário desconectou (a chamada segue)
     /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
     watch_intent: HashMap<(String, usize), std::path::PathBuf>,
@@ -293,7 +296,7 @@ impl Actor {
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -1161,7 +1164,9 @@ impl Actor {
         let Some(list) = self.outbox.get(fp) else { return };
         let Some(peer) = self.peers.values().find(|p| p.fp.as_deref() == Some(fp) && p.sent_proof && p.proven) else { return };
         let Some(dc) = peer.dc.clone() else { return };
-        for m in list { if let Ok(t) = serde_json::to_string(m) { let _ = dc.send_text(t).await; } }
+        let mut fresh: Vec<String> = Vec::new();
+        for m in list { if let Ok(t) = serde_json::to_string(m) { if dc.send_text(t).await.is_ok() && !self.sent_notified.contains(&m.id) { fresh.push(m.id.clone()); } } }
+        for id in fresh { self.sent_notified.insert(id.clone()); self.emit(MeshEvent::Sent { id: id.chars().take(64).collect(), to_fp: fp.to_string() }).await; }
     }
 
     async fn on_internal(&mut self, i: Internal) {

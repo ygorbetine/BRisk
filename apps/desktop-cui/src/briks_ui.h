@@ -44,7 +44,7 @@ typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+               OP_MSG_LOAD, OP_MSG_RECV, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
 
 
 /* conta online (account.c): estado vindo do briks-core (eventos account.*) */
@@ -289,6 +289,14 @@ void app_send_message(app_state_t *s);
 void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text);   /* encaminha o texto para outra conversa */
 void app_create_group(app_state_t *s);
 void app_load_messages(app_state_t *s, const char *body);
+/* DM fora da sala de voz (1.4.1): o core abre um canal direto com o amigo (dmlink.rs); a UI cuida da entrega, do histórico local e do estado de cada mensagem */
+bool chat_in_message(app_state_t *s, const struct jval *j, bool history);   /* chat.message / chat.history do core: grava (idempotente), mostra e avisa */
+void chat_in_pump(app_state_t *s);                                          /* app_pump: grava a próxima mensagem recebida no backend local */
+void chat_in_done(app_state_t *s);                                          /* a gravação terminou: recarrega a conversa aberta */
+void chat_dm_wake(app_state_t *s, const char *fp);                          /* dm.wake: um amigo me tocou */
+bool chat_dm_wants_session(const app_state_t *s);                           /* a sessão do core (identidade) é precisa para receber DMs */
+void chat_dm_tick(app_state_t *s);                                          /* abre a minha caixa de chegada ao entrar na conta */
+void chat_dm_reset(app_state_t *s);                                         /* saiu da conta: fecha caixa e canais */
 void app_load_groups(app_state_t *s, const char *body);
 void app_demo(app_state_t *s, const char *mode);  /* BRIKS_DEMO: dados fixos para capturas */
 void app_pump(app_state_t *s);

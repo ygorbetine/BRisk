@@ -6,6 +6,7 @@
 //!   briks-core mock-realtime [p]  servidor Phoenix/Realtime de teste em 127.0.0.1 (sem Supabase)
 mod accounts;
 mod aec;
+mod dmlink;
 mod audio;
 mod chat_events;
 mod adapt;
@@ -112,3 +113,5 @@ mod tests_sfukick;
 mod tests_sfuapps;
 #[cfg(test)]
 mod tests_sfu;
+#[cfg(test)]
+mod tests_dm;

@@ -446,7 +446,9 @@ impl Layer {
                 self.hist.add(&m);
                 self.outbox.entry(to_fp.clone()).or_default().push(m);
                 let mut out = if self.dm_off.remove(&to_fp) { vec![Out::Ev(MeshEvent::DmLink { fp: to_fp.clone(), on: true })] } else { vec![] };   // escrever reconecta
-                out.extend(self.flush(&to_fp));
+                let flushed = self.flush(&to_fp);
+                if flushed.iter().any(|o| matches!(o, Out::Send { .. })) { if let Some(m) = self.outbox.get(&to_fp).and_then(|l| l.last()) { out.push(Out::Ev(MeshEvent::Sent { id: m.id.chars().take(64).collect(), to_fp: to_fp.clone() })); } }   // saiu pelo servidor de chamadas
+                out.extend(flushed);
                 Some(out)
             }
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {

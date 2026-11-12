@@ -130,6 +130,7 @@ void app_pump(app_state_t *s) {
         char path[256]; snprintf(path, sizeof path, "/p2p/messages/%s?limit=200", s->chat_channel);
         begin(s, OP_MSG_LOAD, "GET", path, NULL);
     }
+    if (!s->call && !s->busy) chat_in_pump(s);
     if (!s->call || !bk_done(s->call)) { if (s->call) cui_request_redraw(cui_app_ui(s->app)); return; }
     int code = bk_http_status(s->call);
     char *body = _strdup(bk_body(s->call));
@@ -196,6 +197,9 @@ void app_pump(app_state_t *s) {
         break;
     case OP_MSG_LOAD:
         if (ok) app_load_messages(s, body);
+        break;
+    case OP_MSG_RECV:
+        chat_in_done(s);
         break;
     case OP_MSG_SEND:
         attach_inflight_done(s, ok);   /* falhou: a mensagem fica com "não enviada · reenviar" em vez de sumir */

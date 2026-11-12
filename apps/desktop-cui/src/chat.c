@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 #include <windows.h>
 #include <bcrypt.h>
 
@@ -48,6 +49,118 @@ void app_open_group(app_state_t *s, int idx) {
     s->reload_msgs = true;
 }
 
+static void add_msg(app_state_t *s, const char *id, const char *author, const char *content, const char *created, bool mine);
+
+/* ---- DM fora da sala de voz ---- */
+static bool in_call_with(const app_state_t *s, const char *fp) {
+    if (!s->in_room || !fp[0]) return false;
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].fp, fp) && !strcmp(s->rtc_peers[i].state, "autenticado")) return true;
+    return false;
+}
+
+/* pede ao core o canal direto com o amigo (idempotente; a cada 20 s no máximo por amigo, para não refazer o toque a cada mensagem) */
+static void dm_open_link(app_state_t *s, const person_t *f) {
+    static struct { char fp[72]; ULONGLONG t; } last[8]; static int n;
+    const ULONGLONG now = GetTickCount64(); int k = -1;
+    for (int i = 0; i < n; i++) if (!strcmp(last[i].fp, f->fp)) k = i;
+    if (k >= 0 && now - last[k].t < 20000) return;
+    if (k < 0) { k = n < 8 ? n++ : 0; snprintf(last[k].fp, sizeof last[k].fp, "%s", f->fp); }
+    last[k].t = now;
+    char fp[160], uid[100], line[400]; json_escape(f->fp, fp, sizeof fp); json_escape(f->id, uid, sizeof uid);
+    snprintf(line, sizeof line, "{\"cmd\":\"dm.open\",\"fp\":\"%s\",\"user_id\":\"%s\"}", fp, uid);
+    core_send(line); (void)s;
+}
+
+bool chat_dm_wants_session(const app_state_t *s) { return s->acct_user_id[0] && !s->acct_demo && core_state() == CORE_READY; }
+
+static char g_inbox_for[64];
+void chat_dm_tick(app_state_t *s) {
+    if (!s->rtc_session_ready || !chat_dm_wants_session(s)) { if (!s->rtc_session_ready) g_inbox_for[0] = 0; return; }
+    if (!strcmp(g_inbox_for, s->acct_user_id)) return;
+    snprintf(g_inbox_for, sizeof g_inbox_for, "%s", s->acct_user_id);
+    char uid[100], line[200]; json_escape(s->acct_user_id, uid, sizeof uid);
+    snprintf(line, sizeof line, "{\"cmd\":\"dm.inbox\",\"user_id\":\"%s\"}", uid);
+    core_send(line);
+}
+void chat_dm_reset(app_state_t *s) {
+    (void)s; g_inbox_for[0] = 0;
+    if (core_state() == CORE_READY) core_send("{\"cmd\":\"dm.inbox\",\"user_id\":\"\"}");
+}
+
+static const person_t *friend_by_fp(const app_state_t *s, const char *fp) {
+    if (!fp[0]) return NULL;
+    for (int i = 0; i < s->friend_count; i++) if (s->friends[i].fp[0] && !strcmp(s->friends[i].fp, fp)) return &s->friends[i];
+    return NULL;
+}
+
+/* um amigo me tocou: só quem está na minha lista de amigos (impressão digital conhecida pela conta) abre o canal */
+void chat_dm_wake(app_state_t *s, const char *fp) {
+    const person_t *f = friend_by_fp(s, fp);
+    if (!f || core_state() != CORE_READY) return;
+    char e[160], line[320]; json_escape(f->fp, e, sizeof e);
+    snprintf(line, sizeof line, "{\"cmd\":\"dm.open\",\"fp\":\"%s\"}", e);
+    core_send(line);
+}
+
+/* mensagens recebidas: fila gravada no backend local (INSERT OR IGNORE: o mesmo id nunca duplica) */
+typedef struct { char channel[160], id[72], author[96], content[1100], created[40]; } inmsg_t;
+static inmsg_t g_in[64]; static int g_in_n; static char g_in_cur[160]; static bool g_in_touch;
+
+static void iso_from_ms(double ms, char *out, size_t cap) {
+    time_t t = (time_t)(ms / 1000.0); struct tm tmv; if (gmtime_s(&tmv, &t)) { now_iso(out, cap); return; }
+    snprintf(out, cap, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec, (int)fmod(ms, 1000.0));
+}
+static bool id_ok(const char *id) {
+    size_t n = strlen(id); if (n < 1 || n > 64) return false;
+    for (size_t i = 0; i < n; i++) { char c = id[i]; if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_')) return false; }
+    return true;
+}
+
+bool chat_in_message(app_state_t *s, const jval *j, bool history) {
+    const char *fp = json_str(j, "from_fp", ""); const person_t *f = friend_by_fp(s, fp);
+    const char *id = json_str(j, "id", ""), *content = json_str(j, "content", "");
+    if (!f) { if (!history) notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), content); return false; }   /* quem não é amigo: sem histórico, só o aviso de antes */
+    if (!id_ok(id) || !content[0]) return false;
+    const jval *mv = json_get(j, "mine"); const bool mine = history && mv && mv->type == J_BOOL && mv->b;
+    char ch[160]; dm_channel(s, f->id, ch, sizeof ch);
+    const bool active = !strcmp(ch, s->chat_channel) || (s->active_friend >= 0 && s->active_friend < s->friend_count && &s->friends[s->active_friend] == f);
+    if (active) for (int i = 0; i < s->msg_count; i++) if (!strcmp(s->msgs[i].id, id)) return false;   /* já está na tela */
+    const jval *tv = json_get(j, "ts"); char iso[40];
+    if (tv && tv->type == J_NUM && tv->num > 0) iso_from_ms(tv->num, iso, sizeof iso); else now_iso(iso, sizeof iso);
+    const char *author = mine ? s->user_name : json_str(j, "author", f->name);
+    if (!history) {   /* aviso uma vez por mensagem (ela pode chegar pelos dois canais) */
+        static char seen[16][72]; static int sn; bool dup = false;
+        for (int i = 0; i < 16; i++) if (!strcmp(seen[i], id)) dup = true;
+        if (dup) return false;
+        snprintf(seen[sn++ % 16], sizeof seen[0], "%s", id);
+        notify_chat_message(s, ch, author, content);
+    }
+    if (!s->token[0]) {   /* sem backend (capturas e testes de tela): só mostra */
+        if (active && s->msg_count < MAX_MSGS) add_msg(s, id, author, content, iso, mine);
+        return true;
+    }
+    if (g_in_n >= 64) return false;   /* fila cheia: o histórico do amigo volta a oferecer na próxima autenticação */
+    inmsg_t *m = &g_in[g_in_n++];
+    snprintf(m->channel, sizeof m->channel, "%s", ch); snprintf(m->id, sizeof m->id, "%s", id); snprintf(m->author, sizeof m->author, "%.79s", author);
+    snprintf(m->content, sizeof m->content, "%.1000s", content); snprintf(m->created, sizeof m->created, "%s", iso);
+    return false;
+}
+
+void chat_in_pump(app_state_t *s) {
+    if (!g_in_n || !s->token[0]) return;
+    inmsg_t m = g_in[0]; memmove(&g_in[0], &g_in[1], sizeof g_in[0] * (size_t)(g_in_n - 1)); g_in_n--;
+    char a[240], c[2200], b[3000], path[256];
+    json_escape(m.author, a, sizeof a); json_escape(m.content, c, sizeof c);
+    snprintf(b, sizeof b, "{\"id\":\"%s\",\"channelId\":\"%s\",\"author\":\"%s\",\"content\":\"%s\",\"createdAt\":\"%s\",\"reactions\":{}}", m.id, m.channel, a, c, m.created);
+    snprintf(path, sizeof path, "/p2p/messages/%s?insertOnly=true", m.channel);
+    snprintf(g_in_cur, sizeof g_in_cur, "%s", m.channel);
+    if (!strcmp(m.channel, s->chat_channel)) g_in_touch = true;
+    app_begin(s, OP_MSG_RECV, "POST", path, b);
+}
+void chat_in_done(app_state_t *s) {
+    if (!g_in_n && g_in_touch) { g_in_touch = false; if (!strcmp(g_in_cur, s->chat_channel)) s->reload_msgs = true; }
+}
+
 static void add_msg(app_state_t *s, const char *id, const char *author, const char *content, const char *created, bool mine) {
     if (s->msg_count >= MAX_MSGS) { memmove(s->msgs, s->msgs + 1, sizeof(msg_t) * (MAX_MSGS - 1)); s->msg_count = MAX_MSGS - 1; }
     msg_t *m = &s->msgs[s->msg_count++];
@@ -70,8 +183,11 @@ void app_send_message(app_state_t *s) {
     s->draft[0] = 0;
     attach_set_inflight(id);
     app_begin(s, OP_MSG_SEND, "POST", path, b);
-    /* DM com a sala aberta: o mesmo id segue pelo DataChannel assinado; o chat.ack do peer vira "entregue" (check duplo) */
-    if (s->active_friend >= 0 && s->active_friend < s->friend_count && s->in_room && s->friends[s->active_friend].fp[0] && core_state() == CORE_READY) {
+    /* DM: o mesmo id segue pelo canal assinado, com ou sem sala de voz. Se o amigo não está na chamada, o core abre um canal direto com ele
+     * (toque na caixa de chegada dele, depois malha P2P só de DataChannel); sem ele online a mensagem espera na caixa de saída deste PC.
+     * Estados da mensagem: só neste PC (check) -> enviada (chat.sent) -> entregue (chat.ack, check duplo). */
+    if (s->active_friend >= 0 && s->active_friend < s->friend_count && s->friends[s->active_friend].fp[0] && core_state() == CORE_READY) {
+        if (!in_call_with(s, s->friends[s->active_friend].fp)) dm_open_link(s, &s->friends[s->active_friend]);
         char fp[160], t[1100], line[1500]; json_escape(s->friends[s->active_friend].fp, fp, sizeof fp); json_escape(c_text, t, sizeof t);
         snprintf(line, sizeof line, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
         core_send(line);

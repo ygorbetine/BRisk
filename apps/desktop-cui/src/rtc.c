@@ -294,7 +294,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
-    } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack")) {
+    } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack") || !strcmp(ev, "chat.sent")) {
         changed = attach_event(s, ev, j);
     } else if (!strcmp(ev, "chat.link")) {   /* chat privado fechado/reaberto pelo core (AMI-16) */
         const jval *on = json_get(j, "on"); friends_dm_link(s, json_str(j, "fp", ""), on && on->type == J_BOOL && on->b); changed = true;
@@ -302,7 +302,13 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const jval *lc = json_get(j, "local");
         changed = msgui_on_event(s, json_str(j, "from_fp", ""), lc && lc->type == J_BOOL && lc->b, json_str(j, "wire_raw", ""));
     } else if (!strcmp(ev, "chat.message")) {   /* mensagem nova de outra pessoa: aviso do sistema e contador de não lidas (notify.c) */
-        notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), json_str(j, "content", ""));
+        changed = chat_in_message(s, j, false);   /* DM: grava no histórico local, mostra na conversa aberta e avisa (chat.c) */
+    } else if (!strcmp(ev, "chat.history")) {   /* mensagens que faltavam, vindas da sincronização com o amigo */
+        changed = chat_in_message(s, j, true);
+    } else if (!strcmp(ev, "dm.wake")) {   /* um amigo quer falar comigo e eu não estou em sala com ele: abre a minha ponta do canal direto */
+        chat_dm_wake(s, json_str(j, "fp", "")); changed = false;
+    } else if (!strcmp(ev, "dm.state")) {
+        changed = false;
     } else if (!strcmp(ev, "room.chat")) {
         const jval *ts = json_get(j, "ts");
         call_chat_add(json_str(j, "id", ""), json_str(j, "author", "Participante"), json_str(j, "content", ""), ts && ts->type == J_NUM ? (long long)ts->num : 0, false);
@@ -460,7 +466,7 @@ void rtc_pump(app_state_t *s) {
                 send_cmd("net.mode.set", extra);
             }
         }
-        if ((s->rtc_want_room || groups_want_roster(s)) && !s->rtc_session_sent) {
+        if ((s->rtc_want_room || groups_want_roster(s) || chat_dm_wants_session(s)) && !s->rtc_session_sent) {
             char extra[256], nm[160];
             json_escape(s->user_name[0] ? s->user_name : "Você", nm, sizeof nm);
             snprintf(extra, sizeof extra, "\"display_name\":\"%s\"", nm);
@@ -468,6 +474,7 @@ void rtc_pump(app_state_t *s) {
             s->rtc_session_sent = true;
         }
         groups_roster_tick(s);
+        chat_dm_tick(s);
         if (s->rtc_want_room && s->rtc_session_ready) {
             char extra[256], rm[160];
             json_escape(s->room_name, rm, sizeof rm);

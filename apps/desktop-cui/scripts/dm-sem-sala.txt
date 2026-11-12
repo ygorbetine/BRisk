@@ -1,0 +1,26 @@
+# 1.4.1: DM recebida fora de qualquer sala aparece na conversa aberta (conversa com Marina, amigo 0, fp conhecida); ida e volta dos estados
+waitms 600
+expect screen 1
+expect msg_count 3
+coreev {"ev":"chat.message","channel":"dm-x","from_fp":"fp-demo-0","author":"Marina Costa","content":"Cheguei! Estou online agora.","id":"in-0001","ts":1794267900000,"via":"dm"}
+waitms 400
+expect msg_count 4
+coreev {"ev":"chat.message","channel":"dm-x","from_fp":"fp-demo-0","author":"Marina Costa","content":"Cheguei! Estou online agora.","id":"in-0001","ts":1794267900000,"via":"dm"}
+waitms 300
+expect msg_count 4
+coreev {"ev":"chat.message","channel":"dm-x","from_fp":"fp-desconhecida","author":"Fulano","content":"quem sou eu","id":"in-0002","ts":1794267901000}
+waitms 300
+expect msg_count 4
+shot dm1-recebida
+msgstate 0 sending
+coreev {"ev":"chat.sent","id":"m2","to_fp":"fp-demo-0"}
+waitms 300
+expect attach_mine_state0 5
+shot dm2-enviada
+coreev {"ev":"chat.ack","id":"m2","from_fp":"fp-demo-0"}
+waitms 300
+expect attach_mine_state0 4
+coreev {"ev":"chat.sent","id":"m2","to_fp":"fp-demo-0"}
+waitms 200
+expect attach_mine_state0 4
+shot dm3-entregue

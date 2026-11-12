@@ -45,6 +45,8 @@ int script_probe(const char *n) {
     if (!strcmp(n, "add_friend")) return state.add_friend_open;
     if (!strcmp(n, "create_group")) return state.create_group_open;
     if (!strcmp(n, "friends_tab")) return state.friends_tab;
+    if (!strcmp(n, "msg_count")) return state.msg_count;
+    if (!strcmp(n, "pending_count")) return state.pending_count;
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;
     { extern int call_probe(const char *name); int v = call_probe(n); if (v != -2) return v; }   /* chamada e histórico (call.h) */

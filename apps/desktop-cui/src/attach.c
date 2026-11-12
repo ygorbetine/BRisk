@@ -97,7 +97,8 @@ void attach_set_inflight(const char *id) { snprintf(g_inflight, sizeof g_infligh
 void attach_inflight_done(app_state_t *s, bool ok) {
     (void)s;
     if (!g_inflight[0]) return;
-    attach_mark(g_inflight, ok ? ATT_SENT : ATT_FAILED); g_inflight[0] = 0;
+    if (attach_state(g_inflight) == ATT_SENDING) attach_mark(g_inflight, ok ? ATT_SENT : ATT_FAILED);   /* "enviada"/"entregue" podem chegar do core antes da gravação terminar: não rebaixa */
+    g_inflight[0] = 0;
 }
 
 /* ---------- eventos do core ---------- */
@@ -143,6 +144,11 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
         for (int i = 0; slot < 0 && i < NTY; i++) if ((int)(g_ty[i].until - GetTickCount()) <= 0) slot = i;
         if (slot < 0) slot = 0;
         snprintf(g_ty[slot].name, sizeof g_ty[slot].name, "%s", nm); g_ty[slot].until = GetTickCount() + 5000; return true;
+    }
+    if (!strcmp(ev, "chat.sent")) {   /* a mensagem saiu pelo canal direto até o amigo (ainda sem confirmação) */
+        const char *id = json_str(j, "id", ""); int st = attach_state(id);
+        if (!id[0] || st == 0 || st == ATT_FAILED || st == ATT_DELIVERED || st == ATT_WIRE) return false;
+        attach_mark(id, ATT_WIRE); return true;
     }
     if (!strcmp(ev, "chat.ack")) {   /* o peer recebeu a mensagem (o core devolve o id que a UI mandou em chat.send): check duplo */
         const char *id = json_str(j, "id", ""); int st = attach_state(id);
@@ -575,9 +581,19 @@ bool attach_search_match(const char *text) {
 /* ---------- etiqueta de estado ---------- */
 void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) { g_ps = s;
     int st = attach_state(m->id);
-    if (st == ATT_SENDING) cui_icon(ui, CUI_ICON_CLOCK, 12, CUI_RGBA(0xffffffb0));
-    else if (st == ATT_SENT) cui_icon(ui, CUI_ICON_CHECK, 12, CUI_RGBA(0xffffffb0));
-    else if (st == ATT_DELIVERED) cui_icon(ui, CUI_ICON_CHECK_CHECK, 12, CUI_RGB(0x7dd3fc));
+    const bool dm = s->active_friend >= 0;   /* DM: o estado conta o caminho até o amigo; grupo só guarda neste PC */
+    if (st == ATT_SENDING || st == ATT_SENT || st == ATT_WIRE || st == ATT_DELIVERED) {
+        const char *ic = st == ATT_SENDING ? CUI_ICON_CLOCK : st == ATT_DELIVERED ? CUI_ICON_CHECK_CHECK : CUI_ICON_CHECK;
+        const cui_color col = st == ATT_DELIVERED ? CUI_RGB(0x7dd3fc) : st == ATT_WIRE ? CUI_RGBA(0xffffffe6) : CUI_RGBA(0xffffff80);
+        const char *tip = st == ATT_SENDING ? "Gravando neste PC…"
+                        : st == ATT_DELIVERED ? "Entregue"
+                        : st == ATT_WIRE ? "Enviada: já saiu para o seu amigo"
+                        : dm ? "Só neste PC: o seu amigo ainda não recebeu (segue quando os dois estiverem online)" : "Salva neste PC";
+        cui_push_id(ui, "stt");
+        cui_box(ui, .id = "ic", .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad = 2) { cui_icon(ui, ic, 12, col); }
+        if (briks_hover(ui, "ic")) briks_tip(tip);
+        cui_pop_id(ui);
+    }
     else if (st == ATT_FAILED) {
         cui_push_id(ui, "fail");
         if (cui_icon_button(ui, CUI_ICON_CIRCLE_ALERT, .size = CUI_SIZE_SM, .tooltip = "Não enviada · clique para reenviar")) {
@@ -591,13 +607,15 @@ void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) { g_ps = s;
     }
 }
 
+void attach_script_event(const char *line) { if (g_ps && line) rtc_handle_event(g_ps, line); }
+
 void attach_script_state(app_state_t *s, int n, const char *state) {
     if (!s) s = g_ps; if (!s) return;
     for (int i = s->msg_count - 1, k = 0; i >= 0; i--) if (s->msgs[i].mine) {
         if (k++ != n) continue;
         const char *id = s->msgs[i].id;
         if (!strcmp(state, "ack")) { char b[160]; snprintf(b, sizeof b, "{\"ev\":\"chat.ack\",\"id\":\"%s\"}", id); jval *j = json_parse(b); attach_event(s, "chat.ack", j); json_free(j); }
-        else attach_mark(id, !strcmp(state, "sending") ? ATT_SENDING : !strcmp(state, "failed") ? ATT_FAILED : !strcmp(state, "delivered") ? ATT_DELIVERED : ATT_SENT);
+        else attach_mark(id, !strcmp(state, "sending") ? ATT_SENDING : !strcmp(state, "failed") ? ATT_FAILED : !strcmp(state, "delivered") ? ATT_DELIVERED : !strcmp(state, "wire") ? ATT_WIRE : ATT_SENT);
         return;
     }
 }

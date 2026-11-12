@@ -1,0 +1,40 @@
+# Miniaturas ao vivo no overlay (até 4, uma por transmissão): o app lê o quadro de cada receptor, reduz (~320 px) e escreve na memória
+# compartilhada do overlay; pede ao receptor que decodifique só o que está LIGADO e PARA de enviar quando o item (ou a transmissão) é desligado.
+# Teste oculto: o briks_overlay.exe NÃO é aberto. Demo "call" + BRIKS_DEMO_PEERS=3 + BRIKS_DEV_SHARE=demo-many (4 telas: a pessoa 0 com 2 telas + 2 pessoas).
+waitms 2200
+expect overlay_lives 4
+expect overlay_tiles 4
+expect overlay_has_map 1
+expect overlay_live_img 4
+expect overlay_live_w 320
+expect overlay_live_h 180
+expect overlay_want_n 4
+expect overlay_img_sent 4
+# a quinta transmissão não cabe: só aparecem 4 e passa a existir "Trocar transmissão"
+sys ovl line tileon #1 0
+waitms 700
+expect cfg_ov_toff 1
+expect overlay_tiles_on 3
+expect overlay_live_img 3
+expect overlay_want_n 3
+expect overlay_tileon_evs 1
+sys ovl line tile #0 \\.\DISPLAY1 120 80 150
+waitms 500
+expect cfg_ov_tiles 1
+expect overlay_tile_evs 1
+expect overlay_tplaces 1
+sys ovl line tileon #1 1
+waitms 900
+expect cfg_ov_toff 0
+expect overlay_tiles_on 4
+expect overlay_live_img 4
+sys ovl line widget live 0
+waitms 700
+expect overlay_live_img 0
+expect overlay_want_n 0
+expect overlay_has_oplive 0
+sys ovl line widget live 1
+waitms 900
+expect overlay_live_img 4
+expect overlay_want_n 4
+snap l0

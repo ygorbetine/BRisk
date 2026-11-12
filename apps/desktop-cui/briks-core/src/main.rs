@@ -42,6 +42,7 @@ mod sfudata;
 mod sfufiles;
 mod sfu_cfg;
 mod roomchat;
+mod sons;
 mod share;
 mod signaling;
 

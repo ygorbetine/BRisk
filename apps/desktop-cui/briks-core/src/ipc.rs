@@ -560,6 +560,12 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         };
                         out(&mut wr, ev).await?;
                     }
+                    // painel de sons: armazenamento local, importação e preferências (rede: sound.play/sound.fetch)
+                    c if c.starts_with("sound.") && matches!(c, "sound.list" | "sound.check" | "sound.import" | "sound.update" | "sound.fav" | "sound.remove" | "sound.prefs" | "sound.path") => {
+                        let store = crate::sons::shared_for(&cfg.data_dir);
+                        let my_fp = identity.as_ref().map(|i| i.fingerprint()).unwrap_or_default();
+                        for ev in crate::sons::handle(&store, &v, &my_fp) { out(&mut wr, ev).await?; }
+                    }
                     "group.code" => {
                         let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
                             Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),

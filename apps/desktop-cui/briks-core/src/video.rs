@@ -325,13 +325,14 @@ pub fn i420_to_rgba(y: &[u8], u: &[u8], v: &[u8], strides: (usize, usize, usize)
 /// Alvo de bitrate "automático" (bps) por resolução (altura) e FPS. Âncoras: 360p 0,8 · 480p 1,2 · 720p 2,5 · 1080p 4,5 ·
 /// 1440p 9 · 4K 18 Mbps a 30 FPS, interpoladas em escala logarítmica entre elas.
 pub fn auto_bitrate(h: usize, fps: u32) -> u32 {
-    const A: [(f64, f64); 6] = [(360.0, 800_000.0), (480.0, 1_200_000.0), (720.0, 2_500_000.0), (1080.0, 4_500_000.0), (1440.0, 9_000_000.0), (2160.0, 18_000_000.0)];
+    // perfis do Electron (screen-quality.ts): 720p30 = 3,5 Mbps, 1080p30 = 6; a 60 FPS 720p = 5 e 1080p = 9
+    const A: [(f64, f64); 6] = [(360.0, 1_000_000.0), (480.0, 1_800_000.0), (720.0, 3_500_000.0), (1080.0, 6_000_000.0), (1440.0, 10_000_000.0), (2160.0, 18_000_000.0)];
     let hh = (h as f64).clamp(A[0].0, A[5].0);
     let mut base = A[5].1;
     for w in A.windows(2) {
         if hh <= w[1].0 { let t = (hh / w[0].0).ln() / (w[1].0 / w[0].0).ln(); base = w[0].1 * (w[1].1 / w[0].1).powf(t); break; }
     }
-    let f = (fps.max(1) as f64 / 30.0).powf(0.75);
+    let f = (fps.max(1) as f64 / 30.0).powf(0.55);
     (base * f) as u32
 }
 

@@ -333,15 +333,21 @@ impl Capture {
             SourceKind::Screen(h) => {
                 if refuses_primary(h) { return Err(anyhow!("teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)")); }
                 let m = Monitor::from_raw_hmonitor(h as *mut std::ffi::c_void);
-                let s = Settings::new(m, CursorCaptureSettings::WithCursor, DrawBorderSettings::Default, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
-                let c: CaptureControl<Handler, _> = Handler::start_free_threaded(s).map_err(|e| anyhow!("captura de tela: {e}"))?;
+                let mk = |b: DrawBorderSettings| Settings::new(m, CursorCaptureSettings::WithCursor, b, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
+                let c: CaptureControl<Handler, _> = match Handler::start_free_threaded(mk(DrawBorderSettings::WithoutBorder)) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("captura sem contorno amarelo indisponível ({e}); usando o contorno padrão"); Handler::start_free_threaded(mk(DrawBorderSettings::Default)).map_err(|e| anyhow!("captura de tela: {e}"))? }
+                };
                 Handle::Wgc(Box::new(move || { let _ = c.stop(); }))
             }
             SourceKind::Window(h) => {
                 let w = Window::from_raw_hwnd(h as *mut std::ffi::c_void);
                 if !w.is_valid() { return Err(anyhow!("janela não existe mais")); }
-                let s = Settings::new(w, CursorCaptureSettings::WithCursor, DrawBorderSettings::Default, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
-                let c: CaptureControl<Handler, _> = Handler::start_free_threaded(s).map_err(|e| anyhow!("captura de janela: {e}"))?;
+                let mk = |b: DrawBorderSettings| Settings::new(w, CursorCaptureSettings::WithCursor, b, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
+                let c: CaptureControl<Handler, _> = match Handler::start_free_threaded(mk(DrawBorderSettings::WithoutBorder)) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("captura sem contorno amarelo indisponível ({e}); usando o contorno padrão"); Handler::start_free_threaded(mk(DrawBorderSettings::Default)).map_err(|e| anyhow!("captura de janela: {e}"))? }
+                };
                 Handle::Wgc(Box::new(move || { let _ = c.stop(); }))
             }
         };

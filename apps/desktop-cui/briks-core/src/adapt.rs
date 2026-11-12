@@ -14,8 +14,6 @@ use crate::video::auto_bitrate;
 /// Piso de bitrate: abaixo disto 360p a 10 qps vira borrão e o quadro-chave não fecha; é melhor segurar aqui e deixar a
 /// retransmissão trabalhar do que continuar descendo.
 pub const FLOOR_BPS: f64 = 250_000.0;
-/// Fator do teto automático para conteúdo de tela (ver `Controller::ceil_for`).
-pub const DETAIL_BOOST: f64 = 1.4;
 
 /// O que preservar quando falta banda ou CPU.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -273,10 +271,7 @@ impl Controller {
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.ceil_for(self.ladder[0]) }
-    /// Teto automático do nível. Tela (Detail): texto e interface sofrem muito mais que vídeo com pouco bitrate (medido em 1080p: 2,5 Mbps
-    /// = 24 dB, 4,5 = 34, 6 = 39, 10 = 46 dB) e baixar a resolução piora mais ainda, então em rede limpa o teto é 40% maior. Só sobe até
-    /// onde a rede mostra folga: o estimador continua mandando, e a necessidade mínima (`need_bps`) não muda.
-    fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64 * if self.content == Content::Detail { DETAIL_BOOST } else { 1.0 }) }
+    fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64) }
     /// Bitrate necessário para o nível: o mínimo de qualidade ou, se maior, o que o codificador comprovadamente não consegue
     /// baixar neste conteúdo (piso medido de bits por pixel).
     fn need(&self, l: Level) -> f64 {
@@ -508,8 +503,8 @@ mod tests {
         assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");
         // conteúdo fácil de novo: o piso some e a resolução volta
         for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360); }
-        for _ in 0..8 { c.decide(1_500_000.0); }
-        assert!(c.decide(1_500_000.0).level.h >= 1080, "voltou a 1080p");
+        for _ in 0..8 { c.decide(4_500_000.0); }
+        assert!(c.decide(4_500_000.0).level.h >= 1080, "voltou a 1080p");
     }
 
     #[test]

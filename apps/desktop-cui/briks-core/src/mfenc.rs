@@ -50,6 +50,18 @@ unsafe fn friendly(act: &IMFActivate) -> String {
     String::new()
 }
 
+/// Tamanho do VBV em bits. Padrão: bps/8 (= 125 ms de bitrate). `BRIKS_ENC_VBV_MS` testa outros (diagnóstico).
+fn vbv_bits(bps: u32) -> u32 {
+    match std::env::var("BRIKS_ENC_VBV_MS").ok().and_then(|v| v.parse::<u64>().ok()) { Some(ms) => (bps as u64 * ms / 1000).min(u32::MAX as u64) as u32, None => bps / 8 }
+}
+/// Perfis H264 na ordem de tentativa; `BRIKS_ENC_PROFILE` = base | main | high põe o escolhido primeiro (diagnóstico).
+fn profile_order() -> Vec<i32> {
+    let mut v = vec![eAVEncH264VProfile_ConstrainedBase.0, eAVEncH264VProfile_Base.0, eAVEncH264VProfile_Main.0, eAVEncH264VProfile_High.0];
+    let first = match std::env::var("BRIKS_ENC_PROFILE").as_deref() { Ok("base") => Some(eAVEncH264VProfile_Base.0), Ok("main") => Some(eAVEncH264VProfile_Main.0), Ok("high") => Some(eAVEncH264VProfile_High.0), _ => None };
+    if let Some(f) = first { v.retain(|x| *x != f); v.insert(0, f); }
+    v
+}
+
 impl MfEnc {
     /// `allow_hw = false` força o codificador de software.
     pub fn new(w: usize, h: usize, fps: u32, bps: u32, allow_hw: bool) -> Result<Self> {
@@ -90,13 +102,13 @@ impl MfEnc {
         set(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR.0 as u32);
         set(&CODECAPI_AVEncCommonMeanBitRate, bps);
         // balde furado (VBV) de 1 s: sem isso um quadro-chave pode sair com várias vezes o bitrate de um segundo e virar rajada
-        set(&CODECAPI_AVEncCommonBufferSize, bps / 8);
+        set(&CODECAPI_AVEncCommonBufferSize, vbv_bits(bps));
         set(&CODECAPI_AVEncMPVGOPSize, fps * 30);   // quadro-chave só a pedido (PLI/FIR); o GOP longo é só rede de segurança
         set(&CODECAPI_AVEncMPVDefaultBPictureCount, 0);
         if let Some(c) = &codec { let _ = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(true)); let _ = c.SetValue(&CODECAPI_AVEncCommonRealTime, &var_bool(true)); }
 
         let mut ok = false;
-        for profile in [eAVEncH264VProfile_ConstrainedBase.0, eAVEncH264VProfile_Base.0, eAVEncH264VProfile_Main.0, eAVEncH264VProfile_High.0] {
+        for profile in profile_order() {
             let ot = MFCreateMediaType()?;
             ot.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
             ot.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
@@ -129,7 +141,7 @@ impl MfEnc {
     /// Bitrate médio ao vivo (ICodecAPI). Devolve false se o codificador recusar.
     pub fn set_bitrate(&mut self, bps: u32) -> bool {
         let Some(c) = &self.codec else { return false };
-        let ok = unsafe { let _ = c.SetValue(&CODECAPI_AVEncCommonBufferSize, &var_u32(bps / 8)); c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &var_u32(bps)).is_ok() };
+        let ok = unsafe { let _ = c.SetValue(&CODECAPI_AVEncCommonBufferSize, &var_u32(vbv_bits(bps))); c.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &var_u32(bps)).is_ok() };
         if ok { self.bps = bps; }
         ok
     }

@@ -126,15 +126,21 @@ impl Shared {
     }
 }
 
-/// Prévia local: reduz (vizinho mais próximo) para no máximo 1280 de largura e troca BGRA → RGBA.
+/// Prévia local: reduz para no máximo 1280 de largura (média da área coberta por cada pixel novo; o vizinho mais próximo
+/// pulava pixels e deixava o texto serrilhado e quebrado) e troca BGRA → RGBA.
 fn preview_rgba(bgra: &[u8], stride: usize, w: usize, h: usize) -> (usize, usize, Vec<u8>) {
     let sc = (w as f32 / 1280.0).max(1.0);
     let (pw, ph) = (((w as f32 / sc) as usize).max(2) & !1, ((h as f32 / sc) as usize).max(2) & !1);
     let mut out = vec![255u8; pw * ph * 4];
-    let xs: Vec<usize> = (0..pw).map(|x| ((x as f32 * sc) as usize).min(w - 1) * 4).collect();
+    let span = |i: usize, n: usize| { let a = (i as f32 * sc) as usize; (a.min(n - 1), (((i + 1) as f32 * sc).ceil() as usize).clamp(a + 1, n)) };
+    let xs: Vec<(usize, usize)> = (0..pw).map(|x| span(x, w)).collect();
     for (y, row) in out.chunks_exact_mut(pw * 4).enumerate() {
-        let src = &bgra[((y as f32 * sc) as usize).min(h - 1) * stride..];
-        for (px, &o) in row.chunks_exact_mut(4).zip(xs.iter()) { px[0] = src[o + 2]; px[1] = src[o + 1]; px[2] = src[o]; }
+        let (y0, y1) = span(y, h);
+        for (px, &(x0, x1)) in row.chunks_exact_mut(4).zip(xs.iter()) {
+            let (mut b, mut g, mut r, mut n) = (0u32, 0u32, 0u32, 0u32);
+            for yy in y0..y1 { let src = &bgra[yy * stride..]; for xx in x0..x1 { let o = xx * 4; b += src[o] as u32; g += src[o + 1] as u32; r += src[o + 2] as u32; n += 1; } }
+            px[0] = (r / n) as u8; px[1] = (g / n) as u8; px[2] = (b / n) as u8;
+        }
     }
     (pw, ph, out)
 }
@@ -476,5 +482,21 @@ mod guard_tests {
         assert!(saw_primary, "sem monitor principal na enumeração");
         std::env::remove_var("BRIKS_SHARE_NO_PRIMARY");
         for s in &screens { assert!(!super::refuses_primary(s["id"].as_str().unwrap().parse().unwrap()), "com a trava desligada nada é recusado"); }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    /// listras de 1 px (preto/branco): a média da área dá cinza em todo o quadro, sem pixel puro (o vizinho mais próximo dava só preto/branco).
+    #[test]
+    fn preview_downscale_averages_instead_of_dropping_pixels() {
+        let (w, h) = (1920usize, 1080usize);
+        let mut f = vec![255u8; w * h * 4];
+        for y in 0..h { for x in 0..w { let v = if x % 2 == 0 { 0 } else { 255 }; let o = (y * w + x) * 4; f[o] = v; f[o + 1] = v; f[o + 2] = v; } }
+        let (pw, ph, out) = preview_rgba(&f, w * 4, w, h);
+        assert_eq!((pw, ph), (1280, 720));
+        let pure = out.chunks(4).filter(|p| p[0] == 0 || p[0] == 255).count();
+        assert!(pure * 10 < out.len() / 4, "{pure} pixels puros de {}", out.len() / 4);
     }
 }

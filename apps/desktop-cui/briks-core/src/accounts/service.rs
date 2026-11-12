@@ -635,7 +635,20 @@ impl Service {
                         _ => {}
                     }
                     match acc.friends().await {
-                        Ok(f) => { let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await; friend_photos(&rt, &f, &tx).await; }
+                        Ok(f) => {
+                            let _ = tx.send(json!({ "ev": "friends.list", "friends": f })).await;
+                            // 1.4.2: avisa a OUTRA pessoa (toque sem dados na caixa de chegada dela) para atualizar a lista na hora, sem esperar o poll de 30 s
+                            if cmd != "friends.list" {
+                                let nk = nick.trim().trim_start_matches('@').to_lowercase();
+                                let target = match cmd.as_str() {
+                                    "friends.request" => f.iter().find(|x| x.nick.to_lowercase() == nk).map(|x| x.user_id.clone()),
+                                    "friends.respond" => f.iter().find(|x| x.request_id.as_deref() == Some(req.as_str())).map(|x| x.user_id.clone()),
+                                    _ => Some(user.clone()),
+                                };
+                                if let Some(t) = target.filter(|t| !t.is_empty()) { let _ = tx.send(json!({ "ev": "friends.poke_out", "user_id": t })).await; }
+                            }
+                            friend_photos(&rt, &f, &tx).await;
+                        }
                         Err(e) => {
                             let _ = tx.send(json!({ "ev": "friends.result", "ok": false, "error_code": e.code, "message": e.message })).await;
                             if e.is_auth() { let _ = tx.send(failed(&rt, &e)).await; }

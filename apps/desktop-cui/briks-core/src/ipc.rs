@@ -780,7 +780,16 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     other => { account.command(other, &v); }
                 }
             }
-            Some(ev) = acct_rx.recv() => out(&mut wr, ev).await?,
+            Some(ev) = acct_rx.recv() => {
+                // 1.4.2: toque de "atualize a lista" para a outra pessoa (só interno ao core; a UI não vê este evento)
+                if ev["ev"] == "friends.poke_out" {
+                    if let (Some(u), Some(url), Some(key)) = (ev["user_id"].as_str().filter(|u| crate::dmlink::valid_id(u)), cfg.realtime_url.clone(), cfg.realtime_key.clone()) {
+                        crate::dmlink::poke(RealtimeCfg::new(&url, &key), u);
+                    }
+                    continue;
+                }
+                out(&mut wr, ev).await?
+            }
             Some(ev) = kick_rx.recv() => out(&mut wr, ev).await?,   // resultado do pedido ao servidor (diagnóstico; a UI não precisa reagir)
             Some(j) = link_rx.recv() => out(&mut wr, j).await?,
             Some((fp, e)) = dm_rx.recv() => {

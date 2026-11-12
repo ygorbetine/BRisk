@@ -519,7 +519,8 @@ bool account_handle_event(app_state_t *s, const char *line) {
         s->ice_test_level = !strcmp(lv, "relay") ? 3 : !strcmp(lv, "stun") ? 2 : 1;
         copy(s->ice_test_msg, sizeof s->ice_test_msg, json_str(j, "message", ""));
         s->ice_test_ms = (json_get(j, "ms") ? (int)json_get(j, "ms")->num : 0);
-    } else if (!strcmp(ev, "friends.list")) on_friends(s, j);
+    } else if (!strcmp(ev, "friends.poke")) { if (s->acct_user_id[0] && !s->acct_demo) core_send("{\"cmd\":\"friends.list\"}"); }   /* 1.4.2: a outra pessoa avisou que a lista mudou: relê na hora (o poll de 30 s segue como reserva) */
+    else if (!strcmp(ev, "friends.list")) on_friends(s, j);
     else if (!strcmp(ev, "friends.photos")) on_friend_photos(s, j);
     else if (!strcmp(ev, "friends.blocks")) on_blocks(s, j);
     else if (!strcmp(ev, "presence.list")) on_presence(s, j);

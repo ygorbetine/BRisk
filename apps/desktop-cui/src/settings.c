@@ -2,6 +2,7 @@
  * Persistência local em %APPDATA%\Briks-CUI\settings.cfg (linhas chave=valor, gravadas quando algo muda).
  * Cada controle é marcado no relatório como "efeito real" ou "sem efeito real ainda" (UI + persistência, sem backend). */
 #include "briks_ui.h"
+#include "volume_ctl.h"
 #include "netdiag.h"
 #include "update.h"
 #include "core.h"
@@ -454,7 +455,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                             if (s->mic_test_on) cui_request_wakeup(ui, 0.05f);
                         }
                         cui_text(ui, "Volume de entrada (ganho)", .size = 12, .color = B_MUTED);
-                        cui_slider(ui, "##cfg-invol", &g_set.in_vol, 0, 100);
+                        briks_volume(ui, "cfg-invol", &g_set.in_vol, 0.0f, 100.0f, 1.0f, NULL, true);
                         sub(ui, "O ganho vale na hora, na sua voz que sai para a sala.");
                     }
                     SCARD(ui, "CÂMERA") {
@@ -485,7 +486,7 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_select(ui, "cfg-out", out_ptr, out_n, &g_set.out);
                         sub(ui, "Vale na hora para as vozes da sala. Se o aparelho sumir, volta ao padrão do sistema.");
                         cui_text(ui, "Volume de saída", .size = 12, .color = B_MUTED);
-                        cui_slider(ui, "##cfg-outvol", &g_set.out_vol, 0, 100);
+                        briks_volume(ui, "cfg-outvol", &g_set.out_vol, 0.0f, 100.0f, 1.0f, NULL, true);
                         sub(ui, "O volume vale na hora, para tudo que você ouve na sala.");
                     }
                     SCARD(ui, "PROCESSAMENTO") {

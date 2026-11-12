@@ -2,6 +2,7 @@
  * controles flutuante. Tela cheia (F11/Esc), indicador de rede, ajustes de áudio e pedido de transmissão ficam aqui.
  * Medidas de apps/web/src/components/CallWorkspace.tsx + call-workspace.css / glass-layout.css; lógica pura em callhist.c. */
 #include "call.h"
+#include "volume_ctl.h"
 #include "netdiag.h"
 #include "call_idle.h"
 #include <math.h>
@@ -215,10 +216,10 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                     if (g_tile_s && t->slot >= 0 && t->slot < BRIKS_MAX_PEERS) {   /* CHM-36: volume por pessoa no próprio menu do bloco (lembrado entre chamadas) */
                         float *vp = &g_tile_s->rtc_peers[t->slot].volume; if (!g_tile_s->rtc_peers[t->slot].vol_set) { g_tile_s->rtc_peers[t->slot].vol_set = true; *vp = 100.0f; }
                         cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
-                            const float before = *vp; cui_icon(ui, CUI_ICON_VOLUME_2, 14, B_MUTED);
-                            cui_slider(ui, "##tvol", vp, 0, 200, .step = 5, .width = CUI_FILL);
-                            if (fabsf(before - *vp) > 0.01f) rtc_set_peer_volume(g_tile_s, t->slot, *vp / 100.0f);
-                            char pct[12]; snprintf(pct, sizeof pct, "%d%%", (int)(*vp + 0.5f)); cui_text(ui, pct, .size = 11, .color = B_MUTED, .nowrap = true);
+                            bool mt = g_tile_s->rtc_peers[t->slot].muted_by_me;
+                            const int ch = briks_volume(ui, "tvol", vp, 0.0f, 200.0f, 1.0f, &mt, true);   /* 1.4.4: ícone muta/desmuta, roda ajusta */
+                            if (ch & VOLCTL_MUTE) rtc_mute_peer(g_tile_s, t->slot, mt);
+                            if (ch & VOLCTL_VOL) rtc_set_peer_volume(g_tile_s, t->slot, *vp / 100.0f);
                         }
                     }
                     /* só o dono, só no servidor de chamadas: fecha (ou pede para reabrir) o microfone da pessoa para todos */
@@ -375,9 +376,9 @@ static void audio_popover(cui_ctx *ui, app_state_t *s) {
         cui_progress(ui, s->mic_on ? s->me_level : 0.0f);
         cui_text(ui, s->mic_on ? "A barra mostra o que a sala está ouvindo de você." : "Seu microfone está desligado.", .size = 12, .color = B_MUTED);
         cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume de entrada", .size = 13, .width = CUI_FILL); char p[12]; snprintf(p, sizeof p, "%d%%", (int)(in_v + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED); }
-        cui_slider(ui, "##call-in", &in_v, 0, 100, .width = CUI_FILL);
+        briks_volume(ui, "call-in", &in_v, 0.0f, 100.0f, 1.0f, NULL, false);
         cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume de saída", .size = 13, .width = CUI_FILL); char p[12]; snprintf(p, sizeof p, "%d%%", (int)(out_v + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED); }
-        cui_slider(ui, "##call-out", &out_v, 0, 100, .width = CUI_FILL);
+        briks_volume(ui, "call-out", &out_v, 0.0f, 100.0f, 1.0f, NULL, false);
         cui_separator(ui);
         cui_switch(ui, "Porta de ruído", &g2);
         if (g2) { cui_textf(ui, "Corta o microfone abaixo de %d dB", (int)gdb2); cui_slider(ui, "##call-gate", &gdb2, -70, -20, .width = CUI_FILL); }

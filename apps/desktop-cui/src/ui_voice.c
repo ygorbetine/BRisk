@@ -1,6 +1,7 @@
 /* Painel "Sala de voz" completo: participantes com indicador de fala, mudo/ensurdecido, status, silenciar e volume por pessoa,
  * expulsar (só o dono) e os controles de voz de quem está na sala. Tudo em vidro, cantos arredondados. */
 #include "call.h"
+#include "volume_ctl.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -50,13 +51,11 @@ static void person_card(cui_ctx *ui, app_state_t *s, int slot, bool me) {
         }
         if (!me) {
             if (!P.vol_set) { P.vol_set = true; P.volume = 100.0f; }
-            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .align = CUI_ALIGN_CENTER) {
-                float before = P.volume;
-                cui_icon(ui, CUI_ICON_VOLUME_2, 14, B_MUTED);
-                cui_slider(ui, "##vol", &P.volume, 0, 200, .step = 5, .width = CUI_FILL);
-                if (fabsf(before - P.volume) > 0.01f) rtc_set_peer_volume(s, slot, P.volume / 100.0f);
-                char pct[12]; snprintf(pct, sizeof pct, "%d%%", (int)(P.volume + 0.5f));
-                cui_text(ui, pct, .size = 11, .color = B_MUTED, .nowrap = true);
+            {
+                bool mt = s->rtc_peers[slot].muted_by_me;
+                const int ch = briks_volume(ui, "pvol", &P.volume, 0.0f, 200.0f, 1.0f, &mt, true);   /* 1.4.4: um só componente de volume */
+                if (ch & VOLCTL_MUTE) rtc_mute_peer(s, slot, mt);
+                if (ch & VOLCTL_VOL) rtc_set_peer_volume(s, slot, P.volume / 100.0f);
             }
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .align = CUI_ALIGN_CENTER) {
                 if (cui_button(ui, by_me ? "Reativar" : "Silenciar", .variant = by_me ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rtc_mute_peer(s, slot, !by_me);

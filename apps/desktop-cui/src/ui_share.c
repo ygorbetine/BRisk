@@ -8,6 +8,7 @@
 #include "json.h"
 #include "callhist.h"
 #include "call.h"
+#include "volume_ctl.h"
 #include <cui/cui_render.h>
 #include <math.h>
 #include <stdio.h>
@@ -399,7 +400,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
         jval *jj = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":4000,\"label\":\"Tela 2\"}");
         if (jj) { share_handle_event(s, jj, "share.remote"); json_free(jj); }
-        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) demo_frame(q->remote[0].path, sizeof q->remote[0].path, "tela1", 1280, 720, 0);
+        if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) demo_frame(q->remote[0].path, sizeof q->remote[0].path, "tela1", 1280, 720, 0); if (getenv("BRIKS_DEMO_SHARE_AUDIO")) q->remote[0].audio = true;   /* 1.4.4: a transmissão demo traz áudio (aparece o controle de volume de quem assiste) */
         if (!strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) {   /* a mesma pessoa com DUAS telas no ar */
             jval *j2 = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"slot\":1,\"state\":\"on\",\"w\":960,\"h\":540,\"fps\":30,\"kbps\":2500,\"label\":\"Tela 3\"}");
             if (j2) { share_handle_event(s, j2, "share.remote"); json_free(j2); }
@@ -856,8 +857,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         if (volume) {   /* volume do áudio desta transmissão, só para quem assiste */
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 18) {
                 cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                    cui_icon(ui, *volume <= 0.01f ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, 14, B_TEXT);
-                    cui_box(ui, .width = CUI_FILL) { cui_slider(ui, "##vol", volume, 0, 2); }
+                    briks_volume(ui, "vol", volume, 0.0f, 2.0f, 0.01f, NULL, false);   /* 1.4.4: ícone muta/desmuta, roda ajusta (volume_ctl.c) */
                 }
             }
         }
@@ -894,6 +894,7 @@ void ui_share_notice_row(cui_ctx *ui, app_state_t *s) {
 int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_notice")) return g_notice.slot >= 0;
     if (!strcmp(n, "share_zoom")) return g_zoom_pct[0];
+    if (!strcmp(n, "share_vol_0")) return (int)(s->sh.remote[0].volume * 100.0f + 0.5f);   /* 1.4.4: volume de quem assiste a 1ª transmissão (%) */
     if (!strcmp(n, "share_zoomed")) return g_zoom_pct[0] > 100;
     if (!strcmp(n, "share_cx")) return (int)g_zoom[0].cx;   /* ponto da imagem no meio da moldura: muda ao arrastar */
     if (!strcmp(n, "share_cy")) return (int)g_zoom[0].cy;

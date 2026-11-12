@@ -314,15 +314,24 @@ impl Controller {
     }
 
     /// Sobrecarga local. `work_ms` = tempo médio de conversão + codificação por quadro; `offered`/`sent` = quadros por segundo
-    /// que a captura entregou e que saíram codificados. Chamado uma vez por segundo.
-    pub fn note_cpu(&mut self, work_ms: f64, offered: f64, sent: f64) {
+    /// que a captura entregou e que saíram codificados. `held` = quadros por segundo que o laço pegou mas deliberadamente não enviou
+    /// (fila do pacer cheia = rede; codificador que soltou nada = ele segurou o quadro): NÃO são lentidão da máquina. `cpu_pct` = CPU do
+    /// processo (0..100, 0 = desconhecida). Chamado uma vez por segundo.
+    ///
+    /// "O PC não deu conta" só vale com evidência de máquina lenta: o quadro custa mais que o período, ou o laço deixou de pegar quadros
+    /// que a captura entregou (offered alto, sent + held baixo) E o custo por quadro ou a CPU estão altos. Antes, `offered >= 0,9·fps &&
+    /// sent < 0,75·fps` bastava: com rede/pacer segurando quadros (bitrate baixo, IDR grande) ou tela parada com reenvio, o controle
+    /// concluía "sobrecarga", descia o nível, o bitrate caía ainda mais e o círculo se fechava (visto: 720p·2 FPS·188 kbps com a rede
+    /// livre, CPU 21% e 7,2 ms por quadro).
+    pub fn note_cpu(&mut self, work_ms: f64, offered: f64, sent: f64, held: f64, cpu_pct: f64) {
         // Carência de partida: nos primeiros segundos o 1º quadro-chave (centenas de KB, pacer) e a abertura do codificador distorcem
         // a medida (54 ms/quadro na 1ª amostra) e derrubavam o FPS alvo por ~5 s sem motivo.
         self.cpu_samples += 1;
         if self.cpu_samples <= 4 { return; }
         let cur = self.ladder[self.idx];
         let period = 1000.0 / cur.fps as f64;
-        let starving = offered >= cur.fps as f64 * 0.9 && sent < cur.fps as f64 * 0.75;
+        let heavy = work_ms > period * 0.5 || cpu_pct > 85.0;
+        let starving = offered >= cur.fps as f64 * 0.9 && sent + held < cur.fps as f64 * 0.75 && heavy;
         if work_ms > period * 0.9 || starving {
             self.cpu_good = 0; self.cpu_bad += 1;
             if self.cpu_bad >= 2 && self.idx + 1 < self.ladder.len() { self.cpu_idx = self.idx + 1; self.cpu_bad = 0; }
@@ -333,7 +342,11 @@ impl Controller {
                 let up = self.ladder[self.cpu_idx - 1];
                 let scale = (up.h as f64 * up.fps as f64) / (cur.h as f64 * cur.fps as f64);   // custo cresce com pixels por segundo
                 if work_ms * scale.max(1.0) < (1000.0 / up.fps as f64) * 0.6 { self.cpu_good += 1; } else { self.cpu_good = 0; }
-                if self.cpu_good >= 3 { self.cpu_idx -= 1; self.cpu_good = 0; self.cpu_relaxed = true; }
+                // folga enorme (o nível de topo caberia com metade do período sobrando): volta direto ao topo em 2 s, não degrau a degrau
+                let top = self.ladder[0];
+                let top_scale = (top.h as f64 * top.fps as f64) / (cur.h as f64 * cur.fps as f64);
+                if self.cpu_good >= 2 && work_ms * top_scale.max(1.0) < (1000.0 / top.fps as f64) * 0.5 { self.cpu_idx = 0; self.cpu_good = 0; self.cpu_relaxed = true; }
+                else if self.cpu_good >= 3 { self.cpu_idx -= 1; self.cpu_good = 0; self.cpu_relaxed = true; }
             }
         }
     }
@@ -554,12 +567,12 @@ mod tests {
         // sobrecarga local: 2 s com o quadro custando mais que o período → desce um degrau; folga por 5 s → volta
         let mut c = Controller::new(Content::Motion, 1080, 60, 0);
         c.decide(20_000_000.0);
-        for _ in 0..4 { c.note_cpu(25.0, 60.0, 38.0); }   // carência de partida: as 4 primeiras amostras não contam
+        for _ in 0..4 { c.note_cpu(25.0, 60.0, 38.0, 0.0, 0.0); }   // carência de partida: as 4 primeiras amostras não contam
         assert!(!c.decide(20_000_000.0).cpu_limited, "carência de partida");
-        c.note_cpu(25.0, 60.0, 38.0); c.note_cpu(25.0, 60.0, 38.0);
+        c.note_cpu(25.0, 60.0, 38.0, 0.0, 0.0); c.note_cpu(25.0, 60.0, 38.0, 0.0, 0.0);
         let d = c.decide(20_000_000.0);
         assert!(d.cpu_limited && d.level == Level { h: 900, fps: 60 }, "{d:?}");
-        for _ in 0..3 { c.note_cpu(4.0, 60.0, 60.0); }
+        for _ in 0..3 { c.note_cpu(4.0, 60.0, 60.0, 0.0, 0.0); }
         assert_eq!(c.decide(20_000_000.0).level, Level { h: 1080, fps: 60 });
     }
 
@@ -619,5 +632,39 @@ mod tests {
         let mut back = None;
         for i in 7..40 { let sent = e.est; if e.update(t0 + Duration::from_secs(i), sent, Some((0.0, 20.0, 1.0)), 0.0) >= 8_500_000.0 * 0.95 { back = Some(i - 7); break; } }
         assert!(back.map(|s| s <= 12).unwrap_or(false), "estimativa demorou a voltar ao teto: {back:?} s");
+    }
+
+    /// Print do usuário: "No ar 720p · 2 FPS · 188 kbps (alvo 10 FPS · 7217 kbps)", rede estimada 8491 kbps, perda 0%, RTT 44 ms,
+    /// NVENC a 7,2 ms/quadro, CPU 21% — e "o PC não deu conta". Com esses números a adaptação não pode reduzir nada.
+    #[test]
+    fn healthy_pc_and_link_never_trigger_pc_overload() {
+        for (name, offered, sent, held) in [("tela parada (poucos quadros)", 2.0, 2.0, 0.0), ("pacer segurando quadros", 24.0, 8.0, 16.0), ("codificador sem saida", 24.0, 8.0, 16.0), ("tela parada, so reenvio", 0.0, 1.0, 0.0)] {
+            let mut c = Controller::new(Content::Detail, 1080, 24, 8_500);
+            let mut e = Estimator::new(8_500_000.0);
+            let t0 = Instant::now();
+            for i in 0..60u64 {
+                let d0 = c.decide(e.est);
+                e.update(t0 + Duration::from_secs(i), d0.bps as f64 * 0.85, Some((0.0, 44.0, 2.0)), 0.0);
+                c.note_cpu(7.2, offered, sent, held, 21.0);
+                c.note_encoder(5_000_000.0, 7_225_000.0, sent.max(1.0), 1920, 1080, false);
+                let d = c.decide(e.est);
+                assert_eq!(d.level, Level { h: 1080, fps: 24 }, "{name}: reduziu no segundo {i}: {d:?} cpu_idx {} piso {}", c.cpu_idx, c.bpp_floor);
+                assert!(!d.cpu_limited, "{name}: alegou PC lento no segundo {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn real_overload_is_still_detected_and_recovers_in_seconds() {
+        let mut c = Controller::new(Content::Detail, 1080, 24, 8_500);
+        c.decide(8_500_000.0);
+        for _ in 0..4 { c.note_cpu(30.0, 24.0, 10.0, 0.0, 95.0); }
+        for _ in 0..3 { c.note_cpu(60.0, 24.0, 8.0, 0.0, 99.0); }
+        let d = c.decide(8_500_000.0);
+        assert!(d.cpu_limited && d.level != Level { h: 1080, fps: 24 }, "sobrecarga real não detectada: {d:?}");
+        // a máquina volta a ficar folgada: em até 4 s o topo (1080p/24) volta
+        let mut back = None;
+        for i in 1..=6 { c.note_cpu(6.0, 10.0, 10.0, 0.0, 20.0); if c.decide(8_500_000.0).level == (Level { h: 1080, fps: 24 }) { back = Some(i); break; } }
+        assert!(back.map(|i| i <= 4).unwrap_or(false), "recuperação lenta: {back:?}");
     }
 }

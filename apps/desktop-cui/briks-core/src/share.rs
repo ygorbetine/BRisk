@@ -320,7 +320,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
                     if std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[est] enviado {:.0} kbps | relatorio {:?} | nack {:.3} (perdidos {lost_new}) | est {:.0} kbps motivo {} tol {:.2}", sent_bps / 1000.0, worst, nack_ratio, est.est / 1000.0, est.reason, est.loss_tol); }
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
-                    if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
+                    if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps, (pacer_drops + skipped) as f64 / secs, ((cpu - win_cpu) / (secs * 1000.0) * 100.0).min(100.0)); }
                     if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h, idrs != idrs0 || trans_win); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {

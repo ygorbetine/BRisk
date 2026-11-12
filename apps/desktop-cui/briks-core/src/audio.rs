@@ -163,7 +163,7 @@ impl Audio {
     pub fn set_retry_ms(&self, ms: u64) { self.retry_ms.store(ms.max(1), Ordering::Relaxed); }
 
     pub fn set_mic_muted(&self, m: bool) { self.mic_muted.store(m, Ordering::Relaxed); }
-    /// Ensurdecer só silencia o que se ouve (como no Briks Electron): NÃO mexe no microfone; mutar e ensurdecer são independentes.
+    /// Ensurdecer só silencia as VOZES que se ouvem (1.4.4: o áudio das transmissões assistidas continua); NÃO mexe no microfone; mutar e ensurdecer são independentes.
     pub fn set_deaf(&self, d: bool) { self.deaf.store(d, Ordering::Relaxed); }
     pub fn deaf(&self) -> bool { self.deaf.load(Ordering::Relaxed) }
     pub fn mic_muted(&self) -> bool { self.mic_muted.load(Ordering::Relaxed) }
@@ -314,7 +314,7 @@ impl Audio {
     }
 
     /// Mixa `out.len()` amostras de todos os peers (jitter buffer simples: espera 60 ms, depois toca; underrun reinicia).
-    /// Ensurdecido ou peer silenciado = ganho zero (o buffer é consumido para não acumular atraso).
+    /// Voz ensurdecida ou peer silenciado = ganho zero (o buffer é consumido para não acumular atraso); transmissões não são afetadas pelo ensurdecer.
     pub fn mix_pull(&self, out: &mut [f32]) {
         let mut st = vec![0.0f32; out.len() * 2];
         self.mix_pull_stereo(&mut st);
@@ -332,7 +332,8 @@ impl Audio {
             if !s.primed { if s.buf.len() >= PRIME { s.primed = true; } else { continue; } }
             let take = out.len().min(s.buf.len()) & !1;
             let g = gains.get(peer).copied().unwrap_or(1.0);
-            let silent = deaf || muted.contains(peer) || muted.contains(peer.split('#').next().unwrap_or(""));
+            // ensurdecer corta só as VOZES; o áudio das transmissões ("peer#screen") segue, com o volume próprio de cada uma (1.4.4)
+            let silent = (deaf && !peer.ends_with("#screen")) || muted.contains(peer) || muted.contains(peer.split('#').next().unwrap_or(""));
             for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v * g; } }
             if take < out.len() { s.primed = false; }
         }
@@ -657,6 +658,37 @@ impl Drop for MicTest { fn drop(&mut self) { self.stop(); } }
 #[cfg(test)]
 mod unit {
     use super::*;
+
+    /// 1.4.4: ensurdecer corta a voz (mic das pessoas) mas mantém o áudio das transmissões, com o ganho próprio de cada uma, em estéreo.
+    #[test]
+    fn deafen_cuts_voices_but_keeps_stream_audio() {
+        let (a, _rx) = Audio::new(true);
+        let tone = |amp: f32, n: usize| -> Vec<f32> { (0..n).map(|i| amp * (2.0 * std::f32::consts::PI * 440.0 * (i / 2) as f32 / 48000.0).sin()).collect() };
+        let fill = |a: &Audio| {
+            let mut s = a.sinks.lock().unwrap();
+            for key in ["ana", "ana#screen"] { s.insert(key.to_string(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        };
+        let peak = |a: &Audio| { let mut out = vec![0.0f32; 960]; a.mix_pull_stereo(&mut out); out.iter().fold(0.0f32, |m, v| m.max(v.abs())) };
+        // sem ensurdecer: voz + transmissão tocam
+        fill(&a); assert!(peak(&a) > 0.5, "voz e transmissão somam");
+        // ensurdecido: a voz some, a transmissão continua
+        a.set_deaf(true);
+        { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        assert_eq!(peak(&a), 0.0, "ensurdecido: voz = 0");
+        { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana#screen".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        let p = peak(&a); assert!(p > 0.35 && p < 0.45, "ensurdecido: a transmissão mantém o ganho ({p})");
+        // o volume por transmissão continua valendo ensurdecido, e o mudo dela (ganho 0) também
+        a.set_screen_gain("ana", 0.5);
+        { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana#screen".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        let p = peak(&a); assert!(p > 0.15 && p < 0.25, "ensurdecido: volume 50% da transmissão ({p})");
+        a.set_screen_gain("ana", 0.0);
+        { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana#screen".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        assert_eq!(peak(&a), 0.0, "ensurdecido: transmissão silenciada por ela mesma");
+        // desensurdecer: a voz volta
+        a.set_deaf(false); a.set_screen_gain("ana", 1.0);
+        { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
+        assert!(peak(&a) > 0.35, "voz volta ao desensurdecer");
+    }
 
     #[test]
     fn speaker_has_hysteresis_and_10hz_events() {

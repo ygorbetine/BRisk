@@ -10,7 +10,6 @@ shot emo-2-seletor-completo
 click 595 480
 waitms 600
 expect emoji_picking 0
-expect status_emoji_len 4
 shot emo-3-escolhido
 click 518 297
 waitms 500

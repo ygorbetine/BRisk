@@ -1,6 +1,7 @@
 /* Tela de chamada: cabeçalho com abas em blocos, palco (grade ou foco de participantes, transmissão, chat da sala) e barra de
  * controles flutuante. Tela cheia (F11/Esc), indicador de rede, ajustes de áudio e pedido de transmissão ficam aqui.
  * Medidas de apps/web/src/components/CallWorkspace.tsx + call-workspace.css / glass-layout.css; lógica pura em callhist.c. */
+#include "msgui.h"
 #include "call.h"
 #include "volume_ctl.h"
 #include "netdiag.h"
@@ -506,6 +507,7 @@ static void stage_chat(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .pad_left = 14, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = can_send ? B_A(B_C3, 0x55) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                msgui_emoji_button(ui, "call-emo", g_call.draft, sizeof g_call.draft, !can_send);
                 int r = cui_input(ui, "call-draft", g_call.draft, sizeof g_call.draft, .placeholder = can_send ? "Escreva para a sala" : "Entre numa sala para escrever", .width = CUI_FILL, .disabled = !can_send);
                 bool send = cui_icon_button(ui, CUI_ICON_SEND, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Enviar", .disabled = !can_send);
                 if (can_send && (send || (r & CUI_SUBMITTED)) && g_call.draft[0]) call_chat_send(s);

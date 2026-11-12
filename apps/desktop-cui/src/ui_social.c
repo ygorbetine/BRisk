@@ -514,6 +514,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
                 if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar arquivo (envia aos participantes da sala)")) attach_pick(s);
+                msgui_emoji_button(ui, "draft-emo", s->draft, sizeof s->draft, false);
                 int r = cui_input(ui, "draft", s->draft, sizeof s->draft, .placeholder = "Escreva uma mensagem", .width = CUI_FILL);
                 attach_paste_key(ui, cui_make_id(ui, "draft"));   /* Ctrl+V com imagem na área de transferência vira anexo preparado */
                 { static char prev[1100]; if (strcmp(prev, s->draft)) { if (s->draft[0]) attach_typing_ping(s); snprintf(prev, sizeof prev, "%s", s->draft); } }
@@ -620,7 +621,8 @@ static void nick_text(const app_state_t *s, char *out, size_t cap) {
     else snprintf(out, cap, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
 }
 
-static void status_emoji_cb(const char *e, void *u) { app_state_t *s = (app_state_t *)u; if (strlen(e) < sizeof s->user_emoji) snprintf(s->user_emoji, sizeof s->user_emoji, "%s", e); }
+static char *g_st_buf; static size_t g_st_cap;
+static void status_text_cb(const char *e, void *u) { (void)u; size_t n = strlen(g_st_buf), k = strlen(e); if (n + k < g_st_cap) memcpy(g_st_buf + n, e, k + 1); }   /* o emoji escolhido entra no texto do status */
 static void profile_dialog(cui_ctx *ui, app_state_t *s) {
     static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
     static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
@@ -677,10 +679,10 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                             cui_box(ui, .id = "pf-emo", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 12, .bg = CUI_RGBA(0xffffff12), .border = 1, .border_color = B_GLASS_BORDER_SOFT,
                                     .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                                if (s->user_emoji[0]) cui_emoji(ui, s->user_emoji, 22); else cui_icon(ui, CUI_ICON_SMILE, 18, B_MUTED);
+                                cui_icon(ui, CUI_ICON_SMILE, 18, B_MUTED);
                             }
-                            if (briks_hover(ui, "pf-emo")) briks_tip("Escolher emoji do status");
-                            if (briks_clicked_r(ui, "pf-emo", 12.0f) && !msgui_emoji_picking()) { const cui_rect er = cui_get_rect(ui, cui_make_id(ui, "pf-emo")); msgui_emoji_pick(er.x, er.y + er.h + 6.0f, status_emoji_cb, s); }   /* o MESMO seletor completo do chat (msgui.c) */
+                            if (briks_hover(ui, "pf-emo")) briks_tip("Adicionar emoji ao status");
+                            if (briks_clicked_r(ui, "pf-emo", 12.0f) && !msgui_emoji_picking()) { const cui_rect er = cui_get_rect(ui, cui_make_id(ui, "pf-emo")); g_st_buf = st_draft; g_st_cap = sizeof st_draft; msgui_emoji_pick(er.x, er.y + er.h + 6.0f, status_text_cb, s); }   /* o MESMO seletor completo do chat (msgui.c) */
                             cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que está pensando?", .width = CUI_FILL);
                         }
                         cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true) {

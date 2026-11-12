@@ -20,6 +20,7 @@ void msgui_submit(app_state_t *s);                          /* Enter/Enviar: con
 void msgui_after_send(const char *new_id);                  /* chat.c: liga a mensagem nova à resposta pendente */
 void msgui_emoji_pick(float x, float y, void (*cb)(const char *emoji, void *user), void *user);   /* abre o MESMO seletor completo do chat; cb recebe o emoji escolhido */
 bool msgui_emoji_picking(void);
+void msgui_emoji_button(cui_ctx *ui, const char *id, char *buf, size_t cap, bool disabled);   /* botão de emoji das caixas de digitação: insere no fim de buf */
 int msgui_emoji_hits(void);
 void msgui_overlay(cui_ctx *ui, app_state_t *s);            /* fim do quadro: barra, menu e diálogos */
 bool msgui_has_reply(const msg_t *m);                       /* a mensagem responde a outra (não agrupa) */

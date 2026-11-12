@@ -273,9 +273,21 @@ static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic, 
 static float g_emo_x, g_emo_y;
 static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;   /* estado do seletor (compartilhado: painel do chat e diálogo do status) */
 static void (*g_emo_cb)(const char *emoji, void *user); static void *g_emo_user;   /* seletor usado por outro ponto (status do perfil): escolher chama isto em vez de reagir */
+static bool g_emo_keep;
 static bool g_emo_dlg;   /* modo status: o seletor abre como diálogo (um painel solto ficaria por baixo do diálogo do perfil) */
-void msgui_emoji_pick(float x, float y, void (*cb)(const char *emoji, void *user), void *user) { (void)x; (void)y; g_emo_dlg = cb != NULL; g_emo_open = cb == NULL; g_emo_cb = cb; g_emo_user = user; g_menu_open = false; }
+void msgui_emoji_pick(float x, float y, void (*cb)(const char *emoji, void *user), void *user) { (void)x; (void)y; g_emo_keep = false; g_emo_dlg = cb != NULL; g_emo_open = cb == NULL; g_emo_cb = cb; g_emo_user = user; g_menu_open = false; }
 bool msgui_emoji_picking(void) { return g_emo_open || g_emo_dlg; }
+/* Botão de emoji de toda caixa de digitação de mensagem: abre o MESMO seletor e acrescenta o emoji ao fim do texto (se couber). */
+static char *g_ins_buf; static size_t g_ins_cap;   /* g_emo_keep: seletor das caixas de digitação continua aberto depois de escolher (clicar fora ou Esc fecha) */
+static void ins_cb(const char *e, void *u) { (void)u; if (!g_ins_buf) return; size_t n = strlen(g_ins_buf), k = strlen(e); if (n + k < g_ins_cap) memcpy(g_ins_buf + n, e, k + 1); }
+void msgui_emoji_button(cui_ctx *ui, const char *id, char *buf, size_t cap, bool disabled) {
+    if (cui_icon_button(ui, CUI_ICON_SMILE, .tooltip = "Emoji", .disabled = disabled) && !msgui_emoji_picking()) {
+        const cui_vec2 mp = cui_mouse_pos(ui);   /* abre acima do botão, como o seletor do Discord */
+        g_ins_buf = buf; g_ins_cap = cap; msgui_emoji_pick(0, 0, ins_cb, NULL);
+        g_emo_dlg = false; g_emo_open = true; g_emo_keep = true; g_emo_x = mp.x - 24.0f; g_emo_y = mp.y - 470.0f;
+    }
+    (void)id;
+}
 static char g_recent[160];
 static int g_tone;
 
@@ -521,14 +533,14 @@ static char g_esearch[48]; static int g_esearch_hits;   /* busca do seletor (cam
 int msgui_emoji_hits(void) { return g_esearch_hits; }
 static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
     cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
-                cui_row(ui, .gap = 6) {
+                cui_row(ui, .gap = 6, .width = CUI_FILL) {
                     for (int i = 0; i < NQUICK; i++) {
                         cui_push_id_int(ui, 7100 + i);
                         cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "slot"));
                         bool tgt = dragging && inside(sr, mp);
-                        cui_box(ui, .id = "slot", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 11, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                        cui_box(ui, .id = "slot", .width = CUI_FILL, .height = CUI_PX(42), .radius = 12, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
                                 .bg = tgt ? CUI_RGBA(0x8b5cf655) : CUI_RGBA(0xffffff0c), .border = 1, .border_color = tgt ? CUI_RGB(0xc4b5fd) : CUI_RGBA(0xc4b5fd60)) {
-                            cui_emoji(ui, g_quick[i], 22);
+                            cui_emoji(ui, g_quick[i], 20);
                         }
                         if (dragging && prev_down && !down && tgt && cand[0]) { snprintf(g_quick[i], sizeof g_quick[i], "%s", cand); st_save(); }
                         cui_pop_id(ui);
@@ -544,28 +556,29 @@ static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
                     }
                 } else { for (int k = 0; k < CATS[cat].n; k++) list[n++] = CATS[cat].e[k]; }
                 g_esearch_hits = searching ? n : -1;
-                if (!searching) cui_row(ui, .gap = 2) {
+                if (!searching) cui_row(ui, .gap = 2, .width = CUI_FILL) {
                     for (int c = 0; c < NCAT; c++) {
                         cui_push_id_int(ui, 7200 + c);
-                        cui_box(ui, .id = "t", .width = CUI_PX(38), .height = CUI_PX(30), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                        cui_box(ui, .id = "t", .width = CUI_FILL, .height = CUI_PX(32), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
                                 .bg = c == cat ? CUI_RGBA(0x8b5cf65a) : CUI_RGBA(0x00000000)) { cui_emoji(ui, CATS[c].icon, 17); }
                         if (briks_clicked_r(ui, "t", 9.0f)) cat = c;
                         cui_pop_id(ui);
                     }
                 }
-                cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(228), .scroll_y = true, .gap = 2) {
-                    const int cols = 8;
+                const int cols = 8; const float gh = fminf(204.0f, (float)(n > 0 ? (n + cols - 1) / cols : 1) * 42.0f);   /* só a altura que a lista usa: sem faixa vazia embaixo */
+                cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(gh), .scroll_y = true, .gap = 2) {
                     if (searching && n == 0) cui_text(ui, "Nenhum emoji com esse nome.", .size = 12, .color = B_MUTED);
                     for (int r0 = 0; r0 < n; r0 += cols) {
                         cui_push_id_int(ui, 7300 + r0);
-                        cui_row(ui, .gap = 2) {
-                            for (int k = r0; k < r0 + cols && k < n; k++) {
+                        cui_row(ui, .gap = 2, .width = CUI_FILL) {
+                            for (int k = r0; k < r0 + cols; k++) {
+                                if (k >= n) { cui_box(ui, .width = CUI_FILL, .height = CUI_PX(40)) {} continue; }   /* última linha: células vazias mantêm a largura das outras */
                                 cui_push_id_int(ui, 7400 + k);
                                 const char *e = list[k];
                                 cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "c"));
                                 bool hot = inside(cr, mp);
-                                cui_box(ui, .id = "c", .width = CUI_PX(40), .height = CUI_PX(38), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
-                                        .bg = hot ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) { cui_emoji(ui, e, 24); }
+                                cui_box(ui, .id = "c", .width = CUI_FILL, .height = CUI_PX(40), .radius = 10, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                        .bg = hot ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) { cui_emoji(ui, e, 22); }
                                 if (down && !prev_down && hot) { snprintf(cand, sizeof cand, "%s", e); p0 = mp; dragging = false; }
                                 cui_pop_id(ui);
                             }
@@ -573,7 +586,7 @@ static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
                         cui_pop_id(ui);
                     }
                 }
-                cui_text(ui, g_emo_cb ? "Clique num emoji para usá-lo no status." : "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+                cui_text(ui, g_emo_cb ? "Clique num emoji para usá-lo." : "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
 }
 
 void msgui_overlay(cui_ctx *ui, app_state_t *s) {
@@ -622,7 +635,7 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         }
         cui_rect er = cui_get_rect(ui, cui_make_id(ui, "msgemoji"));
         if (prev_down && !down) {
-            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); else toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
+            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); else toggle_react(g_menu_m.id, cand); if (!g_emo_keep) g_emo_open = false; }   /* clique simples = reagir */
             cand[0] = 0; dragging = false; g_drag_on = false;
         } else if (er.w > 0 && !inside(er, mp) && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !dragging) g_emo_open = false;
         if (cui_key_pressed(ui, CUI_KEY_ESCAPE)) { g_emo_open = false; cand[0] = 0; dragging = false; g_drag_on = false; }
@@ -631,7 +644,7 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
 
     if (g_emo_dlg) {   /* seletor do status: o MESMO corpo do chat, dentro de um diálogo (fica acima do perfil) */
         const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT); bool open = true;
-        cui_dialog(ui, "Escolher emoji", &open, .width = 420) { emoji_body(ui, mp, down); }
+        cui_dialog(ui, "Escolher emoji", &open, .width = fminf(400.0f, fmaxf(vp.x - 48.0f, 280.0f))) { emoji_body(ui, mp, down); }
         if (prev_down && !down) {
             if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); open = false; }
             cand[0] = 0; dragging = false;

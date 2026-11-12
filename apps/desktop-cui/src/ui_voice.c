@@ -28,7 +28,7 @@ static void person_card(cui_ctx *ui, app_state_t *s, int slot, bool me) {
     if (me) {
         name = s->user_name[0] ? s->user_name : "Você"; snprintf(nmbuf, sizeof nmbuf, "%s (você)", name); name = nmbuf;
         sub = s->sh.active ? "Transmitindo a tela" : s->user_status;
-        level = (s->mic_on && !s->deaf) ? s->me_level : 0; mic_off = !s->mic_on || s->deaf; deaf = s->deaf;
+        level = s->mic_on ? s->me_level : 0; mic_off = !s->mic_on; deaf = s->deaf;
     } else {
         #define P (s->rtc_peers[slot])
         if (P.name[0]) snprintf(nmbuf, sizeof nmbuf, "%s", P.name); else snprintf(nmbuf, sizeof nmbuf, "Participante %d", slot + 1);
@@ -89,13 +89,13 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
         }
     }
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 10, .gap = 8, .justify = CUI_JUSTIFY_CENTER, .align = CUI_ALIGN_CENTER) {
-        bool mic_eff = s->mic_on && !s->deaf;
+        bool mic_eff = s->mic_on;
         {   /* botão do microfone: ligado = primário; desligado = vermelho com o ícone riscado (caixa própria: o botão do CUI só aceita glifo) */
             cui_box(ui, .id = "vmic", .width = CUI_PX(36), .height = CUI_PX(36), .radius = 12, .bg = mic_eff ? B_C3 : CUI_RGB(0xe95555), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 briks_icon(ui, mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, 16, CUI_RGB(0xffffff));
             }
             if (briks_hover(ui, "vmic")) briks_tip(mic_eff ? "Silenciar microfone" : "Ligar microfone");
-            if (briks_clicked_r(ui, "vmic", 12.0f)) { if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); } }
+            if (briks_clicked_r(ui, "vmic", 12.0f)) { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
         }
         if (cui_icon_button(ui, CUI_ICON_VOLUME_X, .variant = s->deaf ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .tooltip = s->deaf ? "Voltar a ouvir" : "Ensurdecer")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
         if (cui_button(ui, "Abrir chamada", .variant = CUI_BUTTON_SECONDARY)) s->screen = SCREEN_CALL;
@@ -114,7 +114,7 @@ static bool mini_icon(cui_ctx *ui, const char *id, const char *icon, const char 
 }
 void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
     if (!s->in_room) return;
-    const bool narrow = g_panel_w < 212.0f, mic_eff = s->mic_on && !s->deaf;
+    const bool narrow = g_panel_w < 212.0f, mic_eff = s->mic_on;
     const bool ok = !strcmp(s->rtc_state, "conectado") || getenv("BRIKS_DEMO_PEERS");
     /* estado de verdade (antes tudo que não era "conectado" aparecia como "Conectando…", inclusive erro e reconexão) */
     const bool bad = !ok && !strcmp(s->rtc_state, "erro");
@@ -139,7 +139,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
                 if (briks_clicked_r(ui, "open", 10.0f)) s->screen = SCREEN_CALL;
             }
             if (mini_icon(ui, "mic", mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {
-                if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
+                s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on);
             }
             if (mini_icon(ui, "deaf", s->deaf ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala", s->deaf ? 2 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
             if (mini_icon(ui, "leave", CUI_ICON_PHONE, "Sair da chamada", 2)) rtc_leave_room(s);

@@ -547,8 +547,8 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         else { deafened = v["on"].as_bool().or(v["deafened"].as_bool()).unwrap_or(false); }
                         if let Some(a) = &audio { a.set_mic_muted(mic_muted); a.set_deaf(deafened); }
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::BroadcastState).await; }
-                        // deafen implica mic mudo: o estado efetivo é o que a UI mostra
-                        out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
+                        // mutar e ensurdecer são independentes (como no Electron): "microphone" é só o mic aberto, "deafened" vem à parte
+                        out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted, "muted": mic_muted, "deafened": deafened })).await?;
                     }
                     "profile.set" => {
                         profile = (v["status"].as_str().unwrap_or("").chars().take(64).collect(), v["presence"].as_str().unwrap_or("").chars().take(64).collect());
@@ -746,7 +746,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         out(&mut wr, v).await?;
                         if let Some(m) = muted_by_owner {
                             mic_muted = m;
-                            out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted && !deafened, "muted": mic_muted, "deafened": deafened })).await?;
+                            out(&mut wr, json!({ "ev": "mic.state", "microphone": !mic_muted, "muted": mic_muted, "deafened": deafened })).await?;
                         }
                     }
                     Some(MeshEvent::Error(m)) => out(&mut wr, json!({ "ev": "error", "where": "mesh", "message": m })).await?,

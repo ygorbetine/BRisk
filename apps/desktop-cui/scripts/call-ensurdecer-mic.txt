@@ -1,0 +1,28 @@
+# Ensurdecer e Microfone sao independentes: ensurdecer NAO silencia o microfone (como no Electron); mutar tambem nao ensurdece
+waitms 500
+expect mic 1
+expect call_deaf 0
+shot e0-inicio
+click 335 787
+waitms 400
+expect call_deaf 1
+expect mic 1
+shot e1-ensurdecido-mic-aberto
+click 335 787
+waitms 400
+expect call_deaf 0
+expect mic 1
+click 180 787
+waitms 400
+expect mic 0
+expect call_deaf 0
+shot e2-mutado-ouvindo
+click 335 787
+waitms 400
+expect call_deaf 1
+expect mic 0
+shot e3-ensurdecido-e-mutado
+click 335 787
+waitms 400
+expect call_deaf 0
+expect mic 0

@@ -12,7 +12,7 @@
 
 call_ui_t g_call = { .focus = -1 };
 
-typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; } tile_t;
+typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; bool deaf; } tile_t;
 enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TILE_ROOM_MUTE };
 #define SLOT_ME (BRIKS_MAX_PEERS + 1)
 static bool g_can_room_mute;   /* sou o dono e a chamada está no servidor de chamadas: posso silenciar alguém para todos */
@@ -89,6 +89,7 @@ void call_reset(app_state_t *s) {
     g_call.req.open = false; g_call.toast[0] = 0;
 }
 
+static bool g_tile_me_deaf;
 int call_probe(const char *n) {
     if (!strcmp(n, "call_layout")) return g_call.layout;
     if (!strcmp(n, "call_focus")) return g_call.focus;
@@ -98,6 +99,7 @@ int call_probe(const char *n) {
     if (!strcmp(n, "call_req")) return g_call.req.open;
     if (!strcmp(n, "call_bar")) return g_bar_visible;
     if (!strcmp(n, "call_audio")) return g_aud_open;
+    if (!strcmp(n, "call_deaf")) return g_tile_me_deaf;
     if (!strcmp(n, "call_fs_window")) return g_fsw.applied;
     return history_probe(n);
 }
@@ -149,6 +151,7 @@ static void paint_avatar(cui_ctx *ui, cui_rect r, void *user) {
     cui_draw_rect_gradient(ui, (cui_rect){ r.x + in, r.y + in, r.w - in * 2, r.h - in * 2 }, CUI_CORNERS((r.w - in * 2) * 0.5f), B_C3, B_C2);
 }
 
+static bool g_tile_me_deaf;   /* o bloco "Você" mostra o ícone de ensurdecido (atualizado a cada quadro antes de desenhar os blocos) */
 static bool in_rect(cui_rect r, cui_vec2 p) { return r.w > 0 && p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h; }
 
 /* Um participante num bloco de w x h. Clique no bloco destaca (modo Foco); clique no rótulo silencia para mim; botão direito abre o menu. */
@@ -190,6 +193,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             {
                 const float ts = sm ? 12.0f : 14.0f;
                 if (muted) briks_icon(ui, BRIKS_ICON_MIC_OFF, ts, B_DANGER);
+                if (t->deaf || (t->me && g_tile_me_deaf)) cui_icon(ui, CUI_ICON_VOLUME_X, ts, B_DANGER);   /* ensurdecido: ícone próprio, separado do mic mudo */
                 if (t->by_me) cui_icon(ui, CUI_ICON_VOLUME_X, ts, B_MUTED);
                 if (t->live) cui_icon(ui, CUI_ICON_MONITOR, ts, B_ONLINE);
                 char lab[160];
@@ -344,8 +348,8 @@ static void audio_popover(cui_ctx *ui, app_state_t *s) {
         float in_v = in * 100.0f, out_v = out * 100.0f; bool g2 = gate; float gdb2 = gdb;
         cui_text(ui, "Áudio da chamada", .font = CUI_FONT_DISPLAY, .size = 16);
         cui_text(ui, "Microfone", .size = 12.5f, .color = B_MUTED);
-        cui_progress(ui, (s->mic_on && !s->deaf) ? s->me_level : 0.0f);
-        cui_text(ui, (s->mic_on && !s->deaf) ? "A barra mostra o que a sala está ouvindo de você." : "Seu microfone está desligado.", .size = 12, .color = B_MUTED);
+        cui_progress(ui, s->mic_on ? s->me_level : 0.0f);
+        cui_text(ui, s->mic_on ? "A barra mostra o que a sala está ouvindo de você." : "Seu microfone está desligado.", .size = 12, .color = B_MUTED);
         cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume de entrada", .size = 13, .width = CUI_FILL); char p[12]; snprintf(p, sizeof p, "%d%%", (int)(in_v + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED); }
         cui_slider(ui, "##call-in", &in_v, 0, 100, .width = CUI_FILL);
         cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume de saída", .size = 13, .width = CUI_FILL); char p[12]; snprintf(p, sizeof p, "%d%%", (int)(out_v + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED); }
@@ -450,7 +454,7 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
         else { g_call.focus = i; g_call.layout = 1; }
     } else if (i >= 0 && i < BRIKS_MAX_PEERS) {
         if (act == TILE_MUTE) rtc_mute_peer(s, i, !s->rtc_peers[i].muted_by_me);
-        else if (act == TILE_ROOM_MUTE) rtc_room_mute(s, i, !(s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened));
+        else if (act == TILE_ROOM_MUTE) rtc_room_mute(s, i, !s->rtc_peers[i].mic_off);
         else if (act == TILE_KICK) { s->kick_slot = i; s->kick_open = true; }
         else if (act == TILE_WATCH) s->call_mode = 1;
         else if (act == TILE_ASK) {
@@ -463,7 +467,8 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
 
 static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
     cui_texture vt = 0; int vw = 0, vh = 0;
-    const bool mic_eff = s->mic_on && !s->deaf;   /* ensurdecer implica microfone mudo */
+    const bool mic_eff = s->mic_on;   /* ensurdecer e mutar são independentes (como no Electron) */
+    g_tile_me_deaf = s->deaf;
     tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = 0;
     g_can_room_mute = s->rtc_owner_me && s->net_sfu;
     T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL, 0, 0, 0 };
@@ -472,8 +477,8 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) {
         if (s->rtc_peers[i].name[0]) snprintf(names[i], sizeof names[i], "%s", s->rtc_peers[i].name); else snprintf(names[i], sizeof names[i], "Participante %d", i + 1);
         const bool live = share_peer_live(s, i);
-        T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off || s->rtc_peers[i].deafened, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0 };
+        T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
+                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
         if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }
     const float gap = 14.0f;
@@ -531,10 +536,9 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
     const bool own = g_call.fullscreen; if (own) g_cov_own++;   /* a barra cobre o palco, mas os botões DELA continuam valendo (antes a cobertura matava os próprios botões em tela cheia) */
     cui_box(ui, .id = "ctlbar", .dir = CUI_ROW, .gap = compact ? 8 : 10, .pad = compact ? 10 : 14, .radius = compact ? 30 : 39, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER,
             .elevation = briks_elev(CUI_ELEVATION_RAISED), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .wrap = true, .max_width = vw - 16.0f) {
-        const bool mic_eff = s->mic_on && !s->deaf;
+        const bool mic_eff = s->mic_on;
         if (pill(ui, 1, mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, compact ? NULL : "Microfone", mic_eff ? 1 : 2, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {   /* desligado: vermelho e riscado */
-            if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); }   /* ligar o mic sai do modo ensurdecido */
-            else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
+            s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on);   /* o microfone não mexe no ensurdecer */
         }
         if (pill(ui, 2, CUI_ICON_VOLUME_2, compact ? NULL : "Ensurdecer", s->deaf ? 1 : 0, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
         /* Câmera: liga/desliga de verdade (o estado vem do core); só abre o dispositivo enquanto ligada */

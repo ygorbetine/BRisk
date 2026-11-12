@@ -163,12 +163,12 @@ impl Audio {
     pub fn set_retry_ms(&self, ms: u64) { self.retry_ms.store(ms.max(1), Ordering::Relaxed); }
 
     pub fn set_mic_muted(&self, m: bool) { self.mic_muted.store(m, Ordering::Relaxed); }
-    /// Ensurdecer implica mutar o microfone (o estado `mic_muted` do usuário é preservado e volta ao desligar).
+    /// Ensurdecer só silencia o que se ouve (como no Briks Electron): NÃO mexe no microfone; mutar e ensurdecer são independentes.
     pub fn set_deaf(&self, d: bool) { self.deaf.store(d, Ordering::Relaxed); }
     pub fn deaf(&self) -> bool { self.deaf.load(Ordering::Relaxed) }
     pub fn mic_muted(&self) -> bool { self.mic_muted.load(Ordering::Relaxed) }
-    /// Microfone efetivamente aberto?
-    pub fn mic_open(&self) -> bool { !self.mic_muted() && !self.deaf() }
+    /// Microfone efetivamente aberto? (só o mudo do usuário conta; ensurdecer não fecha o microfone)
+    pub fn mic_open(&self) -> bool { !self.mic_muted() }
     pub fn mute_peer(&self, peer: &str, m: bool) {
         let mut s = self.muted_peers.lock().unwrap();
         if m { s.insert(peer.to_string()); } else { s.remove(peer); }

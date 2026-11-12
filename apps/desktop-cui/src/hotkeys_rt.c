@@ -15,7 +15,7 @@ static bool combo_down(unsigned mods, int vk) {
 bool g_hk_recording;   /* a tela de Atalhos está capturando uma tecla: os atalhos reais não agem */
 
 static void act(app_state_t *s, int i) {
-    if (i == 0) { if (s->deaf) { s->deaf = false; rtc_set_deaf(s, false); } else { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); } }
+    if (i == 0) { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }   /* mutar não mexe no ensurdecer */
     else if (i == 1) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
     else { if (s->sh.active) share_stop(s); else share_open_dialog(s); }
 }
@@ -79,7 +79,7 @@ void hotkeys_tick(cui_ctx *ui, app_state_t *s) {
     if (ptt_on && hk_parse(kp, &m, &vk)) {
         scan = true;
         bool open = hk_ptt_step(&ptt, real && !g_hk_recording && key_down(vk), (double)GetTickCount64(), delay);
-        if (open != (s->mic_on && !s->deaf)) { s->deaf = false; s->mic_on = open; rtc_set_mic(s, open); }
+        if (open != s->mic_on) { s->mic_on = open; rtc_set_mic(s, open); }   /* o apertar para falar não mexe no ensurdecer */
     }
     if (scan) cui_request_wakeup(ui, 0.03f);
     else cui_request_wakeup(ui, 0.1f);   /* hkw_take: lê o contador dos atalhos registrados */

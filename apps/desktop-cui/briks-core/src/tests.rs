@@ -184,15 +184,19 @@ async fn audio_tone_travels_between_two_cores_and_mute_deafen_work() {
     au_a.set_mic_muted(false);
     assert!(until(5, || au_b.rx_stat(PA).frames > n1 + 10).await, "áudio não voltou");
 
-    // ensurdecer implica mic mudo (nada sai) e a saída fica em silêncio
+    // ensurdecer só silencia a saída (como no Electron): o microfone continua aberto e enviando
     au_b.set_deaf(true);
-    assert!(!au_b.mic_open());
+    assert!(au_b.mic_open(), "ensurdecer não pode fechar o microfone");
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = tone_in(&au_b);
     assert!(tone_in(&au_b).0 < 0.001, "ensurdecido ainda ouve");
     let sent = au_b.sent_frames.load(std::sync::atomic::Ordering::Relaxed);
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(au_b.sent_frames.load(std::sync::atomic::Ordering::Relaxed), sent, "ensurdecido ainda transmite");
+    assert!(au_b.sent_frames.load(std::sync::atomic::Ordering::Relaxed) > sent + 5, "ensurdecido parou de transmitir o microfone");
+    // mutar continua independente: mudo + ensurdecido = nada sai e nada se ouve
+    au_b.set_mic_muted(true);
+    assert!(!au_b.mic_open());
+    au_b.set_mic_muted(false);
     au_b.set_deaf(false);
     assert!(au_b.mic_open());
 
@@ -273,6 +277,40 @@ async fn outbox_waits_for_peer_then_delivers() {
 async fn ipc_line(rd: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>) -> serde_json::Value {
     let l = timeout(Duration::from_secs(10), rd.next_line()).await.expect("tempo").expect("io").expect("fim");
     serde_json::from_str(&l).unwrap()
+}
+
+/// Ensurdecer e mutar são independentes (como no Electron): deafen.set não fecha o microfone e vice-versa; o mic.state leva os dois campos.
+#[tokio::test]
+async fn deafen_and_mute_are_independent_in_mic_state() {
+    let dir = std::env::temp_dir().join(format!("briks-core-deaf-{}", std::process::id()));
+    let (l, port) = crate::ipc::bind().await.unwrap();
+    let cfg = crate::ipc::Config { data_dir: dir.clone(), realtime_url: None, realtime_key: None };
+    tokio::spawn(crate::ipc::serve(l, "segredo".into(), cfg));
+    let s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (rd, mut wr) = s.into_split();
+    let mut lines = BufReader::new(rd).lines();
+    wr.write_all(b"{\"cmd\":\"hello\",\"token\":\"segredo\"}
+").await.unwrap();
+    assert_eq!(ipc_line(&mut lines).await["ev"], "hello.ok");
+    wr.write_all(b"{\"cmd\":\"session.start\",\"display_name\":\"Teste\"}
+").await.unwrap();
+    assert_eq!(ipc_line(&mut lines).await["ev"], "session.ready");
+    async fn state(lines: &mut tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>) -> (bool, bool, bool) {
+        for _ in 0..30 { let v = ipc_line(lines).await; if v["ev"] == "mic.state" { return (v["microphone"].as_bool().unwrap(), v["muted"].as_bool().unwrap(), v["deafened"].as_bool().unwrap()); } }
+        panic!("sem mic.state");
+    }
+    wr.write_all(b"{\"cmd\":\"deafen.set\",\"on\":true}
+").await.unwrap();
+    assert_eq!(state(&mut lines).await, (true, false, true), "ensurdecer com o mic aberto: microphone continua true");
+    wr.write_all(b"{\"cmd\":\"mic.set\",\"on\":false}
+").await.unwrap();
+    assert_eq!(state(&mut lines).await, (false, true, true), "mutar com ensurdecido: os dois");
+    wr.write_all(b"{\"cmd\":\"deafen.set\",\"on\":false}
+").await.unwrap();
+    assert_eq!(state(&mut lines).await, (false, true, false), "desensurdecer não reabre o mic mudo");
+    wr.write_all(b"{\"cmd\":\"mic.set\",\"on\":true}
+").await.unwrap();
+    assert_eq!(state(&mut lines).await, (true, false, false));
 }
 
 #[tokio::test]

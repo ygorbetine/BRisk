@@ -351,7 +351,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
 static void idle_tick(app_state_t *s) {
     const ULONGLONG now = GetTickCount64();
     if (!s->in_room) { s->idle_last = 0; s->idle_phase_now = IDLE_ACTIVE; return; }
-    if (!s->idle_last || (s->mic_on && !s->deaf && s->me_level > 0.05f) || s->sh.active) s->idle_last = now;
+    if (!s->idle_last || (s->mic_on && s->me_level > 0.05f) || s->sh.active) s->idle_last = now;
     long long rem = 0; int ph = idle_phase((long long)(now - s->idle_last), &rem);
     s->idle_phase_now = ph; s->idle_left_ms = rem;
     if (ph == IDLE_EXPIRED) {

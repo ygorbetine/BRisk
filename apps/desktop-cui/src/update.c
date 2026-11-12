@@ -12,7 +12,7 @@
 #include <shlobj.h>
 
 #ifndef BRIKS_APP_VERSION
-#define BRIKS_APP_VERSION "1.4.3"
+#define BRIKS_APP_VERSION "1.4.4"
 #endif
 #define DEFAULT_FEED "https://github.com/ygorbetine/Briks/releases/latest/download/latest.yml"
 #define CHECK_INTERVAL_MS (4UL * 60UL * 60UL * 1000UL)

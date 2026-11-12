@@ -20,6 +20,11 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.4.4", {
+        "Chamadas: o servidor de chamadas (SFU) do Briks vem configurado no instalador; no modo Automático o app usa o servidor quando ele existe e cai para ponto a ponto quando não.",
+        "Transmissão: se o codificador de vídeo falhar, a transmissão se recupera sozinha (com aviso discreto) em vez de cair; o aviso de PC sem conta só aparece com sinal real de máquina lenta.",
+        "Mensagens: convite de grupo pela conversa direta vira um cartão Entrar/Recusar; mensagens esperam na fila deste aparelho até o amigo voltar.",
+        NULL } },
     { "1.4.3", {
         "Chamada: volume e silenciar para cada pessoa (menu do bloco), lembrados entre chamadas; desconexão automática por inatividade com aviso antes, configurável em Configurações (Nunca, 15, 30 min, 1 h ou 2 h).",
         "Transmissão: escolha de qual app capturar o som (por exemplo, o Spotify), trocando ao vivo sem parar a imagem; as duas telas ao mesmo tempo seguem funcionando.",

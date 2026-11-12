@@ -1,5 +1,5 @@
 # Gera o instalador Windows do app nativo (NSIS, instalacao por usuario, mesmo appId/pasta/atalhos do Electron 1.x).
-# Uso (raiz do repositorio): powershell -NoProfile -File scripts/build-installer.ps1 [-Version 1.4.2] [-Test] [-StageOnly | -PackageOnly]
+# Uso (raiz do repositorio): powershell -NoProfile -File scripts/build-installer.ps1 [-Version 1.4.4] [-Test] [-StageOnly | -PackageOnly]
 #   -Test  usa outro GUID e outra pasta de instalacao ("@briksdesktop-test"), para testar sem tocar na instalacao real do Briks.
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
 # So compila e grava em disco: nao publica, nao cria tag/release e nao executa o instalador.
@@ -7,7 +7,7 @@
 #   -SemSfu       instalador sem livekit.json (so P2P); por padrao leva o servidor de chamadas publico do Briks (so URLs, sem segredo).
 #   -PackageOnly  pula a compilacao e empacota o stage que ja existe (com os .exe assinados). O latest.yml sai do instalador sem assinatura:
 #                 depois de assinar o instalador, rode scripts/make-latest-yml.ps1.
-param([string]$Version = "1.4.2", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly, [switch]$SemSfu)
+param([string]$Version = "1.4.4", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly, [switch]$SemSfu)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"

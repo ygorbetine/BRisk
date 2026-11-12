@@ -43,3 +43,6 @@ These notices and the complete third-party license texts are distributed with pa
 - Component: Windows WASAPI bindings used for per-process audio loopback
 - License: MIT
 - Upstream: https://github.com/HEnquist/wasapi-rs
+
+## libvpx (VP8/VP9) — BSD-3-Clause
+Briks 1.4.4+ liga estaticamente a libvpx 1.14.1 (Copyright (c) 2010, The WebM Project authors). Licença BSD de 3 cláusulas e concessão de patentes: https://github.com/webmproject/libvpx/blob/v1.14.1/LICENSE

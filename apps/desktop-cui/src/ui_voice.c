@@ -125,7 +125,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
     cui_push_id_int(ui, 6400);
     g_cov_own++;   /* a barra cobre linhas da lista rolada por baixo dela (clicar na seta/mic abria a conversa escondida): cobertura só para o que está sob ela */
     cui_box(ui, .id = "vmbar", .width = CUI_FILL, .pad_x = 10, .pad_top = 8, .gap = 6) {
-        share_mini(ui, s, g_panel_w - 20.0f);   /* transmissão no ar e fora da tela da chamada: miniatura ao vivo acima da barra (ui_share.c) */
+        share_mini(ui, s, g_panel_w - 20.0f);   /* transmissão no ar e fora da tela da chamada: previa da transmissao acima da barra (ui_share.c) */
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 9, .gap = 4, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
                 .border = 1, .border_color = ok ? CUI_RGBA(0x57d28b66) : bad ? CUI_RGBA(0xe9555566) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = narrow ? CUI_JUSTIFY_CENTER : CUI_JUSTIFY_START) {
             if (!narrow) {

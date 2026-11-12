@@ -186,10 +186,14 @@ static bool matches(const app_state_t *s, const person_t *p) {
 }
 
 /* linha de pessoa: avatar, nome + @nick/status, e os botões do chamador; devolve o cartão para os botões irem dentro */
+/* 1.4.1 (AMI-31): painel estreito (200 a ~330 px): linha mais justa, ações recolhidas num único "..." (muito estreito: só ao passar o mouse) e o
+ * nome/@nick ocupam o resto; clicar no nome abre a conversa. Nada de botão cortado na borda. */
+static bool row_narrow(void) { return g_panel_w < 330.0f; }
+static bool row_tiny(void) { return g_panel_w < 240.0f; }
 #define ROW_BEGIN(ui, p) \
-    cui_box((ui), .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 8, .gap = 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER)
+    cui_box((ui), .id = "fr", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = row_narrow() ? 8 : 12, .pad_y = row_narrow() ? 6 : 8, .gap = row_narrow() ? 8 : 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER)
 static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, bool online) {
-    cui_avatar_ex(ui, p->name, &(cui_avatar_opts){ .size = 36, .image = friend_photo(p->id) });
+    cui_avatar_ex(ui, p->name, &(cui_avatar_opts){ .size = row_narrow() ? 32 : 36, .image = friend_photo(p->id) });
     cui_column(ui, .gap = 1, .width = CUI_FILL) {
         cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, p->name, .nowrap = true);
@@ -213,28 +217,41 @@ static void empty_state(cui_ctx *ui, const char *icon, const char *title, const 
     }
 }
 
+static void friend_menu_items(cui_ctx *ui, app_state_t *s, int i, person_t *p, bool with_bell) {
+    cui_menu_label(ui, p->name);
+    if (cui_menu_item(ui, "Enviar mensagem", .icon = CUI_ICON_MESSAGE_SQUARE)) app_open_friend(s, i);
+    if (with_bell) {   /* painel estreito: o sino também vai para o menu */
+        const bool off = friends_bell_off(s, p->id);
+        if (cui_menu_item(ui, off ? "Ligar aviso de online" : "Desligar aviso de online", .icon = off ? CUI_ICON_BELL : CUI_ICON_VOLUME_X)) friends_bell_set(s, p->id, !off);
+    }
+    if (p->fp[0] && s->in_room) {   /* só há chat P2P para fechar com a chamada aberta e a identidade da pessoa conhecida */
+        if (friends_dm_off(s, p->fp)) cui_menu_label(ui, "Chat P2P desconectado (volta ao escrever)");
+        else if (cui_menu_item(ui, "Desconectar P2P", .icon = CUI_ICON_WIFI)) {
+            snprintf(s->dmdisc_fp, sizeof s->dmdisc_fp, "%s", p->fp); snprintf(s->dmdisc_name, sizeof s->dmdisc_name, "%s", p->name); s->dmdisc_open = true;
+        }
+    }
+    cui_menu_separator(ui);
+    if (cui_menu_item(ui, "Desfazer amizade…", .icon = CUI_ICON_X, .danger = true)) {
+        snprintf(s->unfriend_id, sizeof s->unfriend_id, "%s", p->id); snprintf(s->unfriend_name, sizeof s->unfriend_name, "%s", p->name); s->unfriend_open = true;
+    }
+    if (cui_menu_item(ui, "Bloquear", .icon = CUI_ICON_SHIELD, .danger = true)) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); }
+}
 static void friend_row(cui_ctx *ui, app_state_t *s, int i) {
     person_t *p = &s->friends[i];
     cui_push_id_int(ui, 9000 + i);
     ROW_BEGIN(ui, p) {
-        row_ident(ui, p, NULL, friends_online(s, p));
-        if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
-        { const bool off = friends_bell_off(s, p->id);   /* AMI-15: sino por amigo */
-          if (cui_icon_button(ui, off ? CUI_ICON_VOLUME_X : CUI_ICON_BELL, .tooltip = off ? "Avisos desligados: ligar" : "Avisar quando ficar online")) friends_bell_set(s, p->id, !off); }
-        cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
-            cui_menu_label(ui, p->name);
-            if (cui_menu_item(ui, "Enviar mensagem", .icon = CUI_ICON_MESSAGE_SQUARE)) app_open_friend(s, i);
-            if (p->fp[0] && s->in_room) {   /* só há chat P2P para fechar com a chamada aberta e a identidade da pessoa conhecida */
-                if (friends_dm_off(s, p->fp)) cui_menu_label(ui, "Chat P2P desconectado (volta ao escrever)");
-                else if (cui_menu_item(ui, "Desconectar P2P", .icon = CUI_ICON_WIFI)) {
-                    snprintf(s->dmdisc_fp, sizeof s->dmdisc_fp, "%s", p->fp); snprintf(s->dmdisc_name, sizeof s->dmdisc_name, "%s", p->name); s->dmdisc_open = true;
-                }
-            }
-            cui_menu_separator(ui);
-            if (cui_menu_item(ui, "Desfazer amizade…", .icon = CUI_ICON_X, .danger = true)) {
-                snprintf(s->unfriend_id, sizeof s->unfriend_id, "%s", p->id); snprintf(s->unfriend_name, sizeof s->unfriend_name, "%s", p->name); s->unfriend_open = true;
-            }
-            if (cui_menu_item(ui, "Bloquear", .icon = CUI_ICON_SHIELD, .danger = true)) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); }
+        if (row_narrow()) {
+            cui_box(ui, .id = "who", .dir = CUI_ROW, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .clip = true) { row_ident(ui, p, NULL, friends_online(s, p)); }
+            if (briks_hover(ui, "who")) briks_tip("Abrir a conversa");
+            const bool hov = briks_hover(ui, "fr") || s->active_friend == i;   /* muito estreito: as ações aparecem só com o mouse em cima ou com a conversa aberta */
+            if (!row_tiny() || hov) cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) { friend_menu_items(ui, s, i, p, true); }
+            if (briks_clicked_r(ui, "who", 12.0f)) app_open_friend(s, i);
+        } else {
+            row_ident(ui, p, NULL, friends_online(s, p));
+            if (cui_icon_button(ui, CUI_ICON_MESSAGE_SQUARE, .tooltip = "Mensagem")) app_open_friend(s, i);
+            { const bool off = friends_bell_off(s, p->id);   /* AMI-15: sino por amigo */
+              if (cui_icon_button(ui, off ? CUI_ICON_VOLUME_X : CUI_ICON_BELL, .tooltip = off ? "Avisos desligados: ligar" : "Avisar quando ficar online")) friends_bell_set(s, p->id, !off); }
+            cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) { friend_menu_items(ui, s, i, p, false); }
         }
     }
     cui_pop_id(ui);
@@ -307,8 +324,15 @@ static void pending_tab(cui_ctx *ui, app_state_t *s) {
             ROW_BEGIN(ui, p) {
                 row_ident(ui, p, p->nick[0] ? NULL : "quer ser seu amigo", false);
                 if (cui_icon_button(ui, CUI_ICON_CHECK, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Aceitar")) app_accept_friend(s, p->request_id);
-                if (cui_icon_button(ui, CUI_ICON_X, .tooltip = "Recusar")) account_respond_friend(s, p->request_id, false);
-                if (cui_icon_button(ui, CUI_ICON_SHIELD, .tooltip = "Bloquear")) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); account_respond_friend(s, p->request_id, false); }
+                if (row_narrow()) {   /* estreito: Aceitar fica à vista; Recusar e Bloquear vão para o "..." */
+                    cui_menu(ui, "Mais", .icon = CUI_ICON_ELLIPSIS, .icon_only = true, .placement = CUI_PLACE_BOTTOM_END) {
+                        if (cui_menu_item(ui, "Recusar", .icon = CUI_ICON_X)) account_respond_friend(s, p->request_id, false);
+                        if (cui_menu_item(ui, "Bloquear", .icon = CUI_ICON_SHIELD, .danger = true)) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); account_respond_friend(s, p->request_id, false); }
+                    }
+                } else {
+                    if (cui_icon_button(ui, CUI_ICON_X, .tooltip = "Recusar")) account_respond_friend(s, p->request_id, false);
+                    if (cui_icon_button(ui, CUI_ICON_SHIELD, .tooltip = "Bloquear")) { char id[48], nm[96]; snprintf(id, sizeof id, "%s", p->id); snprintf(nm, sizeof nm, "%s", p->name); friends_block(s, id, nm); account_respond_friend(s, p->request_id, false); }
+                }
             }
             cui_pop_id(ui);
         }
@@ -321,8 +345,8 @@ static void pending_tab(cui_ctx *ui, app_state_t *s) {
             cui_push_id_int(ui, 9400 + i);
             ROW_BEGIN(ui, p) {
                 row_ident(ui, p, p->nick[0] ? NULL : "aguardando resposta", false);
-                cui_text(ui, "Aguardando", .size = 11.5f, .color = B_MUTED);
-                if (cui_icon_button(ui, CUI_ICON_UNDO_2, .tooltip = "Cancelar pedido")) account_remove_friend(s, p->id);
+                if (!row_narrow()) cui_text(ui, "Aguardando", .size = 11.5f, .color = B_MUTED);
+                if (cui_icon_button(ui, CUI_ICON_UNDO_2, .tooltip = "Cancelar pedido (aguardando resposta)")) account_remove_friend(s, p->id);
             }
             cui_pop_id(ui);
         }
@@ -339,7 +363,8 @@ static void blocked_tab(cui_ctx *ui, app_state_t *s) {
         cui_push_id_int(ui, 9500 + i);
         ROW_BEGIN(ui, &p) {
             row_ident(ui, &p, "bloqueado", false);
-            if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) unb = i;
+            if (row_narrow()) { if (cui_icon_button(ui, CUI_ICON_UNDO_2, .tooltip = "Desbloquear")) unb = i; }
+            else if (cui_button(ui, "Desbloquear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) unb = i;
         }
         cui_pop_id(ui);
     }

@@ -1,0 +1,29 @@
+# 1.4.1 (AMI-31): painel Amigos legivel de ~190 a ~500 px de largura (nada cortado, alvos >= 28 px, acoes num unico "..."); a largura do painel vem da janela
+waitms 600
+pick friends
+waitms 300
+at zone:chat:right
+waitms 300
+tap zone:chat:right
+waitms 800
+expect pw_friends 382
+shot w382
+resize 1100 700
+waitms 800
+expect pw_friends 324
+shot w324
+resize 1000 700
+waitms 800
+expect pw_friends 245
+shot w245
+resize 900 700
+waitms 800
+expect pw_friends 227
+shot w227
+resize 760 700
+waitms 800
+expect pw_friends 187
+shot w187
+resize 1700 800
+waitms 800
+shot w500

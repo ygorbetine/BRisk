@@ -157,6 +157,10 @@
       { "item": "CHM-31", "de": "u1-sem", "para": "u2-com", "esperado": "muda", "min": 20 } ] },
     { "id": "chamada-menu", "demo": "call", "roteiro": "chamada-menu.txt", "env": { "BRIKS_DEMO_PEERS": "3" }, "checagens": [
       { "item": "CHM-32", "de": "m0-chamada", "para": "m1-menu", "esperado": "muda", "min": 200 } ] },
+    { "id": "amigos-largura", "demo": "social", "roteiro": "amigos-largura.txt", "env": { "BRIKS_DEMO_FTAB": "0" }, "checagens": [
+      { "item": "AMI-31", "de": "w382", "para": "w324", "esperado": "muda", "min": 50 } ] },
+    { "id": "paineis-estreitos", "demo": "group", "roteiro": "paineis-estreitos.txt", "checagens": [
+      { "item": "AMI-32", "de": "n-membros", "para": "n-historico", "esperado": "muda", "min": 50 } ] },
     { "id": "transmissao-vazio", "demo": "call", "roteiro": "transmissao-vazio.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEV_SHARE": "demo-many" }, "checagens": [
       { "item": "CHM-30", "de": "x0", "para": "x1", "esperado": "muda", "min": 100 },
       { "item": "CHM-30", "de": "x1", "para": "x2", "esperado": "muda", "min": 100 } ] },

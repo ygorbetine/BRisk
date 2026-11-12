@@ -493,6 +493,7 @@ int dock_probe(const char *n) {
     if (!strcmp(n, "menu")) return menu_open;
     if (!strcmp(n, "drag")) return drag.active;
     if (!strcmp(n, "count")) return layout_count(&L);
+    if (!strncmp(n, "pw_", 3)) { int k = panel_from_name(n + 3), i = k >= 0 ? layout_find(&L, k) : -1; return i < 0 ? -1 : (int)lroundf(last_r[i].w); }   /* largura do painel em px (pw_friends, pw_chat...) */
     if (!strcmp(n, "fill_gap")) { float mr = 0; for (int k = 0; k < P_COUNT; k++) if (anim_on[k]) mr = fmaxf(mr, anim[k].x + anim[k].w); return (int)lroundf(last_vp_w - 10.0f - mr); }   /* sobra à direita (0 = preenche) */
     return -1;
 }

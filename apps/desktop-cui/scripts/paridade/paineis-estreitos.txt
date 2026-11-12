@@ -1,0 +1,28 @@
+# 1.4.1 (AMI-32): paineis Membros, Historico e Sala de voz estreitos (~200 a 260 px): nada cortado fora do painel
+waitms 600
+pick members
+waitms 300
+at zone:chat:right
+waitms 300
+tap zone:chat:right
+waitms 800
+resize 900 760
+waitms 800
+expect pw_members 227
+shot n-membros
+pick history
+waitms 300
+at zone:members:bottom
+waitms 300
+tap zone:members:bottom
+waitms 800
+expect pw_history 240
+shot n-historico
+pick voice
+waitms 300
+at zone:history:bottom
+waitms 300
+tap zone:history:bottom
+waitms 800
+expect pw_voice 240
+shot n-voz

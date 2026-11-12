@@ -150,6 +150,9 @@
       { "item": "MSG-14", "de": "e1", "para": "e2", "esperado": "muda", "min": 20 },
       { "item": "MSG-14", "de": "e1", "para": "e4", "esperado": "muda", "min": 20 },
       { "item": "MSG-14", "de": "e3", "para": "e4", "esperado": "muda", "min": 20 } ] },
+    { "id": "transmissao-vazio", "demo": "call", "roteiro": "transmissao-vazio.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEV_SHARE": "demo-many" }, "checagens": [
+      { "item": "CHM-30", "de": "x0", "para": "x1", "esperado": "muda", "min": 100 },
+      { "item": "CHM-30", "de": "x1", "para": "x2", "esperado": "muda", "min": 100 } ] },
     { "id": "msg-troca-amigo", "demo": "social", "roteiro": "msg-troca-amigo.txt", "checagens": [
       { "item": "MSG-23", "de": "t0-marina", "para": "t1-rafael", "esperado": "muda", "min": 50 },
       { "item": "MSG-23", "de": "t1-rafael", "para": "t2-marina", "esperado": "muda", "min": 50 },

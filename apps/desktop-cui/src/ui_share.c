@@ -7,6 +7,7 @@
 #include "core.h"
 #include "json.h"
 #include "callhist.h"
+#include "call.h"
 #include <cui/cui_render.h>
 #include <math.h>
 #include <stdio.h>
@@ -23,6 +24,7 @@ static void cmd(const char *json) { if (core_state() == CORE_READY) core_send(js
 /* zoom de quem assiste, por transmissão (zerado = encaixada), e o aviso "X começou a transmitir · Assistir" */
 static cui_image_view g_zoom[2 * (BRIKS_MAX_PEERS + 1)];   /* mesmo índice de g_fv: cada transmissão tem o próprio zoom */
 static int g_zoom_pct[2 * (BRIKS_MAX_PEERS + 1)];
+static int g_stage_toggles;   /* roteiros: quantas vezes um clique em área vazia alternou grade/foco */
 static int g_tiles;                                 /* blocos desenhados no palco no último quadro (roteiros de teste) */   /* o que o selo mostrou no último quadro (roteiros de teste) */
 static struct { int slot; double until; } g_notice = { -1, -1 };
 static bool share_viewing(const app_state_t *s) { return s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0; }
@@ -669,13 +671,15 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
 /* ---------- palco do modo Transmissão ---------- */
 static int g_sfocus = -1;   /* transmissão fixada no Foco (chave de emit_tile); -1 = a primeira da lista */
 static bool s_modal_hint;   /* com um diálogo aberto por cima, o clique não vale para a miniatura */
+static cui_rect g_trect[16];   /* retângulos das transmissões do último quadro */
 static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
     int zoom_pct = 100; bool clicked = false;
     if (compact) { chip = NULL; volume = NULL; zv = NULL; }   /* miniatura da faixa do Foco: só a imagem e o nome; clicar traz para o destaque */
     if (key >= 0 && key < 2 * FV_N) g_zoom_pct[key] = 100;
-    g_tiles++;
     cui_push_id_int(ui, 800 + key);
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, "vt"));   /* tamanho do quadro anterior: o vídeo cabe inteiro, sem distorcer */
+    if (g_tiles < 16) g_trect[g_tiles] = r;   /* onde cada transmissão está: o que sobra do palco é área vazia (clique alterna grade/foco) */
+    g_tiles++;
     cui_box(ui, .id = "vt", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             if (tex && tw > 0 && th > 0 && r.w > 60 && r.h > 60) {
@@ -753,7 +757,9 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_cx")) return (int)g_zoom[0].cx;   /* ponto da imagem no meio da moldura: muda ao arrastar */
     if (!strcmp(n, "share_cy")) return (int)g_zoom[0].cy;
     if (!strcmp(n, "share_mode")) return s->call_mode;
-    if (!strcmp(n, "share_tiles")) return g_tiles;          /* blocos de vídeo no palco */
+    if (!strcmp(n, "share_tiles")) return g_tiles;
+    if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
+    if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
     if (!strcmp(n, "share_zoom2")) return g_zoom_pct[FV2(0)];   /* % da 2ª tela do 1º participante */
     return -9999;
@@ -810,7 +816,30 @@ static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
 /* Palco do modo Transmissão. Grade: todas as transmissões lado a lado, a 2ª tela de uma pessoa é um bloco à parte (call_grid, última
  * linha centralizada). Foco: uma grande (fixada por clique, senão a primeira) e as outras numa faixa; clicar numa miniatura a traz
  * para o destaque. O seletor Grade/Foco é o mesmo do modo Call (g_call.layout). W x H = área útil do palco. */
+static bool stage_inner(cui_ctx *ui, app_state_t *s, float W, float H, int layout);
+static bool pt_in(cui_rect r, cui_vec2 p) { return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h; }
+/* Clique CURTO em área vazia do palco (fora de qualquer transmissão e de diálogos) alterna grade <-> foco; arrastar não alterna;
+ * clicar dentro de uma transmissão continua como antes (miniatura traz para o destaque, zoom, etc.). O foco volta a quem estava fixado. */
 bool ui_share_stage(cui_ctx *ui, app_state_t *s, float W, float H, int layout) {
+    static bool pressed_empty; static cui_vec2 press_at; static bool was_down;
+    bool shown;
+    cui_box(ui, .id = "sstage", .width = CUI_FILL, .height = CUI_FILL) { shown = stage_inner(ui, s, W, H, layout); }
+    if (!shown) return false;
+    const cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "sstage")); const cui_vec2 mp = cui_mouse_pos(ui); const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
+    bool here_empty = !s_modal_hint && pt_in(sr, mp);
+    for (int i = 0; i < g_tiles && i < 16 && here_empty; i++) if (pt_in(g_trect[i], mp)) here_empty = false;
+    static bool had_press;
+    if (down && !was_down) { press_at = mp; pressed_empty = here_empty; had_press = true; }
+    if (cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) {
+        if (!had_press) { press_at = mp; pressed_empty = here_empty; }   /* roteiro: apertar e soltar no mesmo quadro */
+        const float dx = mp.x - press_at.x, dy = mp.y - press_at.y;
+        if (pressed_empty && here_empty && dx * dx + dy * dy <= 36.0f) { g_call.layout = g_call.layout == 1 ? 0 : 1; g_stage_toggles++; }
+        pressed_empty = false; had_press = false;
+    }
+    was_down = down;
+    return true;
+}
+static bool stage_inner(cui_ctx *ui, app_state_t *s, float W, float H, int layout) {
     share_state_t *q = &s->sh;
     int keys[2 * FV_N], n = 0;
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) { keys[n++] = i; if (q->remote2[i].on) keys[n++] = FV2(i); }

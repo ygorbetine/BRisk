@@ -1,10 +1,10 @@
 # Configurações > Voz: microfone com acesso negado pelo Windows (BRIKS_FAKE_MIC=denied: nenhum dispositivo real) -> aviso em português + botão de Privacidade
 waitms 800
-tap 440 791
-tap 300 125
+tap 441 755
+mtap 300 125
 expect mic_problem 0
 snap n0
-tap 528 328
+mtap 537 328
 waitms 1500
 snap n1
 expect mic_problem 1

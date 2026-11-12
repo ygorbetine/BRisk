@@ -2,7 +2,16 @@
 
 Complementa `paridade-electron-cui.md` (gerado do `itens.csv`, classificado sobre o brisk-dev). Este arquivo é escrito à mão: registra o que o roteiro `scripts/paridade.ps1` mostrou no build integrado (painéis 3aa4bc3, paridade e039295, mensagens 0a9cf2d, contas a529283, auditoria 8e0bfb9; SEM transmissão nova e SEM SFU).
 
-## Atualização de 2026-11-11 (este arquivo abaixo é histórico)
+## Atualização de 2026-11-11 (rodada com audio-robusto, câmera, transmissão e painéis integrados)
+Números reais do `scripts/paridade.ps1` (248 itens, janela oculta, `BRIKS_NET_LOOPBACK_ONLY=1`): **123 PASSOU, 0 FALHOU, 110 SEM-TESTE, 7 VERIFICAR, 5 AUSENTE, 3 SEM-EFEITO** (antes das integrações: 113 PASSOU; na rodada anterior: 54 FALHOU por roteiro velho).
+- Os 54 FALHOU eram roteiros com coordenadas do layout antigo (barra de título de 36 px + filete, lateral com "Entrar com convite", botões das caixas de diálogo). Nenhum era bug do app. Os roteiros foram recalibrados: pontos simbólicos onde há (`tap plus:<painel>`, `tap rel:<painel>:<L|R>dx:<T|B>dy`, `at <ponto>`) e coordenadas absolutas das caixas modais (`mtap`/`mat`/`mclick`/`mto`, sem o deslocamento `-Dy 39` do conteúdo) lidas das capturas.
+- Dois itens ainda falhavam por motivos próprios: CHM-04 (câmera): a câmera agora existe, o botão muda a captura, então a checagem passou de "igual" para "muda"; CFG-07 (microfone negado): o `briks-core.exe` do build era anterior ao merge do áudio robusto (`BRIKS_FAKE_MIC` não chegava ao teste); recompilado e passa.
+- Reclassificados no `itens.csv`: CHM-12 (zoom na transmissão, `ui_share.c`/`callhist.c`) e CHM-24 (câmera dos outros e 2ª tela, `ui_cam.c`/`ui_share.c`) viraram PRESENTE-FUNCIONAL (SEM-TESTE de pixels); LAY-12 e CHM-04 já estavam PRESENTE-FUNCIONAL. Os 7 AUSENTE de antes viram 5 (RDE-06, BAS-27, BAS-28, BAS-40, LAY-05).
+- Mic negado (CFG-07 / `voz-mic-negado`, `call-mic-aviso`) passa com o core novo.
+- Provas: firewall 3/3 (netsh falso; botões da caixa mudaram de posição e foram atualizados), modal 4 roteiros sem clique vazando para as camadas de baixo, smoke "tudo certo".
+- Não coberto: os testes `camera_e2e` do core falham em paralelo (estado global da câmera falsa compartilhado; `camera_adapts_to_loss...` também falha sozinho: adaptação à perda de banda em loopback), por isso o build foi feito com `-SkipTests`; GPU real, Release, instalador e ícone da barra de tarefas não foram testados.
+
+## Atualização anterior de 2026-11-11 (este arquivo abaixo é histórico)
 - Os 5 FALHOU por coordenadas velhas não existem mais: os roteiros `social-a/b`, `config-abas` e `call` passam no integrado.
 - `atalhos-gravar` às vezes sai com código 1 ao abrir e passa na repetição (a saída 1 intermitente descrita no fim deste arquivo).
 - Os 13 REVER restantes foram conferidos e reclassificados no `itens.csv`:

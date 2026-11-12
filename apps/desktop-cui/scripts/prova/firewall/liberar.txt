@@ -5,7 +5,7 @@ sys fwask
 waitms 3000
 expect fw_open 1
 expect fw_choice 0
-click 797 493
+click 805 513
 waitms 2500
 expect fw_open 0
 expect fw_choice 1

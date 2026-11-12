@@ -45,7 +45,7 @@
     { "id": "call", "demo": "call", "roteiro": "call.txt", "checagens": [
       { "item": "CHM-02", "de": "c0", "para": "c1", "esperado": "muda" },
       { "item": "CHM-03", "de": "c1", "para": "c2", "esperado": "muda" },
-      { "item": "CHM-04", "de": "c2", "para": "c3", "esperado": "igual" },
+      { "item": "CHM-04", "de": "c2", "para": "c3", "esperado": "muda" },
       { "item": "CHM-08", "de": "c3", "para": "c4", "esperado": "muda" },
       { "item": "CHM-08", "de": "c4", "para": "c5", "esperado": "muda" },
       { "item": ["CHM-09", "MSG-18"], "de": "c5", "para": "c6", "esperado": "muda" },

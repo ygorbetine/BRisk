@@ -1,10 +1,10 @@
 # Grupos: canais (demo group; dono). Renomear (lapis no hover), apagar (lixeira + confirmacao) e criar canal. Conferido com `expect grp_*`. Coordenadas absolutas (mat/mclick/mtap) lidas das capturas.
 waitms 600
 expect grp_nch 4
-mat 380 550
+mat 380 582
 waitms 400
 shot gc0
-mclick 435 550
+mclick 440 582
 mat 2 790
 waitms 500
 shot gc1
@@ -16,9 +16,9 @@ mtap 798 491
 snap gc2
 expect grp_ch1len 6
 expect grp_ren_open 0
-mat 380 624
+mat 380 687
 waitms 400
-mclick 467 624
+mclick 472 687
 mat 2 790
 waitms 500
 shot gc3
@@ -27,7 +27,7 @@ mtap 774 505
 snap gc4
 expect grp_nch 3
 expect grp_del_open 0
-mtap 380 624
+mtap 470 513
 snap gc5
 mtap 480 414
 mtap 647 465

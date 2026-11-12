@@ -21,12 +21,12 @@ mtap 808 653
 snap gn2
 expect grp_gren_open 0
 expect grp_namelen 15
-mat 380 314
+mat 380 283
 rdown
 rup
-mat 380 314
+mat 380 283
 waitms 500
 shot gn2b
-mtap 480 546
+mtap 480 515
 snap gn3
 expect grp_leave_open 1

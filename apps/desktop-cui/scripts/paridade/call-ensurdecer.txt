@@ -9,15 +9,15 @@ snap e1
 mat 341 787
 waitms 1200
 shot e-tip
-mat 1180 681
+mat 1010 681
 waitms 200
 wheel 1
 waitms 300
 expect share_vol_0 105
-mclick 1093 681
+mclick 937 681
 waitms 300
 expect share_vol_0 0
-mclick 1093 681
+mclick 937 681
 waitms 300
 expect share_vol_0 105
 snap e2

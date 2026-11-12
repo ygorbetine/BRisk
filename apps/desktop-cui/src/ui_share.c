@@ -22,6 +22,7 @@ static bool jbool(const jval *j, const char *k) { const jval *v = json_get(j, k)
 static void cmd(const char *json) { if (core_state() == CORE_READY) core_send(json); }
 
 /* zoom de quem assiste, por transmissão (zerado = encaixada), e o aviso "X começou a transmitir · Assistir" */
+static share_aspect_t g_aspect[2 * (BRIKS_MAX_PEERS + 1)];   /* razão de aspecto suavizada de cada tile (mesmo índice de g_fv) */
 static cui_image_view g_zoom[2 * (BRIKS_MAX_PEERS + 1)];   /* mesmo índice de g_fv: cada transmissão tem o próprio zoom */
 static int g_zoom_pct[2 * (BRIKS_MAX_PEERS + 1)];
 static int g_stage_toggles;   /* roteiros: quantas vezes um clique em área vazia alternou grade/foco */
@@ -172,6 +173,7 @@ void share_open_dialog(app_state_t *s) {
     cmd("{\"cmd\":\"share.audio.list\"}");
 }
 
+static char g_last_err[320];   /* motivo completo da última parada da transmissão (o chip mostra só um resumo) */
 static void send_start(app_state_t *s, const char *kind, const char *id, const char *label) {
     share_state_t *q = &s->sh;
     char line[1024], lab[160], pids[400] = ""; size_t o = 0;
@@ -305,6 +307,11 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             share_stop_second(s);   /* a 2ª tela só existe junto com a 1ª */
             copy(q->err, sizeof q->err, json_str(j, "reason", ""));
         }
+    } else if (!strcmp(ev, "share.encoder")) {
+        /* o core recriou o codificador sozinho (a transmissão continua no ar): só um aviso discreto, nunca um erro */
+        const char *st = json_str(j, "state", "");
+        if (!strcmp(st, "fallback") || !strcmp(st, "software")) { q->hardware = false; settings_notice("Transmissão: o codificador da placa de vídeo falhou várias vezes; usando o codificador por software (a imagem pode ficar mais pesada)."); }
+        else if (!strcmp(st, "recovered")) settings_notice("Transmissão: o codificador de vídeo foi reiniciado automaticamente.");
     } else if (!strcmp(ev, "share.hint")) {
         q->black = !strcmp(json_str(j, "hint", ""), "black");
     } else if (!strcmp(ev, "share.stats")) {
@@ -766,9 +773,10 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             bool adapting = q->active && (q->adapting[0] || q->black);   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
             if (failed) cui_icon(ui, CUI_ICON_TRIANGLE_ALERT, 13, B_DANGER);
             else if (adapting) cui_icon(ui, q->black ? CUI_ICON_TRIANGLE_ALERT : !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
-            cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
+            cui_text(ui, failed ? (strlen(q->err) > 46 ? "A transmissão parou · toque para ver o motivo" : q->err) : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
+            if (failed && q->last_kind[0] && !q->starting && cui_button(ui, "Tentar de novo", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { copy(g_last_err, sizeof g_last_err, q->err); q->err[0] = 0; send_start(s, q->last_kind, q->last_id, q->label); }
         }
-        if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
+        if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; if (q->err[0]) copy(g_last_err, sizeof g_last_err, q->err); q->err[0] = 0; cui_popover_open(ui, "shq"); }
             cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);   /* âncora: topo do chip, com a largura dele */
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
@@ -778,6 +786,8 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             static double apply_at = -1;
             if (quality_controls(ui, q) && q->active) apply_at = cui_time(ui) + 0.4;
             if (apply_at >= 0) { if (!q->active) apply_at = -1; else if (cui_time(ui) >= apply_at) { apply_at = -1; if (q->qsel == 1 && q->second.active) send_start_second(s, q->second.kind, q->second.id, q->second.label); else send_start(s, q->last_kind, q->last_id, q->label); } else cui_request_wakeup(ui, 0.2f); }
+            if (q->active) g_last_err[0] = 0;
+            else if (g_last_err[0]) wrap_line(ui, g_last_err, 12.5f, CUI_RGB(0xffb4b4));   /* por que a transmissão parou (o chip só mostra um resumo) */
             if (q->active) {
                 /* telemetria local, ao vivo */
                 char st[240];
@@ -823,19 +833,25 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
     cui_box(ui, .id = "vt", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             if (tex && tw > 0 && th > 0 && r.w > 60 && r.h > 60) {
-                float aw = r.w - 16, ah = r.h - 16, sc = fminf(aw / tw, ah / th);
-                if (key >= 0 && key < 2 * FV_N) g_fv[key].want = (zv && zv->zoom > sc * 1.01f) ? 0 : (int)floorf(tw * sc);   /* com zoom, o quadro inteiro; senão, o tamanho em que aparece */
+                /* O retângulo exibido sai do container e da razão de aspecto SUAVIZADA, nunca do tamanho do quadro decodificado: trocar a
+                   resolução da fonte (1080p <-> 720p), a redução ou a textura não faz a imagem diminuir/aumentar (a textura antiga fica até a nova chegar) */
+                float aw = r.w - 16, ah = r.h - 16, dw, dh;
+                const float ar = (key >= 0 && key < 2 * FV_N) ? share_aspect_update(&g_aspect[key], tw, th) : (float)tw / (float)th;
+                share_fit_rect(aw, ah, ar, &dw, &dh);
+                const float sc = dw / (float)tw;
+                if (key >= 0 && key < 2 * FV_N) g_fv[key].want = (zv && zv->zoom > sc * 1.01f) ? 0 : (int)floorf(dw);   /* com zoom, o quadro inteiro; senão, o tamanho em que aparece */
                 /* a imagem tem o próprio raio e fica 8 px para dentro da moldura (raio 20): cantos sempre curvos, nada reto vaza */
                 if (zv) {
                     /* quem assiste: roda do mouse ou pinça ampliam em torno do ponteiro, arrastar move; a moldura fica do tamanho
                        da imagem encaixada (cantos curvos, nada vaza) e o zoom nunca fica abaixo do encaixe */
-                    cui_box(ui, .width = CUI_PX(floorf(tw * sc)), .height = CUI_PX(floorf(th * sc)), .radius = 13, .clip = true) {
-                        cui_image_viewer_ex(ui, "zv", tex, tw, th, zv, &(cui_image_viewer_opts){ .width = CUI_FILL, .height = CUI_PX(floorf(th * sc)), .max_zoom = sc * 8, .no_toolbar = true });
+                    cui_box(ui, .width = CUI_PX(floorf(dw)), .height = CUI_PX(floorf(dh)), .radius = 13, .clip = true) {
+                        cui_image_viewer_ex(ui, "zv", tex, tw, th, zv, &(cui_image_viewer_opts){ .width = CUI_FILL, .height = CUI_PX(floorf(dh)), .max_zoom = sc * 8, .no_toolbar = true });
                     }
                     if (share_zoom_clamp(&zv->zoom, &zv->cx, &zv->cy, sc, 8)) zoom_pct = share_zoom_pct(zv->zoom, sc);
                     if (key >= 0 && key < 2 * FV_N) g_zoom_pct[key] = zoom_pct;
-                } else cui_image(ui, tex, .width = CUI_PX(floorf(tw * sc)), .height = CUI_PX(floorf(th * sc)), .radius = 13);
+                } else cui_image(ui, tex, .width = CUI_PX(floorf(dw)), .height = CUI_PX(floorf(dh)), .radius = 13);
             } else {
+                if (key >= 0 && key < 2 * FV_N && !tex) share_aspect_reset(&g_aspect[key]);   /* tile sem imagem: a próxima transmissão começa do zero */
                 cui_icon(ui, CUI_ICON_MONITOR, 34, B_C3);
                 cui_text(ui, wait, .size = 14, .color = B_MUTED);
             }

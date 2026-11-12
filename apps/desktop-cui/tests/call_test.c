@@ -118,6 +118,24 @@ int main(void) {
     OK(share_ds_steps(1920, 0) == 0 && share_ds_steps(1920, 1800) == 0 && share_ds_steps(1920, 700) == 1 && share_ds_steps(1920, 400) == 1 && share_ds_steps(1920, 300) == 2 && share_ds_steps(1920, 100) == 3, "redução do quadro: só quando aparece bem menor (e nunca abaixo de 1,25x)");
     { unsigned char src[4 * 4 * 4], dst[2 * 2 * 4]; for (int i = 0; i < 16; i++) { src[i * 4] = (unsigned char)(i % 2 ? 200 : 100); src[i * 4 + 1] = 50; src[i * 4 + 2] = 0; src[i * 4 + 3] = 255; }
       share_box_down(src, 4, 1, 2, 2, dst); OK(dst[0] == 150 && dst[1] == 50 && dst[2] == 0 && dst[3] == 255 && dst[12] == 150, "média dos 4 pixels de cada bloco 2x2"); }
+    OK(settings_migrate_call_mode(2, false) == 0 && settings_migrate_call_mode(2, true) == 2 && settings_migrate_call_mode(1, false) == 1 && settings_migrate_call_mode(0, true) == 0 && settings_migrate_call_mode(7, true) == 0, "modo da chamada: SFU gravado sem escolha migra para Automático; escolhido manualmente fica");
+    { /* encaixe estável: a fonte vai de 1080p para 720p e volta; o retângulo exibido não pode mudar (nem 1 px) */
+        share_aspect_t st; share_aspect_reset(&st);
+        const int res[][2] = { {1920,1080}, {1920,1080}, {1280,720}, {1280,720}, {960,540}, {1920,1080}, {1278,720}, {640,360}, {1920,1080} };
+        float w0 = 0, h0 = 0; int same = 1;
+        for (unsigned i = 0; i < sizeof res / sizeof res[0]; i++) {
+            float dw, dh; share_fit_rect(1000.0f, 700.0f, share_aspect_update(&st, res[i][0], res[i][1]), &dw, &dh);
+            if (i == 0) { w0 = dw; h0 = dh; } else if (dw != w0 || dh != h0) same = 0;
+        }
+        OK(same && w0 == 1000.0f && h0 > 562.0f && h0 < 563.0f, "tile: 1080p -> 720p -> 1080p mantém o mesmo retângulo exibido");
+        float dw, dh; share_fit_rect(400.0f, 700.0f, 16.0f / 9.0f, &dw, &dh); OK(dw == 400.0f && dh > 224.0f && dh < 226.0f, "tile estreito encaixa pela largura");
+        share_fit_rect(1600.0f, 300.0f, 16.0f / 9.0f, &dw, &dh); OK(dh == 300.0f && dw > 533.0f && dw < 534.0f, "tile baixo encaixa pela altura");
+        /* uma razão realmente nova (janela virou 4:3) só vale depois de vários quadros seguidos; um quadro solto não faz a imagem pular */
+        share_aspect_t b; share_aspect_reset(&b); share_aspect_update(&b, 1920, 1080);
+        float a1 = share_aspect_update(&b, 1024, 768); OK(a1 > 1.77f && a1 < 1.78f, "um quadro de outra razão não muda o encaixe");
+        float a2 = 0; for (int i = 0; i < SHARE_ASPECT_FRAMES; i++) a2 = share_aspect_update(&b, 1024, 768);
+        OK(a2 > 1.33f && a2 < 1.34f, "razão nova persistente é adotada");
+    }
     OK(share_zoom_pct(0, 0.5f) == 100 && share_zoom_pct(0.5f, 0.5f) == 100, "encaixada = 100%");
     OK(share_zoom_pct(1.0f, 0.5f) == 200 && share_zoom_pct(0.75f, 0.5f) == 150, "percentual relativo ao encaixe");
     OK(share_zoom_pct(0.2f, 0.5f) == 100 && share_zoom_pct(1.0f, 0) == 100, "nunca abaixo de 100%");

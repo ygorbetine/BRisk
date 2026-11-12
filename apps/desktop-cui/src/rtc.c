@@ -352,6 +352,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
         s->net_sfu = !strcmp(md, "sfu");
         s->net_failed = !strcmp(md, "none");
+        { static bool told; if (!told && !strcmp(md, "p2p") && strstr(json_str(j, "reason", ""), "não configurado")) { told = true; settings_notice("Chamada em P2P: o servidor de chamadas ainda não está configurado."); } }   /* aviso leve, uma vez por execução */
         if (s->net_failed) { char nt[120]; snprintf(nt, sizeof nt, "Rede: sem chamada%s%s", er[0] ? " · " : "", er); settings_notice(nt); }
         snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : !strcmp(md, "none") ? "Sem chamada" : "P2P", json_str(j, "reason", ""),
                  json_str(j, "server", "")[0] ? " · servidor " : "", json_str(j, "server", ""), er[0] ? " · " : "", er);

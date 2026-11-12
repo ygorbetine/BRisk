@@ -657,7 +657,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                             cui_text(ui, "Você ainda não está na chamada. Em P2P você só fala com quem também entrar em P2P.", .size = 12, .color = B_MUTED);
                         }
                         if (cui_button(ui, "Tentar de novo")) { char room[sizeof s->room_name]; snprintf(room, sizeof room, "%s", s->room_name); s->net_failed = false; s->rtc_session_sent = s->rtc_session_ready; rtc_join_room(s, room); }
-                        if (cui_button(ui, "Entrar em modo P2P", .variant = CUI_BUTTON_PRIMARY)) rtc_join_p2p(s);
+                        if (cui_button(ui, "Usar P2P agora", .variant = CUI_BUTTON_PRIMARY)) rtc_join_p2p(s);
                     }
                 }
                 if (s->in_room && s->rtc_overflow > 0 && s->call_view != 1) {

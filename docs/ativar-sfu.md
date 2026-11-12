@@ -37,7 +37,7 @@ Nenhum segredo vai para o app nem para o git: a chave e o segredo do LiveKit fic
   ponha no `livekit.yaml`, abra 7880/tcp, 7881/tcp, 3478/udp, 5349/tcp e 50000-50200/udp e coloque TLS na frente para ter `wss://`.
   Confira banda mensal da VPS: vídeo em SFU gasta upload do servidor por espectador.
 
-### 2. Rode o assistente (no SEU terminal, na raiz do repositório)
+### 2. Rode o assistente (só para refazer/rotacionar: o servidor atual já está configurado) (no SEU terminal, na raiz do repositório)
 ```powershell
 supabase login        # uma vez
 powershell -NoProfile -File scripts/ativar-sfu.ps1
@@ -57,26 +57,34 @@ supabase functions deploy livekit-kick               # opcional: a expulsão der
 
 ### 3. Entregar o endereço a todos os usuários (via instalador)
 O instalador leva um `livekit.json` ao lado do `Briks.exe` com **só endereços públicos** (`url` e `token_url`; não é segredo).
-O app usa o `livekit.json` da pasta de dados (`%APPDATA%\Briks-CUI`) se existir; senão o do instalador. Ao gerar o instalador:
+**Por padrão `build-installer.ps1` já embute o servidor do Briks** (`wss://briks-jttver1z.livekit.cloud` + função de tokens do projeto
+`wusvizrteyoewggageeu`); `-SemSfu` gera um instalador só P2P. Precedência no app: variáveis `BRIKS_LIVEKIT_*` >
+`%APPDATA%\Briks-CUI\livekit.json` (o que o usuário editou) > o arquivo do instalador ao lado do exe.
+Para trocar de servidor ao gerar o instalador (ex.: depois de refazer o projeto):
 ```powershell
-$env:BRIKS_LIVEKIT_URL = "wss://SEU-SERVIDOR"
+$env:BRIKS_LIVEKIT_URL = "wss://NOVO-SERVIDOR"
 $env:BRIKS_LIVEKIT_TOKEN_URL = "https://wusvizrteyoewggageeu.supabase.co/functions/v1/livekit-token"   # opcional: sem ele, deriva da URL do supabase.json
 powershell -NoProfile -File scripts/build-installer.ps1 -Version 1.4.4
 ```
 (ou `BRIKS_LIVEKIT_JSON_SRC=caminho\livekit.json`; o script recusa qualquer chave que não seja `url`, `token_url`, `kick_url`).
-**Sem essas variáveis o instalador sai como antes, só P2P.** Quem já tem o app instalado e quer testar antes de publicar pode
-só criar `%APPDATA%\Briks-CUI\livekit.json` (o assistente já faz isso na sua máquina).
+
+**TURN:** não precisa de nada no app. Depois do login o core pede as credenciais temporárias à função `turn-credentials` (JWT da sessão),
+guarda só em memória e renova antes de vencer; sem login ou sem a função, só STUN.
 
 ### 4. Conferir que funcionou (sem segredos)
 ```powershell
 powershell -NoProfile -File scripts/verificar-sfu.ps1 -Email conta-de-teste@exemplo.com
 ```
-Diz OK/FALHA por etapa: servidor responde; função de tokens dá 401 sem login; login de teste; função emite token (200);
-WebSocket aceita o token. Use uma conta Briks de teste (senha pedida mascarada ou em `BRIKS_TEST_PASSWORD`).
+Sem argumentos usa o servidor padrão do Briks. Diz OK/FALHA por etapa: servidor responde; handshake TLS; as 3 funções
+(`livekit-token`, `livekit-kick`, `turn-credentials`) dão 401 sem login; login de teste; função emite token (200); WebSocket aceita o token. Use uma conta Briks de teste (senha pedida mascarada ou em `BRIKS_TEST_PASSWORD`).
 No app: Configurações > Rede > diagnóstico mostra "Modo da chamada: SFU · automático: servidor de chamadas (SFU) · servidor SEU-SERVIDOR".
 
+**Validar ponta a ponta em 2 PCs (sem segredos):** instale a mesma versão nos dois e entre com duas contas Briks de teste diferentes.
+Rode `verificar-sfu.ps1` num deles (tudo OK), abra uma chamada entre as contas e confira em Configurações > Rede > diagnóstico
+"Modo da chamada: SFU · servidor briks-jttver1z.livekit.cloud" nos dois; teste áudio, vídeo e uma transmissão. Com TURN ativo a tela Rede deixa de mostrar "Somente STUN".
+
 ### O que o app faz com e sem servidor
-- **Sem `livekit.json`** (nem variáveis): tudo em P2P, como hoje. "Sempre SFU" mostra o aviso de que o servidor não está configurado.
+- **Sem `livekit.json`** (instalador `-SemSfu`, ou arquivo apagado): tudo em P2P, como hoje. "Sempre SFU" mostra o aviso de que o servidor não está configurado.
 - **Com servidor**: **Automático e "Sempre SFU" usam o servidor de chamadas**; "Sempre P2P" continua disponível se todos escolherem o mesmo.
   Se o token não sair (sem conta, Supabase ou LiveKit fora do ar), a chamada **não abre** e aparece o motivo; ela não cai em P2P sozinha,
   porque quem caísse ficaria numa sala à parte. Reserva P2P (só se todos combinarem): `"fallback":"p2p"` no `net-mode.json` ou `BRIKS_NET_FALLBACK=p2p`.

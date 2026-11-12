@@ -558,6 +558,14 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         if (ev) { jval *jj = json_parse(ev); if (jj) { share_handle_event(s, jj, "share.local"); json_free(jj); } }
         cui_request_redraw(ui);
     }
+    if (d && !strcmp(d, "demo-adapt")) {   /* captura: injeta, pelo MESMO tratador do core, o "no ar" e as estatísticas com adapting (formato de share.rs: "cpu" e depois "rede" com reason) e abre a janela de qualidade */
+        static int step; const double t = cui_time(ui); const char *ev = NULL;
+        if (step == 0 && t > 1.0) { step = 1; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"on\",\"w\":1920,\"h\":1080,\"fps\":30,\"kbps\":6000}"; }
+        else if (step == 1 && t > 1.3) { step = 2; ev = "{\"ev\":\"share.stats\",\"fps\":18,\"kbps\":2100,\"h\":720,\"target_fps\":30,\"target_kbps\":6000,\"est_kbps\":2600,\"enc_ms\":41.0,\"cpu_pct\":96,\"rtt_ms\":48,\"rtx\":3,\"loss_pct\":1.5,\"adapting\":\"cpu\",\"reason\":\"\"}"; g_dev_open_quality = true; }
+        else if (step == 2 && t > 8.0) { step = 3; ev = "{\"ev\":\"share.stats\",\"fps\":24,\"kbps\":1800,\"h\":720,\"target_fps\":30,\"target_kbps\":6000,\"est_kbps\":1900,\"enc_ms\":9.0,\"cpu_pct\":40,\"rtt_ms\":180,\"rtx\":40,\"loss_pct\":6.0,\"adapting\":\"rede\",\"reason\":\"perda\"}"; }
+        if (ev) { jval *jj = json_parse(ev); if (jj) { share_handle_event(s, jj, strstr(ev, "share.local") ? "share.local" : "share.stats"); json_free(jj); } }
+        cui_request_redraw(ui);
+    }
     if (d && !strcmp(d, "demo-quality")) { static int once; if (!once && cui_time(ui) > 1.0) { once = 1; g_dev_open_quality = true; } }   /* captura sem core: abre a janela de qualidade */
     if (d && core_state() == CORE_READY && s->in_room) {
         if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }
@@ -889,17 +897,19 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
         }
         if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
-            cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);   /* âncora: topo do chip, com a largura dele */
+            { const cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "q")); cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX((cr.h > 0 ? cr.h : 40.0f) + 24.0f), NULL, NULL, 0); }   /* 12 px acima do topo do chip: o painel sobe para fora da barra, sem encostar nela */   /* âncora: topo do chip, com a largura dele */
         /* painel responsivo: largura até 520 mas nunca mais que a janela, altura limitada ao espaço ACIMA da barra (o cui limita a 420) com rolagem
            interna; os textos quebram e os segmentos descem de linha. O cui já mantém o popover dentro da janela nos 4 lados. */
         const cui_vec2 qvp = cui_viewport_size(ui); const cui_rect qar = cui_get_rect(ui, cui_make_id(ui, "shqanchor"));
         const float qpw = fminf(520.0f, fmaxf(qvp.x - 24.0f, 240.0f));
-        float qh = 360.0f; if (qar.w > 0) qh = qar.y - (titlebar_height() + 4.0f) - 10.0f - 32.0f - 8.0f - 28.0f;   /* menos gap, padding, margem e o título */
-        qh = fminf(fmaxf(qh, 90.0f), 360.0f);
+        float qh = 560.0f; if (qar.w > 0) qh = qar.y - (titlebar_height() + 4.0f) - 10.0f - 32.0f - 8.0f - 28.0f;   /* menos gap, padding, margem e o título */
+        qh = fminf(fmaxf(qh, 90.0f), 640.0f);
         g_qw = qpw - 32.0f - 8.0f;
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = qpw, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
-            cui_box(ui, .id = "shq-body", .width = CUI_FILL, .max_height = qh, .scroll_y = true, .gap = 10, .pad_right = 8) {
+            const cui_rect qin = cui_get_rect(ui, cui_make_id(ui, "shq-in"));   /* altura do conteúdo no quadro anterior: o painel não fica com vazio sobrando, e rola quando passa do limite */
+            cui_scroll(ui, .id = "shq-body", .width = CUI_FILL, .height = CUI_PX(qin.h > 0 ? fminf(qh, qin.h + 2.0f) : qh), .gap = 0, .fade_edges = true) {
+            cui_box(ui, .id = "shq-in", .width = CUI_FILL, .gap = 10, .pad_right = 8) {
             beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");
             /* as escolhas valem sozinhas: transmitindo, ~0,4 s depois da última mudança o codificador é reiniciado com elas (um clique
                seguido de outro não reinicia duas vezes); fora da transmissão ficam salvas para a próxima */
@@ -921,6 +931,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                     wrap_line(ui, st, 12, CUI_RGB(0xf5d9a0));
                 }
             }
+            }   /* shq-in */
             }   /* shq-body */
         }
         }

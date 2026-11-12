@@ -1,0 +1,36 @@
+# Linha "Adaptando: ..." do painel de qualidade (eventos no formato do core): causa CPU e causa rede; 3 tamanhos de janela; rolagem interna chega ao fim
+waitms 3000
+shot adapt-1-cpu-grande
+at 1000 450
+waitms 250
+wheel -10
+waitms 400
+shot adapt-1b-cpu-grande-fim
+resize 900 640
+waitms 600
+at 600 300
+waitms 250
+wheel -10
+waitms 400
+shot adapt-2-cpu-media-fim
+resize 560 520
+waitms 600
+at 300 250
+waitms 250
+wheel -10
+waitms 400
+shot adapt-3-cpu-pequena-fim
+resize 1280 800
+waitms 8000
+at 1000 450
+waitms 250
+wheel -10
+waitms 400
+shot adapt-4-rede-grande-fim
+resize 560 520
+waitms 600
+at 300 250
+waitms 250
+wheel -10
+waitms 400
+shot adapt-5-rede-pequena-fim

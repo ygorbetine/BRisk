@@ -470,7 +470,7 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
         } else cui_tabs(ui, "friends-tabs", items, 6, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true);
     }
     cui_separator(ui);
-    if (s->pending_count && s->friends_tab != 2) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* convites recebidos: indicador vermelho com o número, leva à aba Pendentes */
+    if (s->pending_count && s->friends_tab != 2) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* convites recebidos: indicador vermelho com o número, leva aos pedidos */
         cui_box(ui, .id = "pend-ind", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 14, .pad_y = 8, .gap = 8, .radius = 14, .bg = B_A(B_DANGER, 0x24), .border = 1, .border_color = B_A(B_DANGER, 0x66), .align = CUI_ALIGN_CENTER) {
             cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_DANGER);
             cui_textf(ui, s->pending_count == 1 ? "%d pedido de amizade para responder" : "%d pedidos de amizade para responder", s->pending_count);

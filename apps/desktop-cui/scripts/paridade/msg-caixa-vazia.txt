@@ -1,0 +1,18 @@
+# 1.4.1 (MSG-24): sem conversa aberta ("Escolher amigo", com o painel Amigos no layout) a caixa de escrever continua lá; enviar sem conversa só avisa
+waitms 600
+expect active_friend -1
+expect active_group -1
+pick friends
+waitms 300
+at zone:chat:right
+waitms 300
+tap zone:chat:right
+waitms 800
+expect msgbox 2
+shot v0-vazio
+click 800 753
+type oi
+key enter
+waitms 400
+expect msgbox 2
+shot v1-aviso

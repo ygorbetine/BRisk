@@ -150,6 +150,15 @@
       { "item": "MSG-14", "de": "e1", "para": "e2", "esperado": "muda", "min": 20 },
       { "item": "MSG-14", "de": "e1", "para": "e4", "esperado": "muda", "min": 20 },
       { "item": "MSG-14", "de": "e3", "para": "e4", "esperado": "muda", "min": 20 } ] },
+    { "id": "msg-troca-amigo", "demo": "social", "roteiro": "msg-troca-amigo.txt", "checagens": [
+      { "item": "MSG-23", "de": "t0-marina", "para": "t1-rafael", "esperado": "muda", "min": 50 },
+      { "item": "MSG-23", "de": "t1-rafael", "para": "t2-marina", "esperado": "muda", "min": 50 },
+      { "item": "MSG-23", "de": "t2-marina", "para": "t3-grupo", "esperado": "muda", "min": 50 } ] },
+    { "id": "msg-caixa-sempre", "demo": "social", "roteiro": "msg-caixa-sempre.txt", "checagens": [
+      { "item": "MSG-24", "de": "c0-amigo", "para": "c1-grupo", "esperado": "muda", "min": 50 },
+      { "item": "MSG-24", "de": "c1-grupo", "para": "c2-estreito", "esperado": "muda", "min": 50 } ] },
+    { "id": "msg-caixa-vazia", "demo": "social", "roteiro": "msg-caixa-vazia.txt", "env": { "BRIKS_DEMO_FTAB": "0" }, "checagens": [
+      { "item": "MSG-24", "de": "v0-vazio", "para": "v1-aviso", "esperado": "muda", "min": 5 } ] },
     { "id": "dm-sem-sala", "demo": "social", "roteiro": "dm-sem-sala.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
       { "item": "MSG-22", "de": "dm1-recebida", "para": "dm2-enviada", "esperado": "muda", "min": 5 },
       { "item": "MSG-22", "de": "dm2-enviada", "para": "dm3-entregue", "esperado": "muda", "min": 5 } ] },

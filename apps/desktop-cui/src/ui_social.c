@@ -403,6 +403,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
 /* o mesmo balão para outras telas (chat da sala na chamada: ui_call.c) */
 void briks_bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive, bool grouped) { g_grouped = grouped; bubble(ui, s, m, interactive); g_grouped = false; }
 
+int g_composer_seen;   /* roteiros: 1 = caixa de escrever da conversa desenhada, 2 = a do estado vazio (lida e zerada por script_probe 'msgbox') */
 static cui_rect g_chat_rect;   /* painel da conversa aberta (quadro anterior): o "Solte para enviar" cobre exatamente ele */
 static void content(cui_ctx *ui, app_state_t *s) {
     if (history_is_open()) { ui_history_panel(ui, s, HIST_CENTER); return; }   /* Histórico de chamadas no lugar da conversa (trilho e menu continuam) */
@@ -424,12 +425,15 @@ static void content(cui_ctx *ui, app_state_t *s) {
                     cui_text(ui, "Escolha uma conversa", .font = CUI_FONT_DISPLAY, .size = 17, .nowrap = true);
                     cui_text(ui, s->friend_count || s->group_count ? "Clique em um amigo ou grupo para abrir aqui." : "Adicione um amigo para começar a conversar.", .size = 12.5f, .color = B_MUTED);
                 }
-                cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0) {
-                    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(50), .pad_x = 16, .gap = 12, .radius = 18, .bg = B_GLASS_CARD,
+                cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {   /* a caixa de escrever existe SEMPRE (campo, anexo e enviar); sem conversa, avisa em vez de enviar */
+                    static char hint_draft[1100]; static bool hint_on; g_composer_seen = 2;
+                    if (hint_on) cui_text(ui, "Escolha um amigo ou grupo na lista para enviar.", .size = 12, .color = B_C3, .nowrap = true);
+                    cui_box(ui, .id = "composer-empty", .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                             .border = 1, .border_color = CUI_RGBA(0xffffff1c), .align = CUI_ALIGN_CENTER) {
-                        cui_icon(ui, CUI_ICON_PAPERCLIP, 16, g_th.ph);
-                        cui_text(ui, "Escolha uma conversa para escrever", .color = g_th.ph, .nowrap = true, .width = CUI_FILL);
-                        cui_icon(ui, CUI_ICON_SEND, 16, g_th.ph);
+                        if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar arquivo (escolha uma conversa antes)")) hint_on = true;
+                        int r = cui_input(ui, "draft-empty", hint_draft, sizeof hint_draft, .placeholder = "Escolha uma conversa para escrever", .width = CUI_FILL);
+                        bool send = cui_icon_button(ui, CUI_ICON_SEND, .variant = CUI_BUTTON_PRIMARY, .tooltip = "Enviar");
+                        if (send || (r & CUI_SUBMITTED)) hint_on = true;
                     }
                 }
             }
@@ -471,6 +475,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             }
         }
         cui_box(ui, .width = CUI_FILL, .pad = 12, .pad_top = 0, .gap = 6) {
+            g_composer_seen = 1;
             attach_strip(ui, s);
             attach_mentions(ui, s);
             msgui_composer(ui, s);

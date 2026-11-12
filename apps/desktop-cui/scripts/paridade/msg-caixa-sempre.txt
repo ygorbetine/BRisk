@@ -1,0 +1,16 @@
+# 1.4.1 (MSG-24): a caixa de escrever (campo, anexo, enviar) existe em toda conversa: amigo, grupo, janela estreita e depois de trocar de conversa
+waitms 600
+expect msgbox 1
+shot c0-amigo
+click 355 436
+waitms 500
+expect active_group 0
+expect msgbox 1
+shot c1-grupo
+click 375 528
+waitms 500
+expect msgbox 1
+resize 560 560
+waitms 600
+expect msgbox 1
+shot c2-estreito

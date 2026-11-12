@@ -48,6 +48,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "msg_count")) return state.msg_count;
     if (!strcmp(n, "active_friend")) return state.active_friend;
     if (!strcmp(n, "active_group")) return state.active_group;
+    if (!strcmp(n, "msgbox")) { extern int g_composer_seen; int v = g_composer_seen; g_composer_seen = 0; return v; }
     if (!strcmp(n, "pending_count")) return state.pending_count;
     if (!strcmp(n, "screen")) return (int)state.screen;
     if (!strcmp(n, "modal")) return g_modal_prev;

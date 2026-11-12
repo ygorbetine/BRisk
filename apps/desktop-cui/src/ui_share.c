@@ -507,6 +507,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     { static int demo; const char *dd = getenv("BRIKS_DEV_SHARE");
       if (!demo && dd && !strncmp(dd, "demo-", 5) && s->rtc_peers[0].id[0]) {
         demo = 1;
+        const bool aud = !strcmp(dd, "demo-audio"); if (aud) dd = "demo-many";   /* demo-many com áudio na 1ª transmissão (barra de volume no bloco) */
         if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
         if (!strcmp(dd, "demo-self")) {   /* MINHA transmissão no ar com prévia local (teste do aviso de qualidade reduzida): quadro sintético no arquivo da prévia */
             s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; q->active = true; snprintf(q->label, sizeof q->label, "Tela 1");
@@ -518,6 +519,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         if (!strcmp(dd, "demo-mini")) { s->screen = SCREEN_SOCIAL; s->call_mode = 0; s->call_view = 0; }   /* miniatura da lateral: duas telas no ar, usuário no menu */
         jval *jj = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":4000,\"label\":\"Tela 2\"}");
         if (jj) { share_handle_event(s, jj, "share.remote"); json_free(jj); }
+        q->remote[0].audio = aud;
         if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many") || !strcmp(dd, "demo-mini") || !strcmp(dd, "demo-sheen")) demo_frame(q->remote[0].path, sizeof q->remote[0].path, "tela1", 1280, 720, 0);
         if (!strcmp(dd, "demo-two") || !strcmp(dd, "demo-many") || !strcmp(dd, "demo-mini")) {   /* a mesma pessoa com DUAS telas no ar */
             jval *j2 = json_parse("{\"ev\":\"share.remote\",\"peer_id\":\"demo-0\",\"slot\":1,\"state\":\"on\",\"w\":960,\"h\":540,\"fps\":30,\"kbps\":2500,\"label\":\"Tela 3\"}");
@@ -1089,6 +1091,7 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "tile_opens")) return g_tile_opens;
+    if (!strcmp(n, "share_vol0")) return (int)(s->sh.remote[0].volume * 100.0f + 0.5f);
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
     if (!strcmp(n, "share_zoom2")) return g_zoom_pct[FV2(0)];   /* % da 2ª tela do 1º participante */

@@ -22,7 +22,7 @@ cargo build --release --manifest-path "$root\desktop-backend\Cargo.toml"; if ($L
 $backend = "$root\desktop-backend\target\release\briks-desktop-backend.exe"
 
 Write-Host "== briks-core =="
-$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx") }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
+$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx"); $env:VPX_LIB_DIR = "$cui\briks-core\vendor\vpx"; $env:VPX_VERSION = "1.13.0"; $env:VPX_STATIC = "1" }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
 if (-not $SkipTests) { cargo test --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo test (briks-core) falhou" } }
 cargo build --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo build (briks-core) falhou" }
 

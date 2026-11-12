@@ -27,7 +27,7 @@ $env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 Write-Host "== Rust (release) =="
 cargo build --release --manifest-path "$root\desktop-backend\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo (backend) falhou" }
-$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx") }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
+$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx"); $env:VPX_LIB_DIR = "$cui\briks-core\vendor\vpx"; $env:VPX_VERSION = "1.13.0"; $env:VPX_STATIC = "1" }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
 cargo build --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo (briks-core) falhou" }
 $backend = "$root\desktop-backend\target\release\briks-desktop-backend.exe"
 $core = "$cui\briks-core\target\release\briks-core.exe"

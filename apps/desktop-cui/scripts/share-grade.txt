@@ -3,9 +3,14 @@ waitms 1500
 expect share_mode 1
 expect share_tiles 4
 shot grade-1-quatro-blocos
-at 908 38
-click
+click 940 74
 waitms 500
 expect share_tiles 4
 expect share_focus -1
 shot grade-2-foco
+at 400 400
+waitms 300
+wheel 3
+waitms 500
+expect share_zoomed 1
+shot grade-3-foco-com-zoom

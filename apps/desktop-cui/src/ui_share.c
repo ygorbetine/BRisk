@@ -40,8 +40,8 @@ static const char *const BR_LABEL[4] = { "Automático", "Alto", "Máximo", "Pers
 
 /* mesmo cálculo de video::auto_bitrate no core */
 static int auto_kbps(int h, int fps) {
-    double base = h <= 480 ? 1200 : h <= 720 ? 2500 : h <= 1080 ? 4500 : h <= 1440 ? 9000 : 18000;
-    return (int)(base * pow((fps < 1 ? 1 : fps) / 30.0, 0.75));
+    double base = h <= 480 ? 1800 : h <= 720 ? 3500 : h <= 1080 ? 6000 : h <= 1440 ? 10000 : 18000;   /* perfis do Electron: 720p30 3,5 / 1080p30 6 Mbps */
+    return (int)(base * pow((fps < 1 ? 1 : fps) / 30.0, 0.55));
 }
 static int chosen_kbps(const share_state_t *q) {   /* o que será pedido ao core (0 = automático) */
     int a = auto_kbps(RES_H[q->res], FPS_V[q->fps]), k = 0;
@@ -441,6 +441,11 @@ static void beta_note(cui_ctx *ui, const char *text) {
     }
 }
 
+/* linha de texto que quebra dentro da largura do painel em vez de passar da borda */
+static void wrap_line(cui_ctx *ui, const char *t, float size, cui_color col) {
+    cui_box(ui, .width = CUI_FILL) { cui_text(ui, t, .size = size, .color = col); }
+}
+
 static bool quality_controls(cui_ctx *ui, share_state_t *q) {
     bool ch = false;
     cui_column(ui, .gap = 10, .width = CUI_FILL) {
@@ -453,9 +458,9 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             ch |= seg(ui, "fps", FPS_LABEL, NULL, FPS_N, &q->fps);
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
-            cui_column(ui, .gap = 1) {
-                cui_text(ui, "Se a rede ou o PC apertar", .size = 13, .color = B_MUTED);
-                cui_text(ui, q->content ? "Fluidez: cede resolução antes de quadros" : "Nitidez: cede quadros antes de resolução", .size = 11, .color = CUI_RGBA(0xa592b8aa), .nowrap = true);
+            cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                wrap_line(ui, "Se a rede ou o PC apertar", 13, B_MUTED);
+                wrap_line(ui, q->content ? "Fluidez: cede resolução antes de quadros" : "Nitidez: cede quadros antes de resolução", 11, CUI_RGBA(0xa592b8aa));
             }
             static const char *const pr[2] = { "Nitidez", "Fluidez" };
             ch |= seg(ui, "pri", pr, NULL, 2, &q->content);
@@ -481,7 +486,7 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             }
         } else {
             snprintf(line, sizeof line, q->br_mode == 0 ? "Automático: até %s; baixa e volta sozinho conforme a rede." : "Teto de %s; o ajuste automático trabalha abaixo dele.", r);
-            cui_text(ui, line, .size = 12, .color = B_MUTED, .nowrap = true);
+            wrap_line(ui, line, 12, B_MUTED);
         }
     }
     return ch;
@@ -623,24 +628,26 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
             beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");
-            static bool dirty;
-            if (quality_controls(ui, q)) dirty = true;
+            /* as escolhas valem sozinhas: transmitindo, ~0,4 s depois da última mudança o codificador é reiniciado com elas (um clique
+               seguido de outro não reinicia duas vezes); fora da transmissão ficam salvas para a próxima */
+            static double apply_at = -1;
+            if (quality_controls(ui, q) && q->active) apply_at = cui_time(ui) + 0.4;
+            if (apply_at >= 0) { if (!q->active) apply_at = -1; else if (cui_time(ui) >= apply_at) { apply_at = -1; send_start(s, q->last_kind, q->last_id, q->label); } else cui_request_wakeup(ui, 0.2f); }
             if (q->active) {
                 /* telemetria local, ao vivo */
                 char st[240];
                 snprintf(st, sizeof st, "No ar: %s · %.0f FPS · %d kbps (alvo %d FPS · %d kbps)", res_name(q->live_h ? q->live_h : q->h), q->stat_fps, q->stat_kbps, q->target_fps, q->target_kbps);
-                cui_text(ui, st, .size = 12, .color = B_TEXT, .nowrap = true);
+                wrap_line(ui, st, 12, B_TEXT);
                 snprintf(st, sizeof st, "Rede: estimada %d kbps · perda %.1f%% · RTT %d ms · reenvios %d/s", q->est_kbps, q->loss_pct, q->rtt_ms, q->rtx);
-                cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+                wrap_line(ui, st, 12, B_MUTED);
                 snprintf(st, sizeof st, "Codificador: %s%s · %.1f ms/quadro · CPU %d%%", q->encoder[0] ? q->encoder : "H264", q->hardware ? " (GPU)" : " (software)", q->enc_ms, q->cpu);
-                cui_text(ui, st, .size = 12, .color = B_MUTED, .nowrap = true);
+                wrap_line(ui, st, 12, B_MUTED);
                 if (q->black) cui_text(ui, "A fonte está saindo preta. Jogos em tela cheia exclusiva e conteúdo protegido não podem ser capturados: use janela sem bordas.", .size = 12, .color = CUI_RGB(0xf5d9a0));
                 if (q->adapting[0]) {
                     snprintf(st, sizeof st, !strcmp(q->adapting, "cpu") ? "Adaptando: o PC não deu conta; qualidade reduzida até caber." : "Adaptando à rede%s%s: qualidade reduzida, volta sozinha.", q->reason[0] ? " (" : "", q->reason[0] ? (!strcmp(q->reason, "perda") ? "perda)" : "atraso)") : "");
-                    cui_text(ui, st, .size = 12, .color = CUI_RGB(0xf5d9a0), .nowrap = true);
+                    wrap_line(ui, st, 12, CUI_RGB(0xf5d9a0));
                 }
-                if (cui_button(ui, "Aplicar na transmissão", .variant = CUI_BUTTON_PRIMARY, .disabled = !dirty)) { dirty = false; send_start(s, q->last_kind, q->last_id, q->label); cui_popover_close(ui, "shq"); }
-            } else dirty = false;
+            }
         }
         }
     }
@@ -750,7 +757,7 @@ static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
         bool has = fv_update(ui, s, &g_fv[key], path);
         snprintf(title, sizeof title, "Você · %s", q->label[0] ? q->label : "sua tela");
         quality_chip(q, chip, sizeof chip);
-        return video_tile(ui, key, has ? g_fv[key].tex : 0, g_fv[key].w, g_fv[key].h, title, chip, "Preparando a prévia…", NULL, NULL, compact);
+        return video_tile(ui, key, has ? g_fv[key].tex : 0, g_fv[key].w, g_fv[key].h, title, chip, "Preparando a prévia…", NULL, &g_zoom[key], compact);
     }
     if (key == FV2(BRIKS_MAX_PEERS)) {
         preview_path_n(path, sizeof path, true);
@@ -759,7 +766,7 @@ static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
         snprintf(title, sizeof title, "Você · %s (2ª tela)", q->second.label[0] ? q->second.label : "sua tela");
         fmt_rate(q->second.kbps, r, sizeof r);
         snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->second.h), q->second.fps, r);
-        return video_tile(ui, key, has ? v->tex : 0, v->w, v->h, title, chip, "Preparando a prévia…", NULL, NULL, compact);
+        return video_tile(ui, key, has ? v->tex : 0, v->w, v->h, title, chip, "Preparando a prévia…", NULL, &g_zoom[key], compact);
     }
     const bool two = key >= FV_N; const int i = two ? key - FV_N : key;
     const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";

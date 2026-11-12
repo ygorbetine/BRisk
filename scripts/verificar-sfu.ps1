@@ -36,6 +36,7 @@ if (-not $Url -or -not $TokenUrl) {
 }
 if (-not $Url) { $Url = $env:BRIKS_LIVEKIT_URL }
 if (-not $TokenUrl) { $TokenUrl = $env:BRIKS_LIVEKIT_TOKEN_URL }
+if (-not $Url -and -not $TokenUrl) { $Url = "wss://briks-jttver1z.livekit.cloud"; $TokenUrl = "https://wusvizrteyoewggageeu.supabase.co/functions/v1/livekit-token" }   # padrao publico do Briks
 if ($Url -match '^wss://[^\s/]+' -and $TokenUrl -match '^https://[^\s/]+') { Etapa "Configuracao publica (livekit.json)" "OK" "$Url | $TokenUrl" }
 else { Etapa "Configuracao publica (livekit.json)" "FALHA" "faltam url (wss://) e token_url (https://); veja docs/ativar-sfu.md"; exit 1 }
 
@@ -52,11 +53,31 @@ if ($r.Status -eq 200) { Etapa "Servidor LiveKit responde (HTTPS)" "OK" }
 elseif ($r.Status -gt 0) { Etapa "Servidor LiveKit responde (HTTPS)" "FALHA" "HTTP $($r.Status)" }
 else { Etapa "Servidor LiveKit responde (HTTPS)" "FALHA" $r.Body }
 
-# --- 3. funcao de tokens protegida: sem JWT = 401 ---
-$r = Http "POST" $TokenUrl @{} '{"room":"verificar-sfu"}'
-if ($r.Status -eq 401) { Etapa "Funcao de tokens recusa quem nao entrou (401 sem JWT)" "OK" }
-elseif ($r.Status -eq 404) { Etapa "Funcao de tokens recusa quem nao entrou (401 sem JWT)" "FALHA" "404: a funcao livekit-token nao esta publicada" }
-else { Etapa "Funcao de tokens recusa quem nao entrou (401 sem JWT)" "FALHA" "esperado 401, veio $($r.Status)" }
+# --- 2b. TLS: so o handshake (sem token, sem sinalizacao) ---
+try {
+    $h = ([Uri]$lkHttp).Host
+    $tcp = New-Object Net.Sockets.TcpClient; $tcp.ReceiveTimeout = 10000; $tcp.SendTimeout = 10000
+    if (-not $tcp.ConnectAsync($h, 443).Wait(10000)) { throw "tempo esgotado ao conectar em ${h}:443" }
+    $tls = New-Object Net.Security.SslStream($tcp.GetStream(), $false)
+    $tls.AuthenticateAsClient($h)
+    Etapa "Handshake TLS com o servidor (wss)" "OK" "$($tls.SslProtocol), certificado valido para $h"
+    $tls.Dispose(); $tcp.Dispose()
+} catch { Etapa "Handshake TLS com o servidor (wss)" "FALHA" ($_.Exception.Message -replace '^.*?: ', '') }
+
+# --- 3. as 3 funcoes protegidas: sem JWT = 401 (e nao 404 = nao publicada) ---
+$base = $TokenUrl -replace '/livekit-token/?$', ''
+$funcoes = @(
+    @{ n = "livekit-token"; m = "POST"; u = $TokenUrl; b = '{"room":"verificar-sfu"}' },
+    @{ n = "livekit-kick"; m = "POST"; u = "$base/livekit-kick"; b = '{"room":"verificar-sfu","identity":"x"}' },
+    @{ n = "turn-credentials"; m = "GET"; u = "$base/turn-credentials"; b = $null })
+foreach ($f in $funcoes) {
+    $nome = "Funcao $($f.n) recusa quem nao entrou (401 sem JWT)"
+    if ($f.n -ne "livekit-token" -and $TokenUrl -notmatch '/livekit-token/?$') { Etapa $nome "PULADO" "token_url fora do padrao /livekit-token"; continue }
+    $r = Http $f.m $f.u @{} $f.b
+    if ($r.Status -eq 401) { Etapa $nome "OK" }
+    elseif ($r.Status -eq 404) { Etapa $nome "FALHA" "404: a funcao nao esta publicada" }
+    else { Etapa $nome "FALHA" "esperado 401, veio $($r.Status)" }
+}
 
 # --- 4. login de teste -> token ---
 if (-not $Email) { $Email = $env:BRIKS_TEST_EMAIL }

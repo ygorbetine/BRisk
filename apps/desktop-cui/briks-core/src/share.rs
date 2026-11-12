@@ -148,8 +148,12 @@ const HISTORY: usize = 2048;
 /// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
 async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec, Arc<TrackLocalStaticRTP>)>, mut track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>, rtx_twice: Arc<AtomicBool>) {
     use std::collections::{HashMap, VecDeque};
+    // um sequenciador só para a vida toda da transmissão: ao trocar de codec o número de sequência CONTINUA (um início aleatório novo cai
+    // fora da janela anti-replay do SRTP do receptor em metade das vezes e os pacotes do codec novo seriam descartados)
+    use webrtc::rtp::sequence::Sequencer as _;
+    let seq = webrtc::rtp::sequence::new_random_sequencer();
     let mk_pk = |codec: Codec| { let payloader: Box<dyn webrtc::rtp::packetizer::Payloader + Send + Sync> = crate::codec::payloader(codec).unwrap_or_else(|| Box::new(H264Payloader::default()));
-        webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, payloader, Box::new(webrtc::rtp::sequence::new_random_sequencer()), 90_000) };
+        webrtc::rtp::packetizer::new_packetizer(1180, 0, 0, payloader, seq.clone_to(), 90_000) };
     let mut pk = mk_pk(codec);
     let mut budget_at = tokio::time::Instant::now();
     let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
@@ -193,6 +197,9 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
             }
             m = rx.recv() => {
                 let Some((au, samples, pace_bps)) = m else { break };
+                // o select sorteia entre ramos prontos: a troca de codec pedida ANTES deste quadro tem de valer para ele (senão o 1º quadro-chave
+                // do codec novo sai no empacotador/faixa antigos e o espectador fica sem imagem até pedir outro)
+                while let Ok((nc, nt)) = ctl_rx.try_recv() { codec = nc; track = nt; pk = mk_pk(nc); hist.clear(); order.clear(); }
                 pace = (pace_bps as f64).max(600_000.0);
                 let len = au.len() as u64;
                 let is_key = if codec == Codec::H264 { crate::mfenc::nals(&au).iter().any(|n| n.0 == 5) } else { crate::codec::is_key_frame(codec, &au) };   // o receptor espera mais pelos pedaços de um quadro-chave

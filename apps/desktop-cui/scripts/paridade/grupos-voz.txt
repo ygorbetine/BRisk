@@ -4,6 +4,6 @@ snap gv0
 expect grp_voice_who 3
 expect grp_voice_live 1
 expect grp_call_mode -1
-tap 388 599
+tap 405 656
 snap gv1
 expect grp_call_mode 11

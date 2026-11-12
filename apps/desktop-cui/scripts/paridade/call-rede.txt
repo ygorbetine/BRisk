@@ -1,7 +1,7 @@
 # Indicador de rede e ajustes de áudio dentro da chamada (2 participantes de exemplo)
 waitms 400
 snap n0
-tap 390 38
+tap 455 35
 snap n1
 key esc
 waitms 400

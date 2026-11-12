@@ -568,6 +568,88 @@ async fn screen_share_flows_end_to_end_in_loopback() {
     eprintln!("provas em {}", dir.display());
 }
 
+/// Texto de IDE rolando em 1080p, de ponta a ponta (captura sintética -> conversão -> codificador DE VERDADE (GPU se houver) -> pacer ->
+/// WebRTC em loopback -> decodificador -> quadro do receptor). Mede, nas duas políticas (Nitidez/Fluidez): resolução e FPS que o adaptador
+/// escolheu ao longo do tempo, mudanças de resolução vistas pelo receptor (o "zoom"), bitrate/fps reais e PSNR da luminância do quadro
+/// recebido contra o quadro de origem. `BRIKS_SCROLL_FPS` (24), `BRIKS_SCROLL_SECS` (24), `BRIKS_SCROLL_KBPS` (0 = automático),
+/// `BRIKS_SCROLL_ONLY` = nitidez|fluidez. Usa o codificador padrão (aqui: NVENC); proteja com o lock da GPU.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn scroll_text_end_to_end() {
+    use crate::capture::{read_stamp, scroll_page, scroll_top, SourceKind, SCROLL_T0_MS};
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    use std::sync::atomic::Ordering::Relaxed;
+    let fps: usize = std::env::var("BRIKS_SCROLL_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+    let secs: u64 = std::env::var("BRIKS_SCROLL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+    let kbps: u32 = std::env::var("BRIKS_SCROLL_KBPS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let only = std::env::var("BRIKS_SCROLL_ONLY").unwrap_or_default();
+    let out = std::env::var("BRIKS_PROVAS_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("briks-rolagem"));
+    std::fs::create_dir_all(&out).unwrap();
+    let luma = |a: &[u8], b: &[u8]| -> f64 {   // a = BGRA (origem), b = RGBA (recebido)
+        let (mut se, n, skip) = (0f64, a.len() / 4, crate::capture::stamp_rows(1920) * 1920);
+        for i in skip..n { let ya = 0.299 * a[i * 4 + 2] as f64 + 0.587 * a[i * 4 + 1] as f64 + 0.114 * a[i * 4] as f64; let yb = 0.299 * b[i * 4] as f64 + 0.587 * b[i * 4 + 1] as f64 + 0.114 * b[i * 4 + 2] as f64; se += (ya - yb) * (ya - yb); }
+        let mse = se / n as f64; if mse < 1e-9 { 99.0 } else { 10.0 * (255.0f64 * 255.0 / mse).log10() }
+    };
+    for (content, name) in [(crate::adapt::Content::Detail, "nitidez"), (crate::adapt::Content::Motion, "fluidez")] {
+        if !only.is_empty() && only != name { continue; }
+        let port = crate::mock::start(0).await.unwrap();
+        let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+        let room = format!("rolagem-{name}");
+        let mut a = node(port, PA, "Ana", &room, ia);
+        let mut b = node(port, PB, "Beto", &room, ib);
+        assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
+        let rpath = out.join(format!("recebido-{name}.bin"));
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestScroll, height: 1080, fps: fps as u32, kbps, label: "Rolagem".into(), audio: crate::procaudio::AudioMode::None, content, adaptive: true }, preview: None, dump: None }).await.unwrap();
+        let on = wait_share(&mut a, |v| v["ev"] == "share.local" && v["state"] == "on", 20).await.expect("emissor");
+        eprintln!("[{name}] codificador: {} ({}), início {}x{}", on["encoder"], if on["hardware"] == true { "GPU" } else { "software" }, on["w"], on["h"]);
+        wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("receptor");
+        b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
+        let src = loop { if let Ok(s) = FrameSource::open(&rpath) { break s; } tokio::time::sleep(Duration::from_millis(100)).await; };
+        let (mut last_n, mut dims, mut dim_changes) = (0u64, (0usize, 0usize), 0u32);
+        let (mut stats, mut ps_scroll, mut ps_static, mut ps_jump) = (vec![], vec![], vec![], vec![]);
+        let (mut rx_plis, mut rx_lost) = (0u64, 0u64);
+        let t_end = std::time::Instant::now() + Duration::from_secs(secs);
+        let mut next_sample = std::time::Instant::now() + Duration::from_secs(3);
+        let mut saved = [false; 3];
+        while std::time::Instant::now() < t_end {
+            if let Ok(Some(MeshEvent::Share(v))) = timeout(Duration::from_millis(20), a.events.recv()).await { if v["ev"] == "share.stats" { if std::env::var("BRIKS_SCROLL_DEBUG").is_ok() { eprintln!("  stats: {}x{} fps {} (alvo {}) kbps {} (alvo {}, est {}) enc_ms {} work_ms {} oferecidos {} descartados {} pulados {} pacer_drops {} fila {} KB cpu {}%", v["w"], v["h"], v["fps"], v["target_fps"], v["kbps"], v["target_kbps"], v["est_kbps"], v["enc_ms"], v["work_ms"], v["offered_fps"], v["cap_dropped"], v["skipped"], v["pacer_drops"], v["pacer_queue_kb"], v["cpu_pct"]); } stats.push((v["target_h"].as_u64().unwrap_or(0), v["target_fps"].as_u64().unwrap_or(0), v["kbps"].as_f64().unwrap_or(0.0), v["fps"].as_f64().unwrap_or(0.0), v["plis"].as_u64().unwrap_or(0), v["w"].as_u64().unwrap_or(0), v["h"].as_u64().unwrap_or(0))); } }
+            if let Ok(Some(MeshEvent::Share(v))) = timeout(Duration::from_millis(5), b.events.recv()).await { if v["ev"] == "share.rxstats" { rx_plis = v["plis"].as_u64().unwrap_or(0); rx_lost = v["lost_frames"].as_u64().unwrap_or(0); } }
+            if let Some((rw, rh, n, rgba)) = src.read() {
+                if n != last_n { last_n = n; if (rw, rh) != dims { if dims.0 != 0 { dim_changes += 1; } dims = (rw, rh); } }
+                if std::time::Instant::now() >= next_sample && rw == 1920 && rh == 1080 {
+                    next_sample = std::time::Instant::now() + Duration::from_millis(350);
+                    // o carimbo guarda os 32 bits baixos do relógio em ms
+                    let ms = read_stamp(&rgba, rw) as u64; let t0 = SCROLL_T0_MS.load(Relaxed) & 0xffff_ffff;
+                    let tc = ((ms.wrapping_sub(t0) & 0xffff_ffff) as f64 * fps as f64 / 1000.0).round() as i64;
+                    if tc > 0 && tc < 100_000 {
+                        let phase = tc as usize % (8 * fps);
+                        let kind = if phase < 3 * fps { 0 } else if phase < 5 * fps { 1 } else if phase < 7 * fps { 2 } else { 1 };
+                        let edge = phase % fps; if edge < 3 || edge + 3 > fps { continue; }   // perto da troca de fase o t estimado pode errar
+                        let (mut best, mut best_t) = (0.0f64, tc);
+                        for dt in -2i64..=2 { let t = (tc + dt).max(0) as usize; let f = scroll_page(1920, 1080, scroll_top(t, fps), t); let p = luma(&f, &rgba); if p > best { best = p; best_t = t as i64; } if kind == 1 { break; } }
+                        if std::env::var("BRIKS_SCROLL_DEBUG").is_ok() { eprintln!("  amostra: carimbo {ms} t0 {t0} -> t {tc} fase {phase} tipo {kind} melhor t {best_t} PSNR {best:.1}"); }
+                        match kind { 0 => ps_scroll.push(best), 1 => ps_static.push(best), _ => ps_jump.push(best) }
+                        if !saved[kind] { saved[kind] = true;
+                            let t = best_t.max(0) as usize; let orig = scroll_page(1920, 1080, scroll_top(t, fps), t);
+                            let crop = |bgra: bool, d: &[u8]| -> Vec<u8> { let mut c = Vec::with_capacity(300 * 150 * 4); for y in 300..450 { for x in 400..700 { let o = (y * 1920 + x) * 4; if bgra { c.extend_from_slice(&[d[o + 2], d[o + 1], d[o], 255]); } else { c.extend_from_slice(&d[o..o + 4]); } } } c };
+                            for (nm, bg, d) in [("original", true, &orig[..]), ("recebido", false, &rgba[..])] { if let Some(img) = image::RgbaImage::from_raw(300, 150, crop(bg, d)) { let _ = image::imageops::resize(&img, 900, 450, image::imageops::FilterType::Nearest).save(out.join(format!("{name}-fase{kind}-{nm}.png"))); } }
+                        }
+                    }
+                }
+            }
+        }
+        let avg = |v: &[f64]| if v.is_empty() { f64::NAN } else { v.iter().sum::<f64>() / v.len() as f64 };
+        let hs: std::collections::BTreeSet<u64> = stats.iter().map(|s| s.0).collect();
+        let fs: std::collections::BTreeSet<u64> = stats.iter().map(|s| s.1).collect();
+        let sent_dims: std::collections::BTreeSet<(u64, u64)> = stats.iter().map(|s| (s.5, s.6)).collect();
+        eprintln!("[{name}] {secs} s a {fps} qps pedidos: alturas alvo vistas {hs:?}, fps alvo {fs:?}, tamanhos enviados {sent_dims:?}; mudanças de tamanho no receptor: {dim_changes}; bitrate médio {:.0} kbps, fps médio {:.1}; PLIs do emissor {} / do receptor {rx_plis}, quadros perdidos {rx_lost}",
+            avg(&stats.iter().map(|s| s.2).collect::<Vec<_>>()), avg(&stats.iter().map(|s| s.3).collect::<Vec<_>>()), stats.last().map(|s| s.4).unwrap_or(0));
+        eprintln!("[{name}] PSNR da luminância recebida: rolando 3 px/quadro {:.1} dB ({} amostras) | parada {:.1} dB ({}) | saltos de linha {:.1} dB ({})", avg(&ps_scroll), ps_scroll.len(), avg(&ps_static), ps_static.len(), avg(&ps_jump), ps_jump.len());
+        let _ = a.cmd.send(MeshCmd::ShareStop).await; let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
+    }
+}
+
 /// Medição com a tela real (não roda por padrão): `cargo test --release -- --ignored --nocapture real_screen_share_stats`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]

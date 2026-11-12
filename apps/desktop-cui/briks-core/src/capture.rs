@@ -27,6 +27,8 @@ pub enum SourceKind {
     TestBlack,
     /// ruído rolando em 1920x1080 a 30 qps: conteúdo difícil, faz o codificador usar todo o bitrate (testes de adaptação)
     TestMotion,
+    /// página de código rolando (texto de 1 px, 1920x1080): rola 3 px/quadro por 3 s, para 2 s, pula linhas por 2 s, para 1 s e repete
+    TestScroll,
     TestResize,      // padrão sintético que muda de 1280x720 para 960x540 depois de ~2 s (janela redimensionada)
     /// webcam (id do dispositivo; vazio = a primeira); com `BRIKS_FAKE_CAMERA` é uma câmera sintética (ver camera.rs)
     Camera(String),
@@ -224,6 +226,41 @@ pub fn refuses_primary(hm: isize) -> bool {
     unsafe { !GetMonitorInfoW(HMONITOR(hm as *mut std::ffi::c_void), &mut mi).as_bool() || mi.dwFlags & 1 == 1 }   // não deu para saber = recusa
 }
 
+fn glyph(cell: u32) -> [u8; 7] { let mut x = cell.wrapping_mul(2654435761).wrapping_add(12345); let mut g = [0u8; 7]; for r in &mut g { x ^= x << 13; x ^= x >> 17; x ^= x << 5; *r = (x & 0x1f) as u8 | 0x04; } g }
+
+/// Página de código: texto de traço de 1 px (como IDE/navegador de verdade), 14 px por linha, cores de sintaxe, começando na linha
+/// absoluta `top_px / 14` e rolada `top_px % 14` px. Barra lateral e barra de título fixas; relógio no canto.
+pub fn scroll_page(w: usize, h: usize, top_px: usize, t: usize) -> Vec<u8> {
+    let mut f = vec![0u8; w * h * 4];
+    for y in 0..h { for x in 0..w { let o = (y * w + x) * 4; let (b, g, r) = if y < 36 { (58, 40, 40) } else if x < 280 { (44, 40, 37) } else { (30, 30, 30) }; f[o] = b; f[o + 1] = g; f[o + 2] = r; f[o + 3] = 255; } }
+    let cores = [(230u8, 230u8, 230u8), (86, 156, 214), (206, 145, 120), (78, 201, 176), (220, 220, 170)];
+    let mut put = |x0: usize, y0: usize, cell: u32, col: (u8, u8, u8)| {
+        let gl = glyph(cell);
+        for (ry, bits) in gl.iter().enumerate() { for rx in 0..5 { if bits >> rx & 1 == 1 { let (px, py) = (x0 + rx, y0 + ry); if px < w && py < h { let o = (py * w + px) * 4; f[o] = col.2; f[o + 1] = col.1; f[o + 2] = col.0; } } } }
+    };
+    let first = top_px / 14; let off = top_px % 14;
+    for k in 0..((h - 36) / 14 + 2) {
+        let ln = first + k; let y0 = (36 + k * 14).wrapping_sub(off);
+        if y0 + 8 > h || y0 < 30 { continue; }
+        let indent = (ln * 7 % 4) * 28;
+        let mut c = 0;
+        while 300 + indent + c * 7 < w - 20 { if (c * 5 + ln * 3) % 9 < 7 { put(300 + indent + c * 7, y0, (ln * 977 + c * 31) as u32, cores[(ln + c / 6) % 5]); } c += 1; }
+        if ln % 3 == 0 { for c in 0..30 { put(14 + c * 7, y0, (ln * 131 + c * 17) as u32, (200, 200, 200)); } }   // árvore de arquivos
+    }
+    for c in 0..8 { put(w - 140 + c * 7, 12, (t * 13 + c * 7) as u32, (255, 255, 255)); }   // relógio
+    f
+}
+
+/// Posição de rolagem (px) no quadro `t` (a `fps` quadros por segundo): 3 s a 3 px/quadro, 2 s parada, 2 s a 14 px/quadro, 1 s parada.
+/// Instante (ms desde 1970) em que a fonte TestScroll começou: o teste usa para saber qual quadro é qual (via carimbo).
+pub static SCROLL_T0_MS: AtomicU64 = AtomicU64::new(0);
+
+pub fn scroll_top(t: usize, fps: usize) -> usize {
+    let cyc = 8 * fps; let (full, r) = (t / cyc, t % cyc);
+    let per = 3 * fps * 3 + 2 * fps * 14;
+    full * per + if r < 3 * fps { r * 3 } else if r < 5 * fps { 3 * fps * 3 } else if r < 7 * fps { 3 * fps * 3 + (r - 5 * fps) * 14 } else { per }
+}
+
 pub fn test_pattern(w: usize, h: usize, t: usize) -> Vec<u8> {
     let mut f = vec![255u8; w * h * 4];
     for y in 0..h { for x in 0..w {
@@ -296,6 +333,24 @@ impl Capture {
                         sh.push_bgra(&f, w, h, w * 4);
                         t += 1;
                         next += Duration::from_micros(1_000_000 / 60);   // oferece 60 qps: quem limita é o FPS alvo
+                        let now = std::time::Instant::now();
+                        if next > now { std::thread::sleep(next - now); } else { next = now; }
+                    }
+                });
+                Handle::Thread
+            }
+            SourceKind::TestScroll => {
+                let (sh, st) = (shared.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    let (w, h) = (1920usize, 1080usize);
+                    let (mut t, mut next) = (0usize, std::time::Instant::now());
+                    SCROLL_T0_MS.store(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0), Ordering::Relaxed);
+                    while !st.load(Ordering::Relaxed) {
+                        let mut f = scroll_page(w, h, scroll_top(t, fps as usize), t);
+                        stamp_ms(&mut f, w);
+                        sh.push_bgra(&f, w, h, w * 4);
+                        t += 1;
+                        next += Duration::from_micros(1_000_000 / fps.clamp(1, 120) as u64);
                         let now = std::time::Instant::now();
                         if next > now { std::thread::sleep(next - now); } else { next = now; }
                     }

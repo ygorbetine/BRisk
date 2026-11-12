@@ -231,11 +231,17 @@ pub fn ladder(content: Content, max_h: usize, max_fps: u32) -> Vec<Level> {
             for h in hs.iter().skip(1) { out.push(Level { h: *h, fps: fmin }); }
         }
         Content::Motion => {
+            // Piso de legibilidade: a resolução cai só até 720p; daí em diante cai o FPS (texto/HUD a 540p/360p vira borrão, e foi o
+            // que o usuário viu em 1.4.0). 540p/360p ficam por último, já no FPS mínimo.
             let f_hi = max_fps;
-            for h in &hs { out.push(Level { h: *h, fps: f_hi }); }
-            let hmin = *hs.last().unwrap();
-            if f_hi > 30 { out.push(Level { h: hmin, fps: 30 }); }
-            for f in low_fps(15) { out.push(Level { h: hmin, fps: f }); }
+            let hs_hi: Vec<usize> = hs.iter().copied().filter(|h| *h >= 720).collect();
+            let hs_hi = if hs_hi.is_empty() { hs.clone() } else { hs_hi };
+            for h in &hs_hi { out.push(Level { h: *h, fps: f_hi }); }
+            let hfloor = *hs_hi.last().unwrap();
+            if f_hi > 30 { out.push(Level { h: hfloor, fps: 30 }); }
+            for f in low_fps(15) { out.push(Level { h: hfloor, fps: f }); }
+            let fmin = out.last().unwrap().fps;
+            for h in hs.iter().filter(|h| **h < hfloor) { out.push(Level { h: *h, fps: fmin }); }
         }
     }
     out
@@ -251,6 +257,7 @@ pub struct Controller {
     cpu_bad: u32,
     cpu_good: u32,
     cpu_relaxed: bool,
+    cpu_samples: u32,
     /// enviado / pedido no último segundo (telemetria). Conteúdo muito difícil (ruído, jogo caótico) não comprime até o alvo em
     /// resolução alta; o piso de bits por pixel abaixo é o que faz a escada pular direto para a resolução que cabe.
     pub overshoot: f64,
@@ -267,7 +274,7 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, cpu_samples: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.ceil_for(self.ladder[0]) }
@@ -296,6 +303,10 @@ impl Controller {
     /// Sobrecarga local. `work_ms` = tempo médio de conversão + codificação por quadro; `offered`/`sent` = quadros por segundo
     /// que a captura entregou e que saíram codificados. Chamado uma vez por segundo.
     pub fn note_cpu(&mut self, work_ms: f64, offered: f64, sent: f64) {
+        // Carência de partida: nos primeiros segundos o 1º quadro-chave (centenas de KB, pacer) e a abertura do codificador distorcem
+        // a medida (54 ms/quadro na 1ª amostra) e derrubavam o FPS alvo por ~5 s sem motivo.
+        self.cpu_samples += 1;
+        if self.cpu_samples <= 4 { return; }
         let cur = self.ladder[self.idx];
         let period = 1000.0 / cur.fps as f64;
         let starving = offered >= cur.fps as f64 * 0.9 && sent < cur.fps as f64 * 0.75;
@@ -343,8 +354,9 @@ mod tests {
         assert_eq!(d[4], Level { h: 900, fps: 10 });
         let m = ladder(Content::Motion, 1080, 60);
         assert_eq!(&m[..3], &[Level { h: 1080, fps: 60 }, Level { h: 900, fps: 60 }, Level { h: 720, fps: 60 }]);
-        assert!(m.iter().take_while(|l| l.fps == 60).count() >= 5, "a resolução cai inteira antes do FPS");
-        assert_eq!(m.last().unwrap().fps, 15);
+        assert_eq!(m.iter().take_while(|l| l.fps == 60).count(), 3, "a resolução cai até 720p (piso de legibilidade) antes do FPS");
+        assert!(m.iter().filter(|l| l.h < 720).all(|l| l.fps == 15), "540p/360p só no FPS mínimo");
+        assert_eq!(m.last().unwrap(), &Level { h: 360, fps: 15 });
     }
 
     /// Enlace simulado, um passo por segundo: capacidade `cap` (bps), fila de 250 ms, perda aleatória `rand`, RTT base `base`
@@ -520,6 +532,8 @@ mod tests {
         // sobrecarga local: 2 s com o quadro custando mais que o período → desce um degrau; folga por 5 s → volta
         let mut c = Controller::new(Content::Motion, 1080, 60, 0);
         c.decide(20_000_000.0);
+        for _ in 0..4 { c.note_cpu(25.0, 60.0, 38.0); }   // carência de partida: as 4 primeiras amostras não contam
+        assert!(!c.decide(20_000_000.0).cpu_limited, "carência de partida");
         c.note_cpu(25.0, 60.0, 38.0); c.note_cpu(25.0, 60.0, 38.0);
         let d = c.decide(20_000_000.0);
         assert!(d.cpu_limited && d.level == Level { h: 900, fps: 60 }, "{d:?}");

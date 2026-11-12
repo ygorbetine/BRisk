@@ -4,9 +4,10 @@
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
 # So compila e grava em disco: nao publica, nao cria tag/release e nao executa o instalador.
 #   -StageOnly    compila e monta a pasta apps/desktop-cui/stage, mas para antes do NSIS (a CI assina os .exe de la com a SignPath).
+#   -SemSfu       instalador sem livekit.json (so P2P); por padrao leva o servidor de chamadas publico do Briks (so URLs, sem segredo).
 #   -PackageOnly  pula a compilacao e empacota o stage que ja existe (com os .exe assinados). O latest.yml sai do instalador sem assinatura:
 #                 depois de assinar o instalador, rode scripts/make-latest-yml.ps1.
-param([string]$Version = "1.4.2", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly)
+param([string]$Version = "1.4.2", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly, [switch]$SemSfu)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"
@@ -64,11 +65,26 @@ if (Test-Path $SupabaseJson) {
     Write-Host "supabase.json incluido (chave publishable)."
 } else { Write-Warning "supabase.json nao encontrado: o instalador sai sem login online." }
 # livekit.json (so URLs publicas: servidor wss:// e funcao de tokens https://) ao lado do Briks.exe; o core le dali quando a pasta de dados nao tem um.
-# So entra se a variavel de ambiente BRIKS_LIVEKIT_JSON_SRC apontar para o arquivo de origem; sem ela o instalador sai como antes.
+# Origem, em ordem: BRIKS_LIVEKIT_JSON_SRC (arquivo), BRIKS_LIVEKIT_URL/TOKEN_URL, ou o padrao do Briks (desligue com -SemSfu).
 # NUNCA leva chave/segredo: so as chaves url, token_url e kick_url passam, com esquema validado; qualquer outra chave faz o script recusar.
+# Alternativa mais simples: BRIKS_LIVEKIT_URL (wss://...) e, opcionalmente, BRIKS_LIVEKIT_TOKEN_URL (https://.../functions/v1/livekit-token;
+# sem ele, deriva da URL do supabase.json incluido) e BRIKS_LIVEKIT_KICK_URL. Sem nenhuma das duas formas, o instalador sai so com P2P.
+$ljObj = $null
 if ($env:BRIKS_LIVEKIT_JSON_SRC) {
     if (-not (Test-Path $env:BRIKS_LIVEKIT_JSON_SRC)) { throw "BRIKS_LIVEKIT_JSON_SRC aponta para um arquivo que nao existe." }
-    $lj = Get-Content $env:BRIKS_LIVEKIT_JSON_SRC -Raw | ConvertFrom-Json
+    $ljObj = Get-Content $env:BRIKS_LIVEKIT_JSON_SRC -Raw | ConvertFrom-Json
+} elseif ($env:BRIKS_LIVEKIT_URL -or $env:BRIKS_LIVEKIT_TOKEN_URL) {
+    $tu = $env:BRIKS_LIVEKIT_TOKEN_URL
+    if (-not $tu -and (Test-Path "$stage\supabase.json")) { $tu = ((Get-Content "$stage\supabase.json" -Raw | ConvertFrom-Json).url.TrimEnd('/')) + "/functions/v1/livekit-token" }
+    $tmp = [ordered]@{ url = $env:BRIKS_LIVEKIT_URL; token_url = $tu }
+    if ($env:BRIKS_LIVEKIT_KICK_URL) { $tmp.kick_url = $env:BRIKS_LIVEKIT_KICK_URL }
+    $ljObj = [pscustomobject]$tmp
+} elseif (-not $SemSfu) {
+    # Padrao do Briks (so enderecos publicos: LiveKit Cloud 'Briks' + funcao de tokens do Supabase). Os segredos vivem so no Supabase.
+    $ljObj = [pscustomobject][ordered]@{ url = "wss://briks-jttver1z.livekit.cloud"; token_url = "https://wusvizrteyoewggageeu.supabase.co/functions/v1/livekit-token" }
+}
+if ($ljObj) {
+    $lj = $ljObj
     $allowed = @("url", "token_url", "kick_url")
     foreach ($p in $lj.PSObject.Properties) { if ($allowed -notcontains $p.Name) { throw "livekit.json: a chave '$($p.Name)' nao e permitida (so url, token_url, kick_url; nunca segredo)." } }
     if ($lj.url -notmatch '^wss://[^\s/]+') { throw "livekit.json: 'url' deve ser wss://..." }

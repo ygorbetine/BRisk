@@ -124,10 +124,13 @@ static void load_communities(app_state_t *s, const char *body) {
     json_free(j);
 }
 
+static char g_load_ch[160];
+
 void app_pump(app_state_t *s) {
     if (!s->call && !s->busy && s->reload_msgs && s->token[0]) {
         s->reload_msgs = false;
         char path[256]; snprintf(path, sizeof path, "/p2p/messages/%s?limit=200", s->chat_channel);
+        snprintf(g_load_ch, sizeof g_load_ch, "%s", s->chat_channel);   /* para descartar a resposta se o usuário já trocou de conversa */
         begin(s, OP_MSG_LOAD, "GET", path, NULL);
     }
     if (!s->call && !s->busy) chat_in_pump(s);
@@ -196,7 +199,8 @@ void app_pump(app_state_t *s) {
         if (s->screen == SCREEN_AUTH) { s->screen = SCREEN_SOCIAL; s->active_group = -1; account_bridge_done(s, true); }
         break;
     case OP_MSG_LOAD:
-        if (ok) app_load_messages(s, body);
+        if (ok && !strcmp(g_load_ch, s->chat_channel)) app_load_messages(s, body);
+        else if (ok) s->reload_msgs = true;   /* resposta de outra conversa (cliquei em outro amigo no meio): descarta e carrega a certa */
         break;
     case OP_MSG_RECV:
         chat_in_done(s);

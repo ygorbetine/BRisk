@@ -150,7 +150,7 @@ void account_friends_poll(app_state_t *s) {
     const bool focus = hw && GetForegroundWindow() == hw;
     const bool entered = strcmp(who, s->acct_user_id) != 0;
     if (entered) { copy(who, sizeof who, s->acct_user_id); last = now; was_focus = focus; return; }   /* ao entrar na conta quem chama já pediu a lista */
-    const bool regained = focus && !was_focus && now - last >= 5000; was_focus = focus;
+    const bool regained = focus && !was_focus && now - last >= 1000; was_focus = focus;
     if (!regained && now - last < 30000) return;
     last = now;
     core_send("{\"cmd\":\"friends.list\"}");

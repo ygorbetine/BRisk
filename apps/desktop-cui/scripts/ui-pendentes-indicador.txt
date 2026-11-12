@@ -1,7 +1,0 @@
-# Aba Pendentes: convites recebidos acendem o indicador (faixa vermelha com o numero) fora da aba; dentro da aba some a faixa
-waitms 600
-expect friends_tab 0
-shot p0-todos-com-indicador
-click 1120 150
-waitms 400
-shot p1

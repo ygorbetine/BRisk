@@ -1,0 +1,9 @@
+# 1.4.1 (AMI-30): convites recebidos acendem o indicador vermelho (faixa com o numero) fora da aba Pendentes; dentro dela a faixa some
+waitms 600
+expect friends_tab 0
+expect pending_count 2
+shot p0
+click 835 90
+waitms 400
+expect friends_tab 2
+shot p1

@@ -942,6 +942,8 @@ void share_peer_gone(app_state_t *s, int slot) {
 }
 static bool g_prev_note_off;   /* o usuário dispensou o aviso da prévia (vale até fechar o app) */
 static cui_rect g_trect[16];   /* retângulos das transmissões do último quadro */
+static bool g_tg_press, g_tg_release, g_tile_grid, g_tg_down; static cui_vec2 g_tg_at; static int g_tg_key = -1, g_tile_opens;   /* clique no bloco da Grade abre em Foco */
+static bool pt_in(cui_rect r, cui_vec2 p);
 static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
     int zoom_pct = 100; bool clicked = false;
     if (compact) { chip = NULL; volume = NULL; zv = NULL; }   /* miniatura da faixa do Foco: só a imagem e o nome; clicar traz para o destaque */
@@ -980,7 +982,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         if (zv && zoom_pct > 100) {   /* selo do zoom: clicar volta a 100% (duplo clique na imagem e a tecla 0 também) */
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad = 18) {
                 char z[48]; snprintf(z, sizeof z, "%d%% · voltar a 100%%", zoom_pct);
-                if (cui_button(ui, z, .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) memset(zv, 0, sizeof *zv);
+                cui_box(ui, .id = "zrst") { if (cui_button(ui, z, .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) memset(zv, 0, sizeof *zv); }
             }
         }
         if (!compact && !g_prev_note_off && (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS)) && tex) {   /* só no tile da PRÓPRIA transmissão: a prévia local é reduzida, quem assiste vê em boa qualidade */
@@ -995,7 +997,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         }
         if (volume) {   /* volume do áudio desta transmissão, só para quem assiste */
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 18) {
-                cui_box(ui, .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+                cui_box(ui, .id = "volbar", .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                     cui_icon(ui, *volume <= 0.01f ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, 14, B_TEXT);
                     cui_box(ui, .width = CUI_FILL) { cui_slider(ui, "##vol", volume, 0, 2); }
                 }
@@ -1003,6 +1005,21 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         }
     }
     if (compact && !s_modal_hint && briks_clicked_r(ui, "vt", 20.0f)) clicked = true;
+    if (g_tile_grid && !compact && !s_modal_hint && zoom_pct <= 100) {
+        /* Grade: clique CURTO no bloco (não arrasto, não nos controles do bloco) abre esta transmissão em Foco; Enter com o ponteiro sobre o bloco também */
+        const cui_vec2 mp = cui_mouse_pos(ui); const cui_rect vr = cui_get_rect(ui, cui_make_id(ui, "vt"));
+        bool inside = vr.w > 0 && pt_in(vr, mp) && !briks_blocked() && !briks_covered(ui);
+        const char *kids[] = { "volbar", "zrst", "pnote", "lab" };
+        for (int k = 0; k < 4 && inside; k++) { cui_rect kr = cui_get_rect(ui, cui_make_id(ui, kids[k])); if (kr.w > 0 && pt_in(kr, mp)) inside = false; }
+        bool open = false;
+        if (g_tg_press && inside) { g_tg_at = mp; g_tg_key = key; }
+        if (g_tg_release && inside && g_tg_key == key) {   /* soltou no mesmo bloco, quase onde apertou */
+            const float dx = mp.x - g_tg_at.x, dy = mp.y - g_tg_at.y;
+            if (dx * dx + dy * dy <= 36.0f) open = true;
+        }
+        if (inside && cui_key_pressed(ui, CUI_KEY_ENTER)) open = true;
+        if (open) { g_sfocus = key; g_call.layout = 1; g_tile_opens++; }
+    }
     cui_pop_id(ui);
     return clicked;
 }
@@ -1060,6 +1077,7 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_amode")) return s->sh.audio_mode;   /* 0 da fonte, 1 apps, 2 sem audio */
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
+    if (!strcmp(n, "tile_opens")) return g_tile_opens;
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
     if (!strcmp(n, "share_zoom2")) return g_zoom_pct[FV2(0)];   /* % da 2ª tela do 1º participante */
@@ -1146,7 +1164,12 @@ static bool stage_inner(cui_ctx *ui, app_state_t *s, float W, float H, int layou
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && q->remote[i].on) { keys[n++] = i; if (q->remote2[i].on) keys[n++] = FV2(i); }
     if (q->active) keys[n++] = BRIKS_MAX_PEERS;
     if (q->second.active) keys[n++] = FV2(BRIKS_MAX_PEERS);
-    g_tiles = 0;
+    g_tiles = 0; g_tile_grid = false;
+    {   /* bordas do botão, calculadas UMA vez por quadro (não por bloco); cui_mouse_clicked sem botão apertado = clique de um quadro só (roteiros) */
+        const bool dn = cui_mouse_down(ui, CUI_MOUSE_LEFT), ck = cui_mouse_clicked(ui, CUI_MOUSE_LEFT);
+        if (g_tg_release) g_tg_key = -1;
+        g_tg_press = (dn && !g_tg_down) || (ck && !dn); g_tg_release = (!dn && g_tg_down) || (ck && !dn); g_tg_down = dn;
+    }
     if (!n) return false;
     cui_request_redraw(ui);   /* vídeo: redesenha a cada quadro enquanto o palco está visível */
     s_modal_hint = q->dialog_open || s->kick_open || briks_modal_open();
@@ -1176,6 +1199,7 @@ static bool stage_inner(cui_ctx *ui, app_state_t *s, float W, float H, int layou
     }
     /* Grade: blocos iguais; a última linha fica centralizada */
     int cols, rows; call_grid(n, W, H, gap, &cols, &rows);
+    g_tile_grid = n > 1 && layout == 0;
     const float tw = floorf((W - gap * (float)(cols - 1)) / (float)cols), th = floorf((H - gap * (float)(rows - 1)) / (float)rows);
     cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = gap, .justify = CUI_JUSTIFY_CENTER) {
         for (int r = 0; r < rows; r++) {

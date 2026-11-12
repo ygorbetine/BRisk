@@ -1,0 +1,44 @@
+# Grade: clique curto no bloco abre ESSA transmissao em Foco; no Foco o principal nao muda nada, miniatura troca o foco, area vazia alterna
+waitms 1500
+expect stage_layout 0
+expect tile_opens 0
+shot gf-1-grade
+# clique no 4o bloco (Rafael Lima, embaixo a esquerda) -> Foco com ele como principal
+click 267 563
+waitms 500
+expect stage_layout 1
+expect tile_opens 1
+shot gf-2-foco-no-bloco-4
+# clique no bloco principal: nada acontece (continua Foco, mesmo principal)
+click 400 350
+waitms 400
+expect stage_layout 1
+expect tile_opens 1
+shot gf-3-principal-nao-solta
+# miniatura da faixa (Bia, Tela 5): troca o foco, sem contar como abertura pela Grade
+click 1126 600
+waitms 500
+expect stage_layout 1
+expect tile_opens 1
+shot gf-4-miniatura-troca-foco
+# volta para a Grade pelo seletor; arrastar dentro de um bloco NAO abre
+click 834 73
+waitms 500
+expect stage_layout 0
+at 272 200
+down
+waitms 150
+at 340 260
+waitms 200
+up
+waitms 400
+expect stage_layout 0
+expect tile_opens 1
+# Enter com o ponteiro sobre o bloco 3 (Marina, Tela 3) abre em Foco
+at 800 200
+waitms 300
+key enter
+waitms 500
+expect stage_layout 1
+expect tile_opens 2
+shot gf-5-enter-abre-foco

@@ -18,8 +18,8 @@ foreach ($c in $Casos) {
     $psi.FileName = (Resolve-Path $exe).Path; $psi.WorkingDirectory = (Split-Path -Parent $psi.FileName); $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardError = $true
     $e = $psi.EnvironmentVariables
-    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = $(if ($c -eq "grade") { "4" } else { "3" }); $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
-    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "mini") { "demo-mini" } elseif ($c -eq "previa") { "demo-self" } elseif ($c -eq "sheen") { "demo-sheen" } elseif ($c -eq "lateral") { "demo-two" } elseif ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "grade") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } else { "demo-remote" })
+    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = $(if ($c -eq "grade" -or $c -eq "gradefoco") { "4" } else { "3" }); $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
+    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "mini") { "demo-mini" } elseif ($c -eq "previa") { "demo-self" } elseif ($c -eq "sheen") { "demo-sheen" } elseif ($c -eq "lateral") { "demo-two" } elseif ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "grade" -or $c -eq "gradefoco") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } else { "demo-remote" })
     $e["BRIKS_SCRIPT"] = (Join-Path $PSScriptRoot "share-$c.txt"); $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
     if ($c -eq "emoji") { $e["BRIKS_DEV_OPEN"] = "profile:1"; $e["BRIKS_DEMO"] = "social" }
     if ($c -eq "overlay") { $e["BRIKS_OVERLAY_FORCE"] = "1"; $e["BRIKS_DEV_ROOM"] = "voz-geral" }

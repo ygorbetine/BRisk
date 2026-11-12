@@ -15,7 +15,7 @@ expect stage_layout 0
 shot x2
 at 563 231
 down
-at 700 300
+at 1180 600
 waitms 200
 up
 waitms 400
@@ -24,4 +24,4 @@ expect stage_layout 0
 click 300 300
 waitms 400
 expect stage_toggles 2
-expect stage_layout 0
+expect stage_layout 1   # clique NUMA transmissao da Grade agora abre ela em Foco (nao conta como alternar por area vazia)

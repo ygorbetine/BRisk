@@ -87,7 +87,7 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
 
     // 4) histórico de DMs: o Beto pede à Ana o que falta da conversa dos dois
     let ch = identity::dm_channel(&a.fp, &b.fp);
-    let msg = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new() });
+    let msg = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new(), package: None });
     let (m1, m2, m3) = (msg(&a.id, &ch, 1, "oi, sou a Ana"), msg(&a.id, &ch, 2, "segunda da Ana"), msg(&b.id, &ch, 3, "resposta do Beto, escrita antes"));
     let mut forged = msg(&a.id, &ch, 4, "o Beto nunca disse isto"); forged.author_peer_id = b.fp.clone();
     let other = msg(&a.id, &identity::dm_channel(&a.fp, &d.fp), 5, "conversa com a Duda");

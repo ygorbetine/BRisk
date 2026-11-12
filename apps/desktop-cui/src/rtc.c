@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "call_idle.h"
 #include "core.h"
+#include "ginvite.h"
 #include "json.h"
 #include "msgui.h"
 #include "attach.h"
@@ -317,6 +318,9 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             snprintf(s->notice, sizeof s->notice, "O motor do Briks em execução é de outra versão (nível %d, o programa pede %d). Feche o Briks por completo (e briks-core.exe no Gerenciador de Tarefas) e abra de novo; se continuar, reinstale.", p, BRIKS_CORE_PROTO_MIN);
             settings_notice(s->notice); changed = true;
         }
+    } else if (!strcmp(ev, "chat.invite")) {   /* o pacote do convite de grupo (campo estruturado, byte a byte) logo depois do cartão curto */
+        ginvite_set_code(json_str(j, "id", ""), json_str(j, "package", ""));
+        changed = true;
     } else if (!strcmp(ev, "outbox.state")) {   /* fila de envio guardada no PC (pendentes/entregues/falhas) */
         changed = chat_outbox_event(s, j);
     } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack") || !strcmp(ev, "chat.sent")) {

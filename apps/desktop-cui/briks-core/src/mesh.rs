@@ -58,6 +58,8 @@ pub enum MeshEvent {
     Sent { id: String, to_fp: String },
     /// O peer está digitando.
     Typing { from_fp: String },
+    /// pacote estruturado de um convite de grupo recebido (vem logo depois do `Chat` com o texto curto)
+    Invite { channel: String, from_fp: String, id: String, package: String },
     /// Mensagem do chat da sala (aba Chat da chamada): vale só durante a chamada, de um peer autenticado.
     RoomChat { peer_id: String, from_fp: String, author: String, content: String, id: String, ts: u64 },
     /// Um peer autenticado pediu para eu transmitir a tela.
@@ -107,6 +109,8 @@ pub enum MeshCmd {
     Chat { to_fp: String, text: String },
     /// como `Chat`, mas com o id da mensagem escolhido pela UI (o `chat.ack` volta com o mesmo id: estado "entregue")
     ChatWithId { to_fp: String, text: String, id: String },
+    /// DM com um pacote estruturado (convite de grupo) além do texto curto
+    ChatInvite { to_fp: String, text: String, id: String, package: String },
     /// Assina e envia um evento de chat (`chat.event` v3) a todos os peers autenticados da sala.
     /// Envia um arquivo (caminho local) a todos os peers autenticados, ou só a `to_fp`.
     SendFile { path: String, to_fp: Option<String> },
@@ -554,13 +558,13 @@ impl Actor {
         if self.dm_off.remove(fp) { self.emit(MeshEvent::DmLink { fp: fp.to_string(), on: true }).await; }
     }
 
-    async fn chat_send(&mut self, to_fp: String, text: String, id: String) {
+    async fn chat_send(&mut self, to_fp: String, text: String, id: String, package: Option<String>) {
         self.dm_reconnect(&to_fp).await;
         let my_fp = self.identity.fingerprint();
         let m = identity::sign_message(&self.identity, ChatWire {
             version: 2, kind: "chat.message".into(), channel_id: identity::dm_channel(&my_fp, &to_fp), id,
-            author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new() });
-        self.hist.add(&m);
+            author_peer_id: my_fp, author: self.cfg.display_name.clone(), content: text, timestamp: now_ms() as u64, signature: String::new(), package: package.filter(|p| p.len() <= identity::MAX_PACKAGE_BYTES) });
+        { let mut h = m.clone(); h.package = None; self.hist.add(&h); }   // o histórico sincronizado não carrega o pacote (fica na caixa de saída até a entrega)
         crate::outbox::shared().lock().unwrap().add(&to_fp, &m);   // persistente: sobrevive a reinício e a canal fechado
         self.flush_outbox(&to_fp).await;
     }
@@ -569,8 +573,9 @@ impl Actor {
         match c {
             MeshCmd::ForceOffer { peer_id } => self.start_offer(&peer_id, false).await,
             MeshCmd::DmDisconnect { fp } => { if self.dm_off.insert(fp.clone()) { self.emit(MeshEvent::DmLink { fp, on: false }).await; } }
-            MeshCmd::Chat { to_fp, text } => self.chat_send(to_fp, text, uuid::Uuid::new_v4().to_string()).await,
-            MeshCmd::ChatWithId { to_fp, text, id } => self.chat_send(to_fp, text, id).await,
+            MeshCmd::Chat { to_fp, text } => self.chat_send(to_fp, text, uuid::Uuid::new_v4().to_string(), None).await,
+            MeshCmd::ChatWithId { to_fp, text, id } => self.chat_send(to_fp, text, id, None).await,
+            MeshCmd::ChatInvite { to_fp, text, id, package } => self.chat_send(to_fp, text, id, Some(package)).await,
             MeshCmd::Event { channel, target, action, content, reference, emoji } => {
                 let my_fp = self.identity.fingerprint();
                 match crate::chat_events::create(&self.identity, &channel, &target, &my_fp, &action, content.as_deref(), reference.as_deref(), emoji.as_deref(), now_ms() as u64, &mut self.ev_last_ts) {
@@ -1279,10 +1284,12 @@ impl Actor {
                 if m.author_peer_id != fp || identity::verify_message(&jwk, &m, &expected).is_err() { self.emit(MeshEvent::Error("mensagem rejeitada (assinatura/canal)".into())).await; return; }
                 self.dm_reconnect(&fp).await;   // a pessoa escreveu: o chat privado reconecta
                 self.dc_send(peer, json!({ "version": 2, "type": "chat.message.ack", "channelId": m.channel_id, "messageId": m.id })).await;
-                self.hist.add(&m);
+                { let mut h = m.clone(); h.package = None; self.hist.add(&h); }
                 if self.seen_msgs.len() > 8192 { self.seen_msgs.clear(); }   // dedupe só precisa cobrir as reenvios recentes; sem teto crescia para sempre
                 if self.seen_msgs.insert(m.id.clone()) {
+                    let inv = m.package.clone().filter(|p| p.len() <= identity::MAX_PACKAGE_BYTES).map(|p| (m.channel_id.clone(), fp.clone(), m.id.clone(), p));
                     self.emit(MeshEvent::Chat { channel: m.channel_id, from_fp: fp, author: m.author, content: m.content, id: m.id, ts: m.timestamp }).await;
+                    if let Some((channel, from_fp, id, package)) = inv { self.emit(MeshEvent::Invite { channel, from_fp, id, package }).await; }
                 }
             }
             "chat.history.request" | "chat.history.chunk" if self.peers.get(peer).and_then(|p| p.fp.as_ref()).is_some_and(|f| self.dm_off.contains(f)) => {}   // chat desconectado: sem sincronizar

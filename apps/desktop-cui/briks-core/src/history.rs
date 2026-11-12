@@ -127,7 +127,7 @@ mod tests {
     use crate::identity::{self, Identity};
 
     fn msg(id: &Identity, ch: &str, n: u64, text: &str) -> ChatWire {
-        identity::sign_message(id, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("m-{n:08}"), author_peer_id: id.fingerprint(), author: "A".into(), content: text.into(), timestamp: 1000 + n, signature: String::new() })
+        identity::sign_message(id, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("m-{n:08}"), author_peer_id: id.fingerprint(), author: "A".into(), content: text.into(), timestamp: 1000 + n, signature: String::new(), package: None })
     }
 
     #[test]

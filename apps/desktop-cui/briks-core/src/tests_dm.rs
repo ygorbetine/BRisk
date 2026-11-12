@@ -104,3 +104,32 @@ async fn message_written_with_no_open_link_is_kept_pending_then_delivered_once()
     let end = a.wait(10, "outbox.state final", |v| v["ev"] == "outbox.state" && v["delivered"].as_array().is_some_and(|d| d.iter().any(|x| x == id.as_str()))).await;
     assert!(end["pending"].as_array().unwrap().iter().all(|x| x["id"] != id.as_str()), "a pendência saiu");
 }
+
+/// Convite de grupo real (~32 KB) pela DM: o pacote viaja como campo ESTRUTURADO (`package` em chat.send -> `chat.invite`), não como texto da
+/// mensagem (limite de 4000 caracteres), e chega idêntico byte a byte, uma vez só, com o texto curto assinado em `chat.message`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_32kb_group_invite_round_trips_byte_for_byte_as_a_structured_field() {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+    let port = crate::mock::start(0).await.unwrap();
+    let (mut a, mut b) = (app("ga", port, "Ana").await, app("gb", port, "Beto").await);
+    let ub = "22222222-bbbb-4bbb-8bbb-000000000002";
+    // pacote do tamanho do relato (~32 KB), com todos os bytes possíveis (base64url) e emojis/quebras no meio do JSON
+    let raw: Vec<u8> = (0..24_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    let package = format!("briks-grp1.{}", B64.encode(&raw));
+    assert!(package.len() > 32_000 && package.len() < crate::identity::MAX_PACKAGE_BYTES);
+    let id = format!("convite-{}", std::process::id());
+    let short = "briks-invite:1|grp-x|Noite de jogos|Ana";
+    a.send(json!({ "cmd": "dm.open", "fp": b.fp, "user_id": ub })).await;
+    a.send(json!({ "cmd": "chat.send", "to_fp": b.fp, "id": id, "text": short, "package": package })).await;
+    b.send(json!({ "cmd": "dm.inbox", "user_id": ub })).await;
+    let wake = b.wait(15, "dm.wake em B", |v| v["ev"] == "dm.wake").await;
+    b.send(json!({ "cmd": "dm.open", "fp": wake["fp"] })).await;
+    let m = b.wait(40, "texto curto em B", |v| v["ev"] == "chat.message" && v["id"] == id.as_str()).await;
+    assert_eq!(m["content"], short, "o texto da mensagem é só o cartão curto");
+    let inv = b.wait(20, "chat.invite em B", |v| v["ev"] == "chat.invite" && v["id"] == id.as_str()).await;
+    assert_eq!(inv["package"].as_str().unwrap().as_bytes(), package.as_bytes(), "o pacote chegou idêntico, byte a byte");
+    assert_eq!(inv["from_fp"], a.fp.as_str());
+    a.wait(20, "chat.ack em A", |v| v["ev"] == "chat.ack" && v["id"] == id.as_str()).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(b.count(|v| v["ev"] == "chat.invite" && v["id"] == id.as_str()), 1, "uma vez só");
+}

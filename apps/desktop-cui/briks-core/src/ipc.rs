@@ -431,12 +431,13 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         if let Some(c) = &route {
                             let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
                             let id = v["id"].as_str().filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'));
-                            let _ = c.send(match id { Some(id) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, None => MeshCmd::Chat { to_fp: to.into(), text } }).await;
+                            let pkg = v["package"].as_str().filter(|p| !p.is_empty() && p.len() <= crate::identity::MAX_PACKAGE_BYTES).map(String::from);
+                            let _ = c.send(match (id, pkg) { (Some(id), Some(package)) => MeshCmd::ChatInvite { to_fp: to.into(), text, id: id.into(), package }, (Some(id), None) => MeshCmd::ChatWithId { to_fp: to.into(), text, id: id.into() }, _ => MeshCmd::Chat { to_fp: to.into(), text } }).await;
                         } else if let (Some(idn), Some(id)) = (&identity, v["id"].as_str().filter(|i| crate::dmlink::valid_id(i)).filter(|_| crate::dmlink::valid_fp(to))) {
                             // sem canal nem sala (o canal direto não abriu): a mensagem não se perde, fica na caixa de saída deste PC e segue quando o canal abrir
                             let my_fp = idn.fingerprint();
                             let text: String = text.chars().take(crate::identity::MAX_CHAT_CHARS).collect();
-                            let m = crate::identity::sign_message(idn, crate::identity::ChatWire { version: 2, kind: "chat.message".into(), channel_id: crate::identity::dm_channel(&my_fp, to), id: id.into(), author_peer_id: my_fp, author: name.clone(), content: text, timestamp: mesh::now_ms() as u64, signature: String::new() });
+                            let m = crate::identity::sign_message(idn, crate::identity::ChatWire { version: 2, kind: "chat.message".into(), channel_id: crate::identity::dm_channel(&my_fp, to), id: id.into(), author_peer_id: my_fp, author: name.clone(), content: text, timestamp: mesh::now_ms() as u64, signature: String::new(), package: v["package"].as_str().filter(|p| !p.is_empty() && p.len() <= crate::identity::MAX_PACKAGE_BYTES).map(String::from) });
                             crate::outbox::shared().lock().unwrap().add(to, &m);
                         }
                     }
@@ -819,6 +820,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     MeshEvent::Ack { id, from_fp } => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
                     MeshEvent::Sent { id, to_fp } => out(&mut wr, json!({ "ev": "chat.sent", "id": id, "to_fp": to_fp })).await?,
                     MeshEvent::Typing { from_fp } => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
+                    MeshEvent::Invite { channel, from_fp, id, package } => out(&mut wr, json!({ "ev": "chat.invite", "channel": channel, "from_fp": from_fp, "id": id, "package": package })).await?,
                     MeshEvent::DmLink { fp, on } => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,
                     MeshEvent::ChatEvent { from_fp, wire, local } => out(&mut wr, json!({ "ev": "chat.event", "from_fp": from_fp, "local": local, "wire_raw": wire.to_string(), "wire": wire })).await?,
                     MeshEvent::Peer { state, .. } => {
@@ -839,6 +841,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                     Some(MeshEvent::DmLink { fp, on }) => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,
                     Some(MeshEvent::Sent { id, to_fp }) => out(&mut wr, json!({ "ev": "chat.sent", "id": id, "to_fp": to_fp })).await?,
                     Some(MeshEvent::Typing { from_fp }) => out(&mut wr, json!({ "ev": "chat.typing", "from_fp": from_fp })).await?,
+                    Some(MeshEvent::Invite { channel, from_fp, id, package }) => out(&mut wr, json!({ "ev": "chat.invite", "channel": channel, "from_fp": from_fp, "id": id, "package": package })).await?,
                     Some(MeshEvent::RoomChat { peer_id, from_fp, author, content, id, ts }) => out(&mut wr, json!({ "ev": "room.chat", "peer_id": peer_id, "from_fp": from_fp, "author": author, "content": content, "id": id, "ts": ts })).await?,
                     Some(MeshEvent::StreamRequest { peer_id, name }) => out(&mut wr, json!({ "ev": "stream.request", "peer_id": peer_id, "name": name })).await?,
                     Some(MeshEvent::StreamReply { peer_id, name, accepted }) => out(&mut wr, json!({ "ev": "stream.reply", "peer_id": peer_id, "name": name, "accepted": accepted })).await?,

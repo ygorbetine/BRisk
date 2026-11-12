@@ -504,7 +504,7 @@ async fn history_syncs_missing_messages_verified_and_only_for_the_shared_dm() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticaram");
 
     let ch = identity::dm_channel(&ia.fingerprint(), &ib.fingerprint());
-    let mk = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new() });
+    let mk = |who: &Identity, ch: &str, n: u64, text: &str| identity::sign_message(who, ChatWire { version: 2, kind: "chat.message".into(), channel_id: ch.into(), id: format!("hist-{n:08}"), author_peer_id: who.fingerprint(), author: "x".into(), content: text.into(), timestamp: 1_700_000_000_000 + n, signature: String::new(), package: None });
     let m1 = mk(&ia, &ch, 1, "oi, sou a Ana");
     let m2 = mk(&ia, &ch, 2, "segunda da Ana");
     let m3 = mk(&ib, &ch, 3, "resposta do Beto, escrita antes");

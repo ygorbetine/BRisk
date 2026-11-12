@@ -71,6 +71,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "ginv_total")) return ginvite_pending_total();                      /* convites de grupo esperando resposta */
     if (!strcmp(n, "ginv_from0")) return state.friend_count ? ginvite_pending_from(state.friends[0].id) : 0;
     if (!strcmp(n, "ginv_st")) { for (int i = state.msg_count - 1; i >= 0; i--) if (ginvite_is(state.msgs[i].content)) return ginvite_state(state.msgs[i].id); return -9; }   /* estado do cartão mais recente */
+    if (!strcmp(n, "ginv_codelen")) { for (int i = state.msg_count - 1; i >= 0; i--) if (ginvite_is(state.msgs[i].content)) return ginvite_code_len(state.msgs[i].id); return -9; }
     if (!strcmp(n, "pend_fp0")) return state.friend_count && state.friends[0].fp[0] ? chat_pending_for_fp(state.friends[0].fp) : 0;   /* mensagens esperando o amigo 0 (fila do PC) */
     if (!strcmp(n, "draft_len")) return (int)strlen(state.draft);
     if (!strncmp(n, "draft_is:", 9) || !strncmp(n, "clip_is:", 8)) {   /* '+' = espaço (o roteiro separa por espaço): draft_is:ola+mundo */

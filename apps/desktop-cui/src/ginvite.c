@@ -91,6 +91,7 @@ const char *ginvite_summary(const char *content, char *out, size_t cap) {
     if (ginvite_is(content) && parse(content, gid, name, inv, &code)) snprintf(out, cap, "Convite para o grupo %s", name); else snprintf(out, cap, "%s", content);
     return out;
 }
+int ginvite_code_len(const char *id) { inv_t *e = find(id); return e && e->code ? (int)strlen(e->code) : 0; }   /* roteiro de teste */
 int ginvite_state(const char *id) { inv_t *e = find(id); return !e ? -1 : expired(e) ? GINV_EXPIRED : e->st; }
 int ginvite_pending_from(const char *user_id) { if (!g_loaded) load(); int n = 0; for (int i = 0; i < NINV; i++) if (g_inv[i].used && g_inv[i].st == GINV_PENDING && !expired(&g_inv[i]) && !strcmp(g_inv[i].from, user_id)) n++; return n; }
 int ginvite_pending_total(void) { if (!g_loaded) load(); int n = 0; for (int i = 0; i < NINV; i++) if (g_inv[i].used && g_inv[i].st == GINV_PENDING && !expired(&g_inv[i])) n++; return n; }
@@ -103,11 +104,13 @@ void ginvite_signed(app_state_t *s, const char *gid, const char *gname, const ch
     g_expect_user[0] = 0; g_expect_gid[0] = 0;
     if (fi < 0) return;
     char n[64], iv[64]; clean(n, sizeof n, gname); clean(iv, sizeof iv, s->user_name[0] ? s->user_name : "Alguém");
-    const size_t cap = strlen(code) + 300; char *wire = malloc(cap); if (!wire) return;
-    snprintf(wire, cap, PFX "%s|%s|%s|%s", gid, n, iv, code);
-    if (strlen(wire) <= 3900 && chat_dm_post(s, fi, wire)) snprintf(s->notice, sizeof s->notice, "Convite enviado a %s pela conversa. Chega quando a pessoa estiver online.", s->friends[fi].name);
-    else snprintf(s->notice, sizeof s->notice, "O convite ficou grande demais para a conversa: use o botão de copiar o código.");
-    free(wire);
+    char wire[300]; snprintf(wire, sizeof wire, PFX "%s|%s|%s", gid, n, iv);   /* texto curto assinado; o código vai em campo próprio (package) */
+    if (strlen(code) <= 45000 && chat_dm_post(s, fi, wire, code)) snprintf(s->notice, sizeof s->notice, "Convite enviado a %s pela conversa. Chega quando a pessoa estiver online.", s->friends[fi].name);
+    else snprintf(s->notice, sizeof s->notice, "Não foi possível enviar o convite pela conversa agora: use o botão de copiar o código.");
+}
+void ginvite_set_code(const char *id, const char *code) {   /* chat.invite do core: o pacote estruturado do convite recebido */
+    inv_t *e = find(id); if (!e || e->st != GINV_PENDING || !code || !code[0] || strlen(code) > 45000) return;
+    free(e->code); e->code = _strdup(code); save();
 }
 
 /* ---- responder ---- */

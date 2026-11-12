@@ -220,17 +220,20 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
 /* mensagens que a UI mesma escreve (convite de grupo): o core recebe na hora (fila local), o banco de mensagens quando estiver livre */
 typedef struct { char channel[160], id[72], shown[640], created[40]; } outmsg_t;
 static outmsg_t g_out[8]; static int g_out_n;
-bool chat_dm_post(app_state_t *s, int fi, const char *wire) {
+bool chat_dm_post(app_state_t *s, int fi, const char *wire, const char *package) {
     if (fi < 0 || fi >= s->friend_count || !s->friends[fi].fp[0] || core_state() != CORE_READY || g_out_n >= 8) return false;
     const person_t *f = &s->friends[fi];
     char id[40], iso[40], shown[640]; new_id(id, sizeof id); now_iso(iso, sizeof iso);
     snprintf(shown, sizeof shown, "%s", wire);
     if (ginvite_is(wire) && !ginvite_receive(s, id, f->id, wire, true, shown, sizeof shown)) return false;
-    const size_t cap = strlen(wire) * 2 + 400; char *line = malloc(cap), *t = malloc(strlen(wire) * 2 + 8); if (!line || !t) { free(line); free(t); return false; }
-    char fp[160]; json_escape(f->fp, fp, sizeof fp); json_escape(wire, t, strlen(wire) * 2 + 8);
-    snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
+    const size_t pl = package ? strlen(package) : 0, cap = strlen(wire) * 2 + pl * 2 + 400;
+    char *line = malloc(cap), *t = malloc(strlen(wire) * 2 + 8), *pk = malloc(pl * 2 + 8); if (!line || !t || !pk) { free(line); free(t); free(pk); return false; }
+    char fp[160]; json_escape(f->fp, fp, sizeof fp); json_escape(wire, t, strlen(wire) * 2 + 8); pk[0] = 0; if (pl) json_escape(package, pk, pl * 2 + 8);
+    /* o pacote (convite de grupo, ~32 KB) vai em campo próprio, nunca no texto da mensagem (limite de 4000 caracteres) */
+    if (pl) snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\",\"package\":\"%s\"}", fp, id, t, pk);
+    else snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
     if (!in_call_with(s, f->fp)) dm_open_link(s, f);
-    core_send(line); free(line); free(t);
+    core_send(line); free(line); free(t); free(pk);
     pend_add(id, f->fp); attach_mark(id, ATT_SENT);
     outmsg_t *o = &g_out[g_out_n++]; dm_channel(s, f->id, o->channel, sizeof o->channel);
     snprintf(o->id, sizeof o->id, "%s", id); snprintf(o->shown, sizeof o->shown, "%s", shown); snprintf(o->created, sizeof o->created, "%s", iso);
@@ -274,6 +277,10 @@ static void add_msg(app_state_t *s, const char *id, const char *author, const ch
 
 void app_send_message(app_state_t *s) {
     if (s->busy || !s->draft[0] || !s->chat_channel[0]) return;
+    if (!strncmp(s->draft, "briks-grp1.", 11)) {   /* o convite longo não cabe numa mensagem de texto (a caixa corta em 255 caracteres e ele chegaria corrompido) */
+        snprintf(s->notice, sizeof s->notice, "Convite de grupo não vai como texto: use Convidar no grupo (envia o cartão com o código inteiro) ou cole o código em Entrar com convite.");
+        settings_notice(s->notice); return;
+    }
     char id[40], iso[40], a[200], c[1100], b[1700], path[256];
     new_id(id, sizeof id); now_iso(iso, sizeof iso);
     json_escape(s->user_name, a, sizeof a); json_escape(s->draft, c, sizeof c);

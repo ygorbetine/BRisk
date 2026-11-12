@@ -41,7 +41,7 @@ a pasta de dados apagada, o que estava pendente se perde. O histórico apagado e
 `briks-invite:1|<grupo>|<nome>|<quem convida>|<código briks-grp1.…>` pelo mesmo caminho da fila (id único, entrega quando o amigo estiver
 online, sem duplicar). Quem recebe vê um cartão (Entrar / Recusar; estados pendente, aceito, recusado, expirado em 7 dias). **Entrar** usa a
 mesma conferência de hoje (`group.verify`: assinatura do dono + destinatário na lista); o app nunca entra sozinho. Copiar o código continua
-disponível como alternativa. Limite: o convite precisa caber nos 4000 caracteres de uma mensagem (grupos muito grandes usam o código copiado).
+disponível como alternativa. O código (~32 KB) viaja em campo estruturado (`package` do `chat.send`, evento `chat.invite`, até 45 KB), NÃO no texto da mensagem: a caixa de texto corta em 255 caracteres e a mensagem em 4000, o que corrompia o convite colado como texto. Colar `briks-grp1.…` no chat agora é recusado com aviso. Teste: `a_32kb_group_invite_round_trips_byte_for_byte_as_a_structured_field`.
 
 ## Core de outra versão
 O `hello.ok` traz `core_proto`; a UI exige `BRIKS_CORE_PROTO_MIN` (`core.h`) e avisa quando o core em execução é mais antigo. Antes de

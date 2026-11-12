@@ -12,7 +12,7 @@
 import { AccessToken } from "npm:livekit-server-sdk@2";
 import { authenticate, peerBelongsToUser } from "../_shared/auth.ts";
 import { persistentRateLimit } from "../_shared/rate-limit.ts";
-import { listParticipants } from "../_shared/livekit-admin.ts";
+import { listParticipants, LiveKitAdminError } from "../_shared/livekit-admin.ts";
 import { OWNER_METADATA, grantsOwner } from "../_shared/owner.ts";
 import { RateLimiter, clampTtl, combineWaits, clientIp, corsHeaders, isValidPeerId, isValidRoom, originAllowed, parseAllowedOrigins } from "../_shared/guard.ts";
 
@@ -55,7 +55,10 @@ Deno.serve(async (request) => {
   // Dono fixo: a marca vai no próprio token (regra em ../_shared/owner.ts). Se não der para perguntar ao servidor de chamadas
   // quem está na sala, o token sai sem a marca (vale "o mais antigo") em vez de a entrada falhar.
   const livekitUrl = Deno.env.get("LIVEKIT_URL");
-  const participants = livekitUrl ? await listParticipants(livekitUrl, key, secret, body.room).catch(() => null) : null;
+  let keyRejected = false;
+  const participants = livekitUrl ? await listParticipants(livekitUrl, key, secret, body.room).catch((e) => { if (e instanceof LiveKitAdminError && (e.status === 401 || e.status === 403)) keyRejected = true; return null; }) : null;
+  // O servidor de chamadas não aceitou a chave: um token assinado com ela também seria recusado na entrada (401 sem explicação para a pessoa).
+  if (keyRejected) return json({ message: "O servidor de chamadas recusou as chaves configuradas (LIVEKIT_API_KEY/LIVEKIT_API_SECRET não são do projeto em LIVEKIT_URL)." }, 503);
   const owner = await grantsOwner({ room: body.room, identity, participants, previous: body.previous, apiSecret: secret });
   const token = new AccessToken(key, secret, owner ? { identity, ttl, metadata: OWNER_METADATA } : { identity, ttl });
   token.addGrant({ room: body.room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });

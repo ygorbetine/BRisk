@@ -6,7 +6,7 @@
 //! (pedimos `AddTrack`, o servidor responde `TrackPublished`, só então ligamos a faixa e mandamos a offer).
 //! Eventos e comandos usam os mesmos tipos da malha (`MeshEvent`/`MeshCmd`), então a UI e o IPC não mudam por causa do modo.
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -197,7 +197,7 @@ async fn open_session(url: &str, token: &str, secs: u64) -> Result<(WsTx, WsRx, 
     let hostport = format!("{}:{}", target.host, target.port);
     let url = ws_url(&format!("{}://{}", if target.tls { "wss" } else { "ws" }, hostport), token);
     let (ws, _) = tokio::time::timeout(Duration::from_secs(secs), tokio_tungstenite::client_async(url, io)).await.map_err(|_| OpenErr::net("servidor de chamadas não respondeu"))?
-        .map_err(|e| OpenErr { auth: matches!(&e, WsErr::Http(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403), msg: format!("servidor de chamadas recusou a conexão: {}", redact(&e.to_string())) })?;
+        .map_err(|e| OpenErr { auth: matches!(&e, WsErr::Http(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403), msg: format!("servidor de chamadas recusou a conexão: {}{}", redact(&e.to_string()), if matches!(&e, WsErr::Http(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403) { clock_hint() } else { String::new() }) })?;
     let (tx, mut rx): (WsTx, WsRx) = ws.split();
     let join = tokio::time::timeout(Duration::from_secs(secs), async {
         loop {
@@ -329,12 +329,42 @@ pub fn fetch_token_ex(token_url: &str, access_token: &str, room: &str) -> Result
     fetch_token_inner(token_url, access_token, room)
 }
 
+/// Diferença (segundos) entre o relógio do servidor de tokens e o deste PC, lida do cabeçalho `Date` da última resposta. Um relógio fora
+/// de hora faz a sessão expirada parecer válida e o servidor de chamadas recusar o token da sala (401): a mensagem de erro cita isto.
+static CLOCK_SKEW_S: AtomicI64 = AtomicI64::new(0);
+pub fn clock_skew_s() -> i64 { CLOCK_SKEW_S.load(Ordering::Relaxed) }
+/// "Wed, 12 Nov 2026 21:30:42 GMT" -> segundos Unix (UTC).
+pub(crate) fn parse_http_date(s: &str) -> Option<i64> {
+    let p: Vec<&str> = s.split_whitespace().collect();
+    if p.len() < 5 { return None; }
+    let (d, y): (i64, i64) = (p[1].parse().ok()?, p[3].parse().ok()?);
+    let m = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].iter().position(|x| x.eq_ignore_ascii_case(p[2]))? as i64 + 1;
+    let hms: Vec<i64> = p[4].split(':').filter_map(|v| v.parse().ok()).collect();
+    if hms.len() != 3 { return None; }
+    let (yy, mm) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };   // dias desde 1970 (algoritmo civil)
+    let era = yy.div_euclid(400); let yoe = yy - era * 400;
+    let doy = (153 * mm + 2) / 5 + d - 1; let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146097 + doe - 719468) * 86400 + hms[0] * 3600 + hms[1] * 60 + hms[2])
+}
+fn note_clock(r: &ureq::Response) {
+    if let Some(srv) = r.header("date").and_then(parse_http_date) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(srv);
+        CLOCK_SKEW_S.store(srv - now, Ordering::Relaxed);
+    }
+}
+/// Complemento para mensagens de recusa (401/403): cita o relógio quando ele está a mais de 60 s do servidor.
+pub fn clock_hint() -> String {
+    let s = clock_skew_s();
+    if s.abs() > 60 { format!(" O relógio deste PC difere do servidor em {} min: ajuste a data e a hora.", s.abs() / 60) } else { String::new() }
+}
+
 fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
     crate::sfu_cfg::check_token_url(token_url)?;
     if let Some(m) = crate::netmode::deny_url(token_url) { return Err(m.into()); }
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
         .post(token_url).set("authorization", &format!("Bearer {access_token}")).set("content-type", "application/json")
         .send_json(match previous_token(room, access_token) { Some(p) => json!({ "room": room, "previous": p }), None => json!({ "room": room }) });
+    match &resp { Ok(r) | Err(ureq::Error::Status(_, r)) => note_clock(r), _ => {} }
     match resp {
         Ok(r) => {
             let v: Value = r.into_json().map_err(|e| format!("resposta do serviço de tokens inválida: {e}"))?;
@@ -348,7 +378,7 @@ fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<
         }
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_json::<Value>().ok().and_then(|v| v["message"].as_str().map(String::from)).unwrap_or_default();
-            Err(format!("serviço de tokens recusou ({code}){}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>()).into())
+            Err(format!("serviço de tokens recusou ({code}){}{}{}", if msg.is_empty() { "" } else { ": " }, msg.chars().take(160).collect::<String>(), if code == 401 || code == 403 { clock_hint() } else { String::new() }).into())
         }
         Err(e) => Err(format!("serviço de tokens inacessível: {}", e.to_string().chars().take(160).collect::<String>()).into()),
     }
@@ -1442,5 +1472,15 @@ mod gone_tests {
         assert!(v[1]["slot"] == 1 && v[2]["ev"] == "cam.remote" && v[2]["state"] == "off");
         assert_eq!(gone_events("bia", &[false, true], false).len(), 1);
         assert!(gone_events("cris", &[false, false], false).is_empty(), "quem não transmitia não gera evento");
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    #[test]
+    fn http_date_vira_epoch() {
+        assert_eq!(super::parse_http_date("Thu, 01 Jan 1970 00:00:10 GMT"), Some(10));
+        assert_eq!(super::parse_http_date("Thu, 12 Nov 2026 21:30:42 GMT"), Some(1_794_519_042));
+        assert_eq!(super::parse_http_date("lixo"), None);
     }
 }

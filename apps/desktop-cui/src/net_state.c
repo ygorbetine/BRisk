@@ -91,6 +91,8 @@ void net_friendly_error(const char *raw, char *out, size_t cap) {
     else if (strstr(low, "dns") || strstr(low, "resolve") || strstr(low, "no such host") || strstr(low, "11001")) m = "Não foi possível encontrar o servidor. Confira a internet e tente de novo.";
     else if (strstr(low, "connection refused") || strstr(low, "10061") || strstr(low, "connect error") || strstr(low, "network is unreachable") || strstr(low, "error sending request")) m = "Sem conexão com o servidor. Confira a internet e tente de novo.";
     else if (strstr(low, "certificate") || strstr(low, "ssl") || strstr(low, "tls")) m = "Não foi possível abrir uma conexão segura. Confira a data e a hora do computador.";
+    else if (strstr(low, "relógio deste pc difere")) m = "O relógio deste PC está fora de hora e o servidor de chamadas recusou o acesso. Ajuste a data e a hora do Windows.";
+    else if (strstr(low, "servidor de chamadas recusou a conexão") && (strstr(low, "401") || strstr(low, "403") || strstr(low, "unauthorized") || strstr(low, "forbidden"))) m = "O servidor de chamadas recusou o token da sala (não é a sua senha). Confira a data e a hora do computador; se continuar, use P2P.";
     else if (strstr(low, "serviço de tokens recusou (401") || strstr(low, "serviço de tokens recusou (403")) m = "O servidor de chamadas recusou o acesso desta conta. Saia e entre de novo no Briks; se continuar, use P2P.";   /* não é senha: é a sessão/instalação que o servidor de chamadas não aceitou */
     else if (strstr(low, "401") || strstr(low, "unauthorized") || strstr(low, "invalid login")) m = "E-mail ou senha incorretos.";
     else if (strstr(low, "429") || strstr(low, "too many")) m = "Muitas tentativas seguidas. Espere um pouco e tente de novo.";

@@ -29,7 +29,8 @@ static const notes_t NOTES[] = {
         "Sobreposição em jogos que se arrasta e se redimensiona (Ctrl+Shift+O edita a posição em qualquer tela).",
         "Barra de título própria com minimizar, maximizar e fechar, e botão Verificar agora em Atualizações.",
         "Teste de rede com STUN e relay, TURN da sua conta ou o seu próprio, e detecção de ZeroTier, Tailscale e WireGuard.",
-        "Transmissão de tela (beta) e servidor de chamadas SFU (beta).",
+        "Câmera na chamada (beta), com prévia em Configurações, e avisos quando o microfone está negado, ausente ou em uso.",
+        "Transmissão de tela (beta), com segunda tela e zoom, e servidor de chamadas SFU (beta).",
         NULL } },
     { "1.3.0", { "Primeira versão nativa do Briks: login, amigos, chat e chamadas ponto a ponto.", NULL } },
 };

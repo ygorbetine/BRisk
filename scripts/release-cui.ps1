@@ -1,6 +1,6 @@
 # Release do app nativo (CUI). POR PADRAO NAO PUBLICA: gera o instalador, confere o latest.yml e imprime os comandos.
-# Uso: powershell -NoProfile -File scripts/release-cui.ps1 -Version 1.3.0            (ensaio: so monta e confere)
-#      $env:BRIKS_RELEASE_OK = "1"; powershell -NoProfile -File scripts/release-cui.ps1 -Version 1.3.0 -Publish   (tag + push + release)
+# Uso: powershell -NoProfile -File scripts/release-cui.ps1 -Version 1.4.0            (ensaio: so monta e confere)
+#      $env:BRIKS_RELEASE_OK = "1"; powershell -NoProfile -File scripts/release-cui.ps1 -Version 1.4.0 -Publish   (tag + push + release)
 # -Publish exige BRIKS_RELEASE_OK=1 (ok explicito do usuario), arvore limpa, branch atual e gh autenticado.
 # Reverter: gh release delete v<versao> --cleanup-tag --yes   (o latest/download/latest.yml volta ao release anterior)
 param([Parameter(Mandatory)][string]$Version, [switch]$Publish, [string]$Branch = "")

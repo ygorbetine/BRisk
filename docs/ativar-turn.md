@@ -11,7 +11,7 @@ Sem ele, parte dos amigos fica sem áudio/vídeo. Você precisa de **um servidor
 
 ## 2. Emissor de credenciais (usa o Supabase que você já tem)
 O app pede credenciais temporárias a uma URL pública. A função pronta está em `supabase/functions/turn-credentials`.
-1. No painel do Supabase: Edge Functions → criar `turn-credentials` com o conteúdo do arquivo; **desligue "Verify JWT"**.
+1. No painel do Supabase: Edge Functions → criar `turn-credentials` com o conteúdo do arquivo. **Não é mais preciso desligar "Verify JWT"**: deixe ligado (as funções `livekit-token` e `livekit-kick` do SFU também estão publicadas com Verify JWT ligado).
 2. Em Secrets: `TURN_HOST=turn.seudominio.com` e `TURN_SECRET=<o mesmo segredo do Coturn>`.
 3. Teste no navegador: `https://<projeto>.supabase.co/functions/v1/turn-credentials` deve devolver JSON com `iceServers`.
 

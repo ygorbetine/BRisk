@@ -52,6 +52,8 @@ pub enum MeshEvent {
     ChatEvent { from_fp: String, wire: Value, local: bool },
     /// Anexo: `kind` = offer | progress | done | cancelled | failed (campos no JSON). Nada é aberto; o arquivo recebido fica em quarentena.
     File(Value),
+    /// Painel de sons: evento já pronto para a UI (`sound.play`, `sound.got`, `sound.fetching`, `sound.fail`, `sound.drop`...), ver `sonsnet.rs`.
+    Sound(Value),
     /// Confirmação de entrega de uma mensagem de DM que enviei.
     Ack { id: String, from_fp: String },
     /// A mensagem de DM saiu pelo canal direto até `to_fp` (ainda não confirmada: o `Ack` vem depois). Uma vez por id.
@@ -130,6 +132,9 @@ pub enum MeshCmd {
     Typing,
     /// Chat da sala: texto para todos os peers autenticados (não fica gravado).
     RoomChat { id: String, text: String },
+    /// Painel de sons: dispara um som que tenho (assinado, para toda a sala) / pré-busca o arquivo de um som do catálogo.
+    SoundPlay { hash: String },
+    SoundFetch { hash: String },
     /// Pede a um peer (peer_id ou impressão digital) que transmita a tela.
     StreamRequest { key: String },
     /// Responde a quem pediu a minha transmissão.
@@ -268,6 +273,7 @@ struct Actor {
     hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
     hist_reqs: HashMap<String, String>,        // peer -> requestId do pedido de histórico em andamento
     seen_msgs: HashSet<String>,
+    sons: crate::sonsnet::Net,
     incoming: HashMap<String, (String, crate::filetransfer::Incoming, u64)>,   // id -> (peer, estado, último progresso emitido)
     outgoing: HashMap<String, Arc<Ctl>>,                                   // id -> controle (aceitar, pausar, cancelar)
     pending: HashMap<String, (String, crate::filetransfer::Offer)>,       // ofertas recebidas aguardando "Baixar": id -> (peer, oferta)
@@ -311,9 +317,10 @@ impl Actor {
         let room_hash = secure_room_id(&cfg.namespace, &cfg.room);
         let (itx, irx) = mpsc::channel(512);
         let validator = Validator::new(&room_hash, &cfg.local_peer);
+        let sons = crate::sonsnet::Net::new(&identity.fingerprint(), &room_hash, crate::sons::shared());
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), viewers: [HashSet::new(), HashSet::new()], peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), viewers: [HashSet::new(), HashSet::new()], peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), sons, incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -338,6 +345,7 @@ impl Actor {
                     let fps: Vec<String> = self.outbox.iter().filter(|(_, l)| !l.is_empty()).map(|(k, _)| k.clone()).collect();   // (flush_outbox relê a fila em disco)
                     for fp in fps { self.flush_outbox(&fp).await; }
                     self.retry_auth().await;
+                    let o = self.sons.tick(now_ms() as u64); self.sons_out(o).await;
                 },
                 e = rt_events.recv() => match e {
                     Some(e) => self.on_rt(e).await,
@@ -626,6 +634,16 @@ impl Actor {
                 let wire = json!({ "version": 1, "type": "room.chat", "id": id, "content": text, "timestamp": now_ms() });
                 for pid in self.authed_ids() { self.dc_send(&pid, wire.clone()).await; }
             }
+            MeshCmd::SoundPlay { hash } => {
+                match self.sons.play(&self.identity.clone(), &hash, now_ms() as u64) {
+                    Ok(o) => self.sons_out(o).await,
+                    Err(m) => self.emit(MeshEvent::Sound(json!({ "ev": "sound.denied", "hash": hash, "message": m }))).await,
+                }
+            }
+            MeshCmd::SoundFetch { hash } => {
+                let cands: Vec<String> = self.authed_ids().into_iter().take(3).collect();
+                let o = self.sons.fetch(&hash, cands, now_ms() as u64); self.sons_out(o).await;
+            }
             MeshCmd::StreamRequest { key } | MeshCmd::StreamReply { key, .. } if !self.peers.iter().any(|(k, p)| (k == &key || p.fp.as_deref() == Some(key.as_str())) && p.sent_proof && p.proven) => {
                 self.emit(MeshEvent::Error("pedido de transmissão: essa pessoa não está na sala".into())).await;
             }
@@ -761,6 +779,20 @@ impl Actor {
             }
             MeshCmd::RemoteMute { .. } => self.emit(MeshEvent::Error("mudo remoto só existe no modo SFU".into())).await,
             MeshCmd::Close => {}
+        }
+    }
+
+    /// Entrega o que o `sonsnet` mandou: mensagens aos pares autenticados e eventos para a UI.
+    async fn sons_out(&mut self, outs: Vec<crate::sonsnet::NetOut>) {
+        for o in outs {
+            match o {
+                crate::sonsnet::NetOut::Ev(e) => self.emit(MeshEvent::Sound(e)).await,
+                crate::sonsnet::NetOut::Send { to, kind, mut body } => {
+                    body["version"] = json!(1); body["type"] = json!(kind);
+                    let ids = if to.is_empty() { self.authed_ids() } else { to.into_iter().filter(|k| self.peers.get(k).map(|p| p.sent_proof && p.proven).unwrap_or(false)).collect() };
+                    for id in ids { self.dc_send(&id, body.clone()).await; }
+                }
+            }
         }
     }
 
@@ -1375,6 +1407,14 @@ impl Actor {
                 if self.seen_msgs.insert(format!("room:{id}")) {
                     self.emit(MeshEvent::RoomChat { peer_id: peer.into(), from_fp: fp, author, content, id, ts: now }).await;
                 }
+            }
+            "sound.play" | "sound.want" | "sound.data" | "sound.none" => {
+                // painel de sons: só de par autenticado; o autor é a identidade provada do canal (sonsnet.rs confere a assinatura do disparo)
+                let Some(p) = self.peers.get(peer) else { return };
+                let (true, Some(jwk), Some(fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
+                let kind = v["type"].as_str().unwrap_or("").to_string();
+                let o = self.sons.on_msg(&crate::sonsnet::PeerRef { key: peer, fp: &fp, jwk: &jwk }, &kind, &v, now_ms() as u64);
+                self.sons_out(o).await;
             }
             "stream.request" | "stream.reply" => {
                 let Some(p) = self.peers.get(peer) else { return };

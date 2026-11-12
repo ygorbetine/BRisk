@@ -66,6 +66,7 @@ pub struct Layer {
     outbox: HashMap<String, Vec<ChatWire>>,
     dm_off: HashSet<String>,             // fps cujo chat privado o usuário desconectou (a chamada segue)
     seen_msgs: HashSet<String>,
+    sons: crate::sonsnet::Net,
     seen_events: HashSet<String>,
     ev_last_ts: u64,
     profile: (String, String),
@@ -111,8 +112,9 @@ fn short(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 impl Layer {
     pub fn new(cfg: DataCfg, sfu_id: String) -> Self {
         let fp = cfg.identity.fingerprint();
+        let sons = crate::sonsnet::Net::new(&fp, &cfg.room_hash, crate::sons::shared());
         Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(), dm_off: HashSet::new(),
-            seen_msgs: HashSet::new(), seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
+            seen_msgs: HashSet::new(), sons, seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
             rate: HashMap::new(), owner_sent: None, server_owner: None, tick_n: 0, resend: vec![],
             hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new() }
     }
@@ -230,7 +232,16 @@ impl Layer {
         self.resend.retain(|(_, stage, _)| *stage < 2);
         if self.tick_n % 3 == 0 { for fp in fps { out.extend(self.flush(&fp)); } }
         self.rate.retain(|_, (t, _)| t.elapsed() < RATE_WIN);
+        let so = self.sons.tick(now_ms() as u64); out.extend(self.sons_out(so));
         out
+    }
+
+    /// Converte o que o `sonsnet` mandou: pacotes da camada de dados (`v`/`t`) e eventos para a UI.
+    fn sons_out(&self, outs: Vec<crate::sonsnet::NetOut>) -> Vec<Out> {
+        outs.into_iter().map(|o| match o {
+            crate::sonsnet::NetOut::Ev(e) => Out::Ev(MeshEvent::Sound(e)),
+            crate::sonsnet::NetOut::Send { to, kind, mut body } => { body["v"] = json!(1); body["t"] = json!(kind); Out::Send { to, msg: body } }
+        }).collect()
     }
 
     fn flush(&mut self, fp: &str) -> Vec<Out> {
@@ -319,6 +330,10 @@ impl Layer {
                 } else if crate::roomchat::take_asked(&self.me, from, now) {
                     vec![Out::Ev(MeshEvent::StreamReply { peer_id: from.into(), name, accepted: v["accepted"].as_bool().unwrap_or(false) })]
                 } else { vec![] }
+            }
+            "sound.play" | "sound.want" | "sound.data" | "sound.none" => {
+                let o = self.sons.on_msg(&crate::sonsnet::PeerRef { key: from, fp: &fp, jwk: &jwk }, t, &v, now_ms() as u64);
+                self.sons_out(o)
             }
             "file" => vec![Out::File { from: from.to_string(), fp, jwk, m: v["m"].clone() }],
             "group" => {
@@ -480,6 +495,18 @@ impl Layer {
                 let idents: Vec<String> = self.muted_idents.iter().filter(|(_, f)| f.as_str() == fp).map(|(k, _)| k.clone()).collect();
                 for i in idents { self.muted_idents.remove(&i); out.push(Out::MuteLocal { ident: i, muted: false }); }
                 Some(out)
+            }
+            MeshCmd::SoundPlay { hash } => {
+                let id = self.cfg.identity.clone();
+                match self.sons.play(&id, &hash, now_ms() as u64) {
+                    Ok(o) => Some(self.sons_out(o)),
+                    Err(m) => Some(vec![Out::Ev(MeshEvent::Sound(json!({ "ev": "sound.denied", "hash": hash, "message": m })))]),
+                }
+            }
+            MeshCmd::SoundFetch { hash } => {
+                let cands: Vec<String> = self.peers.keys().take(3).cloned().collect();
+                let o = self.sons.fetch(&hash, cands, now_ms() as u64);
+                Some(self.sons_out(o))
             }
             MeshCmd::RoomChat { id, text } => {
                 let (Some(id), Some(text)) = (crate::roomchat::clean_id(&id), crate::roomchat::clean(&text)) else { return Some(vec![]) };

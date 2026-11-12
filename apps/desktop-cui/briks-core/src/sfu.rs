@@ -1035,7 +1035,7 @@ impl Actor {
     }
 
     async fn on_cmd(&mut self, c: MeshCmd) {
-        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::ChatInvite { .. } | MeshCmd::DmDisconnect { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
+        if self.data.is_some() && matches!(c, MeshCmd::Chat { .. } | MeshCmd::ChatWithId { .. } | MeshCmd::ChatInvite { .. } | MeshCmd::SoundPlay { .. } | MeshCmd::SoundFetch { .. } | MeshCmd::DmDisconnect { .. } | MeshCmd::Typing | MeshCmd::GroupSend { .. } | MeshCmd::RoomChat { .. } | MeshCmd::StreamRequest { .. } | MeshCmd::StreamReply { .. } | MeshCmd::Event { .. } | MeshCmd::Kick { .. } | MeshCmd::Allow { .. } | MeshCmd::RemoteMute { .. } | MeshCmd::SetProfile { .. }) {
             let media = self.media();
             let outs = self.data.as_mut().and_then(|l| l.on_cmd(c, media)).unwrap_or_default();
             self.apply(outs).await;
@@ -1070,6 +1070,8 @@ impl Actor {
         match c {
             MeshCmd::BroadcastState => self.sync_mic().await,
             MeshCmd::SetProfile { .. } => {}   // status/presença ainda não viajam pelo SFU
+            MeshCmd::SoundPlay { hash } => self.emit(MeshEvent::Sound(json!({ "ev": "sound.denied", "hash": hash, "message": "sons exigem a camada de dados da chamada" }))).await,
+            MeshCmd::SoundFetch { .. } => {}
             MeshCmd::MutePeer { key, muted } => { if let Some(a) = &self.audio { a.mute_peer(&key, muted); } }
             MeshCmd::ShareVolume { key, gain } => { if let Some(a) = &self.audio { a.set_screen_gain(&key, gain); } }
             MeshCmd::ShareStart { cfg, preview, dump } => self.share_start(cfg, preview, dump, 0).await,

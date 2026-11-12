@@ -17,14 +17,14 @@ $pins = @{
 New-Item -ItemType Directory -Force "$Cache\dl" | Out-Null
 foreach ($k in $pins.Keys) {
   $f = "$Cache\dl\$k"
-  if (-not (Test-Path $f)) { Invoke-WebRequest -Uri $pins[$k].url -OutFile $f -UseBasicParsing }
+  if (-not (Test-Path $f)) { curl.exe -sSL --fail -m 300 -o $f $pins[$k].url }   # curl: o SourceForge devolve uma página HTML a clientes que não são curl
   $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
   if ($h -ne $pins[$k].sha) { Remove-Item $f; throw "SHA-256 de $k não confere ($h); abortado" }
 }
 $src = "$Cache\src"; $tools = "$Cache\tools"; $bld = "$Cache\build"
 Remove-Item $src, $bld -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $src, $tools, $bld | Out-Null
-tar -xzf "$Cache\dl\libvpx.tgz" -C $src
+& "$env:SystemRoot\System32\tar.exe" -xzf "$Cache\dl\libvpx.tgz" -C $src   # bsdtar do Windows: o tar do Git não entende caminhos C:\
 Expand-Archive "$Cache\dl\nasm.zip" "$tools\nasm" -Force
 Expand-Archive "$Cache\dl\make.zip" "$tools\make" -Force
 $nasm = (Get-ChildItem "$tools\nasm" -Recurse -Filter nasm.exe | Select-Object -First 1).DirectoryName
@@ -39,25 +39,27 @@ foreach ($l in $envdump) { if ($l -match '^([^=]+)=(.*)$') { Set-Item "env:$($Ma
 $env:PATH = "$gitsh\usr\bin;$nasm;$make;$env:PATH"
 Set-Location $bld
 # 1) configure gera os Makefiles; 2) make gera o vpx.vcxproj; 3) MSBuild compila a biblioteca estática (/MD, como o Rust)
-sh "$srcdir/configure" --target=x86_64-win64-vs17 --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-install-docs --enable-vp8 --enable-vp9 --enable-static --disable-shared --enable-multithread --enable-runtime-cpu-detect
+cmd /c "sh `"$srcdir/configure`" --target=x86_64-win64-vs17 --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-install-docs --enable-vp8 --enable-vp9 --enable-static --disable-shared --enable-multithread --enable-runtime-cpu-detect >configure.log 2>&1"
 if ($LASTEXITCODE) { throw "configure da libvpx falhou" }
-make -j4 2>&1 | Out-Null
+cmd /c "make -j4 >make.log 2>&1"   # pode reclamar da linha longa (ver abaixo); o que vale é o vpx.vcxproj regenerado depois
 # O make do Windows corta a linha de comando longa do gerador (8191 caracteres) e o vpx.vcxproj sai SEM metade das fontes (sem vpx_decoder.c,
 # vpx_dsp...): o link falha com símbolos vpx_codec_* não resolvidos. Roda o gerador à mão, com a linha completa.
-$dry = (make -n -B target=libs vpx.vcxproj 2>&1) -join "`n"
+cmd /c "make -n -B target=libs vpx.vcxproj >dry.txt 2>&1"
+$dry = (Get-Content dry.txt) -join "`n"
 $i = $dry.IndexOf("gen_msvs_vcxproj.sh"); if ($i -lt 0) { throw "não achei o comando do gerador do vcxproj" }
 $cmd = $dry.Substring($i); $j = $cmd.IndexOf("`necho"); if ($j -gt 0) { $cmd = $cmd.Substring(0, $j) }
 $cmd = "$srcdir/build/make/" + ($cmd -replace ([regex]::Escape([string][char]92) + "\r?\n"), " ")
 Remove-Item vpx.vcxproj -ErrorAction SilentlyContinue
-sh -c $cmd 2>&1 | Out-Null
+Set-Content gen.sh $cmd -Encoding ASCII
+cmd /c "sh gen.sh >gen.log 2>&1"
 $nc = (Select-String -Path vpx.vcxproj -Pattern 'Include=.*\.c"' -AllMatches).Matches.Count
 if ($nc -lt 200) { throw "vpx.vcxproj incompleto ($nc fontes .c; esperado ~209)" }
 # Sem /GL (WholeProgramOptimization): objetos LTCG não resolvem símbolos quando o rustc empacota a .lib; sem PDB para a lib ficar pequena.
-msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /m /v:m /p:WholeProgramOptimization=false /p:DebugInformationFormat=None /t:Rebuild
+cmd /c "msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /m /v:m /p:WholeProgramOptimization=false /p:DebugInformationFormat=None /t:Rebuild >msbuild.log 2>&1"
 if ($LASTEXITCODE) { throw "build da libvpx falhou" }
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Copy-Item "$bld\x64\Release\vpxmd.lib" $lib -Force
 Set-Location $root
 # O rustc embute a .lib no rlib do env-libvpx-sys e o cargo não vê a troca do arquivo: limpa esse pacote para o próximo build religar.
-cargo clean -p env-libvpx-sys --release --manifest-path "$root\apps\desktop-cui\briks-core\Cargo.toml" 2>&1 | Out-Null
+cmd /c "cargo clean -p env-libvpx-sys --release --manifest-path `"$root\apps\desktop-cui\briks-core\Cargo.toml`" >nul 2>&1"
 "OK: $lib ($([math]::Round((Get-Item $lib).Length/1MB,1)) MB)"

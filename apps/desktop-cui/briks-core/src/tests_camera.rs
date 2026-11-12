@@ -106,7 +106,7 @@ async fn camera_flows_both_ways_next_to_a_screen_share_and_stops_cleanly() {
     assert!(pn > 10 && (pw, ph) == (1280, 720), "prévia local {pw}x{ph} n={pn}");
 
     // 2) a transmissão de tela coexiste: dois tracks de vídeo de A, B assiste aos dois, cada um no seu arquivo
-    a.cmd.send(MeshCmd::ShareStart { cfg: crate::share::ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: crate::share::ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_cam(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 25).await.expect("B não soube da tela de A");
     let spath = dir.join("b-ve-tela-de-a.bin");
     b.cmd.send(MeshCmd::ShareWatch { key: CA.into(), on: true, path: spath.clone() }).await.unwrap();

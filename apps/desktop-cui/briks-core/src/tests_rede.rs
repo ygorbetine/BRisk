@@ -56,7 +56,7 @@ impl Session {
         assert!(authed(&mut a).await && authed(&mut b).await, "não autenticou");
         let dir = std::env::temp_dir().join(format!("briks-rede-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height, fps: 30, kbps, label: "Rede".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height, fps: 30, kbps, label: "Rede".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive }, preview: None, dump: None }).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
         let rpath = dir.join("rx.bin");
         b.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: rpath.clone() }).await.unwrap();

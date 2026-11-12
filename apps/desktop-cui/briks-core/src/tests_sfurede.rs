@@ -53,7 +53,7 @@ async fn open(tag: &str, sim_on: &str, height: usize, kbps: u32, adaptive: bool)
     let (mut a, mut b) = (Ends { cmd: ha.cmd, events: ha.events }, Ends { cmd: hb.cmd, events: hb.events });
     let dir = std::env::temp_dir().join(format!("briks-sfurede-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height, fps: 30, kbps, label: "Rede".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height, fps: 30, kbps, label: "Rede".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     let rpath = dir.join("rx.bin");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: rpath.clone() }).await.unwrap();

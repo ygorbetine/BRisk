@@ -16,6 +16,8 @@ add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c
 target_sources(briks_cui PRIVATE src/net_state.c src/accountx.c src/titlebar.c src/hotkeys_ovl.c src/ui_nettest.c)   # estado da internet e faixa offline
 if(WIN32)
   target_sources(briks_cui PRIVATE src/briks.rc)
+  # o .rc embute assets/briks.ico: sem esta dependência o Ninja não recompila o recurso quando só o .ico muda (o exe ficava com o ícone antigo)
+  set_source_files_properties(src/briks.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/briks.ico")
 endif()
 if(MSVC)
   target_compile_options(briks_cui PRIVATE /utf-8)

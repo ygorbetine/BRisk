@@ -659,7 +659,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         out(&mut wr, json!({ "ev": "share.audio.apps", "apps": apps })).await?;
                     }
                     "share.audio.set" => {
-                        let mode = audio_mode(&v, &crate::capture::SourceKind::Test);
+                        // ao vivo: "source" precisa saber a fonte (janela = árvore do app dela; tela = tudo menos Briks/Discord); a UI manda kind+id
+                        let id: isize = v["id"].as_str().and_then(|s| s.parse().ok()).or(v["id"].as_i64().map(|n| n as isize)).unwrap_or(0);
+                        let kind = match v["kind"].as_str().unwrap_or("screen") { "window" => crate::capture::SourceKind::Window(id), _ => crate::capture::SourceKind::Screen(id) };
+                        let mode = audio_mode(&v, &kind);
                         if let Some(c) = &mesh_cmd { let _ = c.send(MeshCmd::ShareAudio { mode }).await; }
                     }
                     // "Com áudio"/"Sem áudio" ao vivo (só a 1ª transmissão leva áudio): a faixa continua aberta, nada é renegociado

@@ -998,6 +998,44 @@ async fn screen_audio_is_stereo_and_av_offset_is_measured() {
     assert!(loud > 0.1 && muted < 0.001);
 }
 
+/// 1.4.3 (seletor de canal de áudio): trocar de quais apps vem o som COM a transmissão no ar. A fonte sintética (bipes) entra e sai da mistura
+/// sem renegociar nada: o espectador deixa de ouvir os bipes ao tirar a fonte e volta a ouvir ao recolocar. A faixa continua aberta o tempo todo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_audio_source_switch_changes_what_the_viewer_hears() {
+    use crate::capture::SourceKind;
+    use crate::procaudio::AudioMode;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb) = ("aaaaaaaa-1111-4111-8111-0000000000e7", "bbbbbbbb-2222-4222-8222-0000000000e7");
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, pa, "Ana", "avlive1", ia);
+    let (mut b, bau) = node_audio(port, pb, "Beto", "avlive1", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
+    let dir = std::env::temp_dir().join(format!("briks-avlive-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 360, fps: 15, kbps: 0, label: "AO VIVO".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    let key = format!("{pa}#screen");
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let beeps = |n: &str| { let _ = n; bau.rx_stat(&key).onsets.len() };
+    let b1 = beeps("com a fonte");
+    assert!(b1 >= 2, "o espectador deveria ouvir os bipes de começo: {b1}");
+    // tira a fonte (nenhum app marcado): sem bipes novos
+    a.cmd.send(MeshCmd::ShareAudio { mode: AudioMode::None }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;   // deixa esvaziar o que já estava a caminho
+    let b2 = beeps("depois de tirar");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let b3 = beeps("3 s depois");
+    assert_eq!(b2, b3, "ainda chegaram bipes depois de tirar a fonte: {b2} → {b3}");
+    // recoloca a fonte: os bipes voltam
+    a.cmd.send(MeshCmd::ShareAudio { mode: AudioMode::TestBeep }).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let b4 = beeps("recolocada");
+    assert!(b4 >= b3 + 2, "os bipes não voltaram ao recolocar a fonte: {b3} → {b4}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Vários espectadores: A transmite para B (rede boa) e C (atrás de uma rede ruim simulada: 0,5 Mbps e 5% de perda).
 /// O espectador ruim não pode derrubar a qualidade do bom: B continua recebendo perto do FPS cheio e o bitrate do emissor não
 /// desce ao nível de C. Mede também o custo do emissor com 1 e com 2 espectadores.

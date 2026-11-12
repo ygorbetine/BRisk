@@ -1,0 +1,21 @@
+# Canal de audio ao vivo: com a transmissao no ar aparece o botao "Canal"; o popover troca o som por app sem parar a transmissao
+waitms 9000
+shot ca0-no-ar
+expect share_active 1
+expect share_audio 1
+click 930 727
+waitms 1200
+shot ca1-popover
+expect share_amode 0
+click 1012 618
+waitms 2500
+expect share_amode 1
+shot ca2-escolher-apps
+click 1076 610
+waitms 1500
+shot ca3-spotify-marcado
+click 843 510
+waitms 1200
+expect share_amode 0
+expect share_active 1
+shot ca4-da-fonte

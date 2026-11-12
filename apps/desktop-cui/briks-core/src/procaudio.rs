@@ -212,7 +212,6 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
         let _ = enc.set_bitrate(opus::Bitrate::Bits(128_000));
         let _ = enc.set_inband_fec(true);   // FEC interno do Opus: um pacote perdido é reconstruído a partir do seguinte
         let _ = enc.set_packet_loss_perc(5);
-        let beep = *md.lock().unwrap() == AudioMode::TestBeep;
         let mut beep_phase = 0.0f32;
         let mut srcs: HashMap<u32, Src> = HashMap::new();
         let mut last_scan = Instant::now() - Duration::from_secs(10);
@@ -240,6 +239,7 @@ pub fn start(mode: AudioMode, track: Arc<TrackLocalStaticSample>) -> ProcAudio {
             if mu.load(Ordering::Relaxed) { for s in srcs.values() { s.ring.lock().unwrap().clear(); } continue; }   // sem áudio: descarta o que chegou e não envia nada
             mix.iter_mut().for_each(|v| *v = 0.0);
             let mut any = false;
+            let beep = *md.lock().unwrap() == AudioMode::TestBeep;   // lido a cada quadro: o modo também muda ao vivo (share.audio.set)
             if beep {
                 // o quadro cobre os 20 ms que acabaram de passar (como numa captura de verdade)
                 let ms0 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0).saturating_sub(20_000);

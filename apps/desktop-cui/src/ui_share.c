@@ -427,7 +427,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         if (dev == 0 && !strcmp(d, "dialog-quality")) { q->quality_open = true; q->br_mode = 3; q->br_custom = 35; q->res = 2; q->fps = FPS_N - 1; }
         if (dev == 0) { dev = 1; if (!strncmp(d, "dialog", 6) || !strcmp(d, "screen") || !strcmp(d, "adapt")) share_open_dialog(s);
             if (!strcmp(d, "dialog-apps")) q->audio_mode = 1; if (!strcmp(d, "dialog-windows")) q->tab = 1;
-            if (!strcmp(d, "test")) send_start(s, "test", "0", "Padrão de teste"); }
+            if (!strcmp(d, "test")) { if (s->rtc_session_ready && !strcmp(s->rtc_state, "conectado") && cui_time(ui) > 4.0) send_start(s, "test", "0", "Padrão de teste"); else dev = 0; } }
         else if (dev == 1 && (!strcmp(d, "screen") || !strcmp(d, "adapt")) && !q->loading && q->nsrc[0] > 0 && s->rtc_authed_count > 0) { dev = 2; q->tab = 0; q->sel[0] = 0; start_selected(s); }
         if (dev == 1 && !strcmp(d, "dialog-apps") && q->napps > 0) { dev = 2; q->apps[0].on = true; }
     }
@@ -560,6 +560,44 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
     return ch;
 }
 
+/* ---------- canal de áudio ao vivo (popover da barra) ---------- */
+static void send_audio_live(app_state_t *s) {
+    share_state_t *q = &s->sh;
+    char line[640], pids[400] = ""; size_t o = 0;
+    for (int i = 0; i < q->napps && o < sizeof pids - 16; i++) if (q->apps[i].on) o += (size_t)snprintf(pids + o, sizeof pids - o, "%s%u", o ? "," : "", q->apps[i].pid);
+    snprintf(line, sizeof line, "{\"cmd\":\"share.audio.set\",\"audio\":\"%s\",\"pids\":[%s],\"kind\":\"%s\",\"id\":\"%s\"}", q->audio_mode == 1 ? "apps" : q->audio_mode == 0 ? "source" : "none", pids, q->last_kind, q->last_id);
+    cmd(line);
+}
+static void share_audio_live(cui_ctx *ui, app_state_t *s) {
+    share_state_t *q = &s->sh;
+    static double last_poll; if (cui_time(ui) - last_poll > 2.0) { last_poll = cui_time(ui); cmd("{\"cmd\":\"share.audio.list\"}"); }
+    cui_request_wakeup(ui, 1.0f);
+    cui_text(ui, "Som da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
+    static const char *const am[2] = { "Da fonte", "Escolher apps" };
+    int mode = q->audio_mode == 1 ? 1 : 0;
+    if (cui_segmented(ui, "amlive", am, 2, &mode, .full_width = true, .size = CUI_SIZE_SM)) { q->audio_mode = mode; send_audio_live(s); }
+    if (q->audio_mode == 1) {
+        int marked = 0;
+        if (!q->napps) cui_text(ui, "Nenhum app com áudio aberto agora.", .size = 13, .color = B_MUTED);
+        cui_box(ui, .width = CUI_FILL, .gap = 6, .height = q->napps > 4 ? CUI_PX(4 * 50 + 18) : CUI_FIT, .scroll_y = q->napps > 4) {
+            for (int i = 0; i < q->napps; i++) {
+                share_app_t *a = &q->apps[i]; if (a->on) marked++;
+                cui_push_id_int(ui, 600 + i);
+                cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(46), .pad_x = 12, .gap = 10, .radius = 10, .bg = B_GLASS_SOFT, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER) {
+                    cui_icon(ui, CUI_ICON_MUSIC, 14, B_C3);
+                    cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                        cui_text(ui, a->name, .size = 13, .nowrap = true);
+                        cui_text(ui, a->playing ? "Tocando agora" : "Em silêncio", .size = 11, .color = a->playing ? B_ONLINE : B_MUTED);
+                    }
+                    if (cui_switch(ui, "##on", &a->on)) send_audio_live(s);
+                }
+                cui_pop_id(ui);
+            }
+        }
+        cui_text(ui, marked ? "Só o som dos apps marcados sai na transmissão. O Briks e o Discord nunca entram." : "Nenhum app marcado: a transmissão fica sem som até marcar um.", .size = 12, .color = B_MUTED);
+    } else cui_text(ui, "Entra o som da fonte (tela: tudo menos o Briks e o Discord; janela: só o programa dela).", .size = 12, .color = B_MUTED);
+}
+
 /* ---------- diálogo ---------- */
 void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
@@ -686,6 +724,19 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             if (!modal && q->audio_on && briks_clicked_r(ui, "ba", 25.0f)) {
                 q->audio_muted = !q->audio_muted;
                 cmd(q->audio_muted ? "{\"cmd\":\"share.audio.mute\",\"muted\":true}" : "{\"cmd\":\"share.audio.mute\",\"muted\":false}");
+            }
+        }
+        if (q->active && q->audio_on) {   /* 1.4.3: escolher de quais apps vem o som, AO VIVO (o core troca a mistura sem renegociar nada) */
+            vsep(ui);
+            cui_box(ui, .dir = CUI_STACK, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START) {
+                cui_box(ui, .id = "bc", .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                    cui_icon(ui, CUI_ICON_MUSIC, 14, q->audio_mode == 1 ? CUI_RGB(0x7be8a8) : B_TEXT);
+                    cui_text(ui, q->audio_mode == 1 ? "Apps" : "Canal", .size = 12, .color = q->audio_mode == 1 ? CUI_RGB(0x7be8a8) : B_TEXT, .nowrap = true);
+                }
+                cui_tooltip(ui, "Escolher de quais apps vem o som da transmissão (ex.: só o Spotify), sem parar a transmissão");
+                if (!modal && briks_clicked_r(ui, "bc", 25.0f)) { cui_popover_open(ui, "shaud"); cmd("{\"cmd\":\"share.audio.list\"}"); }
+                cui_canvas(ui, "shaudanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);
+                cui_popover(ui, "shaud", .placement = CUI_PLACE_TOP, .width = 380, .pad = 14, .gap = 10) { share_audio_live(ui, s); }
             }
         }
         vsep(ui);
@@ -840,6 +891,8 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_q1_fps")) return s->sh.qsel == 1 ? s->sh.fps : s->sh.qs[1].fps;
     if (!strcmp(n, "share_q0_kbps")) return g_qk[0];
     if (!strcmp(n, "share_q1_kbps")) return g_qk[1];
+    if (!strcmp(n, "share_active")) return s->sh.active;
+    if (!strcmp(n, "share_amode")) return s->sh.audio_mode;   /* 0 da fonte, 1 apps, 2 sem audio */
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */

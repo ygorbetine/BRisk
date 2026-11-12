@@ -12,12 +12,19 @@ static void ini2(const char *name, char *out) {
 }
 
 /* medidor de fala: disco com anel verde que cresce com o nível */
-static void voice_avatar(cui_ctx *ui, const char *name, float level, bool muted) {
+static void voice_avatar(cui_ctx *ui, const char *name, float level, bool muted, bool live) {
     char in[2]; ini2(name, in);
-    cui_color ring = level > 0 ? CUI_RGBA(0x57d28bdd) : B_GLASS_BORDER;
-    cui_box(ui, .width = CUI_PX(36), .height = CUI_PX(36), .radius = 18, .bg = muted ? B_A(B_C1, 0x40) : B_A(B_C3, 0xdd),
-            .border = level > 0 ? 2 : 1, .border_color = ring, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-        cui_text(ui, in, .font = CUI_FONT_MEDIUM, .size = 14, .color = CUI_RGB(0xffffff));
+    const float pulse = 0.5f + 0.5f * sinf((float)cui_time(ui) * 3.2f);
+    cui_color ring = level > 0 ? CUI_RGBA(0x57d28bdd) : live ? B_A(B_C3, (unsigned char)(120 + 120 * pulse)) : B_GLASS_BORDER;   /* transmitindo: anel roxo pulsante (o verde de fala tem prioridade) */
+    if (live) cui_request_wakeup(ui, 0.06f);
+    cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(36), .height = CUI_PX(36), .radius = 18, .bg = muted ? B_A(B_C1, 0x40) : B_A(B_C3, 0xdd),
+            .border = level > 0 || live ? 2 : 1, .border_color = ring, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_text(ui, in, .font = CUI_FONT_MEDIUM, .size = 14, .color = CUI_RGB(0xffffff)); }
+        if (live) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END) {   /* selo de tela no canto, sem cobrir o mudo/ensurdecido (que ficam à direita do cartão) */
+            cui_box(ui, .width = CUI_PX(15), .height = CUI_PX(15), .radius = 8, .bg = B_A(CUI_RGB(0x6d28d9), 0xf0), .border = 1, .border_color = CUI_RGBA(0xffffffaa), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                cui_icon(ui, CUI_ICON_MONITOR, 9, CUI_RGB(0xffffff));
+            }
+        }
     }
 }
 
@@ -39,7 +46,7 @@ static void person_card(cui_ctx *ui, app_state_t *s, int slot, bool me) {
     cui_box(ui, .width = CUI_FILL, .radius = 16, .bg = level > 0 ? CUI_RGBA(0x57d28b14) : CUI_RGBA(0xffffff0e), .border = 1,
             .border_color = level > 0 ? CUI_RGBA(0x57d28b66) : B_GLASS_BORDER_SOFT, .pad = 10, .gap = 8) {
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 10, .align = CUI_ALIGN_CENTER) {
-            voice_avatar(ui, me ? s->user_name : name, level, mic_off);
+            voice_avatar(ui, me ? s->user_name : name, level, mic_off, me ? s->sh.active : share_peer_live(s, slot));
             cui_box(ui, .width = CUI_FILL, .gap = 1, .clip = true) {
                 cui_text(ui, name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
                 if (sub && sub[0]) cui_text(ui, sub, .size = 11, .color = B_MUTED, .nowrap = true);

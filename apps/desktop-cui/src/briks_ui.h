@@ -357,6 +357,8 @@ const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "
 /* ui_share.c: transmissão de tela */
 struct jval;
 bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos share.* do core */
+bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h);   /* thumb minúscula (desfocada ao esticar) da transmissão de quem está no slot; false = sem quadro */
+bool share_any_live(const app_state_t *s);   /* alguém (outro participante) transmite a tela */
 bool share_mini(cui_ctx *ui, app_state_t *s, float w);        /* miniatura ao vivo da transmissão em foco, na barra "Em chamada" (ui_voice_mini) */
 void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
 void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */

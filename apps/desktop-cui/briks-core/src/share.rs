@@ -578,7 +578,8 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
                 if sink.as_ref().map(|s| s.0 != path).unwrap_or(true) { sink = FrameSink::create(&path).ok().map(|s| (path, s)); }
                 if let Some((_, s)) = sink.as_mut() { s.write(w, h, rgba); }
                 let n = st2.frames.fetch_add(1, Ordering::Relaxed) + 1;
-                if dims != (w, h) || n == 1 { dims = (w, h); let (pid, slot) = split_key(&peer2); let _ = ev2.try_send(json!({ "ev": ev_remote2, "peer_id": pid, "slot": slot, "state": "frame", "w": w, "h": h })); }
+                // o aviso do 1º quadro sai por try_send e se perde com o canal cheio: repete a cada 15 quadros (idempotente na UI)
+                if dims != (w, h) || n == 1 || n % 15 == 0 { dims = (w, h); let (pid, slot) = split_key(&peer2); let _ = ev2.try_send(json!({ "ev": ev_remote2, "peer_id": pid, "slot": slot, "state": "frame", "w": w, "h": h })); }
             }
         }
     });

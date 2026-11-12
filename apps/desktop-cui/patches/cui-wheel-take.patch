@@ -1,0 +1,54 @@
+diff --git a/include/cui/cui.h b/include/cui/cui.h
+index 481d58e..fc2d77f 100644
+--- a/include/cui/cui.h
++++ b/include/cui/cui.h
+@@ -261,6 +261,8 @@ CUI_API void cui_input_mouse_move(cui_ctx *ui, float x, float y);
+ CUI_API void cui_input_mouse_button(cui_ctx *ui, cui_mouse_button button, bool down);
+ CUI_API void cui_input_mouse_leave(cui_ctx *ui);
+ CUI_API void cui_input_scroll(cui_ctx *ui, float dx, float dy);  /* in lines; +dy scrolls up */
++CUI_API float cui_wheel_take(cui_ctx *ui);  /* the wheel lines (+ = up) pending this frame, consumed so scroll areas do not move; 0 if none */
++CUI_API void cui_wheel_claim(cui_ctx *ui, cui_rect r);  /* call every frame for a control that uses the wheel: the NEXT frame no scroll area under r takes it */
+ CUI_API void cui_input_key(cui_ctx *ui, cui_key key, bool down, int mods);
+ CUI_API void cui_input_text(cui_ctx *ui, const char *utf8);
+ CUI_API void cui_input_focus(cui_ctx *ui, bool window_focused);
+diff --git a/src/cui_core.c b/src/cui_core.c
+index 6e5ac58..beb170a 100644
+--- a/src/cui_core.c
++++ b/src/cui_core.c
+@@ -498,6 +498,8 @@ void cui_input_mouse_button(cui_ctx *ui, cui_mouse_button b, bool down) {
+ }
+ 
+ void cui_input_scroll(cui_ctx *ui, float dx, float dy) { ui->scroll_dx += dx; ui->scroll_dy += dy; cui__poke(ui); }
++float cui_wheel_take(cui_ctx *ui) { float d = ui->scroll_dy; ui->scroll_dx = ui->scroll_dy = 0; return d; }
++void cui_wheel_claim(cui_ctx *ui, cui_rect r) { if (ui->wheel_claim_n < 8) ui->wheel_claim[ui->wheel_claim_n++] = r; }
+ 
+ void cui_input_key(cui_ctx *ui, cui_key key, bool down, int mods) {
+     /* modifiers are sampled at key presses (and modifier-only changes), so a
+@@ -590,6 +592,7 @@ void cui_set_cursor(cui_ctx *ui, cui_cursor c) { ui->cursor = c; }
+ 
+ static void cui__compute_hot(cui_ctx *ui) {
+     ui->hot = 0; ui->hot_layer = 0; ui->scroll_target = 0;
++    memcpy(ui->wheel_claim_prev, ui->wheel_claim, sizeof ui->wheel_claim); ui->wheel_claim_prev_n = ui->wheel_claim_n; ui->wheel_claim_n = 0;
+     if (!ui->mouse_inside) return;
+     bool found_hot = false, fits = false;
+     /* the wheel goes to the innermost scroll area that can move that way, so a
+@@ -613,6 +616,7 @@ static void cui__compute_hot(cui_ctx *ui) {
+         if (h->flags & CUI_NF_BLOCKER) break;
+         if (found_hot && fits) break;
+     }
++    for (int i = 0; i < ui->wheel_claim_prev_n; i++) if (cui__rect_contains(ui->wheel_claim_prev[i], ui->mx, ui->my)) { ui->scroll_target = 0; break; }   /* a control owns the wheel here (cui_wheel_claim) */
+ }
+ 
+ cui_interact cui__interact(cui_ctx *ui, cui_id id, int flags) {
+diff --git a/src/cui_internal.h b/src/cui_internal.h
+index c113aaa..c28f757 100644
+--- a/src/cui_internal.h
++++ b/src/cui_internal.h
+@@ -517,6 +517,7 @@ struct cui_ctx {
+     double last_click_time;
+     float last_click_x, last_click_y;
+     float scroll_dx, scroll_dy;
++    cui_rect wheel_claim[8], wheel_claim_prev[8]; int wheel_claim_n, wheel_claim_prev_n;   /* controls that own the wheel (cui_wheel_claim) */
+     bool kdown[CUI_KEY_COUNT];
+     uint8_t kpressed[CUI_KEY_COUNT];
+     int mods;

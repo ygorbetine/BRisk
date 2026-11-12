@@ -78,6 +78,7 @@ function Expand-Roteiro([string]$origem, [string]$destino) {
             "mat"  { $out.Add("at $($t[1]) $($t[2])") }   # at/to absolutos (sem Dy): dentro de modais
             "mto"  { $out.Add("to " + (($s -split "\s+", 2)[1])) }
             "mclick" { $out.Add("click $($t[1]) $($t[2])") }   # click absoluto, sem Dy
+            "mrclick" { $out.Add("rclick $($t[1]) $($t[2])") }   # botão direito absoluto, sem Dy   # click absoluto, sem Dy
             "tap"  {
                 if ($t[1] -match '^-?\d+$') { $out.Add("click $($t[1]) $([int]$t[2] + $Dy)") } else { $out.Add("click $($t[1])") }   # tap rel:chat:R-30:T+40 (ancora simbolica: sem Dy)
                 $out.Add("at 2 790"); $out.Add("waitms 500") }

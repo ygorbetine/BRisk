@@ -1,0 +1,25 @@
+# 1.4.4 (CHM-39): ganho de entrada em Configurações > Voz e vídeo: a roda ajusta sem rolar o painel; o ícone muta e desmuta lembrando o valor
+waitms 800
+tap 441 755
+waitms 800
+expect cfg_in_vol 100
+snap g0
+mat 760 443
+waitms 200
+wheel -2
+waitms 300
+expect cfg_in_vol 90
+wheel -1
+waitms 300
+expect cfg_in_vol 85
+wheel 2
+waitms 300
+expect cfg_in_vol 95
+snap g1
+mclick 484 443
+waitms 300
+expect cfg_in_vol 0
+snap g2
+mclick 484 443
+waitms 300
+expect cfg_in_vol 95

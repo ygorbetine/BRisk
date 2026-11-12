@@ -3,6 +3,7 @@
  * é "subclassificada" (SetWindowLongPtr) para interceptar o fechar e as mensagens do ícone da bandeja sem mexer no CUI.
  * Teste automatizado: nunca grava no %APPDATA% real (só com BRIKS_SYS_FILE), nunca mostra janela/aviso, nunca registra autostart real. */
 #include "sysint.h"
+#include "volume_ctl.h"
 #include "update.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -393,7 +394,7 @@ void sys_settings_notifications(cui_ctx *ui) {
         if (cui_switch(ui, "Sons de aviso e da chamada", &g_sys.sounds)) sys_cfg_save();
         hint(ui, "Toca ao receber um aviso e quando você ou alguém entra ou sai da chamada.");
         float v = (float)g_sys.sound_vol; cui_textf(ui, "Volume dos sons: %d%%", g_sys.sound_vol);
-        if (cui_slider(ui, "##sys-vol", &v, 0, 100)) { g_sys.sound_vol = (int)(v + 0.5f); sys_cfg_save(); }
+        if (briks_volume(ui, "sys-vol", &v, 0.0f, 100.0f, 1.0f, NULL, false)) { g_sys.sound_vol = (int)(v + 0.5f); sys_cfg_save(); }
         if (cui_button(ui, "Testar som", .variant = CUI_BUTTON_SECONDARY)) sound_play(SND_NOTIFY);
     }
 }

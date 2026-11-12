@@ -1,0 +1,48 @@
+# 1.4.4 (CHM-39): controle de volume único. Menu do bloco da pessoa: roda ajusta (5%; Ctrl 1%; Shift 10%), clique no ícone muta/desmuta lembrando o volume, arrastar ajusta
+waitms 1200
+mrclick 960 270
+waitms 600
+expect peer_vol_0 100
+snap w0
+mat 780 197
+waitms 200
+wheel 1
+waitms 200
+expect peer_vol_0 105
+wheel -2
+waitms 200
+expect peer_vol_0 95
+key ctrl+a
+wheel 1
+waitms 200
+expect peer_vol_0 96
+key shift+a
+wheel 1
+waitms 200
+expect peer_vol_0 106
+mclick 697 197
+waitms 300
+expect peer_muted_0 1
+expect peer_vol_0 106
+snap w1
+mclick 697 197
+waitms 300
+expect peer_muted_0 0
+expect peer_vol_0 106
+mclick 697 197
+waitms 300
+expect peer_muted_0 1
+mat 780 197
+wheel 1
+waitms 200
+expect peer_muted_0 0
+expect peer_vol_0 111
+mat 740 197
+waitms 100
+down
+waitms 150
+mat 800 197
+waitms 150
+up
+waitms 300
+snap w2

@@ -89,6 +89,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "peer_muted_0")) return state.rtc_peers[0].muted_by_me;
     if (!strcmp(n, "call_in_room")) return state.in_room;
     if (!strcmp(n, "idle_min")) return settings_idle_min();
+    if (!strcmp(n, "cfg_in_vol") || !strcmp(n, "cfg_out_vol")) { float i, o, d; bool g; settings_audio(&i, &o, &g, &d); return (int)((n[4] == 'i' ? i : o) * 100.0f + 0.5f); }
     if (!strcmp(n, "peer_vol_0")) return (int)(state.rtc_peers[0].volume + 0.5f);
     if (!strcmp(n, "amg_code_len")) return state.amg_code ? (int)strlen(state.amg_code) : 0;
     if (!strcmp(n, "fw_open")) return fw_open();

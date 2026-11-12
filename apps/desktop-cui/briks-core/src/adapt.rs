@@ -270,7 +270,7 @@ impl Controller {
         Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
-    pub fn top_ceil(&self) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(self.ladder[0].h, self.ladder[0].fps) as f64) }
+    pub fn top_ceil(&self) -> f64 { self.ceil_for(self.ladder[0]) }
     fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64) }
     /// Bitrate necessário para o nível: o mínimo de qualidade ou, se maior, o que o codificador comprovadamente não consegue
     /// baixar neste conteúdo (piso medido de bits por pixel).
@@ -503,8 +503,8 @@ mod tests {
         assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");
         // conteúdo fácil de novo: o piso some e a resolução volta
         for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360); }
-        for _ in 0..8 { c.decide(1_500_000.0); }
-        assert!(c.decide(1_500_000.0).level.h >= 1080, "voltou a 1080p");
+        for _ in 0..8 { c.decide(4_500_000.0); }
+        assert!(c.decide(4_500_000.0).level.h >= 1080, "voltou a 1080p");
     }
 
     #[test]

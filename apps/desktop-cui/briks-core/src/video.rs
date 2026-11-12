@@ -325,13 +325,14 @@ pub fn i420_to_rgba(y: &[u8], u: &[u8], v: &[u8], strides: (usize, usize, usize)
 /// Alvo de bitrate "automático" (bps) por resolução (altura) e FPS. Âncoras: 360p 0,8 · 480p 1,2 · 720p 2,5 · 1080p 4,5 ·
 /// 1440p 9 · 4K 18 Mbps a 30 FPS, interpoladas em escala logarítmica entre elas.
 pub fn auto_bitrate(h: usize, fps: u32) -> u32 {
-    const A: [(f64, f64); 6] = [(360.0, 800_000.0), (480.0, 1_200_000.0), (720.0, 2_500_000.0), (1080.0, 4_500_000.0), (1440.0, 9_000_000.0), (2160.0, 18_000_000.0)];
+    // perfis do Electron (screen-quality.ts): 720p30 = 3,5 Mbps, 1080p30 = 6; a 60 FPS 720p = 5 e 1080p = 9
+    const A: [(f64, f64); 6] = [(360.0, 1_000_000.0), (480.0, 1_800_000.0), (720.0, 3_500_000.0), (1080.0, 6_000_000.0), (1440.0, 10_000_000.0), (2160.0, 18_000_000.0)];
     let hh = (h as f64).clamp(A[0].0, A[5].0);
     let mut base = A[5].1;
     for w in A.windows(2) {
         if hh <= w[1].0 { let t = (hh / w[0].0).ln() / (w[1].0 / w[0].0).ln(); base = w[0].1 * (w[1].1 / w[0].1).powf(t); break; }
     }
-    let f = (fps.max(1) as f64 / 30.0).powf(0.75);
+    let f = (fps.max(1) as f64 / 30.0).powf(0.55);
     (base * f) as u32
 }
 
@@ -458,6 +459,61 @@ mod bench {
             let mut okd = 0; for a in &aus { if a.is_empty() { continue; } match dec.decode(a) { Ok(Some(_)) => okd += 1, Ok(None) => {}, Err(e) => eprintln!("erro em au de {} bytes: {e}", a.len()) } } eprintln!("decodificou {okd} de {}", aus.len());
             let d = t.elapsed().as_secs_f64() * 50.0;
             eprintln!("[{}] {sw}x{sh}->{dw}x{dh}: conversão {conv:.1} ms (CPU {ccpu:.1} ms), codificação (quadro parado) {e:.1} ms, decodificação+RGBA {d:.1} ms", enc.name);
+        }
+    }
+}
+
+/// Medição de qualidade de tela (ignorado; rode com `--ignored --nocapture`): quadro 1080p com "texto de interface" e uma faixa que
+/// anda (como a linha do tempo do Premiere); PSNR do que sai do decodificador contra a fonte, por bitrate. Variáveis de diagnóstico:
+/// BRIKS_ENC_VBV_MS, BRIKS_ENC_PROFILE, BRIKS_ENCODER.
+#[cfg(test)]
+mod qualidade {
+    use super::*;
+
+    fn glyph(cell: u32) -> [u8; 7] { let mut x = cell.wrapping_mul(2654435761).wrapping_add(12345); let mut g = [0u8; 7]; for r in &mut g { x ^= x << 13; x ^= x >> 17; x ^= x << 5; *r = (x & 0x1f) as u8 | 0x04; } g }
+    fn tela(w: usize, h: usize, t: usize) -> Vec<u8> {
+        let mut f = vec![0u8; w * h * 4];
+        for y in 0..h { for x in 0..w { let o = (y * w + x) * 4; let (b, g, r) = if y < 40 { (60, 40, 40) } else if x < 300 { (45, 40, 38) } else if y > h - 300 { (30, 28, 28) } else { (38, 36, 36) }; f[o] = b; f[o + 1] = g; f[o + 2] = r; f[o + 3] = 255; } }
+        fn put(f: &mut [u8], w: usize, h: usize, x0: usize, y0: usize, cell: u32, col: (u8, u8, u8)) { let gl = glyph(cell); for (ry, bits) in gl.iter().enumerate() { for rx in 0..5 { if bits >> rx & 1 == 1 { for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] { let (px, py) = (x0 + rx * 2 + dx, y0 + ry * 2 + dy); if px < w && py < h { let o = (py * w + px) * 4; f[o] = col.0; f[o + 1] = col.1; f[o + 2] = col.2; } } } } } }
+        // texto: linhas de "palavras" em todos os painéis (menus, propriedades, lista de arquivos)
+        for ln in 0..70 { for c in 0..(w / 14) { if (c * 7 + ln * 3) % 11 < 8 { put(&mut f, w, h, c * 14 + 6, 56 + ln * 14, (ln * 977 + c * 31) as u32, (225, 225, 225)); } } }
+        // a parte que anda: faixa de "clipes" que desliza 6 px por quadro e um relógio que muda
+        let off = (t * 6) % 600;
+        for k in 0..30 { let x0: usize = 320 + k * 60; let xx = x0.saturating_sub(off % 60); if xx + 40 < w { for y in (h - 280)..(h - 40) { for x in xx..xx + 40 { let o = (y * w + x) * 4; f[o] = 140; f[o + 1] = 90 + (k * 5) as u8; f[o + 2] = 60; } } } }
+        for c in 0..8 { put(&mut f, w, h, w - 140 + c * 14, 10, (t * 13 + c * 7) as u32, (255, 255, 255)); }
+        f
+    }
+    fn media(rgba: &[u8], f: &[u8]) -> f64 { let mut e = f.to_vec(); for p in e.chunks_mut(4) { p.swap(0, 2); } psnr(&e, rgba) }
+
+    /// amplia RGBA (sw x sh) para (dw x dh) com filtro bilinear, como a GPU faz ao desenhar a imagem no palco
+    fn amplia(src: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<u8> {
+        let mut o = vec![255u8; dw * dh * 4];
+        for y in 0..dh { let fy = ((y as f32 + 0.5) * sh as f32 / dh as f32 - 0.5).clamp(0.0, sh as f32 - 1.001); let (y0, ty) = (fy as usize, fy.fract());
+            for x in 0..dw { let fx = ((x as f32 + 0.5) * sw as f32 / dw as f32 - 0.5).clamp(0.0, sw as f32 - 1.001); let (x0, tx) = (fx as usize, fx.fract());
+                for c in 0..3 { let g = |xx: usize, yy: usize| src[(yy * sw + xx) * 4 + c] as f32; let v = (g(x0, y0) * (1.0 - tx) + g(x0 + 1, y0) * tx) * (1.0 - ty) + (g(x0, y0 + 1) * (1.0 - tx) + g(x0 + 1, y0 + 1) * tx) * ty; o[(y * dw + x) * 4 + c] = v as u8; } } }
+        o
+    }
+
+    #[test]
+    #[ignore]
+    fn psnr_da_tela_por_bitrate() {
+        let (w, h) = (1920usize, 1080usize);
+        let lista: Vec<(u32, usize)> = std::env::var("BRIKS_Q_CASOS").unwrap_or("2.5:1080,4.5:1080,6:1080,10:1080".into()).split(',').map(|v| { let (a, b) = v.split_once(':').unwrap(); ((a.parse::<f64>().unwrap() * 1e6) as u32, b.parse::<usize>().unwrap()) }).collect();
+        for (bps, eh) in lista {
+            let ew = eh * 16 / 9 / 2 * 2;
+            let mut enc = H264Enc::new(ew, eh, 30.0, bps).unwrap();
+            let mut dec = H264Dec::new().unwrap();
+            let (mut bytes, mut psnr_idr, mut psnr_fim, mut kb_idr) = (0usize, 0.0f64, 0.0f64, 0usize);
+            for t in 0..90 {
+                let f = tela(w, h, t);
+                let yuv = bgra_to_i420(&f, w, h, ew, eh);
+                for au in enc.encode(&yuv).unwrap() {
+                    bytes += au.len();
+                    if t == 0 { kb_idr += au.len(); }
+                    if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() { let up = if (dw, dh) == (w, h) { rgba.to_vec() } else { amplia(rgba, dw, dh, w, h) }; let p = media(&up, &f); if t == 0 { psnr_idr = p; } psnr_fim = p; }
+                }
+            }
+            eprintln!("[{}] {:.1} Mbps em {}p: real {:.2} Mbps, IDR {} KB PSNR {:.1} dB, PSNR no quadro 90 (ampliado a 1080p) {:.1} dB", enc.name, bps as f64 / 1e6, eh, bytes as f64 * 8.0 / 3.0 / 1e6, kb_idr / 1024, psnr_idr, psnr_fim);
         }
     }
 }

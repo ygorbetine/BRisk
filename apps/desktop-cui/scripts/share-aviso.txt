@@ -3,7 +3,7 @@ waitms 1500
 expect share_notice 1
 expect share_mode 0
 shot aviso-1-apareceu
-click 778 112
+click 785 147
 waitms 600
 expect share_mode 1
 expect share_notice 0

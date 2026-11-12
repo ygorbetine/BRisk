@@ -126,15 +126,21 @@ impl Shared {
     }
 }
 
-/// Prévia local: reduz (vizinho mais próximo) para no máximo 1280 de largura e troca BGRA → RGBA.
+/// Prévia local: reduz para no máximo 1280 de largura (média da área coberta por cada pixel novo; o vizinho mais próximo
+/// pulava pixels e deixava o texto serrilhado e quebrado) e troca BGRA → RGBA.
 fn preview_rgba(bgra: &[u8], stride: usize, w: usize, h: usize) -> (usize, usize, Vec<u8>) {
     let sc = (w as f32 / 1280.0).max(1.0);
     let (pw, ph) = (((w as f32 / sc) as usize).max(2) & !1, ((h as f32 / sc) as usize).max(2) & !1);
     let mut out = vec![255u8; pw * ph * 4];
-    let xs: Vec<usize> = (0..pw).map(|x| ((x as f32 * sc) as usize).min(w - 1) * 4).collect();
+    let span = |i: usize, n: usize| { let a = (i as f32 * sc) as usize; (a.min(n - 1), (((i + 1) as f32 * sc).ceil() as usize).clamp(a + 1, n)) };
+    let xs: Vec<(usize, usize)> = (0..pw).map(|x| span(x, w)).collect();
     for (y, row) in out.chunks_exact_mut(pw * 4).enumerate() {
-        let src = &bgra[((y as f32 * sc) as usize).min(h - 1) * stride..];
-        for (px, &o) in row.chunks_exact_mut(4).zip(xs.iter()) { px[0] = src[o + 2]; px[1] = src[o + 1]; px[2] = src[o]; }
+        let (y0, y1) = span(y, h);
+        for (px, &(x0, x1)) in row.chunks_exact_mut(4).zip(xs.iter()) {
+            let (mut b, mut g, mut r, mut n) = (0u32, 0u32, 0u32, 0u32);
+            for yy in y0..y1 { let src = &bgra[yy * stride..]; for xx in x0..x1 { let o = xx * 4; b += src[o] as u32; g += src[o + 1] as u32; r += src[o + 2] as u32; n += 1; } }
+            px[0] = (r / n) as u8; px[1] = (g / n) as u8; px[2] = (b / n) as u8;
+        }
     }
     (pw, ph, out)
 }
@@ -327,15 +333,21 @@ impl Capture {
             SourceKind::Screen(h) => {
                 if refuses_primary(h) { return Err(anyhow!("teste: a tela principal está bloqueada (BRIKS_SHARE_NO_PRIMARY)")); }
                 let m = Monitor::from_raw_hmonitor(h as *mut std::ffi::c_void);
-                let s = Settings::new(m, CursorCaptureSettings::WithCursor, DrawBorderSettings::Default, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
-                let c: CaptureControl<Handler, _> = Handler::start_free_threaded(s).map_err(|e| anyhow!("captura de tela: {e}"))?;
+                let mk = |b: DrawBorderSettings| Settings::new(m, CursorCaptureSettings::WithCursor, b, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
+                let c: CaptureControl<Handler, _> = match Handler::start_free_threaded(mk(DrawBorderSettings::WithoutBorder)) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("captura sem contorno amarelo indisponível ({e}); usando o contorno padrão"); Handler::start_free_threaded(mk(DrawBorderSettings::Default)).map_err(|e| anyhow!("captura de tela: {e}"))? }
+                };
                 Handle::Wgc(Box::new(move || { let _ = c.stop(); }))
             }
             SourceKind::Window(h) => {
                 let w = Window::from_raw_hwnd(h as *mut std::ffi::c_void);
                 if !w.is_valid() { return Err(anyhow!("janela não existe mais")); }
-                let s = Settings::new(w, CursorCaptureSettings::WithCursor, DrawBorderSettings::Default, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
-                let c: CaptureControl<Handler, _> = Handler::start_free_threaded(s).map_err(|e| anyhow!("captura de janela: {e}"))?;
+                let mk = |b: DrawBorderSettings| Settings::new(w, CursorCaptureSettings::WithCursor, b, SecondaryWindowSettings::Default, interval, DirtyRegionSettings::Default, ColorFormat::Bgra8, shared.clone());
+                let c: CaptureControl<Handler, _> = match Handler::start_free_threaded(mk(DrawBorderSettings::WithoutBorder)) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("captura sem contorno amarelo indisponível ({e}); usando o contorno padrão"); Handler::start_free_threaded(mk(DrawBorderSettings::Default)).map_err(|e| anyhow!("captura de janela: {e}"))? }
+                };
                 Handle::Wgc(Box::new(move || { let _ = c.stop(); }))
             }
         };
@@ -476,5 +488,21 @@ mod guard_tests {
         assert!(saw_primary, "sem monitor principal na enumeração");
         std::env::remove_var("BRIKS_SHARE_NO_PRIMARY");
         for s in &screens { assert!(!super::refuses_primary(s["id"].as_str().unwrap().parse().unwrap()), "com a trava desligada nada é recusado"); }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    /// listras de 1 px (preto/branco): a média da área dá cinza em todo o quadro, sem pixel puro (o vizinho mais próximo dava só preto/branco).
+    #[test]
+    fn preview_downscale_averages_instead_of_dropping_pixels() {
+        let (w, h) = (1920usize, 1080usize);
+        let mut f = vec![255u8; w * h * 4];
+        for y in 0..h { for x in 0..w { let v = if x % 2 == 0 { 0 } else { 255 }; let o = (y * w + x) * 4; f[o] = v; f[o + 1] = v; f[o + 2] = v; } }
+        let (pw, ph, out) = preview_rgba(&f, w * 4, w, h);
+        assert_eq!((pw, ph), (1280, 720));
+        let pure = out.chunks(4).filter(|p| p[0] == 0 || p[0] == 255).count();
+        assert!(pure * 10 < out.len() / 4, "{pure} pixels puros de {}", out.len() / 4);
     }
 }

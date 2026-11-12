@@ -13,6 +13,9 @@ mod adapt;
 mod camera;
 mod capture;
 mod video;
+mod codec;
+#[cfg(feature = "vpx")]
+mod vpx;
 mod gpuconv;
 mod friend_invite;
 mod group_sync;

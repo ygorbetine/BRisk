@@ -7,6 +7,7 @@
 #include "msgui.h"
 #include "attach.h"
 #include "call.h"
+#include "ginvite.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -74,8 +75,10 @@ static void dm_open_link(app_state_t *s, const person_t *f) {
 bool chat_dm_wants_session(const app_state_t *s) { return s->acct_user_id[0] && !s->acct_demo && core_state() == CORE_READY; }
 
 static char g_inbox_for[64];
+static void ob_tick(app_state_t *s);
 void chat_dm_tick(app_state_t *s) {
     if (!s->rtc_session_ready || !chat_dm_wants_session(s)) { if (!s->rtc_session_ready) g_inbox_for[0] = 0; return; }
+    ob_tick(s);
     if (!strcmp(g_inbox_for, s->acct_user_id)) return;
     snprintf(g_inbox_for, sizeof g_inbox_for, "%s", s->acct_user_id);
     char uid[100], line[200]; json_escape(s->acct_user_id, uid, sizeof uid);
@@ -102,6 +105,69 @@ void chat_dm_wake(app_state_t *s, const char *fp) {
     core_send(line);
 }
 
+/* ---- fila de envio no aparelho (outbox.rs do core): pendente -> enviada (saiu pelo canal) -> entregue (ACK) ou falhou ----
+ * O core guarda, cifrado neste PC, o que ainda não foi entregue; aqui ficam só os ids e para quem, para os tiques e para reabrir o canal
+ * direto quando o amigo ficar online. Nada de conteúdo sobe ao servidor. */
+#define OB_N 512
+static struct { char id[72], fp[72]; } g_pend[OB_N]; static int g_pend_n;
+static char g_dlv[OB_N][72]; static int g_dlv_n;
+static char g_fld[OB_N][72]; static int g_fld_n;
+static bool ob_in(char (*a)[72], int n, const char *id) { for (int i = 0; i < n; i++) if (!strcmp(a[i], id)) return true; return false; }
+static void ob_push(char (*a)[72], int *n, const char *id) {
+    if (!id[0] || ob_in(a, *n, id)) return;
+    if (*n >= OB_N) { memmove(a[0], a[1], 72 * (OB_N - 1)); (*n)--; }
+    snprintf(a[(*n)++], 72, "%s", id);
+}
+static void ob_del(char (*a)[72], int *n, const char *id) { for (int i = 0; i < *n; i++) if (!strcmp(a[i], id)) { memmove(a[i], a[i + 1], 72 * (size_t)(*n - i - 1)); (*n)--; return; } }
+static int pend_find(const char *id) { for (int i = 0; i < g_pend_n; i++) if (!strcmp(g_pend[i].id, id)) return i; return -1; }
+static void pend_add(const char *id, const char *fp) {
+    if (!id[0] || pend_find(id) >= 0) return;
+    if (g_pend_n >= OB_N) { memmove(&g_pend[0], &g_pend[1], sizeof g_pend[0] * (OB_N - 1)); g_pend_n--; }
+    snprintf(g_pend[g_pend_n].id, 72, "%s", id); snprintf(g_pend[g_pend_n].fp, 72, "%s", fp); g_pend_n++;
+}
+int chat_pending_for_fp(const char *fp) { int n = 0; for (int i = 0; i < g_pend_n; i++) if (!strcmp(g_pend[i].fp, fp)) n++; return n; }
+
+/* refaz relógio/tiques das mensagens que estão na tela (depois de reabrir o app ou quando o estado do core chega) */
+static bool ob_apply(app_state_t *s) {
+    bool ch = false;
+    for (int i = 0; i < s->msg_count; i++) {
+        if (!s->msgs[i].mine) continue;
+        const char *id = s->msgs[i].id; const int st = attach_state(id);
+        const int want = pend_find(id) >= 0 ? ATT_SENT : ob_in(g_dlv, g_dlv_n, id) ? ATT_DELIVERED : ob_in(g_fld, g_fld_n, id) ? ATT_FAILED : 0;
+        if (!want || st == want || st == ATT_SENDING) continue;
+        if (want == ATT_SENT && (st == ATT_WIRE || st == ATT_DELIVERED)) continue;   /* já mais adiante nesta sessão */
+        attach_mark(id, want); ch = true;
+    }
+    return ch;
+}
+bool chat_outbox_event(app_state_t *s, const jval *j) {   /* outbox.state do core */
+    g_pend_n = g_dlv_n = g_fld_n = 0;
+    const jval *p = json_get(j, "pending"), *d = json_get(j, "delivered"), *f = json_get(j, "failed");
+    for (int i = 0; p && i < json_len(p); i++) { const jval *e = json_at(p, i); pend_add(json_str(e, "id", ""), json_str(e, "to_fp", "")); }
+    for (int i = 0; d && i < json_len(d); i++) { const jval *e = json_at(d, i); if (e && e->type == J_STR) ob_push(g_dlv, &g_dlv_n, e->str); }
+    for (int i = 0; f && i < json_len(f); i++) { const jval *e = json_at(f, i); if (e && e->type == J_STR) ob_push(g_fld, &g_fld_n, e->str); }
+    return ob_apply(s);
+}
+void chat_outbox_acked(const char *id) {   /* chat.ack: entregue */
+    const int k = id[0] ? pend_find(id) : -1;
+    if (k >= 0) { memmove(&g_pend[k], &g_pend[k + 1], sizeof g_pend[0] * (size_t)(g_pend_n - k - 1)); g_pend_n--; }
+    if (id[0]) { ob_push(g_dlv, &g_dlv_n, id); ob_del(g_fld, &g_fld_n, id); }
+}
+
+/* a cada ~4 s: com mensagem pendente para um amigo que está online (presença) e fora da sala, reabre o canal direto (toque na caixa dele);
+ * é o caminho da 1.4.1/1.4.2 (dm.open, malha só de DataChannel) e o core entrega a fila ao autenticar. A cada 30 s relê a fila do core
+ * (o que passou de 30 dias vira "falhou"). */
+static void ob_tick(app_state_t *s) {
+    static ULONGLONG t_open, t_get; const ULONGLONG now = GetTickCount64();
+    if (!t_get || now - t_get > 30000) { t_get = now; core_send("{\"cmd\":\"outbox.get\"}"); }
+    if (now - t_open < 4000 || !g_pend_n) return;
+    t_open = now;
+    for (int i = 0; i < g_pend_n; i++) {
+        const person_t *f = friend_by_fp(s, g_pend[i].fp);
+        if (f && friends_online(s, f) && !in_call_with(s, f->fp)) dm_open_link(s, f);
+    }
+}
+
 /* mensagens recebidas: fila gravada no backend local (INSERT OR IGNORE: o mesmo id nunca duplica) */
 typedef struct { char channel[160], id[72], author[96], content[1100], created[40]; } inmsg_t;
 static inmsg_t g_in[64]; static int g_in_n; static char g_in_cur[160]; static bool g_in_touch;
@@ -122,6 +188,11 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
     if (!f) { if (!history) notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), content); return false; }   /* quem não é amigo: sem histórico, só o aviso de antes */
     if (!id_ok(id) || !content[0]) return false;
     const jval *mv = json_get(j, "mine"); const bool mine = history && mv && mv->type == J_BOOL && mv->b;
+    char shown[640], summ[160]; const char *notif = content;
+    if (ginvite_is(content)) {   /* convite de grupo: o código fica só em invites.dat; na conversa e no banco vai o texto curto */
+        if (!ginvite_receive(s, id, f->id, content, mine, shown, sizeof shown)) return false;
+        ginvite_summary(shown, summ, sizeof summ); notif = summ; content = shown;
+    }
     char ch[160]; dm_channel(s, f->id, ch, sizeof ch);
     const bool active = !strcmp(ch, s->chat_channel) || (s->active_friend >= 0 && s->active_friend < s->friend_count && &s->friends[s->active_friend] == f);
     if (active) for (int i = 0; i < s->msg_count; i++) if (!strcmp(s->msgs[i].id, id)) return false;   /* já está na tela */
@@ -133,7 +204,7 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
         for (int i = 0; i < 16; i++) if (!strcmp(seen[i], id)) dup = true;
         if (dup) return false;
         snprintf(seen[sn++ % 16], sizeof seen[0], "%s", id);
-        notify_chat_message(s, ch, author, content);
+        notify_chat_message(s, ch, author, notif);
     }
     if (!s->token[0]) {   /* sem backend (capturas e testes de tela): só mostra */
         if (active && s->msg_count < MAX_MSGS) add_msg(s, id, author, content, iso, mine);
@@ -146,7 +217,42 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
     return false;
 }
 
+/* mensagens que a UI mesma escreve (convite de grupo): o core recebe na hora (fila local), o banco de mensagens quando estiver livre */
+typedef struct { char channel[160], id[72], shown[640], created[40]; } outmsg_t;
+static outmsg_t g_out[8]; static int g_out_n;
+bool chat_dm_post(app_state_t *s, int fi, const char *wire, const char *package) {
+    if (fi < 0 || fi >= s->friend_count || !s->friends[fi].fp[0] || core_state() != CORE_READY || g_out_n >= 8) return false;
+    const person_t *f = &s->friends[fi];
+    char id[40], iso[40], shown[640]; new_id(id, sizeof id); now_iso(iso, sizeof iso);
+    snprintf(shown, sizeof shown, "%s", wire);
+    if (ginvite_is(wire) && !ginvite_receive(s, id, f->id, wire, true, shown, sizeof shown)) return false;
+    const size_t pl = package ? strlen(package) : 0, cap = strlen(wire) * 2 + pl * 2 + 400;
+    char *line = malloc(cap), *t = malloc(strlen(wire) * 2 + 8), *pk = malloc(pl * 2 + 8); if (!line || !t || !pk) { free(line); free(t); free(pk); return false; }
+    char fp[160]; json_escape(f->fp, fp, sizeof fp); json_escape(wire, t, strlen(wire) * 2 + 8); pk[0] = 0; if (pl) json_escape(package, pk, pl * 2 + 8);
+    /* o pacote (convite de grupo, ~32 KB) vai em campo próprio, nunca no texto da mensagem (limite de 4000 caracteres) */
+    if (pl) snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\",\"package\":\"%s\"}", fp, id, t, pk);
+    else snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
+    if (!in_call_with(s, f->fp)) dm_open_link(s, f);
+    core_send(line); free(line); free(t); free(pk);
+    pend_add(id, f->fp); attach_mark(id, ATT_SENT);
+    outmsg_t *o = &g_out[g_out_n++]; dm_channel(s, f->id, o->channel, sizeof o->channel);
+    snprintf(o->id, sizeof o->id, "%s", id); snprintf(o->shown, sizeof o->shown, "%s", shown); snprintf(o->created, sizeof o->created, "%s", iso);
+    return true;
+}
+static void out_pump(app_state_t *s) {
+    if (!g_out_n || !s->token[0] || s->busy) return;
+    outmsg_t o = g_out[0]; memmove(&g_out[0], &g_out[1], sizeof g_out[0] * (size_t)(g_out_n - 1)); g_out_n--;
+    char a[200], c[1400], b[2200], path[256];
+    json_escape(s->user_name, a, sizeof a); json_escape(o.shown, c, sizeof c);
+    snprintf(b, sizeof b, "{\"id\":\"%s\",\"channelId\":\"%s\",\"author\":\"%s\",\"content\":\"%s\",\"createdAt\":\"%s\",\"reactions\":{}}", o.id, o.channel, a, c, o.created);
+    snprintf(path, sizeof path, "/p2p/messages/%s", o.channel);
+    if (!strcmp(o.channel, s->chat_channel)) add_msg(s, o.id, s->user_name, o.shown, o.created, true);
+    attach_set_inflight(o.id);
+    app_begin(s, OP_MSG_SEND, "POST", path, b);
+}
+
 void chat_in_pump(app_state_t *s) {
+    out_pump(s); if (s->busy) return;
     if (!g_in_n || !s->token[0]) return;
     inmsg_t m = g_in[0]; memmove(&g_in[0], &g_in[1], sizeof g_in[0] * (size_t)(g_in_n - 1)); g_in_n--;
     char a[240], c[2200], b[3000], path[256];
@@ -171,6 +277,10 @@ static void add_msg(app_state_t *s, const char *id, const char *author, const ch
 
 void app_send_message(app_state_t *s) {
     if (s->busy || !s->draft[0] || !s->chat_channel[0]) return;
+    if (!strncmp(s->draft, "briks-grp1.", 11)) {   /* o convite longo não cabe numa mensagem de texto (a caixa corta em 255 caracteres e ele chegaria corrompido) */
+        snprintf(s->notice, sizeof s->notice, "Convite de grupo não vai como texto: use Convidar no grupo (envia o cartão com o código inteiro) ou cole o código em Entrar com convite.");
+        settings_notice(s->notice); return;
+    }
     char id[40], iso[40], a[200], c[1100], b[1700], path[256];
     new_id(id, sizeof id); now_iso(iso, sizeof iso);
     json_escape(s->user_name, a, sizeof a); json_escape(s->draft, c, sizeof c);
@@ -187,6 +297,7 @@ void app_send_message(app_state_t *s) {
      * (toque na caixa de chegada dele, depois malha P2P só de DataChannel); sem ele online a mensagem espera na caixa de saída deste PC.
      * Estados da mensagem: só neste PC (check) -> enviada (chat.sent) -> entregue (chat.ack, check duplo). */
     if (s->active_friend >= 0 && s->active_friend < s->friend_count && s->friends[s->active_friend].fp[0] && core_state() == CORE_READY) {
+        pend_add(id, s->friends[s->active_friend].fp);   /* pendente até o ACK (o core guarda a cópia assinada em disco) */
         if (!in_call_with(s, s->friends[s->active_friend].fp)) dm_open_link(s, &s->friends[s->active_friend]);
         char fp[160], t[1100], line[1500]; json_escape(s->friends[s->active_friend].fp, fp, sizeof fp); json_escape(c_text, t, sizeof t);
         snprintf(line, sizeof line, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
@@ -228,6 +339,7 @@ void app_load_messages(app_state_t *s, const char *body) {
             add_msg(s, json_str(m, "id", ""), author, json_str(m, "content", ""), json_str(m, "createdAt", ""), !strcmp(author, s->user_name));
     }
     json_free(j);
+    ob_apply(s);   /* depois de reabrir o app: relógio/tiques voltam do que o core guardou */
 }
 
 void app_create_group(app_state_t *s) {

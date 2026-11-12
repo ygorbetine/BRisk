@@ -622,7 +622,7 @@ void attach_state_tag(cui_ctx *ui, app_state_t *s, const msg_t *m) { g_ps = s;
         const char *tip = st == ATT_SENDING ? "Gravando neste PC…"
                         : st == ATT_DELIVERED ? "Entregue"
                         : st == ATT_WIRE ? "Enviada: já saiu para o seu amigo"
-                        : dm ? "Só neste PC: o seu amigo ainda não recebeu (segue quando os dois estiverem online)" : "Salva neste PC";
+                        : dm ? "Pendente: guardada neste PC; segue sozinha quando o seu amigo estiver online (sem servidor)" : "Salva neste PC";
         cui_push_id(ui, "stt");
         cui_box(ui, .id = "ic", .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad = 2) { cui_icon(ui, ic, 12, col); }
         if (briks_hover(ui, "ic")) briks_tip(tip);

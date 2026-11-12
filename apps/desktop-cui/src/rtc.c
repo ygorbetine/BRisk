@@ -2,6 +2,7 @@
 #include "briks_ui.h"
 #include "call_idle.h"
 #include "core.h"
+#include "ginvite.h"
 #include "json.h"
 #include "msgui.h"
 #include "attach.h"
@@ -311,7 +312,19 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
             copy(s->rtc_peers[i].status, sizeof s->rtc_peers[i].status, json_str(j, "status", ""));
             copy(s->rtc_peers[i].presence, sizeof s->rtc_peers[i].presence, json_str(j, "presence", ""));
         }
+    } else if (!strcmp(ev, "hello.ok")) {   /* o core diz o nível do protocolo: abaixo do exigido é um core de outra versão (órfão ou briks-core.exe velho) */
+        const jval *pv = json_get(j, "core_proto"); const int p = pv && pv->type == J_NUM ? (int)pv->num : 0; core_set_proto(p);
+        if (p < BRIKS_CORE_PROTO_MIN) {
+            snprintf(s->notice, sizeof s->notice, "O motor do Briks em execução é de outra versão (nível %d, o programa pede %d). Feche o Briks por completo (e briks-core.exe no Gerenciador de Tarefas) e abra de novo; se continuar, reinstale.", p, BRIKS_CORE_PROTO_MIN);
+            settings_notice(s->notice); changed = true;
+        }
+    } else if (!strcmp(ev, "chat.invite")) {   /* o pacote do convite de grupo (campo estruturado, byte a byte) logo depois do cartão curto */
+        ginvite_set_code(json_str(j, "id", ""), json_str(j, "package", ""));
+        changed = true;
+    } else if (!strcmp(ev, "outbox.state")) {   /* fila de envio guardada no PC (pendentes/entregues/falhas) */
+        changed = chat_outbox_event(s, j);
     } else if (!strcmp(ev, "file") || !strcmp(ev, "link.preview") || !strcmp(ev, "chat.typing") || !strcmp(ev, "chat.ack") || !strcmp(ev, "chat.sent")) {
+        if (!strcmp(ev, "chat.ack")) chat_outbox_acked(json_str(j, "id", ""));
         changed = attach_event(s, ev, j);
     } else if (!strcmp(ev, "chat.link")) {   /* chat privado fechado/reaberto pelo core (AMI-16) */
         const jval *on = json_get(j, "on"); friends_dm_link(s, json_str(j, "fp", ""), on && on->type == J_BOOL && on->b); changed = true;

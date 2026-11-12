@@ -115,7 +115,7 @@ typedef struct {
     bool unfriend_open; char unfriend_id[48], unfriend_name[96]; bool blocked_loaded;
     struct { char id[48]; bool online; } pres[MAX_FRIENDS]; int pres_n; bool pres_remote;   /* presença por batimento (0007): quem está online; pres_remote=false = servidor sem a 0007 */
     char my_jwk[260];                                                                         /* minha chave pública (session.ready), compacta */
-    bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768]; char ginv_short[24], ginv_short_msg[200]; int ginv_short_st;   /* 1.4.1: código curto BRK-XXXX-XXXX (0=ainda não, 1=pedindo, 2=pronto, 3=indisponível) */   /* convite de grupo: colar e entrar / mostrar o código */
+    bool join_open, ginv_open, ginv_wait; char join_err[160]; char *ginv_code; char join_code[32768]; char ginv_short[24], ginv_short_msg[200]; int ginv_short_st; unsigned long long ginv_short_t0;   /* 1.4.1: código curto BRK-XXXX-XXXX (0=ainda não, 1=pedindo, 2=pronto, 3=indisponível) */   /* convite de grupo: colar e entrar / mostrar o código */
     char gnick[32], gnick_msg[140]; person_t gnick_hit; bool gnick_found;                       /* convite por @nick (friends.lookup): busca e resultado */
     bool notify_off; char ginv_q[48];                                                         /* avisos de amigo online (desligável) · busca na lista de convite do grupo */
     bool invisible;                                                                          /* "Aparecer offline": o batimento segue, mas os amigos não me veem (profile.json) */
@@ -302,6 +302,11 @@ void chat_in_pump(app_state_t *s);                                          /* a
 void chat_in_done(app_state_t *s);                                          /* a gravação terminou: recarrega a conversa aberta */
 void chat_dm_wake(app_state_t *s, const char *fp);                          /* dm.wake: um amigo me tocou */
 bool chat_dm_wants_session(const app_state_t *s);                           /* a sessão do core (identidade) é precisa para receber DMs */
+bool chat_outbox_event(app_state_t *s, const struct jval *j);                /* outbox.state do core: refaz os tiques das mensagens na tela */
+void chat_outbox_acked(const char *id);                                      /* chat.ack: a mensagem foi entregue */
+int  chat_pending_for_fp(const char *fp);                                    /* quantas mensagens minhas esperam esse amigo (fila neste PC) */
+void chat_dm_channel(const app_state_t *s, const char *peer, char *out, size_t cap);   /* canal "dm-a-b" da conversa com o amigo */
+bool chat_dm_post(app_state_t *s, int friend_idx, const char *text, const char *package);   /* package: campo estruturado (convite de grupo) ou NULL */        /* envia pela fila local da DM (core) e grava no banco; false se não deu */
 void chat_dm_tick(app_state_t *s);                                          /* abre a minha caixa de chegada ao entrar na conta */
 void chat_dm_reset(app_state_t *s);                                         /* saiu da conta: fecha caixa e canais */
 void app_load_groups(app_state_t *s, const char *body);

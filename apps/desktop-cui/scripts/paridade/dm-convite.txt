@@ -1,0 +1,20 @@
+# 1.4.4: convite de grupo pela DM: cartão com Entrar/Recusar, sem duplicar (mesmo id), contador de pendentes; o código não vai para a conversa.
+waitms 600
+expect screen 1
+expect msg_count 3
+shot conv0-sem
+coreev {"ev":"chat.message","channel":"dm-x","from_fp":"fp-demo-0","author":"Marina Costa","content":"briks-invite:1|grp-conv-0001|Noite de jogos|Marina Costa","id":"inv-0001","ts":1794267900000,"via":"dm"}
+waitms 400
+expect msg_count 4
+expect ginv_total 1
+expect ginv_from0 1
+expect ginv_st 0
+expect ginv_codelen 0
+coreev {"ev":"chat.invite","channel":"dm-x","from_fp":"fp-demo-0","id":"inv-0001","package":"briks-grp1.AbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYzAbC_-09xYz"}
+waitms 300
+expect ginv_codelen 891
+shot conv1-cartao
+coreev {"ev":"chat.message","channel":"dm-x","from_fp":"fp-demo-0","author":"Marina Costa","content":"briks-invite:1|grp-conv-0001|Noite de jogos|Marina Costa","id":"inv-0001","ts":1794267900000,"via":"dm"}
+waitms 300
+expect msg_count 4
+expect ginv_total 1

@@ -94,7 +94,13 @@ pub struct ChatWire {
     pub timestamp: u64,
     #[serde(default)]
     pub signature: String,
+    /// Convite de grupo (código `briks-grp1.…`, até ~45 KB): campo ESTRUTURADO ao lado do texto curto assinado, nunca dentro do texto da mensagem.
+    /// Não entra na assinatura da mensagem (o pacote já é assinado pelo dono do grupo e só vale para o destinatário: `group.verify`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
 }
+
+pub const MAX_PACKAGE_BYTES: usize = 45_000;   // cabe com folga no limite de 64 KiB de uma mensagem do DataChannel
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,7 +183,7 @@ mod tests {
     fn sample(id: &Identity) -> ChatWire {
         sign_message(id, ChatWire {
             version: 2, kind: "chat.message".into(), channel_id: "dm-x".into(), id: "0b1c2d3e-aaaa-bbbb-cccc-111122223333".into(),
-            author_peer_id: "peer-a".into(), author: "Ygor".into(), content: "olá, açaí".into(), timestamp: 1_700_000_000_000, signature: String::new(),
+            author_peer_id: "peer-a".into(), author: "Ygor".into(), content: "olá, açaí".into(), timestamp: 1_700_000_000_000, signature: String::new(), package: None,
         })
     }
 

@@ -23,6 +23,8 @@ static const notes_t NOTES[] = {
     { "1.4.4", {
         "Chamadas: o servidor de chamadas (SFU) do Briks vem configurado no instalador; no modo Automático o app usa o servidor quando ele existe e cai para ponto a ponto quando não.",
         "Transmissão: se o codificador de vídeo falhar, a transmissão se recupera sozinha (com aviso discreto) em vez de cair; o aviso de PC sem conta só aparece com sinal real de máquina lenta.",
+        "Transmissão: escolha de codec (H.264, VP9 ou VP8) nas chamadas ponto a ponto, com queda automática para H.264 se alguém não decodificar; no servidor de chamadas segue H.264.",
+        "Transmissão: clique no bloco abre em Foco, painel de qualidade que se adapta à janela, seletor de emoji com busca e participantes com avatar de quem transmite.",
         "Mensagens: convite de grupo pela conversa direta vira um cartão Entrar/Recusar; mensagens esperam na fila deste aparelho até o amigo voltar.",
         NULL } },
     { "1.4.3", {

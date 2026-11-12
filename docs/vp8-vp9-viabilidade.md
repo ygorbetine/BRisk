@@ -1,6 +1,6 @@
-# VP8 / VP9 no Briks nativo: viabilidade (1.4.2)
+# VP8 / VP9 no Briks nativo: viabilidade
 
-**Decisão: não entra na 1.4.2.** Fica documentado o motivo e o caminho para quando houver ambiente.
+**Histórico:** na 1.4.2 a análise concluiu que não era viável no ambiente de então. Na 1.4.4 o VP8/VP9 entrou na malha P2P (libvpx compilada por `scripts/build-vpx.ps1`; seção final abaixo). A análise original segue abaixo como contexto. **SFU e câmera permanecem H.264**; não foi possível provar mídia LiveKit com VP8/VP9 nesta máquina.
 
 ## Situação atual
 - Todo o vídeo (transmissão de tela, câmera, malha P2P e SFU) é **H264**: codificador do Media Foundation (hardware NVENC/Quick Sync/AMF

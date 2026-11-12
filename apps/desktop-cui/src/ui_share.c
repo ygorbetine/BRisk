@@ -271,12 +271,22 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             if (a->name[0] >= 'a' && a->name[0] <= 'z') a->name[0] -= 32;
             for (int k = 0; k < nold; k++) if (old[k].pid == a->pid) a->on = old[k].on;
         }
+    } else if (!strcmp(ev, "share.viewers")) {   /* core: {slot, count, peers:[ids]}; nunca conta o próprio usuário */
+        const int sl = jint(j, "slot") == 1 ? 1 : 0; q->vknown[sl] = true; q->viewers[sl] = jint(j, "count"); q->vnames[sl][0] = 0;
+        const jval *pl = json_get(j, "peers"); const int np = json_len(pl); int shown = 0;
+        for (int k = 0; k < np && shown < 3; k++) {
+            const jval *e = json_at(pl, k); const char *pid = e && e->type == J_STR && e->str ? e->str : "";
+            const char *nm = "Participante";
+            for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, pid) && s->rtc_peers[i].name[0]) nm = s->rtc_peers[i].name;
+            size_t l = strlen(q->vnames[sl]); snprintf(q->vnames[sl] + l, sizeof q->vnames[sl] - l, "%s%s", shown ? ", " : "", nm); shown++;
+        }
+        if (np > shown) { size_t l = strlen(q->vnames[sl]); snprintf(q->vnames[sl] + l, sizeof q->vnames[sl] - l, " e mais %d", np - shown); }
     } else if (jint(j, "slot") == 1 && (!strcmp(ev, "share.local") || !strcmp(ev, "share.stats") || !strcmp(ev, "share.hint") || !strcmp(ev, "share.rxstats") || !strcmp(ev, "share.remote"))) {
         /* 2ª tela (segundo monitor): estado próprio, mais enxuto que o da 1ª */
         if (!strcmp(ev, "share.local")) {
             if (!strcmp(json_str(j, "state", ""), "on")) { if (!q->second.active && s->screen == SCREEN_CALL) s->call_mode = 1;   /* começou a MINHA 2ª tela: vai para Transmissão (uma vez por início) */
                 q->second.active = true; q->second.starting = false; q->second.w = jint(j, "w"); q->second.h = jint(j, "h"); q->second.fps = jint(j, "fps"); q->second.kbps = jint(j, "kbps"); }
-            else { const char *why = json_str(j, "reason", ""); if (why[0]) copy(q->err, sizeof q->err, why); memset(&q->second, 0, sizeof q->second); fv_close(&g_fv[FV2(BRIKS_MAX_PEERS)]); }
+            else { const char *why = json_str(j, "reason", ""); if (why[0]) copy(q->err, sizeof q->err, why); memset(&q->second, 0, sizeof q->second); q->vknown[1] = false; q->viewers[1] = 0; fv_close(&g_fv[FV2(BRIKS_MAX_PEERS)]); }
         } else if (!strcmp(ev, "share.stats")) { q->second.kbps = jint(j, "kbps"); if (jint(j, "h")) q->second.h = jint(j, "h"); }
         else if (!strcmp(ev, "share.remote")) {
             int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) return false;
@@ -301,7 +311,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             if (q->audio_on && q->audio_muted) cmd("{\"cmd\":\"share.audio.mute\",\"muted\":true}");   /* o codificador reiniciou (mudou a qualidade): o mudo continua valendo */
             copy(q->encoder, sizeof q->encoder, json_str(j, "encoder", ""));
         } else {
-            q->active = false; q->starting = false; q->black = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
+            q->vknown[0] = false; q->viewers[0] = 0; q->active = false; q->starting = false; q->black = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
             share_stop_second(s);   /* a 2ª tela só existe junto com a 1ª */
             copy(q->err, sizeof q->err, json_str(j, "reason", ""));
         }
@@ -509,11 +519,19 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         demo = 1;
         const bool aud = !strcmp(dd, "demo-audio"); if (aud) dd = "demo-many";   /* demo-many com áudio na 1ª transmissão (barra de volume no bloco) */
         if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
-        if (!strcmp(dd, "demo-self")) {   /* MINHA transmissão no ar com prévia local (teste do aviso de qualidade reduzida): quadro sintético no arquivo da prévia */
+        if (!strcmp(dd, "demo-self") || !strcmp(dd, "demo-eye")) {   /* MINHA transmissão no ar com prévia local (teste do aviso de qualidade reduzida): quadro sintético no arquivo da prévia */
             s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; q->active = true; snprintf(q->label, sizeof q->label, "Tela 1");
             char tmpf[300], pv[300]; demo_frame(tmpf, sizeof tmpf, "self", 1280, 720, 0); preview_path(pv, sizeof pv);
             char *sl = strrchr(pv, 92); if (sl) { *sl = 0; CreateDirectoryA(pv, NULL); *sl = 92; }
             CopyFileA(tmpf, pv, FALSE);
+            if (!strcmp(dd, "demo-eye")) {   /* 2 telas minhas no ar; olho: 4 assistindo a 1ª (nomes "e mais 1"), 1 assistindo a 2ª */
+                q->second.active = true; copy(q->second.label, sizeof q->second.label, "Tela 2"); q->second.w = 1280; q->second.h = 720;
+                char t2[300], p2[300]; demo_frame(t2, sizeof t2, "self2", 1280, 720, 1); preview_path_n(p2, sizeof p2, true); CopyFileA(t2, p2, FALSE);
+                jval *v0 = json_parse("{\"ev\":\"share.viewers\",\"slot\":0,\"count\":4,\"peers\":[\"demo-0\",\"demo-1\",\"demo-2\",\"zz\"]}");
+                if (v0) { share_handle_event(s, v0, "share.viewers"); json_free(v0); }
+                jval *v1 = json_parse("{\"ev\":\"share.viewers\",\"slot\":1,\"count\":1,\"peers\":[\"demo-1\"]}");
+                if (v1) { share_handle_event(s, v1, "share.viewers"); json_free(v1); }
+            }
         }
         if (!strcmp(dd, "demo-sheen")) { s->screen = SCREEN_CALL; s->call_mode = 0; s->call_view = 0; }   /* modo Call com alguém transmitindo: brilho e avatar com thumb */
         if (!strcmp(dd, "demo-mini")) { s->screen = SCREEN_SOCIAL; s->call_mode = 0; s->call_view = 0; }   /* miniatura da lateral: duas telas no ar, usuário no menu */
@@ -539,6 +557,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     /* ganchos de teste/captura: BRIKS_DEV_SHARE=dialog | dialog-apps | dialog-windows | screen | test (uma vez, com o core pronto) */
     static int dev; const char *d = getenv("BRIKS_DEV_SHARE");
     if (d) cui_request_redraw(ui);
+    if (d && !strcmp(d, "demo-eye") && q->vknown[0] && cui_time(ui) > 3.0) { static bool done; if (!done) { done = true; q->viewers[0] = 0; snprintf(q->vnames[0], sizeof q->vnames[0], "%s", ""); q->vknown[1] = false; } }   /* depois: 1ª sem ninguém ("0"), 2ª sem dado (oculto) */
     if (d && !strcmp(d, "qual-slots")) {   /* teste (CHM-34): duas transmissões, cada uma com a sua qualidade; trocar/mudar a 2 não mexe na 1 */
         static int step; double t = cui_time(ui);
         if (step == 0 && t > 0.5) {
@@ -859,6 +878,19 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             }
             if (!modal && briks_clicked_r(ui, "b2", 25.0f)) { if (on2) share_stop_second(s); else { share_open_dialog(s); q->pick_second = true; qual_switch(q, 1); } }
         }
+        if (q->active && (q->vknown[0] || (q->second.active && q->vknown[1]))) {   /* olho: quantas pessoas assistem às minhas telas (sem dado = não aparece) */
+            vsep(ui);
+            static char ebuf[40], etip[460]; const bool two = q->second.active && q->vknown[1] && q->vknown[0];
+            if (two) snprintf(ebuf, sizeof ebuf, "%d · %d", q->viewers[0], q->viewers[1]); else snprintf(ebuf, sizeof ebuf, "%d", q->vknown[0] ? q->viewers[0] : q->viewers[1]);
+            etip[0] = 0;
+            for (int sl = 0; sl < 2; sl++) if (q->vknown[sl] && (sl == 0 || q->second.active)) {
+                size_t l = strlen(etip); snprintf(etip + l, sizeof etip - l, "%s%s%s%s", l ? "\n" : "", q->second.active ? (sl ? "Tela 2: " : "Tela 1: ") : "Assistindo: ", q->viewers[sl] ? q->vnames[sl] : "ninguém", "");
+            }
+            cui_box(ui, .id = "bey", .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                cui_icon(ui, CUI_ICON_EYE, 14, B_TEXT); cui_text(ui, ebuf, .size = 12, .nowrap = true);
+            }
+            cui_tooltip(ui, etip);
+        }
         if (q->active) {   /* "Com áudio" / "Sem áudio": liga e desliga o áudio da transmissão AO VIVO (a faixa continua aberta: nada é renegociado) */
             vsep(ui);
             const bool snd = q->audio_on && !q->audio_muted;   /* só a 1ª tela leva áudio; sem áudio desde o início não há faixa para ligar */
@@ -957,6 +989,7 @@ static bool g_prev_note_off;   /* o usuário dispensou o aviso da prévia (vale 
 static cui_rect g_trect[16];   /* retângulos das transmissões do último quadro */
 static bool g_tg_press, g_tg_release, g_tile_grid, g_tg_down; static cui_vec2 g_tg_at; static int g_tg_key = -1, g_tile_opens;   /* clique no bloco da Grade abre em Foco */
 static bool pt_in(cui_rect r, cui_vec2 p);
+static int g_eye = -1; static char g_eye_tip[220];   /* olho + número de quem assiste à minha tela neste bloco (-1 = oculto) */
 static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
     int zoom_pct = 100; bool clicked = false;
     if (compact) { chip = NULL; volume = NULL; zv = NULL; }   /* miniatura da faixa do Foco: só a imagem e o nome; clicar traz para o destaque */
@@ -989,6 +1022,12 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 8 : 12, .pad_y = compact ? 4 : 8, .align = CUI_ALIGN_CENTER });
             if (!compact) cui_icon(ui, CUI_ICON_MONITOR, 14, B_C3);
             cui_text(ui, title, .size = compact ? 11 : 14, .nowrap = true);
+            if (g_eye >= 0 && !compact && (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS))) {
+                cui_box(ui, .id = "eyec", .dir = CUI_ROW, .gap = 4, .pad_left = 8, .pad_right = 6, .pad_y = 2, .radius = 10, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER) {
+                    cui_icon(ui, CUI_ICON_EYE, 13, B_C3); cui_textf(ui, "%d", g_eye);
+                }
+                if (briks_hover(ui, "eyec")) briks_tip(g_eye_tip);
+            }
             cui_card_end(ui);
         }
         if (chip && chip[0]) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 18) { briks_status_pill(ui, chip); }
@@ -1091,6 +1130,8 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "tile_opens")) return g_tile_opens;
+    if (!strcmp(n, "eye0")) return s->sh.vknown[0] ? s->sh.viewers[0] : -1;   /* -1 = sem dado (oculto) */
+    if (!strcmp(n, "eye1")) return s->sh.vknown[1] ? s->sh.viewers[1] : -1;
     if (!strcmp(n, "share_vol0")) return (int)(s->sh.remote[0].volume * 100.0f + 0.5f);
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
@@ -1103,6 +1144,11 @@ int share_probe(const char *n, const app_state_t *s) {
 static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
     share_state_t *q = &s->sh;
     char path[300], title[200], chip[96], r[24];
+    g_eye = -1;
+    if (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS)) {
+        const int sl = key == BRIKS_MAX_PEERS ? 0 : 1;
+        if (q->vknown[sl]) { g_eye = q->viewers[sl]; snprintf(g_eye_tip, sizeof g_eye_tip, "%s", g_eye ? q->vnames[sl] : "Ninguém assistindo agora"); }
+    }
     if (key == BRIKS_MAX_PEERS) {
         preview_path(path, sizeof path);
         bool has = fv_update(ui, s, &g_fv[key], path);

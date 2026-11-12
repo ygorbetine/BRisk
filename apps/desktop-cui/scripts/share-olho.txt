@@ -1,0 +1,17 @@
+# Olho + numero de quem assiste a MINHA transmissao: 2 telas, cada uma com a sua contagem; tooltip com nomes; sem dado = oculto
+waitms 1500
+expect eye0 4
+expect eye1 1
+shot olho-1-contagens
+waitms 200
+shot olho-2
+at 734 343
+waitms 700
+shot olho-4-tooltip-tile
+at 874 718
+waitms 700
+shot olho-5-tooltip-barra
+waitms 2500
+expect eye0 0
+expect eye1 -1
+shot olho-3-zero-e-oculto

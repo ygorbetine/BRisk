@@ -293,7 +293,10 @@ impl AuthProvider for SupabaseProvider {
         self.rpc(access_token, "group_invite_create", json!({ "p_package": package, "p_ttl_hours": ttl_hours, "p_max_uses": max_uses }))
     }
     fn group_invite_lookup(&self, access_token: &str, code: &str) -> AResult<Value> {
-        self.rpc(access_token, "group_invite_lookup", json!({ "p_code": code }))
+        let v = self.rpc(access_token, "group_invite_lookup", json!({ "p_code": code }))?;
+        // 0011: o servidor devolve {"error": "<código>"} (e não exceção) para a tentativa falha contar no limite por hora
+        if let Some(err) = v["error"].as_str() { return Err(map_error(400, &json!({ "message": err }))); }
+        Ok(v)
     }
     fn set_status(&self, access_token: &str, status: &str, emoji: &str, ttl_seconds: u32) -> AResult<()> {
         let args = json!({ "p_status": status, "p_emoji": if emoji.is_empty() { Value::Null } else { json!(emoji) }, "p_ttl_seconds": if ttl_seconds == 0 { Value::Null } else { json!(ttl_seconds) } });

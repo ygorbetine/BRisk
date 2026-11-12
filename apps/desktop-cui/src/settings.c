@@ -40,6 +40,7 @@ typedef struct {
     bool telemetry;
     int text_size;
     char ov_tiles[480], ov_toff[120];   /* miniaturas de transmissão do overlay: "chave|monitor|x|y|%;..." (posição/escala) e chaves ocultas "chave;chave" */
+    char grp_coll[190];   /* grupos recolhidos na lateral: hashes FNV-1a (8 hex) separados por ";" (1.4.2: persiste entre reinicios) */
     char ov_lay[190], ov_dev[48];   /* posições da sobreposição por monitor ("dev|x|y|w;...") e o monitor ativo */
 } settings_t;
 settings_t g_set;
@@ -48,6 +49,18 @@ int settings_idle_min(void) { return g_set.idle_min < 0 ? 0 : g_set.idle_min; }
 int settings_net_pref(void) { return g_set.net_pref; }
 int settings_fw_choice(void) { return g_set.fw_choice; }
 void settings_fw_set(int c) { g_set.fw_choice = c; }
+static void coll_hash(const char *gid, char out[9]) { unsigned h = 2166136261u; for (const unsigned char *p = (const unsigned char *)gid; *p; p++) { h ^= *p; h *= 16777619u; } snprintf(out, 9, "%08x", h); }
+bool settings_group_collapsed(const char *gid) {
+    char h[9]; coll_hash(gid, h); char b[190]; snprintf(b, sizeof b, "%s", g_set.grp_coll);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) if (!strcmp(e, h)) return true;
+    return false;
+}
+void settings_group_collapse(const char *gid, bool on) {
+    char h[9]; coll_hash(gid, h); char keep[190] = "", b[190]; snprintf(b, sizeof b, "%s", g_set.grp_coll);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) { if (!strcmp(e, h)) continue; size_t n = strlen(keep); snprintf(keep + n, sizeof keep - n, "%s%s", n ? ";" : "", e); }
+    if (on) { size_t n = strlen(keep); while (n + 10 > sizeof keep - 1) { char *sc = strchr(keep, ';'); if (!sc) break; memmove(keep, sc + 1, strlen(sc)); n = strlen(keep); } snprintf(keep + n, sizeof keep - n, "%s%s", n ? ";" : "", h); }   /* sobra: descarta o mais antigo */
+    snprintf(g_set.grp_coll, sizeof g_set.grp_coll, "%s", keep);
+}
 const char *settings_cam_name(void) { return g_set.cam_name; }
 bool settings_cam_tab_visible(const app_state_t *s) { return s->settings_open && s->settings_tab == 0; }
 
@@ -60,7 +73,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "key_mute", 's', g_set.key_mute, 24 }, { "key_deafen", 's', g_set.key_deafen, 24 }, { "key_stream", 's', g_set.key_stream, 24 }, { "key_ptt", 's', g_set.key_ptt, 24 },
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "idle_min", 'i', &g_set.idle_min }, { "text_size", 'i', &g_set.text_size },
-    { "ov_lay", 's', g_set.ov_lay, 190 }, { "ov_dev", 's', g_set.ov_dev, 48 },
+    { "grp_coll", 's', g_set.grp_coll, 190 }, { "ov_lay", 's', g_set.ov_lay, 190 }, { "ov_dev", 's', g_set.ov_dev, 48 },
     { "ov_tiles", 's', g_set.ov_tiles, 480 }, { "ov_toff", 's', g_set.ov_toff, 120 },
 };
 #define NF ((int)(sizeof F / sizeof *F))

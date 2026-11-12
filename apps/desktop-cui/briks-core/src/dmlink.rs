@@ -34,17 +34,40 @@ pub fn read_knock(meta: &Value, my_fp: &str) -> Option<String> {
     (meta["knock"].as_bool() == Some(true) && valid_fp(fp) && fp != my_fp).then(|| fp.to_string())
 }
 
-/// Observa a minha caixa e emite `{"ev":"dm.wake","fp":...}` para cada toque.
+/// O aviso "sua lista de amigos/pedidos mudou": sem nenhum dado (nem impressão digital); quem recebe só refaz a consulta ao servidor.
+pub fn poke_meta() -> Value { json!({ "poke": true }) }
+pub fn is_poke(meta: &Value) -> bool { meta["poke"].as_bool() == Some(true) }
+
+/// Observa a minha caixa e emite `{"ev":"dm.wake","fp":...}` para cada toque e `{"ev":"friends.poke"}` para cada aviso de lista.
 pub fn watch_inbox(cfg: RealtimeCfg, my_user_id: &str, my_fp: String, tx: mpsc::Sender<Value>) -> Realtime {
     let (rt, mut rx) = realtime::connect(cfg, inbox_topic(my_user_id), uuid::Uuid::new_v4().to_string(), json!({ "inbox": true }));
     tokio::spawn(async move {
+        let mut last_poke: Option<std::time::Instant> = None;
         while let Some(e) = rx.recv().await {
             if let RtEvent::PeerJoined { meta, .. } = e {
+                if is_poke(&meta) {
+                    // no máx. 1 aviso a cada 1,5 s (quem não é amigo só consegue fazer a UI refazer uma consulta ao servidor)
+                    if last_poke.map_or(true, |t| t.elapsed() >= std::time::Duration::from_millis(1500)) {
+                        last_poke = Some(std::time::Instant::now());
+                        if tx.send(json!({ "ev": "friends.poke" })).await.is_err() { return; }
+                    }
+                    continue;
+                }
                 if let Some(fp) = read_knock(&meta, &my_fp) { if tx.send(json!({ "ev": "dm.wake", "fp": fp })).await.is_err() { return; } }
             }
         }
     });
     rt
+}
+
+/// Avisa `user_id` que a lista dele mudou: entra na caixa dele por alguns segundos e sai (nada é guardado no servidor).
+pub fn poke(cfg: RealtimeCfg, user_id: &str) {
+    let (rt, mut rx) = realtime::connect(cfg, inbox_topic(user_id), uuid::Uuid::new_v4().to_string(), poke_meta());
+    tokio::spawn(async move {
+        let drain = async { while rx.recv().await.is_some() {} };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), drain).await;
+        rt.close().await;
+    });
 }
 
 /// Toca na caixa de `friend_user_id`. Devolve a conexão: quem chama a fecha quando o canal direto abrir.
@@ -64,6 +87,22 @@ mod t {
         assert_ne!(a, b);
         assert!(a.starts_with("realtime:briks:friend:") && !a.contains("user-a"));
         assert_ne!(a, topic_name("friend", &secure_room_id("friend", "user-a")), "não colide com o nome simples");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_poke_reaches_the_inbox_as_friends_poke_with_no_data_and_is_rate_limited() {
+        let port = crate::mock::start(0).await.unwrap();
+        let cfg = || RealtimeCfg::new(&format!("ws://127.0.0.1:{port}"), "chave-de-teste");
+        let (tx, mut rx) = mpsc::channel::<Value>(16);
+        let _inbox = watch_inbox(cfg(), "user-b", "ab12".repeat(16), tx);
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        poke(cfg(), "user-b");
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await.expect("o aviso não chegou").unwrap();
+        assert_eq!(ev, json!({ "ev": "friends.poke" }), "o aviso não carrega nenhum dado");
+        assert!(is_poke(&poke_meta()) && !is_poke(&knock_meta("ab12")) && !is_poke(&json!({ "inbox": true })));
+        // um aviso colado no outro (menos de 1,5 s) não vira um segundo evento
+        poke(cfg(), "user-b");
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(900), rx.recv()).await.is_err(), "segundo aviso em seguida deve ser descartado");
     }
 
     #[test]

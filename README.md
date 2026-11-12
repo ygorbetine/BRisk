@@ -6,6 +6,20 @@
 
 > Derivado do projeto aberto [Risk-P2P](https://github.com/xxsamboladiones/Risk-P2P) (AGPL-3.0). Este fork mantém a licença AGPL-3.0; veja `LICENSE` e `THIRD_PARTY_NOTICES.md`.
 
+## Download
+
+Installers (Windows 10/11) are published on the [GitHub Releases page](https://github.com/ygorbetine/Briks/releases/latest). The app updates itself from there.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). *(Applies from the first release signed through SignPath; earlier releases are unsigned.)*
+
+- **Signed files:** the installer `Briks-Setup-<version>.exe` and the executables it contains (`Briks.exe`, `briks_overlay.exe`, `briks-core.exe`, `briks-desktop-backend.exe`), built from this repository.
+- **Build:** releases are built from source by the GitHub Actions workflow [`release-windows.yml`](.github/workflows/release-windows.yml) and signed there; nothing is signed from a developer's machine. See [`docs/assinatura-signpath.md`](docs/assinatura-signpath.md).
+- **Roles:** the maintainer, [@ygorbetine](https://github.com/ygorbetine), is author, reviewer and approver of every signing request. Releases are only published after the maintainer approves them in the protected `release` environment.
+- **Privacy:** see [PRIVACY.md](PRIVACY.md). Briks does not collect personal data beyond what is described there.
+- **Third-party components** and their licenses are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`LICENSES/`](LICENSES). Only open-source components are bundled.
+
 ## O que o Briks acrescenta
 
 - **Áudio só da janela:** ao transmitir uma janela, o som capturado é o do processo dela (Windows, WASAPI), nunca o do sistema inteiro. Discord e o próprio Briks são excluídos. Abas do navegador compartilham o som do navegador inteiro (limitação do Windows: o áudio é por processo, não por aba).

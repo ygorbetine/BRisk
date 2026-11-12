@@ -89,13 +89,18 @@ static void quality_chip(const share_state_t *q, char *out, size_t cap) {
 }
 
 /* ---------- quadro compartilhado -> textura ---------- */
-typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; } fview_t;
+typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; int want; unsigned char *ds; size_t dscap; int sw, sh, kused; } fview_t;   /* want: largura (px) em que a imagem aparece; ds: quadro reduzido; sw/sh: tamanho do quadro de origem */
 #define FV_N (BRIKS_MAX_PEERS + 1)
 #define FV2(i) (FV_N + (i))   /* a 2ª tela de cada um fica na segunda metade */
 static fview_t g_fv[2 * FV_N];   /* 0..MAX-1 = slots de rtc_peers; MAX = prévia local; depois o mesmo para a 2ª tela */
 static cui_texture g_trash[64]; static int g_ntrash;   /* texturas a destruir no próximo quadro (só a thread da UI mexe em GL) */
 
+/* 1.4.2: o receptor reduzia um quadro grande (ex. 1080p) direto na GPU com filtro linear simples, o que serrilha e borra texto quando o quadro aparece muito
+ * menor (tile na grade). Aqui o quadro é reduzido por média de blocos (caixa 2^k x 2^k) até ficar entre 1x e 2x do tamanho em que aparece; a GPU faz só o
+ * ajuste final. Com zoom acima do encaixe (want = 0) ou quando já aparece quase no tamanho original, usa o quadro inteiro. */
+
 static void fv_close(fview_t *v) {
+    free(v->ds); v->ds = NULL; v->dscap = 0;
     if (v->p) UnmapViewOfFile(v->p);
     if (v->map) CloseHandle(v->map);
     if (v->file && v->file != INVALID_HANDLE_VALUE) CloseHandle(v->file);
@@ -121,16 +126,29 @@ static bool fv_update(cui_ctx *ui, app_state_t *s, fview_t *v, const char *path)
     if (memcmp(v->p, "BKFR", 4) || (a & 1)) return v->tex != 0;
     int w = *(const int *)(v->p + 8), h = *(const int *)(v->p + 12);
     unsigned long long n = *(const unsigned long long *)(v->p + 16);
-    if (w <= 0 || h <= 0 || w > 3840 || h > 2160 || n == 0 || n == v->n) return v->tex != 0;
+    if (w <= 0 || h <= 0 || w > 3840 || h > 2160 || n == 0 || (n == v->n && share_ds_steps(w, v->want) == v->kused)) return v->tex != 0;   /* quadro igual e mesma redução: nada a subir */
     cui_gl_renderer *gl = cui_app_gl_renderer(s->app);
-    if (v->tex && w == v->w && h == v->h && gl) {
+    const unsigned char *pix = v->p + 64; int ow = w, oh = h;
+    const int k = share_ds_steps(w, v->want);
+    if (k > 0) {
+        ow = w >> k; oh = h >> k; const size_t need = (size_t)ow * (size_t)oh * 4;
+        if (v->dscap < need) { free(v->ds); v->ds = (unsigned char *)malloc(need); v->dscap = v->ds ? need : 0; }
+        if (v->ds) { share_box_down(pix, w, k, ow, oh, v->ds); pix = v->ds; } else { ow = w; oh = h; }
+    }
+    if (v->tex && v->w > 0 && (ow != v->w || oh != v->h)) {   /* a textura mudou de tamanho (redução ligou/desligou): o zoom do espectador é em px da imagem, então acompanha */
+        const int gi = (int)(v - g_fv);
+        if (gi >= 0 && gi < 2 * FV_N && g_zoom[gi].zoom > 0) { const float f = (float)v->w / (float)ow; g_zoom[gi].zoom *= f; g_zoom[gi].cx /= f; g_zoom[gi].cy /= f; }
+    }
+    v->kused = k;
+    if (v->tex && ow == v->w && oh == v->h && gl) {
         cui_renderer_iface r = cui_gl_iface(gl);
-        r.texture_update(r.user, v->tex, 0, 0, w, h, v->p + 64, w * 4);
+        r.texture_update(r.user, v->tex, 0, 0, ow, oh, pix, ow * 4);
     } else {
         if (v->tex && g_ntrash < 64) g_trash[g_ntrash++] = v->tex;
-        v->tex = cui_image_create(ui, w, h, v->p + 64);
-        v->w = w; v->h = h;
+        v->tex = cui_image_create(ui, ow, oh, pix);
+        v->w = ow; v->h = oh;
     }
+    v->sw = w; v->sh = h;
     if (*seq == a) v->n = n;   /* o core escreveu no meio da cópia: sobe de novo no próximo quadro */
     v->last = now;
     return v->tex != 0;
@@ -806,6 +824,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             if (tex && tw > 0 && th > 0 && r.w > 60 && r.h > 60) {
                 float aw = r.w - 16, ah = r.h - 16, sc = fminf(aw / tw, ah / th);
+                if (key >= 0 && key < 2 * FV_N) g_fv[key].want = (zv && zv->zoom > sc * 1.01f) ? 0 : (int)floorf(tw * sc);   /* com zoom, o quadro inteiro; senão, o tamanho em que aparece */
                 /* a imagem tem o próprio raio e fica 8 px para dentro da moldura (raio 20): cantos sempre curvos, nada reto vaza */
                 if (zv) {
                     /* quem assiste: roda do mouse ou pinça ampliam em torno do ponteiro, arrastar move; a moldura fica do tamanho

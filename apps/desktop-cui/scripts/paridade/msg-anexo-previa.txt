@@ -1,0 +1,6 @@
+# 1.4.2 (MSG-15): imagem anexada aparece com pré-visualização inline no chat (png/jpg/bmp, até 20 MB); arquivo que sumiu cai no cartão simples; outros tipos seguem como cartão
+waitms 1200
+shot p0
+waitms 600
+expect attach_pv_count 1
+shot p1

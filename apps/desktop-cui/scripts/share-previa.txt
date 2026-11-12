@@ -3,7 +3,7 @@ waitms 1500
 expect share_mine 1
 expect prev_note_off 0
 shot previa-1-aviso
-click 1246 617
+click 1090 607
 waitms 400
 expect prev_note_off 1
 shot previa-2-dispensado

@@ -11,6 +11,7 @@
 #include <windows.h>
 
 call_ui_t g_call = { .focus = -1 };
+static int g_side_n;   /* roteiros: pessoas na faixa lateral do modo Transmissão */
 static int g_sheen_seen;   /* roteiros: quadros em que o brilho foi desenhado no botão Transmissão */
 
 static app_state_t *g_tile_s;   /* estado para o menu do bloco (slider de volume por pessoa) */
@@ -95,6 +96,7 @@ static bool g_tile_me_deaf;
 int call_probe(const char *n) {
     if (!strcmp(n, "call_layout")) return g_call.layout;
     if (!strcmp(n, "call_focus")) return g_call.focus;
+    if (!strcmp(n, "side_people")) return g_side_n;   /* pessoas na faixa lateral do modo Transmissão */
     if (!strcmp(n, "sheen_frames")) return g_sheen_seen > 0;   /* 1 = o brilho já correu pelo botão */
     if (!strcmp(n, "call_full")) return g_call.fullscreen;
     if (!strcmp(n, "call_msgs")) return g_call.msg_count;
@@ -528,11 +530,11 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
     cui_pop_id(ui);
 }
 
-static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
-    cui_texture vt = 0; int vw = 0, vh = 0;
-    const bool mic_eff = s->mic_on;   /* ensurdecer e mutar são independentes (como no Electron) */
+/* blocos da chamada: eu primeiro, depois cada participante (câmera ligada = vídeo no bloco). names guarda os nomes (os blocos apontam para eles) */
+static int build_tiles(cui_ctx *ui, app_state_t *s, tile_t *T, char (*names)[64]) {
+    cui_texture vt = 0; int vw = 0, vh = 0, n = 0;
+    const bool mic_eff = s->mic_on;
     g_tile_me_deaf = s->deaf;
-    tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = 0;
     g_can_room_mute = s->rtc_owner_me && s->net_sfu;
     T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL, 0, 0, 0 };
     if (cam_frame(ui, s, SLOT_ME, &vt, &vw, &vh)) { T[0].vtex = vt; T[0].vw = vw; T[0].vh = vh; }
@@ -544,6 +546,12 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
                            s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
         if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }
+    return n;
+}
+
+static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
+    const bool mic_eff = s->mic_on;   /* ensurdecer e mutar são independentes (como no Electron) */
+    tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = build_tiles(ui, s, T, names);
     const float gap = 14.0f;
     if (g_call.layout == 1 && n > 1 && (W >= 720.0f ? H >= 150.0f : H >= 260.0f)) {   /* palco baixo demais para um bloco grande + faixa: fica a grade */
         /* Foco: um bloco grande (fixado por clique ou quem está falando) e os demais numa faixa */
@@ -588,6 +596,26 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
             }
             cui_pop_id(ui);
         }
+    }
+}
+
+/* Modo Transmissão em Grade: faixa lateral rolável com quem NÃO está transmitindo (avatar, anel verde de fala, mudo/ensurdecido, menu do bloco).
+ * Só com largura de sobra; em janela estreita a faixa some e a grade fica com tudo. Devolve a largura reservada (0 = sem faixa). */
+#define SIDE_W 142.0f
+static float side_people_width(app_state_t *s, float W) {
+    g_side_n = 0;
+    if (g_call.layout != 0 || W < 640.0f) return 0.0f;
+    int n = (s->sh.active || s->sh.second.active) ? 0 : 1;   /* eu, se não estou transmitindo */
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !share_peer_live(s, i)) n++;
+    g_side_n = n;
+    return n > 0 ? SIDE_W : 0.0f;
+}
+static void stage_side_people(cui_ctx *ui, app_state_t *s, float H) {
+    tile_t T[BRIKS_MAX_PEERS + 2], L[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = build_tiles(ui, s, T, names), k = 0;
+    for (int i = 0; i < n; i++) if (!T[i].live) { L[k] = T[i]; L[k].vtex = 0; L[k].badge = NULL; k++; }   /* só avatar: o vídeo da câmera fica na aba Call */
+    const float tw = SIDE_W - 12.0f, th = 112.0f;
+    cui_scroll(ui, .id = "side-people", .width = CUI_PX(SIDE_W), .height = CUI_PX(H)) {
+        cui_column(ui, .gap = 10, .width = CUI_PX(tw)) { for (int i = 0; i < k; i++) do_tile(ui, s, &L[i], tw, th, s->mic_on); }
     }
 }
 
@@ -721,6 +749,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 if (W < 120) W = 120; if (H < 90) H = 90;
                 if (s->call_view == 1) stage_chat(ui, s);
                 else if (s->call_mode == 1) {
+                    const bool streams = share_any_live(s) || s->sh.active || s->sh.second.active;
+                    const float sw = streams ? side_people_width(s, W) : 0.0f;
+                    if (sw > 0) {
+                        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
+                            cui_box(ui, .width = CUI_PX(W - 14.0f - sw), .height = CUI_PX(H)) { ui_share_stage(ui, s, W - 14.0f - sw, H, g_call.layout); }
+                            stage_side_people(ui, s, H);
+                        }
+                    } else
                     if (!ui_share_stage(ui, s, W, H, g_call.layout)) {
                         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .clip = true) {
                             empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui. Para pedir, clique com o botão direito em alguém na aba Call.");

@@ -217,7 +217,7 @@ impl H264Enc {
             .set_bitrate_bps(bps)
             .max_frame_rate(fps)
             .rate_control_mode(RateControlMode::Bitrate)
-            .usage_type(UsageType::CameraVideoRealTime)
+            .usage_type(if std::env::var("BRIKS_OH264_USAGE").as_deref() == Ok("screen") { UsageType::ScreenContentRealTime } else { UsageType::CameraVideoRealTime })   // medido: "screen" é estável nos saltos mas fica ~7 dB abaixo na rolagem lenta
             .enable_skip_frame(true);
         let enc = Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(|e| anyhow!("h264: {e}"))?;
         Ok(H264Enc { be: Backend::Open(enc), w, h, bps, name: "OpenH264 (software)".into(), hardware: false, idr: true, nv12: vec![] })
@@ -483,6 +483,13 @@ mod qualidade {
         for c in 0..8 { put(&mut f, w, h, w - 140 + c * 14, 10, (t * 13 + c * 7) as u32, (255, 255, 255)); }
         f
     }
+    /// PSNR só da luminância (BT.601): é o que decide se o texto é legível; a croma 4:2:0 é igual em qualquer codificador H264.
+    fn luma_psnr(bgra: &[u8], rgba: &[u8]) -> f64 {
+        let mut se = 0f64; let n = bgra.len() / 4;
+        for i in 0..n { let (b, g, r) = (bgra[i * 4] as f64, bgra[i * 4 + 1] as f64, bgra[i * 4 + 2] as f64); let (r2, g2, b2) = (rgba[i * 4] as f64, rgba[i * 4 + 1] as f64, rgba[i * 4 + 2] as f64);
+            let d = (0.299 * r + 0.587 * g + 0.114 * b) - (0.299 * r2 + 0.587 * g2 + 0.114 * b2); se += d * d; }
+        let mse = se / n as f64; if mse < 1e-9 { 99.0 } else { 10.0 * (255.0f64 * 255.0 / mse).log10() }
+    }
     fn media(rgba: &[u8], f: &[u8]) -> f64 { let mut e = f.to_vec(); for p in e.chunks_mut(4) { p.swap(0, 2); } psnr(&e, rgba) }
 
     /// amplia RGBA (sw x sh) para (dw x dh) com filtro bilinear, como a GPU faz ao desenhar a imagem no palco
@@ -492,6 +499,100 @@ mod qualidade {
             for x in 0..dw { let fx = ((x as f32 + 0.5) * sw as f32 / dw as f32 - 0.5).clamp(0.0, sw as f32 - 1.001); let (x0, tx) = (fx as usize, fx.fract());
                 for c in 0..3 { let g = |xx: usize, yy: usize| src[(yy * sw + xx) * 4 + c] as f32; let v = (g(x0, y0) * (1.0 - tx) + g(x0 + 1, y0) * tx) * (1.0 - ty) + (g(x0, y0 + 1) * (1.0 - tx) + g(x0 + 1, y0 + 1) * tx) * ty; o[(y * dw + x) * 4 + c] = v as u8; } } }
         o
+    }
+
+    /// Página de código: texto de traço de 1 px (como IDE/navegador de verdade), 14 px por linha, cores de sintaxe, começando na linha
+    /// absoluta `top_px / 14` e rolada `top_px % 14` px. Barra lateral e barra de título fixas.
+    fn pagina(w: usize, h: usize, top_px: usize, t: usize) -> Vec<u8> {
+        let mut f = vec![0u8; w * h * 4];
+        for y in 0..h { for x in 0..w { let o = (y * w + x) * 4; let (b, g, r) = if y < 36 { (58, 40, 40) } else if x < 280 { (44, 40, 37) } else { (30, 30, 30) }; f[o] = b; f[o + 1] = g; f[o + 2] = r; f[o + 3] = 255; } }
+        let cores = [(230u8, 230u8, 230u8), (86, 156, 214), (206, 145, 120), (78, 201, 176), (220, 220, 170)];
+        let mut put = |x0: usize, y0: usize, cell: u32, col: (u8, u8, u8)| {
+            let gl = glyph(cell);
+            for (ry, bits) in gl.iter().enumerate() { for rx in 0..5 { if bits >> rx & 1 == 1 { let (px, py) = (x0 + rx, y0 + ry); if px < w && py < h { let o = (py * w + px) * 4; f[o] = col.2; f[o + 1] = col.1; f[o + 2] = col.0; } } } }
+        };
+        let first = top_px / 14; let off = top_px % 14;
+        for k in 0..((h - 36) / 14 + 2) {
+            let ln = first + k; let y0 = (36 + k * 14).wrapping_sub(off);
+            if y0 + 8 > h || y0 < 30 { continue; }
+            let indent = (ln * 7 % 4) * 28;
+            let mut c = 0;
+            while 300 + indent + c * 7 < w - 20 { if (c * 5 + ln * 3) % 9 < 7 { put(300 + indent + c * 7, y0, (ln * 977 + c * 31) as u32, cores[(ln + c / 6) % 5]); } c += 1; }
+            if ln % 3 == 0 { for c in 0..30 { put(14 + c * 7, y0, (ln * 131 + c * 17) as u32, (200, 200, 200)); } }   // árvore de arquivos
+        }
+        for c in 0..8 { put(w - 140 + c * 7, 12, (t * 13 + c * 7) as u32, (255, 255, 255)); }   // relógio
+        f
+    }
+
+    /// Texto rolando (IDE): 2 s a 3 px/quadro, 1 s parado, 2 s a 14 px/quadro (salto de linha), 1 s parado. Mede PSNR por trecho, bitrate e
+    /// fps reais e guarda quadro original x decodificado. Variáveis: BRIKS_Q_CASOS (mbps:altura), BRIKS_Q_FPS, BRIKS_PROVAS_OUT.
+    #[test]
+    #[ignore]
+    fn rolagem_de_texto() {
+        let (w, h) = (1920usize, 1080usize);
+        let fps: usize = std::env::var("BRIKS_Q_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+        let lista: Vec<(u32, usize)> = std::env::var("BRIKS_Q_CASOS").unwrap_or("6.6:1080".into()).split(',').map(|v| { let (a, b) = v.split_once(':').unwrap(); ((a.parse::<f64>().unwrap() * 1e6) as u32, b.parse().unwrap()) }).collect();
+        let out = std::env::var("BRIKS_PROVAS_OUT").ok().map(std::path::PathBuf::from);
+        if let Some(o) = &out { let _ = std::fs::create_dir_all(o); }
+        for (bps, eh) in lista {
+            let ew = eh * 16 / 9 / 2 * 2;
+            let mut enc = H264Enc::new(ew, eh, fps as f32, bps).unwrap();
+            let mut dec = H264Dec::new().unwrap();
+            { let f = pagina(w, h, 100, 1); let y = bgra_to_i420(&f, w, h, w, h); let mut rgba = vec![255u8; w * h * 4]; i420_to_rgba(&y.y, &y.u, &y.v, (w, w / 2, w / 2), w, h, &mut rgba);
+              eprintln!("teto da subamostragem 4:2:0 (sem codificar): PSNR {:.1} dB, luma {:.1} dB", media(&rgba, &f), luma_psnr(&f, &rgba)); }
+            // fases: (quadros, px por quadro)
+            let fases = [(2 * fps, 0usize), (3 * fps, 3usize), (fps, 0), (2 * fps, 14), (fps, 0)];   // a 1ª é aquecimento (quadro-chave + refino) e não entra no resumo
+            let (mut t, mut top) = (0usize, 0usize);
+            let mut res: Vec<String> = vec![];
+            for (fi, (n, v)) in fases.iter().enumerate() {
+                let (mut bytes, mut psum, mut pmin, mut got, mut maxq, mut lsum) = (0usize, 0.0f64, 99.0f64, 0usize, 0usize, 0.0f64);
+                let t0 = std::time::Instant::now();
+                for k in 0..*n {
+                    top += v; t += 1;
+                    let f = pagina(w, h, top, t);
+                    let yuv = bgra_to_i420(&f, w, h, ew, eh);
+                    for au in enc.encode(&yuv).unwrap() {
+                        bytes += au.len(); maxq = maxq.max(au.len());
+                        if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() {
+                            let up = if (dw, dh) == (w, h) { rgba.to_vec() } else { amplia(rgba, dw, dh, w, h) };
+                            let p = media(&up, &f); psum += p; pmin = pmin.min(p); got += 1; lsum += luma_psnr(&f, &up);
+                            if k == n - 1 { if let Some(o) = &out {
+                                let tag = format!("{}-{:.1}M-{}p-fase{}", enc.name.replace(' ', "_"), bps as f64 / 1e6, eh, fi);
+                                let save = |name: &str, rgba: &[u8]| { if let Some(img) = image::RgbaImage::from_raw(300, 150, { let mut c = Vec::with_capacity(300 * 150 * 4); for y in 300..450 { c.extend_from_slice(&rgba[(y * w + 400) * 4..(y * w + 700) * 4]); } c }) { let _ = image::imageops::resize(&img, 900, 450, image::imageops::FilterType::Nearest).save(o.join(format!("{tag}-{name}.png"))); } };
+                                let mut orig = f.clone(); for p in orig.chunks_mut(4) { p.swap(0, 2); }
+                                save("original", &orig); save("recebido", &up);
+                            } }
+                        }
+                    }
+                }
+                let dur = (*n as f64) / fps as f64;
+                if fi > 0 { res.push(format!("fase{fi} ({}px/q): {:.2} Mbps, PSNR médio {:.1} mín {:.1} dB, luma {:.1} dB, maior AU {} KB, {:.0} ms de CPU/quadro", v, bytes as f64 * 8.0 / dur / 1e6, psum / got.max(1) as f64, pmin, lsum / got.max(1) as f64, maxq / 1024, t0.elapsed().as_secs_f64() * 1000.0 / *n as f64)); }
+            }
+            eprintln!("[{}] {:.1} Mbps {}p {} fps: {}", enc.name, bps as f64 / 1e6, eh, fps, res.join(" | "));
+        }
+    }
+
+    /// "Pulso" do quadro-chave: PSNR da luminância quadro a quadro em volta de um IDR forçado, com a página parada e com ela rolando.
+    /// Um IDR pior (ou melhor) que os quadros vizinhos aparece na tela como piscada. BRIKS_Q_CASOS = mbps:altura.
+    #[test]
+    #[ignore]
+    fn pulso_do_quadro_chave() {
+        let (w, h) = (1920usize, 1080usize);
+        let (bps, eh): (u32, usize) = { let v = std::env::var("BRIKS_Q_CASOS").unwrap_or("4.5:1080".into()); let (a, b) = v.split(',').next().unwrap().split_once(':').unwrap(); ((a.parse::<f64>().unwrap() * 1e6) as u32, b.parse().unwrap()) };
+        let ew = eh * 16 / 9 / 2 * 2;
+        for (nome, vel) in [("parada", 0usize), ("rolando 3 px/q", 3)] {
+            let mut enc = H264Enc::new(ew, eh, 24.0, bps).unwrap();
+            let mut dec = H264Dec::new().unwrap();
+            let (mut top, mut linha) = (0usize, vec![]);
+            for t in 0..120usize {
+                if t == 60 { enc.force_idr(); }
+                top += vel;
+                let f = pagina(w, h, top, t);
+                let yuv = bgra_to_i420(&f, w, h, ew, eh);
+                for au in enc.encode(&yuv).unwrap() { if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() { let up = if (dw, dh) == (w, h) { rgba.to_vec() } else { amplia(rgba, dw, dh, w, h) }; if t >= 52 && t <= 72 { linha.push(format!("{}:{:.1}({}KB)", t, luma_psnr(&f, &up), au.len() / 1024)); } } }
+            }
+            eprintln!("[{}] {} a {:.1} Mbps, IDR forçado no quadro 60 — quadro:luma PSNR(tamanho): {}", enc.name, nome, bps as f64 / 1e6, linha.join(" "));
+        }
     }
 
     #[test]

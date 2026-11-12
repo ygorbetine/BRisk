@@ -244,6 +244,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
+        let mut idrs = 0u64;   // quadros-chave forçados (telemetria: rajada de IDR = "reload" no espectador)
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
         let mut recreated = Instant::now() - Duration::from_secs(4);
@@ -278,7 +279,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 let nack_ratio = if bytes > 0 && left_out == 0 { lost_new as f32 / (bytes as f32 / 1100.0).max(1.0) } else { 0.0 };
                 let (tw, th) = enc.as_ref().map(|e| (e.w, e.h)).unwrap_or((0, 0));
                 if cfg.adaptive {
-                    est.set_ceil(ctl.top_ceil());
+                    est.set_ceil(ctl.top_ceil());
                     est.update(Instant::now(), sent_bps, worst, nack_ratio);
                     if std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[est] enviado {:.0} kbps | relatorio {:?} | nack {:.3} (perdidos {lost_new}) | est {:.0} kbps motivo {} tol {:.2}", sent_bps / 1000.0, worst, nack_ratio, est.est / 1000.0, est.reason, est.loss_tol); }
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
@@ -311,7 +312,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
-                    "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis,
+                    "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis, "idrs": idrs,
                     "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
@@ -364,8 +365,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             since_idr += 1;
             // quadro-chave: só a pedido (rede de segurança a cada 30 s) (PLI/FIR/novo espectador) — mas no máximo um por segundo, para uma rajada de
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
-            let min_gap = Duration::from_millis(if est.reason != "" { 2000 } else { 1000 });   // rede apertada: quadros-chave mais espaçados
-            if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); }
+            // Um IDR custa ~1 s do orçamento (600 KB a 4,5 Mbps em 1080p de texto): rajadas de IDR são o que o espectador vê como "reload".
+            let min_gap = Duration::from_millis(if est.reason != "" { 3000 } else { 1500 });   // rede apertada: quadros-chave mais espaçados
+            if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); idrs += 1; }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
@@ -603,8 +605,8 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         if let Some(p) = pkt { jb.push(p); }
         let (aus, want) = jb.pop(Instant::now());
         if std::mem::take(&mut jb.fresh) { let _ = dtx.try_send(None); }   // descontinuidade: decodificador novo para o quadro-chave
-        for au in aus { if dtx.try_send(Some(au)).is_err() { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); } last_frame = Instant::now(); }
-        if want || st.want_pli.swap(false, Ordering::Relaxed) { ask(&mut last_pli, &mut plis, Duration::from_millis(400)); }
+        for au in aus { if dtx.try_send(Some(au)).is_err() { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); } last_frame = Instant::now(); }
+        if want || st.want_pli.swap(false, Ordering::Relaxed) { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }
         // sem quadros há 2 s (o quadro-chave pedido se perdeu): pede outro
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
         if win.elapsed() >= Duration::from_secs(1) {

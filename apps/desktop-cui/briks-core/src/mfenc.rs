@@ -99,14 +99,29 @@ impl MfEnc {
             let _ = a.SetUINT32(&MF_LOW_LATENCY, 1);
         }
         let codec = tr.cast::<ICodecAPI>().ok();
-        let set = |g: &GUID, v: u32| { if let Some(c) = &codec { let _ = c.SetValue(g, &var_u32(v)); } };
-        set(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR.0 as u32);
-        set(&CODECAPI_AVEncCommonMeanBitRate, bps);
-        // balde furado (VBV) de 1 s: sem isso um quadro-chave pode sair com várias vezes o bitrate de um segundo e virar rajada
-        set(&CODECAPI_AVEncCommonBufferSize, vbv_bits(bps));
-        set(&CODECAPI_AVEncMPVGOPSize, fps * 30);   // quadro-chave só a pedido (PLI/FIR); o GOP longo é só rede de segurança
-        set(&CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-        if let Some(c) = &codec { let _ = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(true)); let _ = c.SetValue(&CODECAPI_AVEncCommonRealTime, &var_bool(true)); }
+        let log = std::env::var("BRIKS_ENC_LOG").is_ok();
+        let set = |nome: &str, g: &GUID, v: u32| { if let Some(c) = &codec { let r = c.SetValue(g, &var_u32(v)); if log { eprintln!("[mfenc] {nome} = {v}: {}", if r.is_ok() { "ok".to_string() } else { format!("RECUSADO {r:?}") }); } } };
+        let envu = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
+        // Modo de controle de taxa (BRIKS_ENC_RC = cbr | pvbr | vbr | quality; diagnóstico). Padrão: CBR.
+        let rc = match std::env::var("BRIKS_ENC_RC").as_deref() { Ok("pvbr") => eAVEncCommonRateControlMode_PeakConstrainedVBR, Ok("vbr") => eAVEncCommonRateControlMode_UnconstrainedVBR, Ok("quality") => eAVEncCommonRateControlMode_Quality, _ => eAVEncCommonRateControlMode_CBR };
+        set("RateControlMode", &CODECAPI_AVEncCommonRateControlMode, rc.0 as u32);
+        set("MeanBitRate", &CODECAPI_AVEncCommonMeanBitRate, bps);
+        if rc == eAVEncCommonRateControlMode_PeakConstrainedVBR { set("MaxBitRate", &CODECAPI_AVEncCommonMaxBitRate, (bps as f64 * envu("BRIKS_ENC_PEAK_PCT").unwrap_or(150) as f64 / 100.0) as u32); }
+        // balde furado (VBV) curto: sem isso um quadro-chave pode sair com várias vezes o bitrate de um segundo e virar rajada
+        set("BufferSize", &CODECAPI_AVEncCommonBufferSize, vbv_bits(bps));
+        set("GOPSize", &CODECAPI_AVEncMPVGOPSize, fps * 30);   // quadro-chave só a pedido (PLI/FIR); o GOP longo é só rede de segurança
+        set("BPictureCount", &CODECAPI_AVEncMPVDefaultBPictureCount, 0);
+        if let Some(q) = envu("BRIKS_ENC_QUALITY") { set("CommonQuality", &CODECAPI_AVEncCommonQuality, q); }
+        if let Some(q) = envu("BRIKS_ENC_QVS") { set("QualityVsSpeed", &CODECAPI_AVEncCommonQualityVsSpeed, q); }
+        // Teto de QP: sem ele o NVENC em CBR faz o quadro-chave (a cada PLI/novo espectador) sair com QP altíssimo (luma ~22 dB, texto ilegível)
+        // seguido de P-quadros quase vazios que refinam devagar: é o "reload/zoom" que o usuário vê. Com 28 o IDR sai ~36 dB (medido).
+        set("MaxQP", &CODECAPI_AVEncVideoMaxQP, envu("BRIKS_ENC_MAXQP").unwrap_or(28));
+        if let Some(q) = envu("BRIKS_ENC_MINQP") { set("MinQP", &CODECAPI_AVEncVideoMinQP, q); }
+        if let Some(c) = &codec {
+            let ll = std::env::var("BRIKS_ENC_LOWLAT").map(|v| v != "0").unwrap_or(true);
+            let r1 = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(ll)); let r2 = c.SetValue(&CODECAPI_AVEncCommonRealTime, &var_bool(ll));
+            if log { eprintln!("[mfenc] LowLatency={ll}: {:?}/{:?} (perfil, tamanho {w}x{h}, {fps} fps, {bps} bps)", r1.is_ok(), r2.is_ok()); }
+        }
 
         let mut ok = false;
         for profile in profile_order() {

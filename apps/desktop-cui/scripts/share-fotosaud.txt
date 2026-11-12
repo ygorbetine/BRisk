@@ -1,0 +1,20 @@
+# Auditoria das fotos de perfil: mensagens, rodape do usuario, hub de amigos (Todos e Pendentes), cartao do perfil, membros do grupo
+waitms 2500
+shot fotosaud-1-chat-rodape
+click 312 139
+waitms 1200
+shot fotosaud-2-amigos-todos
+click 301 779
+waitms 800
+shot fotosaud-3-cartao-perfil
+click 1041 166
+waitms 500
+click 825 126
+waitms 800
+shot fotosaud-4-amigos-pendentes
+click 700 126
+waitms 800
+shot fotosaud-5-amigos-online
+click 346 303
+waitms 1500
+shot fotosaud-6-chamada-tiles

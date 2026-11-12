@@ -209,7 +209,7 @@ static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_textu
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
             .bg = active ? B_A(B_C1, 0x38) : CUI_RGBA(0x00000000), .align = CUI_ALIGN_CENTER) {
-        cui_box(ui, .id = "av") { cui_avatar_ex(ui, f->name, &(cui_avatar_opts){ .size = 32, .image = img }); }
+        cui_box(ui, .id = "av") { briks_avatar(ui, f->name, 32, img); }
         const char *line = f->presence;   /* a linha sob o nome é só o rich presence; o status vai no balão */
         if (line[0]) {   /* rich presence: linha pequena sob o nome */
             cui_column(ui, .gap = 0, .width = CUI_FILL) {
@@ -251,7 +251,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 for (int i = 0; i < s->pending_count; i++) {
                     cui_push_id_int(ui, 1000 + i);
                     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 8, .align = CUI_ALIGN_CENTER) {
-                        cui_avatar(ui, s->pending[i].name, .size = 28);
+                        briks_avatar(ui, s->pending[i].name, 28, person_photo(s, s->pending[i].id, s->pending[i].name));
                         cui_text(ui, s->pending[i].name, .nowrap = true, .width = CUI_FILL);
                         if (cui_icon_button(ui, CUI_ICON_CHECK, .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .tooltip = "Aceitar"))
                             app_accept_friend(s, s->pending[i].request_id);
@@ -265,7 +265,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                 for (int i = 0; i < s->legacy_count; i++) {
                     cui_push_id_int(ui, 3000 + i);
                     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 5, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER) {
-                        cui_avatar(ui, s->legacy[i].name, .size = 24);
+                        briks_avatar(ui, s->legacy[i].name, 24, person_photo(s, NULL, s->legacy[i].name));
                         cui_text(ui, s->legacy[i].name, .nowrap = true, .width = CUI_FILL, .color = B_MUTED);
                     }
                     cui_pop_id(ui);
@@ -325,7 +325,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             const bool f_compact = g_panel_w < 220.0f;   /* painel estreito: sai o texto (nome/status), ficam a foto e os três ícones, sem nada cortado */
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .pad_right = 8, .gap = g_panel_w < 300.0f ? 4 : 8, .radius = 18, .bg = B_GLASS_CARD, .clip = true,
                     .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
-                cui_box(ui, .id = "avatar") { cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 32, .image = s->user_photo }); }
+                cui_box(ui, .id = "avatar") { briks_avatar(ui, s->user_name, 32, s->user_photo); }
                 if (briks_clicked_r(ui, "avatar", 16.0f)) { s->profile_open = true; s->profile_tab = 0; }
                 bubble_note(cui_get_rect(ui, cui_make_id(ui, "avatar")), s->user_status);
                 if (f_compact) cui_box(ui, .width = CUI_FILL) {}
@@ -375,7 +375,7 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
     /* bubble_align: top = topo do balão no topo do avatar; middle = a pontinha (quina reta no topo) na altura do centro do avatar */
     cui_box(ui, .id = "row", .dir = CUI_ROW, .width = CUI_FILL, .justify = m->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .gap = 4,
             .align = m->mine ? CUI_ALIGN_DEFAULT : CUI_ALIGN_START) {
-        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { cui_avatar_ex(ui, m->author, &(cui_avatar_opts){ .size = 32, .image = friend_photo_by_name(s, m->author) }); } }   /* avatar sem relevo; agrupada: só o espaço */
+        if (!m->mine) { if (g_grouped) cui_box(ui, .width = CUI_PX(32)) {} else cui_box(ui) { briks_avatar(ui, m->author, 32, friend_photo_by_name(s, m->author)); } }   /* avatar sem relevo; agrupada: só o espaço */
         if (m->mine) {
             if (interactive) msgui_arrow(ui, m);   /* seta do lado de dentro, como no WhatsApp: à esquerda do nosso balão */
             /* nosso: roxo padrão; só a quina superior direita mais reta */
@@ -620,7 +620,7 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
             /* lateral: foto + nome + @nick, seções e o botão discreto de desconectar no rodapé */
             cui_box(ui, .width = CUI_PX(236), .height = CUI_FILL, .pad = 12, .gap = 4, .radius = 18, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER) {
                 cui_row(ui, .gap = 12, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .pad_bottom = 10) {
-                    cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 56, .image = s->user_photo });
+                    briks_avatar(ui, s->user_name, 56, s->user_photo);
                     cui_column(ui, .gap = 1, .width = CUI_FILL) {
                         cui_text(ui, s->user_name, .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
                         char nick[100]; nick_text(s, nick, sizeof nick);
@@ -641,11 +641,11 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                     if (s->acct_user_id[0]) { ui_account_editor(ui, s); break; }   /* conta online: foto, nome e @nick vêm do servidor */
                     PCARD(ui, "PERFIL") {
                         cui_row(ui, .gap = 18, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-                            cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 96, .image = s->user_photo });
+                            briks_avatar(ui, s->user_name, 96, s->user_photo);
                             cui_column(ui, .gap = 8, .width = CUI_FILL) {
                                 cui_text(ui, "Nome exibido", .size = 12, .color = B_MUTED);
                                 cui_input(ui, "pf-name", name_draft, sizeof name_draft, .placeholder = "Seu nome");
-                                cui_button(ui, "Escolher foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM);   /* UI pronta, sem backend de upload */
+                                if (cui_button(ui, "Escolher foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) account_pick_photo(s);   /* sem conta: a foto fica neste computador */
                             }
                         }
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {

@@ -218,7 +218,8 @@ void account_set_name(app_state_t *s) {
 }
 
 void account_pick_photo(app_state_t *s) {
-    if (core_state() != CORE_READY) return;
+    const bool local = !s->acct_user_id[0];   /* perfil local (sem conta): a foto vale só neste computador, direto como textura */
+    if (!local && core_state() != CORE_READY) return;
     wchar_t wpath[1024] = L""; char path[3072];
     OPENFILENAMEW of = { sizeof of };
     of.hwndOwner = GetActiveWindow();
@@ -228,6 +229,7 @@ void account_pick_photo(app_state_t *s) {
     of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&of)) return;   /* cancelou */
     if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)sizeof path, NULL, NULL)) return;
+    if (local) { set_photo(s, path); cui_request_redraw(cui_app_ui(s->app)); return; }
     copy(s->profile_msg, sizeof s->profile_msg, "Enviando a foto…");
     char line[6400], esc[6200]; json_escape(path, esc, sizeof esc);
     snprintf(line, sizeof line, "{\"cmd\":\"account.photo\",\"path\":\"%s\"}", esc);

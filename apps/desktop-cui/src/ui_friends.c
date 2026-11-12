@@ -193,7 +193,7 @@ static bool row_tiny(void) { return g_panel_w < 240.0f; }
 #define ROW_BEGIN(ui, p) \
     cui_box((ui), .id = "fr", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = row_narrow() ? 8 : 12, .pad_y = row_narrow() ? 6 : 8, .gap = row_narrow() ? 8 : 12, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER)
 static void row_ident(cui_ctx *ui, const person_t *p, const char *sub_override, bool online) {
-    cui_avatar_ex(ui, p->name, &(cui_avatar_opts){ .size = row_narrow() ? 32 : 36, .image = friend_photo(p->id) });
+    briks_avatar(ui, p->name, row_narrow() ? 32 : 36, friend_photo(p->id));
     cui_column(ui, .gap = 1, .width = CUI_FILL) {
         cui_row(ui, .gap = 6, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, p->name, .nowrap = true);

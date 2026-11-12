@@ -524,6 +524,8 @@ static inline cui_texture person_photo(const app_state_t *s, const char *id, con
     cui_texture t = id && id[0] ? friend_photo(id) : 0;
     return t ? t : (name && name[0] && !strcmp(name, s->user_name)) ? s->user_photo : friend_photo_by_name(s, name);
 }
+/* ÚNICO ponto que desenha o avatar de uma pessoa: foto (textura em cache, recorte circular do cui) ou, sem foto, as iniciais. Todas as telas passam por aqui. */
+static inline void briks_avatar(cui_ctx *ui, const char *name, float size, cui_texture photo) { cui_avatar_ex(ui, name, &(cui_avatar_opts){ .size = size, .image = photo }); }
 /* accountx.c: data de nascimento do cadastro e dica de login por @nick */
 bool birth_parse(const char *t, int *d, int *m, int *y);
 int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */

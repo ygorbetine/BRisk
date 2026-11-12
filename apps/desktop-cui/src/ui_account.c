@@ -17,7 +17,7 @@ void ui_account_editor(cui_ctx *ui, app_state_t *s) {
         /* foto */
         cui_text(ui, "Foto", .size = 12, .color = B_MUTED);
         cui_row(ui, .gap = 12, .align = CUI_ALIGN_CENTER) {
-            cui_avatar_ex(ui, s->user_name, &(cui_avatar_opts){ .size = 56, .image = s->user_photo });
+            briks_avatar(ui, s->user_name, 56, s->user_photo);
             cui_column(ui, .gap = 6) {
                 cui_row(ui, .gap = 8) {
                     if (cui_button(ui, "Trocar foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) account_pick_photo(s);

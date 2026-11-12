@@ -87,6 +87,7 @@ typedef struct {
     /* 2ª tela simultânea (segundo monitor), minha e dos outros: sem áudio próprio (o áudio da transmissão é o da 1ª) */
     bool pick_second;                          /* o seletor aberto vai iniciar a 2ª tela */
     struct { bool active, starting; int w, h, fps, kbps; char label[64], kind[12], id[24]; } second;
+    int viewers[2]; bool vknown[2]; char vnames[2][200];   /* quem assiste à MINHA tela (slot 0/1): só P2P e só depois do 1º aviso do core (sem dado = oculto) */
     struct { bool on, watching, has_frame, stalled; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
 } share_state_t;
 
@@ -523,6 +524,14 @@ static inline void briks_text_ex(cui_ctx *ui, const char *text, const cui_text_o
 /* account.c: fotos dos amigos no cache local (PRF-03); 0 = sem foto (só iniciais) */
 cui_texture friend_photo(const char *user_id);
 cui_texture friend_photo_by_name(const app_state_t *s, const char *name);
+/* foto de perfil de qualquer pessoa: eu (user_photo), amigo (por id, depois por nome); 0 = só iniciais */
+static inline cui_texture person_photo(const app_state_t *s, const char *id, const char *name) {
+    if (id && id[0] && !strcmp(id, s->user_id)) return s->user_photo;
+    cui_texture t = id && id[0] ? friend_photo(id) : 0;
+    return t ? t : (name && name[0] && !strcmp(name, s->user_name)) ? s->user_photo : friend_photo_by_name(s, name);
+}
+/* ÚNICO ponto que desenha o avatar de uma pessoa: foto (textura em cache, recorte circular do cui) ou, sem foto, as iniciais. Todas as telas passam por aqui. */
+static inline void briks_avatar(cui_ctx *ui, const char *name, float size, cui_texture photo) { cui_avatar_ex(ui, name, &(cui_avatar_opts){ .size = size, .image = photo }); }
 /* accountx.c: data de nascimento do cadastro e dica de login por @nick */
 bool birth_parse(const char *t, int *d, int *m, int *y);
 int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */

@@ -260,6 +260,8 @@ struct Actor {
     dm_off: HashSet<String>,                   // fps cujo chat privado o usuário desconectou (a chamada segue)
     /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
     watch_intent: HashMap<(String, usize), std::path::PathBuf>,
+    /// 1.4.4: quem está assistindo a MINHA transmissão (slot → ids dos pares que avisaram "share.viewing"); só P2P
+    viewers: [HashSet<String>; 2],
     /// 1.4.1: quem está transmitindo (tela por slot / câmera) segundo o par: quando o par SAI ou a conexão cai, a UI precisa do "off" (antes ficava a última imagem parada)
     remote_live: HashSet<(String, usize)>,
     cam_live: HashSet<String>,
@@ -311,7 +313,7 @@ impl Actor {
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), viewers: [HashSet::new(), HashSet::new()], peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -751,6 +753,7 @@ impl Actor {
                         if on { self.watch_intent.insert((id.clone(), slot), path.clone()); } else { self.watch_intent.remove(&(id.clone(), slot)); }
                         if on { *r.sink_path.lock().unwrap() = Some(path.clone()); r.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.frames.store(0, std::sync::atomic::Ordering::Relaxed); }
                         r.watching.store(on, std::sync::atomic::Ordering::Relaxed);
+                        self.dc_send(&id, json!({ "version": 2, "type": "share.viewing", "slot": slot, "on": on })).await;   // o emissor conta quem assiste
                         self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": id, "slot": slot, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
                     }
                     None => self.emit(MeshEvent::Error("assistir: peer desconhecido".into())).await,
@@ -860,6 +863,7 @@ impl Actor {
         sh.sender.stop();
         if let Some(a) = &sh.audio { a.stop(); }
         for id in self.authed_ids() { self.dc_send(&id, json!({ "version": 2, "type": "share.state", "slot": slot, "on": false })).await; }
+        if !self.viewers[slot].is_empty() { self.viewers[slot].clear(); self.emit_viewers(slot).await; }   // parou: ninguém assiste mais
     }
 
     async fn send_share_state(&self, peer: &str, info: &Value, slot: usize) {
@@ -1017,7 +1021,13 @@ impl Actor {
 
     /// A pessoa saiu (ou a conexão com ela caiu): o que ela transmitia (tela nos dois slots e câmera) acabou. Avisa a UI com "off" para
     /// tirar o bloco e a última imagem (antes ficava a última imagem parada). `forget`: saiu de vez, esquece também o "continuar assistindo".
+    async fn emit_viewers(&mut self, slot: usize) {
+        let mut ids: Vec<String> = self.viewers[slot].iter().cloned().collect(); ids.sort();
+        self.emit(MeshEvent::Share(json!({ "ev": "share.viewers", "slot": slot, "count": ids.len(), "peers": ids }))).await;
+    }
+
     async fn end_remote_streams(&mut self, peer: &str, forget: bool) {
+        for slot in 0..2usize { if self.viewers[slot].remove(peer) { self.emit_viewers(slot).await; } }   // quem saiu/caiu deixa de contar
         for slot in 0..2usize {
             if self.remote_live.remove(&(peer.to_string(), slot)) {
                 if let Some(p) = self.peers.get(peer) { p.recv[slot].watching.store(false, std::sync::atomic::Ordering::Relaxed); }
@@ -1485,6 +1495,12 @@ impl Actor {
                     }
                 }
             }
+            "share.viewing" => {   // um par começou/parou de assistir à minha tela: atualiza a contagem (nunca conta a mim mesmo: só chega de outros pares)
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
+                let changed = if v["on"].as_bool().unwrap_or(false) { self.viewers[slot].insert(peer.to_string()) } else { self.viewers[slot].remove(peer) };
+                if changed { self.emit_viewers(slot).await; }
+            }
             "share.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 let on = v["on"].as_bool().unwrap_or(false);
@@ -1505,6 +1521,7 @@ impl Actor {
                             r.epoch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             r.frames.store(0, std::sync::atomic::Ordering::Relaxed);
                             r.watching.store(true, std::sync::atomic::Ordering::Relaxed);
+                            self.dc_send(peer, json!({ "version": 2, "type": "share.viewing", "slot": slot, "on": true })).await;
                             self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": peer, "slot": slot, "state": "watch", "path": path.to_string_lossy() }))).await;
                         }
                     }

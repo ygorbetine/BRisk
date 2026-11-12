@@ -16,7 +16,7 @@ static int g_side_n;   /* roteiros: pessoas na faixa lateral do modo Transmissã
 static int g_sheen_seen;   /* roteiros: quadros em que o brilho foi desenhado no botão Transmissão */
 
 static app_state_t *g_tile_s;   /* estado para o menu do bloco (slider de volume por pessoa) */
-typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; bool deaf; } tile_t;
+typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; bool deaf; cui_texture ptex; } tile_t;   /* ptex: foto de perfil (0 = iniciais) */
 enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TILE_ROOM_MUTE };
 #define SLOT_ME (BRIKS_MAX_PEERS + 1)
 static bool g_can_room_mute;   /* sou o dono e a chamada está no servidor de chamadas: posso silenciar alguém para todos */
@@ -203,6 +203,10 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                     }
                 }
                 char in[4]; initials2(t->name, in);
+                if (t->ptex && !(t->live && !t->me)) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                    const float dp2 = d - 4.0f;   /* a foto tem o PRÓPRIO raio (disco perfeito) e fica dentro do anel */
+                    cui_image(ui, t->ptex, .width = CUI_PX(dp2), .height = CUI_PX(dp2), .radius = (int)(dp2 * 0.5f));
+                } else
                 if (!(t->live && !t->me)) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                     cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
                 }
@@ -538,6 +542,7 @@ static int build_tiles(cui_ctx *ui, app_state_t *s, tile_t *T, char (*names)[64]
     g_tile_me_deaf = s->deaf;
     g_can_room_mute = s->rtc_owner_me && s->net_sfu;
     T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL, 0, 0, 0 };
+    T[0].ptex = s->user_photo;
     if (cam_frame(ui, s, SLOT_ME, &vt, &vw, &vh)) { T[0].vtex = vt; T[0].vw = vw; T[0].vh = vh; }
     if (!s->in_room && getenv("BRIKS_DEMO") && !getenv("BRIKS_DEMO_PEERS")) T[n++] = (tile_t){ "Marina Costa", false, false, 0, BRIKS_MAX_PEERS, false, false, false, "", NULL };   /* participante de exemplo: só nas capturas de demonstração */
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0]) {
@@ -545,6 +550,7 @@ static int build_tiles(cui_ctx *ui, app_state_t *s, tile_t *T, char (*names)[64]
         const bool live = share_peer_live(s, i);
         T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
                            s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
+        T[n - 1].ptex = friend_photo_by_name(s, names[i]);   /* o participante da chamada traz só o nome: casa com a lista de amigos (cache de texturas por pessoa) */
         if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }
     return n;

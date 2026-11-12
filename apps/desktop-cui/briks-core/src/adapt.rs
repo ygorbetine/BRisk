@@ -264,6 +264,10 @@ pub struct Controller {
     /// piso medido de bits por pixel por quadro (0 = sem piso conhecido) e proporção largura/altura do que está sendo codificado
     pub bpp_floor: f64,
     bpp_prev: Option<f64>,
+    /// segundos seguidos com o codificador acima do pedido
+    bpp_run: u32,
+    /// o nível atual está abaixo do que a rede e a CPU deixariam por causa do piso de bits por pixel (telemetria)
+    pub floor_driven: bool,
     aspect: f64,
     /// teto de bitrate do modo manual (None = automático: o teto é o "automático" do nível em uso)
     pub manual_ceil: Option<f64>,
@@ -274,8 +278,9 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, cpu_samples: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, cpu_samples: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, bpp_run: 0, floor_driven: false, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
     }
+    pub fn why_floor(&self) -> bool { self.floor_driven }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
     pub fn top_ceil(&self) -> f64 { self.ceil_for(self.ladder[0]) }
     fn ceil_for(&self, l: Level) -> f64 { self.manual_ceil.unwrap_or(auto_bitrate(l.h, l.fps) as f64) }
@@ -285,18 +290,26 @@ impl Controller {
         let pixels = l.h as f64 * l.h as f64 * self.aspect;
         need_bps(l).max(self.bpp_floor * pixels * l.fps as f64 * 1.1)
     }
+    /// Índice que a rede sozinha daria, sem o piso de bits por pixel.
+    fn plain_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| need_bps(*l) <= budget).unwrap_or(self.ladder.len() - 1) }
     fn net_index(&self, budget: f64) -> usize { self.ladder.iter().position(|l| self.need(*l) <= budget).unwrap_or(self.ladder.len() - 1) }
     /// Chamado uma vez por segundo com quadros saindo: `sent`/`asked` = bps que saíram do codificador e bps pedidos; `fps` = quadros
     /// codificados por segundo; `w`x`h` = tamanho codificado. Se o codificador passa do pedido, aprende o piso de bits por pixel.
-    pub fn note_encoder(&mut self, sent: f64, asked: f64, fps: f64, w: usize, h: usize) {
+    ///
+    /// `transient` = este segundo teve quadro-chave forçado, troca de nível ou codificador novo: o excesso é do quadro-chave e da
+    /// mudança de cena (trocar de aba num navegador regrava a tela inteira), não do conteúdo ser incompressível. Esses segundos
+    /// não ensinam o piso — senão uma troca de aba derrubava o FPS para 10 e a resolução para 720p, e o piso demorava a sumir.
+    pub fn note_encoder(&mut self, sent: f64, asked: f64, fps: f64, w: usize, h: usize, transient: bool) {
         if asked <= 0.0 || sent <= 0.0 || fps < 0.5 || w == 0 || h == 0 { return; }
         self.aspect = w as f64 / h as f64;
         let bpp = sent / fps / (w * h) as f64;
+        if transient { self.bpp_prev = None; self.bpp_run = 0; self.overshoot = (sent / asked).clamp(0.0, 8.0); return; }
         if sent > asked * 1.15 {
-            // vale o menor de dois segundos seguidos de excesso: um quadro-chave isolado infla a medida de um segundo só
-            if let Some(prev) = self.bpp_prev { let c = prev.min(bpp); self.bpp_floor = if c > self.bpp_floor { c } else { self.bpp_floor * 0.7 + c * 0.3 }; }
-            self.bpp_prev = Some(bpp);
-        } else { self.bpp_prev = None; self.bpp_floor *= 0.9; }   // obedeceu: o conteúdo ficou mais fácil, esquece aos poucos
+            // vale o menor de três segundos seguidos de excesso: um quadro-chave isolado infla a medida de um segundo só
+            self.bpp_run += 1;
+            if let Some(prev) = self.bpp_prev { if self.bpp_run >= 3 { let c = prev.min(bpp); self.bpp_floor = if c > self.bpp_floor { c } else { self.bpp_floor * 0.7 + c * 0.3 }; } }
+            self.bpp_prev = Some(self.bpp_prev.map_or(bpp, |p| p.min(bpp)));
+        } else { self.bpp_prev = None; self.bpp_run = 0; self.bpp_floor *= 0.6; }   // obedeceu: o conteúdo ficou mais fácil, esquece rápido
         self.overshoot = (sent / asked).clamp(0.0, 8.0);
     }
 
@@ -329,12 +342,15 @@ impl Controller {
     pub fn decide(&mut self, budget: f64) -> Decision {
         let net_now = self.net_index(budget);
         let net_up = self.net_index(budget / 1.3);
+        // folga grande (2x o que o degrau pede): a queda foi passageira, volta em 1 s em vez de 3
+        let ticks_needed = if self.idx > 0 && self.net_index(budget / 2.0) < self.idx { 1 } else { 3 };
         let mut want = self.idx;
         if net_now > self.idx { want = net_now; self.up_ticks = 0; }
-        else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= 3 { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; } }   // até 3 degraus por vez
+        else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= ticks_needed { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; } }   // até 3 degraus por vez
         else { self.up_ticks = 0; }
         // a folga local voltou e era ela que segurava o nível: sobe já até onde a rede deixa (sem esperar os 3 s da rede)
         if std::mem::take(&mut self.cpu_relaxed) && want > net_now.max(self.cpu_idx) { want = net_now.max(self.cpu_idx); }
+        self.floor_driven = want > net_now.max(self.cpu_idx) || (want == net_now && net_now > 0 && self.plain_index(budget) < net_now);
         let cpu_limited = self.cpu_idx > want;
         self.idx = want.max(self.cpu_idx).min(self.ladder.len() - 1);
         let level = self.ladder[self.idx];
@@ -509,12 +525,11 @@ mod tests {
         let mut c = Controller::new(Content::Detail, 1080, 30, 12_000);
         c.decide(12_000_000.0);
         // ruído em 1080p: pediu 1,5 Mbps, saíram 4,3 Mbps a 3 qps → ~0,7 bit por pixel por quadro
-        c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080);
-        c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080);
+        for _ in 0..3 { c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080, false); }
         let d = c.decide(1_500_000.0);
         assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");
         // conteúdo fácil de novo: o piso some e a resolução volta
-        for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360); }
+        for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360, false); }
         for _ in 0..8 { c.decide(4_500_000.0); }
         assert!(c.decide(4_500_000.0).level.h >= 1080, "voltou a 1080p");
     }
@@ -526,9 +541,16 @@ mod tests {
         let d = c.decide(900_000.0);   // 1080p10 pede ~1 Mbps: não cabe, desce a resolução
         assert!(d.level.fps == 10 && d.level.h < 1080 && d.net_limited, "{d:?}");
         let low = d.level;
-        assert_eq!(c.decide(4_500_000.0).level, low, "não sobe no primeiro segundo");
-        c.decide(4_500_000.0);
-        assert_ne!(c.decide(4_500_000.0).level, low, "sobe depois de 3 s de folga");
+        assert_ne!(c.decide(4_500_000.0).level, low, "folga grande (mais de 2x): sobe em 1 s");
+        // folga moderada (30–100%): só sobe depois de 3 s seguidos
+        let mut c = Controller::new(Content::Detail, 1080, 30, 0);
+        c.decide(900_000.0);
+        let low = c.ladder[c.idx];
+        let up = c.ladder[c.idx - 1];
+        let mid = need_bps(up) * 1.4;
+        assert_eq!(c.decide(mid).level, low, "não sobe no primeiro segundo");
+        c.decide(mid);
+        assert_ne!(c.decide(mid).level, low, "sobe depois de 3 s de folga");
         // sobrecarga local: 2 s com o quadro custando mais que o período → desce um degrau; folga por 5 s → volta
         let mut c = Controller::new(Content::Motion, 1080, 60, 0);
         c.decide(20_000_000.0);
@@ -539,5 +561,63 @@ mod tests {
         assert!(d.cpu_limited && d.level == Level { h: 900, fps: 60 }, "{d:?}");
         for _ in 0..3 { c.note_cpu(4.0, 60.0, 60.0); }
         assert_eq!(c.decide(20_000_000.0).level, Level { h: 1080, fps: 60 });
+    }
+
+    /// Caso do vídeo do usuário (1.4.3): transmissor em 1080p/24 FPS/8,5 Mbps, rede boa; uma troca de aba regravou a tela inteira,
+    /// o codificador estourou o bitrate por 1–2 s (quadro-chave + cena nova) e o espectador ficou em 1080p·10 FPS e depois 720p·10.
+    #[test]
+    fn scene_change_burst_does_not_pin_the_stream_at_10_fps() {
+        let mut c = Controller::new(Content::Detail, 1080, 24, 8_500);
+        assert_eq!(c.decide(8_500_000.0).level, Level { h: 1080, fps: 24 });
+        let asked = 7_225_000.0;
+        // 2 s de excesso com quadro-chave/troca de nível (transitório) + 1 s de excesso comum: nenhum ensina o piso
+        c.note_encoder(12_000_000.0, asked, 8.0, 1920, 1080, true);
+        c.note_encoder(12_000_000.0, asked, 8.0, 1920, 1080, true);
+        c.note_encoder(9_000_000.0, asked, 8.0, 1920, 1080, false);
+        assert_eq!(c.bpp_floor, 0.0, "excesso curto/transitório não vira piso de qualidade");
+        for _ in 0..3 { assert_eq!(c.decide(8_500_000.0).level, Level { h: 1080, fps: 24 }); }
+    }
+
+    #[test]
+    fn content_floor_fades_fast_and_level_returns_to_configured() {
+        let mut c = Controller::new(Content::Detail, 1080, 24, 8_500);
+        c.decide(8_500_000.0);
+        // conteúdo realmente difícil por 4 s seguidos: o piso aparece e o nível cai
+        for _ in 0..4 { c.note_encoder(9_000_000.0, 3_000_000.0, 24.0, 1920, 1080, false); }
+        let d = c.decide(8_500_000.0);
+        assert!(c.bpp_floor > 0.0 && d.level != Level { h: 1080, fps: 24 }, "piso aprendido: {d:?} floor {}", c.bpp_floor);
+        assert_eq!(c.why_floor(), d.level != Level { h: 1080, fps: 24 });
+        // o conteúdo volta ao normal: o codificador obedece de novo; em poucos segundos volta ao 1080p/24 configurado
+        let mut back = None;
+        for i in 1..=10 {
+            c.note_encoder(2_000_000.0, 3_000_000.0, 10.0, 1280, 720, false);
+            if c.decide(8_500_000.0).level == (Level { h: 1080, fps: 24 }) { back = Some(i); break; }
+        }
+        assert!(back.map(|i| i <= 6).unwrap_or(false), "demorou a voltar ao 1080p/24: {back:?}, piso {}", c.bpp_floor);
+    }
+
+    #[test]
+    fn brief_network_dip_recovers_to_configured_quality_quickly() {
+        let mut c = Controller::new(Content::Detail, 1080, 24, 8_500);
+        c.decide(8_500_000.0);
+        // queda breve: a banda estimada vai a 0,9 Mbps por 2 s (RTT/perda passageiros)…
+        for _ in 0..2 { c.decide(900_000.0); }
+        assert!(c.idx > 0);
+        // …e volta ao normal: o nível de topo tem de voltar em no máximo 3 s com a rede folgada
+        let mut n = 0;
+        while c.decide(8_500_000.0).level != (Level { h: 1080, fps: 24 }) { n += 1; assert!(n <= 3, "ficou preso em {:?}", c.ladder[c.idx]); }
+    }
+
+    #[test]
+    fn estimator_recovers_to_ceiling_after_a_delay_spike_on_a_good_link() {
+        // rede boa (RTT 20 ms); uma rajada de quadro-chave faz o RTT reportado subir a 250 ms por 2 s e some
+        let mut e = Estimator::new(8_500_000.0);
+        let t0 = Instant::now();
+        for i in 0..5 { e.update(t0 + Duration::from_secs(i), e.est, Some((0.0, 20.0, 1.0)), 0.0); }
+        for i in 5..7 { e.update(t0 + Duration::from_secs(i), e.est, Some((0.0, 250.0, 1.0)), 0.0); }
+        assert!(e.est < 8_500_000.0, "o atraso deveria ter cortado");
+        let mut back = None;
+        for i in 7..40 { let sent = e.est; if e.update(t0 + Duration::from_secs(i), sent, Some((0.0, 20.0, 1.0)), 0.0) >= 8_500_000.0 * 0.95 { back = Some(i - 7); break; } }
+        assert!(back.map(|s| s <= 12).unwrap_or(false), "estimativa demorou a voltar ao teto: {back:?} s");
     }
 }

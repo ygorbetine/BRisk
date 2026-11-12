@@ -1084,7 +1084,7 @@ async fn sender_counts_its_viewers() {
     let mut b = node(port, pb, "Beto", "viewers1", Arc::new(Identity::generate()));
     let mut c = node(port, pc, "Caio", "viewers1", Arc::new(Identity::generate()));
     assert!(authed(&mut a, 2, 40).await && authed(&mut b, 2, 40).await && authed(&mut c, 2, 40).await);
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 360, fps: 15, kbps: 800, label: "V".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 360, fps: 15, kbps: 800, label: "V".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("B vê no ar");
     wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("C vê no ar");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b.bin") }).await.unwrap();

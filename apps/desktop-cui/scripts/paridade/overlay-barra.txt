@@ -1,0 +1,57 @@
+# Barra de edição da sobreposição: o app reage ao que o overlay manda (widget/opacity/selectlive/edit 0) e grava em Configurações > Sobreposição.
+# Teste oculto: o briks_overlay.exe NÃO é aberto; "sys ovl key" finge o Ctrl+Shift+O e "sys ovl line ..." finge a linha que o overlay mandaria.
+# Demo "call" + BRIKS_DEMO_PEERS=1 + BRIKS_OVERLAY_FORCE=1.
+waitms 1500
+expect overlay_hotkey 1
+expect overlay_edit 0
+sys ovl key
+waitms 500
+expect overlay_edit 1
+expect overlay_has_edit 1
+expect overlay_flags 15
+expect overlay_lives 0
+sys ovl lives 2
+waitms 500
+expect overlay_lives 2
+expect overlay_has_oplive 1
+sys ovl line widget mute 0
+waitms 500
+expect cfg_ov_flags 7
+expect overlay_flags 7
+sys ovl line widget live 0
+waitms 500
+expect cfg_ov_flags 6
+expect overlay_has_oplive 0
+sys ovl line widget live 1
+sys ovl line selectlive
+waitms 500
+expect overlay_select_evs 1
+expect overlay_live_sel 1
+sys ovl line widget all 0
+waitms 500
+expect cfg_ov_flags 0
+expect overlay_flags 0
+expect overlay_people 0
+sys ovl line widget all 1
+sys ovl line opacity 55
+waitms 500
+expect cfg_ov_flags 15
+expect cfg_ov_opacity 55
+expect overlay_opacity 55
+sys ovl line opacity 3
+waitms 400
+expect cfg_ov_opacity 10
+sys ovl line widget lixo 1
+waitms 200
+expect cfg_ov_flags 15
+sys ovl line edit 0
+waitms 500
+expect overlay_edit 0
+expect overlay_has_edit 0
+sys ovl key
+waitms 400
+expect overlay_edit 1
+sys ovl key
+waitms 400
+expect overlay_edit 0
+snap b0

@@ -169,6 +169,17 @@ void settings_ovl_set(const char *dev, int x, int y, int w) {
     while (strlen(now) > 180) { char *sc = strchr(now, ';'); if (!sc) break; memmove(now, sc + 1, strlen(sc)); }   /* sobra: descarta o mais antigo */
     snprintf(g_set.ov_lay, sizeof g_set.ov_lay, "%s", now); snprintf(g_set.ov_dev, sizeof g_set.ov_dev, "%s", dev);
 }
+/* Barra de edição do overlay: liga/desliga um item ("live", "voice", "status", "mute" ou "all") e muda a opacidade. Vão para g_set e são salvos
+ * por settings_tick; Configurações > Sobreposição lê o mesmo g_set, então as duas telas ficam sempre iguais. */
+bool settings_ovl_widget(const char *id, bool on) {
+    bool all = !strcmp(id, "all"), hit = all;
+    if (all || !strcmp(id, "live")) { g_set.ov_live = on; hit = true; }
+    if (all || !strcmp(id, "voice")) { g_set.ov_voice = on; hit = true; }
+    if (all || !strcmp(id, "status")) { g_set.ov_status = on; hit = true; }
+    if (all || !strcmp(id, "mute")) { g_set.ov_mute = on; hit = true; }
+    return hit;
+}
+void settings_ovl_opacity(int pct) { g_set.ov_opacity = (float)(pct < 10 ? 10 : pct > 100 ? 100 : pct); }
 void settings_ovl_reset(void) { g_set.ov_lay[0] = 0; g_set.ov_dev[0] = 0; }
 bool settings_echo(void) { return g_set.echo; }
 bool settings_nt_online(void) { return g_set.nt_online; }
@@ -262,6 +273,8 @@ int settings_probe(const char *n, app_state_t *s) {
     { int op = overlay_probe(n); if (op != -9999) return op; }
     { int cp = cam_probe(n); if (cp != -9999) return cp; }
     if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
+    if (!strcmp(n, "cfg_ov_flags")) return (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
+    if (!strcmp(n, "cfg_ov_opacity")) return (int)(g_set.ov_opacity + 0.5f);
     if (!strcmp(n, "rec_slot")) return rec_slot;
     if (!strcmp(n, "key_msg")) return key_msg[0] != 0;
     if (!strcmp(n, "mic_test_on")) return s->mic_test_on;

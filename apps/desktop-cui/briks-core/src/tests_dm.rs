@@ -76,3 +76,31 @@ async fn dm_reaches_a_friend_with_no_shared_room_through_the_inbox_knock() {
     b.send(json!({ "cmd": "dm.open", "fp": "../../x" })).await;
     b.send(json!({ "cmd": "dm.close", "fp": a.fp })).await;
 }
+
+/// Fila no aparelho pelo IPC: A escreve SEM canal aberto (nem sala, nem dm.open): a mensagem não se perde, aparece como pendente em
+/// `outbox.state`; quando o canal abre e B está online, B recebe UMA vez e A vê "entregue" (a pendência some, o id vira entregue).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn message_written_with_no_open_link_is_kept_pending_then_delivered_once() {
+    let port = crate::mock::start(0).await.unwrap();
+    let (mut a, mut b) = (app("fa", port, "Ana").await, app("fb", port, "Beto").await);
+    let ub = "22222222-bbbb-4bbb-8bbb-000000000002";
+    let id = format!("fila-ipc-{}", std::process::id());
+    a.send(json!({ "cmd": "chat.send", "to_fp": b.fp, "id": id, "text": "escrita com o amigo fora" })).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    a.send(json!({ "cmd": "outbox.get" })).await;
+    let st = a.wait(10, "outbox.state com a pendência", |v| v["ev"] == "outbox.state" && v["pending"].as_array().is_some_and(|p| p.iter().any(|x| x["id"] == id.as_str() && x["to_fp"] == b.fp.as_str()))).await;
+    assert!(st["delivered"].as_array().unwrap().iter().all(|x| x != id.as_str()));
+    // o amigo fica online: a UI de A reabre o canal (dm.open com toque) e B observa a caixa
+    b.send(json!({ "cmd": "dm.inbox", "user_id": ub })).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    a.send(json!({ "cmd": "dm.open", "fp": b.fp, "user_id": ub })).await;
+    let wake = b.wait(15, "dm.wake em B", |v| v["ev"] == "dm.wake").await;
+    b.send(json!({ "cmd": "dm.open", "fp": wake["fp"] })).await;
+    b.wait(40, "mensagem pendente em B", |v| v["ev"] == "chat.message" && v["id"] == id.as_str()).await;
+    a.wait(20, "chat.ack em A", |v| v["ev"] == "chat.ack" && v["id"] == id.as_str()).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;   // dá tempo a reenvios: não pode duplicar
+    assert_eq!(b.count(|v| v["ev"] == "chat.message" && v["id"] == id.as_str()), 1, "chegou uma vez só");
+    a.send(json!({ "cmd": "outbox.get" })).await;
+    let end = a.wait(10, "outbox.state final", |v| v["ev"] == "outbox.state" && v["delivered"].as_array().is_some_and(|d| d.iter().any(|x| x == id.as_str()))).await;
+    assert!(end["pending"].as_array().unwrap().iter().all(|x| x["id"] != id.as_str()), "a pendência saiu");
+}

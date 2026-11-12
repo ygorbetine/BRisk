@@ -12,7 +12,13 @@ const CB: &str = "bbbbbbbb-ca11-4222-8222-0000000000b2";
 
 /// Os testes mexem em BRIKS_FAKE_CAMERA e no contador global `camera::open_count()`: um de cada vez.
 static CAM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-fn serial() -> std::sync::MutexGuard<'static, ()> { CAM_LOCK.lock().unwrap_or_else(|e| e.into_inner()) }
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    let g = CAM_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // o teste anterior pode ter acabado de soltar a camera de forma assincrona: espera o contador zerar antes de comecar
+    let t0 = std::time::Instant::now();
+    while camera::open_count() != 0 && t0.elapsed() < std::time::Duration::from_secs(8) { std::thread::sleep(std::time::Duration::from_millis(50)); }
+    g
+}
 
 fn fake(mode: &str) { std::env::set_var("BRIKS_FAKE_CAMERA", mode); }
 

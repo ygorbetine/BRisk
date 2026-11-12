@@ -61,3 +61,6 @@ NÃO reproduzida: 36 execuções seguidas dos três roteiros no build integrado,
 
 ## Clique atravessando modais
 Confirmado no integrado: `scripts/prova/modal/rodar.ps1` passa (3 roteiros) e falha com `-SemRegra` (3 de 3), ou seja, a regra central do cui-paineis (`briks_blocked` em `briks_clicked`/`briks_hover`, e `cui_dialog`/`cui_menu`/`cui_popover` redefinidos em `briks_ui.h`) cobre os arquivos das outras frentes. Dois cliques diretos de botão direito escapavam da regra (menu da mensagem em `msgui.c`, menu do participante em `ui_call.c`): corrigidos aqui. O redimensionar de divisória em `dock.c` usa clique direto; não testado com modal aberto.
+
+## Auditoria de lacunas (1.4.0)
+Classe nova `PARCIAL` no `itens.csv` (o runner a trata como funcional, com o aviso "falta parte do Electron"). Reclassificados: RDE-06 (TURN já existe) → PRESENTE-FUNCIONAL; CFG-11, CFG-22, CFG-24, CFG-25, MSG-10 → PARCIAL. CFG-26 (aba Avisos ligada a erros de chamada, transmissão, arquivo, conta e rede), NOT-04 (aviso do sistema "pediu para você transmitir", `NT_REQUEST`) e o novo ATU-05 (bolinha de atualização pronta) foram implementados na 1.4.0 e ficam PRESENTE-FUNCIONAL. Itens novos: OVL-01..04, MSG-20, MSG-21, CHM-26, CFG-30, PRF-14, ATU-05, TRX-13 (as lacunas restantes ficam para a 1.4.1).

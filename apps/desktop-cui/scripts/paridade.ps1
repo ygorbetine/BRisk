@@ -195,6 +195,7 @@ foreach ($it in $itens) {
     $r = $resultado[$it.id]
     switch ($it.classe) {
         "PRESENTE-FUNCIONAL" { if ($r) { $res = $r.res; $det = $r.det } else { $res = "SEM-TESTE"; $det = "sem roteiro automático (conferir à mão ou por teste do core)" } }
+        "PARCIAL" { if ($r) { $res = $r.res; $det = "parcial: falta parte do Electron. " + $r.det } else { $res = "SEM-TESTE"; $det = "parcial: falta parte do Electron; sem roteiro automático" } }
         "PRESENTE-SEM-EFEITO" {
             if ($r -and ($r.res -eq "REVER" -or $r.res -eq "FALHOU")) { $res = "REVER"; $det = "agora tem efeito visível ou código novo: reclassifique. " + $r.det }
             elseif ($r -and $r.res -eq "PASSOU") { $res = "SEM-EFEITO"; $det = "confirmado: o clique não muda nada. " + $r.det }

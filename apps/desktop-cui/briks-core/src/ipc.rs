@@ -226,7 +226,7 @@ async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
 
 /// Nível do protocolo UI<->core. A UI (BRIKS_CORE_PROTO_MIN em core.h) avisa quando o core em execução é mais antigo que o programa
 /// (core órfão ou briks-core.exe de outra versão ao lado do app). Suba junto com a UI quando um comando/evento novo passar a ser exigido.
-pub const CORE_PROTO: u32 = 2;
+pub const CORE_PROTO: u32 = 3;   // 3: painel de sons (sound.*)
 
 async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     s.set_nodelay(true).ok();

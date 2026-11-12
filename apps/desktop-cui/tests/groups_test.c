@@ -19,6 +19,10 @@ cui_texture friend_photo_by_name(const app_state_t *s, const char *name) { (void
 char g_tip[160]; void app_open_group(app_state_t *s, int i) { s->active_group = i; } bool friends_online(const app_state_t *s, const person_t *p) { (void)s; (void)p; return false; }
 static char core_sent[16384]; static int core_n;
 core_status_t core_state(void) { return CORE_STOPPED; }
+/* painel de sons (sons.c): aqui só os pontos de ligação, sem catálogo */
+void sons_catalog_sync(const char *s) { (void)s; }
+char *sons_group_catalog_json(const char *gid, const char *st) { (void)gid; (void)st; return NULL; }
+void sons_note_snapshot(const char *gid, const jval *sn) { (void)gid; (void)sn; }
 bool core_send(const char *l) { snprintf(core_sent, sizeof core_sent, "%s", l); core_n++; return true; }
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FALHOU: %s (linha %d)\n  enviado: %s\n", #c, __LINE__, sent); fails++; } } while (0)

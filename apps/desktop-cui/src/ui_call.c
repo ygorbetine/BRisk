@@ -5,6 +5,7 @@
 #include "volume_ctl.h"
 #include "netdiag.h"
 #include "call_idle.h"
+#include "sons.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@ enum { TILE_NONE = 0, TILE_MUTE, TILE_KICK, TILE_FOCUS, TILE_ASK, TILE_WATCH, TI
 #define SLOT_ME (BRIKS_MAX_PEERS + 1)
 static bool g_can_room_mute;   /* sou o dono e a chamada está no servidor de chamadas: posso silenciar alguém para todos */
 static struct { float lvl, d; } g_av[BRIKS_MAX_PEERS + 2];   /* nível de fala e diâmetro do avatar por tile (0..7 peers, 8 prévia, 9 eu), lidos pelo canvas ao pintar */
-static bool g_bar_visible = true, g_aud_open;
+static bool g_bar_visible = true, g_aud_open, g_son_open;
 
 /* ---------- chat da sala ---------- */
 static void iso_from_ms(long long ms, char *out, size_t cap) {
@@ -105,6 +106,7 @@ int call_probe(const char *n) {
     if (!strcmp(n, "call_req")) return g_call.req.open;
     if (!strcmp(n, "call_bar")) return g_bar_visible;
     if (!strcmp(n, "call_audio")) return g_aud_open;
+    if (!strcmp(n, "call_sons")) return g_son_open;
     if (!strcmp(n, "call_deaf")) return g_tile_me_deaf;
     if (!strcmp(n, "call_fs_window")) return g_fsw.applied;
     return history_probe(n);
@@ -652,6 +654,14 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
             if (open_aud) cui_popover_open(ui, "audpop");
             audio_popover(ui, s);
         }
+        cui_box(ui, .dir = CUI_STACK, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START) {   /* painel de sons: o mesmo padrão da pílula Áudio */
+            const bool open_son = pill(ui, 8, CUI_ICON_MUSIC, compact ? NULL : "Sons", g_son_open ? 1 : 0, "Painel de sons: toca para quem está na chamada");
+            cui_canvas(ui, "sonanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);
+            if (open_son) cui_popover_open(ui, "sonpop");
+            g_son_open = false;
+            sons_popover(ui, s);
+            g_son_open = sons_panel_open();
+        }
         if (g_call.fullscreen && pill(ui, 7, CUI_ICON_MINIMIZE_2, NULL, 0, "Sair da tela cheia (Esc)")) call_set_fullscreen(s, false);
         if (pill(ui, 5, CUI_ICON_PHONE, compact ? NULL : "Sair", 2, "Sair da chamada")) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
     }
@@ -672,7 +682,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
     {
         const cui_vec2 m = cui_mouse_pos(ui);
         if (g_call.last_move < 0 || fabsf(m.x - g_call.mx) > 1.0f || fabsf(m.y - g_call.my) > 1.0f || cui_mouse_down(ui, CUI_MOUSE_LEFT)) { g_call.last_move = now; g_call.mx = m.x; g_call.my = m.y; }
-        g_bar_visible = !g_call.fullscreen || now - g_call.last_move < 3.0 || g_aud_open || modal;
+        g_bar_visible = !g_call.fullscreen || now - g_call.last_move < 3.0 || g_aud_open || g_son_open || modal;
         if (g_call.fullscreen && g_bar_visible) cui_request_wakeup(ui, 0.5f);
     }
     char title[120], st[160]; call_room_title(s, title, sizeof title); rtc_status_text(s, st, sizeof st);
@@ -780,6 +790,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .justify = CUI_JUSTIFY_END, .align = CUI_ALIGN_CENTER, .pad_bottom = 16) { control_bar(ui, s, bar_compact); }
         }
         call_banner(ui, s);
+        sons_dialogs(ui, s);
     }
     ui_share_dialog(ui, s);
     /* confirmação rápida antes de expulsar */

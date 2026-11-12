@@ -8,6 +8,7 @@
 #include "core.h"
 #include "ginvite.h"
 #include "sysint.h"
+#include "sons.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -42,6 +43,7 @@ int script_probe(const char *n) {
     { int sp = sys_probe(n); if (sp != -9999) return sp; }
     { int sp = settings_probe(n, &state); if (sp != -9999) return sp; }
     { int sp = share_probe(n, &state); if (sp != -9999) return sp; }
+    { int sp = sons_probe(n); if (sp != -1) return sp; }
     if (!strcmp(n, "profile")) return state.profile_open;
     if (!strcmp(n, "status_emoji_len")) return (int)strlen(state.user_emoji);   /* bytes do emoji do status (0 = nenhum) */
     if (!strcmp(n, "emoji_picking")) return msgui_emoji_picking();
@@ -236,6 +238,7 @@ int main(void) {
     briks_glass_shutdown();
     sys_before_destroy(&state);   /* grava a janela e tira o ícone da bandeja */
     cui_app_destroy(app);
+    sons_shutdown();
     core_stop();
     bk_stop();
     update_install_on_exit();   /* atualização já baixada e verificada: instala em silêncio ao fechar */

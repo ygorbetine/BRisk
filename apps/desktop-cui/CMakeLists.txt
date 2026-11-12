@@ -13,7 +13,7 @@ FetchContent_Declare(cui
 FetchContent_MakeAvailable(cui)
 
 add_executable(briks_cui WIN32 src/main.c src/theme.c src/theme_cfg.c src/perf.c src/ui_auth.c src/ui_social.c src/ui_call.c src/app.c src/chat.c src/ginvite.c src/ui_history.c src/layout.c src/drag_stack.c src/drag_stack_ui.c src/dock.c src/script.c src/glass.c src/json.c src/backend.c src/core.c src/rtc.c src/profile.c src/msgui.c src/migrate.c src/update.c src/ui_update.c src/settings.c src/themes.c src/account.c src/ui_account.c src/ui_share.c src/ui_cam.c src/ui_voice.c src/hotkeys.c src/hotkeys_rt.c src/netdiag.c src/attach.c src/richtext.c src/ui_friends.c src/ui_groups.c src/winstate.c src/tray.c src/notify.c src/hotkeys_win.c src/storage.c src/settings_data.c src/overlay_host.c src/callhist.c src/firewall.c src/media_preview.c src/volume_ctl.c)
-target_sources(briks_cui PRIVATE src/net_state.c src/accountx.c src/titlebar.c src/hotkeys_ovl.c src/ui_nettest.c)   # estado da internet e faixa offline
+target_sources(briks_cui PRIVATE src/net_state.c src/accountx.c src/titlebar.c src/hotkeys_ovl.c src/ui_nettest.c src/sons.c src/sons_util.c)   # estado da internet e faixa offline
 if(WIN32)
   target_sources(briks_cui PRIVATE src/briks.rc)
   # o .rc embute assets/briks.ico: sem esta dependência o Ninja não recompila o recurso quando só o .ico muda (o exe ficava com o ícone antigo)
@@ -67,6 +67,9 @@ add_executable(briks_sys_test tests/sys_test.c)   # janela/sistema: geometria, a
 target_compile_options(briks_sys_test PRIVATE /utf-8)
 target_link_libraries(briks_sys_test PRIVATE advapi32)
 add_executable(briks_richtext_test tests/richtext_test.c src/richtext.c)   # texto das mensagens: sem janela
+
+add_executable(briks_sons_test tests/sons_test.c src/sons_util.c)   # logica pura do painel de sons: sem janela
+target_compile_options(briks_sons_test PRIVATE /utf-8)
 
 add_executable(briks_call_test tests/call_test.c src/callhist.c src/json.c)   # logica pura da chamada (historico, grade, rede): sem janela
 target_compile_options(briks_call_test PRIVATE /utf-8)

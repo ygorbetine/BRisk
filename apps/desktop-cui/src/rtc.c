@@ -8,6 +8,7 @@
 #include "attach.h"
 #include "sysint.h"
 #include "call.h"
+#include "sons.h"
 #include <math.h>
 #include <windows.h>
 #include <shellapi.h>
@@ -39,6 +40,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
 }
 
 void rtc_leave_room(app_state_t *s) {
+    sons_stop_all();
     s->rtc_want_room = false;
     s->in_room = false; s->dmoff_n = 0;   /* a malha acaba junto com a sala: chats privados fechados voltam ao normal */
     s->mic_state[0] = 0; s->mic_text[0] = 0; s->dev_notice[0] = 0;   /* avisos de áudio são da chamada que acabou */
@@ -243,6 +245,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
     const char *ev = json_str(j, "ev", "");
     bool changed = true;
     over_note(j, ev);
+    if (!strncmp(ev, "sound.", 6)) { sons_core_event(s, j, ev); json_free(j); return true; }
     if (!strcmp(ev, "session.ready")) {
         s->rtc_session_ready = true;
         copy(s->rtc_fp, sizeof s->rtc_fp, json_str(j, "fingerprint", ""));
@@ -254,7 +257,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);   /* erro técnico de rede vira frase compreensível */
     } else if (!strcmp(ev, "peer")) {
         set_peer(s, json_str(j, "peer_id", ""), json_str(j, "state", ""));
-        if (!strcmp(json_str(j, "state", ""), "autenticado")) groups_resend(s);
+        if (!strcmp(json_str(j, "state", ""), "autenticado")) { groups_resend(s); sons_ask_missing(); }
     } else if (!strcmp(ev, "speaking")) {
         const jval *lv = json_get(j, "level");
         float l = lv && lv->type == J_NUM ? (float)lv->num : 0;

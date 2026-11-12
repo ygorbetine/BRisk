@@ -15,6 +15,7 @@
 #include <commdlg.h>
 #include "core.h"
 #include "ginvite.h"
+#include "sons.h"
 
 static void new_id(char *out, size_t cap) {
     unsigned char r[16]; BCryptGenRandom(NULL, r, sizeof r, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
@@ -231,7 +232,10 @@ static char *snap_build(const app_state_t *s, const group_t *g, long long versio
         if (i) sb_put(&b, ",");
         sb_put(&b, "{\"id\":"); sb_str(&b, g->ch[i].voice ? g->ch[i].room : g->ch[i].id); sb_put(&b, ",\"name\":"); sb_str(&b, g->ch[i].name); sb_put(&b, g->ch[i].voice ? ",\"kind\":\"voice\"}" : ",\"kind\":\"text\"}");
     }
-    sb_put(&b, "],\"signer_fp\":\"\",\"signature\":\"\"}");
+    sb_put(&b, "]");
+    { char *st = stored_snap(g, NULL); char *so = sons_group_catalog_json(g->id, st); free(st);   /* catálogo de sons do grupo (painel de sons); vazio não entra no texto */
+      if (so && strcmp(so, "[]")) { sb_put(&b, ",\"sounds\":"); sb_put(&b, so); } free(so); }
+    sb_put(&b, ",\"signer_fp\":\"\",\"signature\":\"\"}");
     return b.p;
 }
 
@@ -399,6 +403,22 @@ void groups_resend(app_state_t *s) {
     for (int i = 0; i < s->group_count; i++) { char *sn = stored_snap(&s->groups[i], NULL); if (sn) { send_obj("group.send", sn, NULL, NULL); free(sn); } }
 }
 
+void groups_republish(app_state_t *s, const char *gid) { int gi = find_group(s, gid); if (gi >= 0) group_publish(s, gi, false); }
+
+/* sala de voz de um grupo: quem pode disparar sons nela = membros do grupo (impressão digital P2P); NULL se a sala não é de grupo */
+char *groups_room_roster(app_state_t *s, const char *room, char *gid, size_t gcap) {
+    for (int i = 0; i < s->group_count; i++) {
+        const group_t *g = &s->groups[i]; bool hit = false;
+        for (int c = 0; c < g->nch; c++) if (g->ch[c].voice && !strcmp(g->ch[c].room, room)) hit = true;
+        if (!hit) continue;
+        snprintf(gid, gcap, "%s", g->id);
+        sbuf b = { 0 }; sb_put(&b, "[");
+        for (int m = 0, k = 0; m < g->nm; m++) { const bool me = !strcmp(g->m[m].id, s->user_id); const char *fp = me ? s->rtc_fp : g->m[m].fp; if (!fp[0]) continue; if (k++) sb_put(&b, ","); sb_str(&b, fp); }
+        sb_put(&b, "]"); return b.p;
+    }
+    return NULL;
+}
+
 static void leave_or_delete(app_state_t *s, int gi);
 #define GINV_SHORT_TIMEOUT_MS 25000ull
 void groups_tick(app_state_t *s) {
@@ -411,8 +431,8 @@ void groups_tick(app_state_t *s) {
         gpend_t *p = &g_pend[i]; if (!p->kind) continue;
         const int kind = p->kind; char gid[48]; snprintf(gid, sizeof gid, "%s", p->gid); char *text = p->text; p->kind = 0; p->text = NULL;
         int gi = find_group(s, gid);
-        if (kind == 1 && gi >= 0 && text) group_save_ex(s, gi, text);
-        else if (kind == 2 && gi >= 0 && text) { jval *sn = json_parse(text); if (sn) { snap_apply(s, &s->groups[gi], sn); json_free(sn); group_save_ex(s, gi, text); } }
+        if (kind == 1 && gi >= 0 && text) { group_save_ex(s, gi, text); sons_catalog_sync(text); }
+        else if (kind == 2 && gi >= 0 && text) { jval *sn = json_parse(text); if (sn) { snap_apply(s, &s->groups[gi], sn); sons_note_snapshot(gid, sn); json_free(sn); group_save_ex(s, gi, text); sons_catalog_sync(text); } }
         else if (kind == 3 && text) { jval *sn = json_parse(text); if (sn) { char *doc = doc_from_snap(s, sn, text); json_free(sn); app_begin(s, OP_GROUP_SAVE, "POST", "/p2p/groups", doc); free(doc); } }
         else if (kind == 4 && gi >= 0) leave_or_delete(s, gi);
         free(text);

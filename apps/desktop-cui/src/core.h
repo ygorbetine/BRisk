@@ -11,7 +11,7 @@ void core_start(void);                         /* inicia o briks-core.exe ao lad
 void core_stop(void);
 core_status_t core_state(void);
 const char *core_error(void);
-#define BRIKS_CORE_PROTO_MIN 2   /* core_proto mínimo no hello.ok (ipc.rs CORE_PROTO); abaixo disso o app avisa que o core é de outra versão */
+#define BRIKS_CORE_PROTO_MIN 3   /* core_proto mínimo no hello.ok (ipc.rs CORE_PROTO); abaixo disso o app avisa que o core é de outra versão */
 int core_proto(void);                                /* nível anunciado pelo core em execução (0 = ainda não respondeu ou core antigo) */
 void core_set_proto(int p);
 bool core_send(const char *json_line);         /* uma linha JSON (sem \n); false se não conectado */

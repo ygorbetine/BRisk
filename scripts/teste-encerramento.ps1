@@ -6,6 +6,12 @@ $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'apps\desktop-cui\build\briks_cui.exe'
 $tmp = Join-Path $root 'apps\desktop-cui\build\_ci\enc'
 $falhas = 0
+Add-Type @'
+using System; using System.Runtime.InteropServices; using System.Diagnostics;
+public static class W { [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint t, EnumProc cb, IntPtr l); delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static int Close(Process p) { int n = 0; foreach (ProcessThread t in p.Threads) EnumThreadWindows((uint)t.Id, (h, l) => { PostMessage(h, 0x10, IntPtr.Zero, IntPtr.Zero); n++; return true; }, IntPtr.Zero); return n; } }
+'@
 function Filhos([int]$ppid) { @(Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $ppid }) }
 function Descend([int]$ppid) { $r = @(); foreach ($c in (Filhos $ppid)) { $r += $c; $r += (Descend $c.ProcessId) }; $r }
 foreach ($modo in 'saida-normal', 'fechar-janela', 'matar-app') {
@@ -14,7 +20,7 @@ foreach ($modo in 'saida-normal', 'fechar-janela', 'matar-app') {
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $exe; $psi.WorkingDirectory = Split-Path $exe; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $e = $psi.EnvironmentVariables
-    $e['BRIKS_NET_LOOPBACK_ONLY'] = '1'; $e['BRIKS_HIDDEN'] = '1'; $e['BRIKS_DEMO'] = 'call'; $e['BRIKS_NO_IMPORT'] = '1'; $e['BRIKS_DISABLE_UPDATE'] = '1'
+    $e['BRIKS_NET_LOOPBACK_ONLY'] = '1'; $e['BRIKS_HIDDEN'] = '1'; $e['BRIKS_NO_IMPORT'] = '1'; $e['BRIKS_DISABLE_UPDATE'] = '1'
     $e['BRIKS_CORE_DATA'] = "$w\dados"; $e['BRIKS_CUI_DATA'] = "$w\dados"; $e['BRIKS_LAYOUT_FILE'] = "$w\layout.json"; $e['BRIKS_SETTINGS_FILE'] = "$w\settings.cfg"; $e['BRIKS_THEME_FILE'] = "$w\theme.json"
     if ($modo -eq 'saida-normal') { Set-Content "$w\r.txt" "waitms 4000" -Encoding ASCII; $e['BRIKS_SCRIPT'] = "$w\r.txt" } else { Set-Content "$w\r.txt" "waitms 60000" -Encoding ASCII; $e['BRIKS_SCRIPT'] = "$w\r.txt" }
     $p = [Diagnostics.Process]::Start($psi)
@@ -24,7 +30,7 @@ foreach ($modo in 'saida-normal', 'fechar-janela', 'matar-app') {
     $ids = @($vistos | ForEach-Object { $_.ProcessId })
     switch ($modo) {
         'saida-normal' { [void]$p.WaitForExit(30000) }
-        'fechar-janela' { Start-Sleep -Seconds 1; [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(8000)) { Write-Host "$modo : a janela oculta nao fechou; encerrando o app" ; $p.Kill() } }
+        'fechar-janela' { Start-Sleep -Seconds 1; [void][W]::Close($p); if (-not $p.WaitForExit(8000)) { Write-Host "$modo : a janela oculta nao fechou; encerrando o app" ; $p.Kill() } }
         'matar-app' { Start-Sleep -Seconds 1; Stop-Process -Id $p.Id -Force }
     }
     Start-Sleep -Seconds 3

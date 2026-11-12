@@ -8,6 +8,9 @@ static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }
 int notify_unread_for(const char *chan) { (void)chan; return 0; }
+void ginvite_expect(const char *u, const char *g) { (void)u; (void)g; }   /* ginvite.c: convite pela DM (o teste de grupos não envia DM) */
+void ginvite_signed(app_state_t *s, const char *gid, const char *n, const char *c) { (void)s; (void)gid; (void)n; (void)c; }
+void ginvite_verified(app_state_t *s, const char *gid, bool ok, const char *m) { (void)s; (void)gid; (void)ok; (void)m; }
 static char g_coll_stub[8][48]; static int g_ncoll_stub;   /* settings.c: grupos recolhidos */
 bool settings_group_collapsed(const char *gid) { for (int i = 0; i < g_ncoll_stub; i++) if (!strcmp(g_coll_stub[i], gid)) return true; return false; }
 void settings_group_collapse(const char *gid, bool on) { if (on && !settings_group_collapsed(gid) && g_ncoll_stub < 8) snprintf(g_coll_stub[g_ncoll_stub++], 48, "%s", gid); }

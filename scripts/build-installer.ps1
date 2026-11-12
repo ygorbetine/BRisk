@@ -1,4 +1,4 @@
-# Gera o instalador Windows do app nativo (NSIS, instalacao por usuario, mesmo appId/pasta/atalhos do Electron 1.x).
+﻿# Gera o instalador Windows do app nativo (NSIS, instalacao por usuario, mesmo appId/pasta/atalhos do Electron 1.x).
 # Uso (raiz do repositorio): powershell -NoProfile -File scripts/build-installer.ps1 [-Version 1.4.2] [-Test] [-StageOnly | -PackageOnly]
 #   -Test  usa outro GUID e outra pasta de instalacao ("@briksdesktop-test"), para testar sem tocar na instalacao real do Briks.
 # Saida: apps/desktop-cui/installer-out/Briks-Setup-<versao>.exe (+ latest.yml no formato do electron-updater).
@@ -6,7 +6,7 @@
 #   -StageOnly    compila e monta a pasta apps/desktop-cui/stage, mas para antes do NSIS (a CI assina os .exe de la com a SignPath).
 #   -PackageOnly  pula a compilacao e empacota o stage que ja existe (com os .exe assinados). O latest.yml sai do instalador sem assinatura:
 #                 depois de assinar o instalador, rode scripts/make-latest-yml.ps1.
-param([string]$Version = "1.4.2", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly)
+param([string]$Version = "1.4.2", [switch]$Test, [string]$SupabaseJson = "", [switch]$StageOnly, [switch]$PackageOnly, [switch]$NoVpx)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"
@@ -27,7 +27,8 @@ $env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 Write-Host "== Rust (release) =="
 cargo build --release --manifest-path "$root\desktop-backend\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo (backend) falhou" }
-cargo build --release --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo (briks-core) falhou" }
+$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx") }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
+cargo build --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo (briks-core) falhou" }
 $backend = "$root\desktop-backend\target\release\briks-desktop-backend.exe"
 $core = "$cui\briks-core\target\release\briks-core.exe"
 

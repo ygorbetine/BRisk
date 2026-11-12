@@ -1,0 +1,16 @@
+# Modo Call com alguem transmitindo: brilho no botao Transmissao, avatar com thumb desfocada e selo na lista de participantes
+waitms 2200
+expect share_mode 0
+expect thumbs 1
+expect sheen_frames 1
+shot sheen-1-call
+waitms 300
+shot sheen-2-call
+waitms 300
+shot sheen-3-call
+waitms 300
+shot sheen-4-call
+click 700 74
+waitms 600
+expect share_mode 1
+shot sheen-5-modo-transmissao

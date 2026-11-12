@@ -1,0 +1,20 @@
+# Status do perfil: o botao de emoji abre o MESMO seletor completo do chat; escolher poe o emoji e fecha
+waitms 1200
+expect profile 1
+expect emoji_picking 0
+shot emo-1-perfil-status
+click 518 297
+waitms 500
+expect emoji_picking 1
+shot emo-2-seletor-completo
+click 595 480
+waitms 600
+expect emoji_picking 0
+expect status_emoji_len 4
+shot emo-3-escolhido
+click 518 297
+waitms 500
+expect emoji_picking 1
+esc
+waitms 400
+expect emoji_picking 0

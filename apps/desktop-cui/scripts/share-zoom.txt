@@ -6,7 +6,7 @@ at 640 420
 wheel 3
 waitms 600
 expect share_zoomed 1
-expect share_cx 635
+expect share_cx 677
 shot zoom-2-ampliada
 at 700 420
 waitms 100
@@ -19,7 +19,7 @@ waitms 200
 up
 waitms 400
 expect share_zoomed 1
-expect share_cx 781
+expect share_cx 822
 shot zoom-3-arrastada
 click 112 160
 waitms 600

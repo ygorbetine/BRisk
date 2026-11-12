@@ -11,6 +11,8 @@
 #include <windows.h>
 
 call_ui_t g_call = { .focus = -1 };
+static int g_side_n;   /* roteiros: pessoas na faixa lateral do modo Transmissão */
+static int g_sheen_seen;   /* roteiros: quadros em que o brilho foi desenhado no botão Transmissão */
 
 static app_state_t *g_tile_s;   /* estado para o menu do bloco (slider de volume por pessoa) */
 typedef struct { const char *name; bool me, muted; float level; int slot; bool by_me, can_kick, live; const char *status; const char *badge; cui_texture vtex; int vw, vh; bool deaf; } tile_t;
@@ -94,6 +96,8 @@ static bool g_tile_me_deaf;
 int call_probe(const char *n) {
     if (!strcmp(n, "call_layout")) return g_call.layout;
     if (!strcmp(n, "call_focus")) return g_call.focus;
+    if (!strcmp(n, "side_people")) return g_side_n;   /* pessoas na faixa lateral do modo Transmissão */
+    if (!strcmp(n, "sheen_frames")) return g_sheen_seen > 0;   /* 1 = o brilho já correu pelo botão */
     if (!strcmp(n, "call_full")) return g_call.fullscreen;
     if (!strcmp(n, "call_msgs")) return g_call.msg_count;
     if (!strcmp(n, "call_unread")) return g_call.unread;
@@ -176,8 +180,29 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 cui_push_id_int(ui, (int)(t->level * 8) + ((int)d << 4));   /* o canvas é reaproveitado por id: muda o id quando o nível ou o tamanho muda */
                 cui_canvas(ui, "av", CUI_FILL, CUI_FILL, paint_avatar, &g_av[gi], 0);
                 cui_pop_id(ui);
+                cui_texture th = 0; int tw = 0, thh = 0;
+                const bool has_th = t->live && !t->me && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh);
+                if (t->live && !t->me) {   /* quem transmite: thumb desfocada da tela como fundo do avatar, ícone de transmissão por cima e anel pulsante */
+                    const float pulse = 0.5f + 0.5f * sinf((float)cui_time(ui) * 3.2f), ringd = fminf(d + 10.0f, cv);
+                    cui_request_wakeup(ui, 0.06f);
+                    if (has_th) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                        const float di = d - 2.0f;   /* a imagem tem o PRÓPRIO raio (o recorte do pai é retangular): disco perfeito; a tela esticada para o quadrado some no desfoque */
+                        cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(di), .height = CUI_PX(di), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                            cui_image(ui, th, .width = CUI_PX(di), .height = CUI_PX(di), .radius = (int)(di * 0.5f));
+                            cui_box(ui, .width = CUI_PX(di), .height = CUI_PX(di), .radius = (int)(di * 0.5f), .bg = CUI_RGBA(0x1a0a2678)) {}
+                        }
+                    }
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                        cui_box(ui, .width = CUI_PX(ringd), .height = CUI_PX(ringd), .radius = (int)(ringd * 0.5f), .border = 2, .border_color = B_A(B_C3, (unsigned char)(110 + 120 * pulse))) {}
+                    }
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, fmaxf(12.0f, d * 0.34f), CUI_RGB(0xffffff)); }
+                    const float dp = fmaxf(7.0f, d * 0.12f), off = (cv - d) * 0.5f + d * 0.06f;
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad_right = off, .pad_top = off) {
+                        cui_box(ui, .width = CUI_PX(dp), .height = CUI_PX(dp), .radius = (int)(dp * 0.5f), .bg = B_A(CUI_RGB(0xff4d6d), (unsigned char)(150 + 105 * pulse)), .border = 1, .border_color = CUI_RGBA(0x1a0a26cc)) {}
+                    }
+                }
                 char in[4]; initials2(t->name, in);
-                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                if (!(t->live && !t->me)) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                     cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
                 }
             }
@@ -240,12 +265,27 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     return act;
 }
 
+/* brilho que atravessa o botão (modo Call com alguém transmitindo): faixa clara de bordas suaves, de um lado ao outro; o pai recorta nos cantos arredondados */
+static float g_sheen_phase = -1;   /* 0..1 durante a passada; < 0 = parado */
+static bool g_tab_sheen;           /* a próxima aba desenhada recebe o brilho */
+static void paint_sheen(cui_ctx *ui, cui_rect r, void *user) {
+    const float p = *(const float *)user; if (p < 0 || p > 1) return;
+    const float bw = r.w * 0.42f, cx = r.x - bw * 0.5f + (r.w + bw) * p;
+    for (int k = 0; k < 3; k++) {   /* três cápsulas concêntricas, cada vez mais estreitas e mais claras = borda suave, sem listras; recortadas aos limites do botão */
+        const float w = bw * (1.0f - 0.3f * (float)k), x0 = fmaxf(cx - w * 0.5f, r.x), x1 = fminf(cx + w * 0.5f, r.x + r.w);
+        if (x1 - x0 < 2.0f) continue;
+        cui_color c = CUI_RGB(0xffffff); c.a = 16;
+        cui_draw_rect(ui, (cui_rect){ x0, r.y, x1 - x0, r.h }, CUI_CORNERS(fminf(9.0f, (x1 - x0) * 0.5f)), c);
+    }
+}
+
 /* aba de um segmented control: ativa = pílula em degradê com texto branco; inativa = texto muted. compact = só o ícone (com dica) */
 static bool tab(cui_ctx *ui, int id, const char *icon, const char *label, bool active, bool compact, int badge) {
     static float rad = 9;
     cui_push_id_int(ui, id);
     cui_box(ui, .id = "b", .dir = CUI_STACK, .height = CUI_PX(34), .radius = 9, .clip = true, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         if (active) cui_canvas(ui, "tabbg", CUI_FILL, CUI_FILL, paint_grad, &rad, 0);
+        const bool sheen = g_tab_sheen && g_sheen_phase >= 0; g_tab_sheen = false;
         cui_box(ui, .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 11 : 16, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
             cui_color c = active ? CUI_RGB(0xffffff) : B_MUTED;
             if (icon) cui_icon(ui, icon, 15, c);
@@ -255,6 +295,7 @@ static bool tab(cui_ctx *ui, int id, const char *icon, const char *label, bool a
                 cui_text(ui, b, .size = 11, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
         }
+        if (sheen) { cui_push_id_int(ui, 100 + (int)(g_sheen_phase * 24.0f)); cui_canvas(ui, "sheen", CUI_FILL, CUI_FILL, paint_sheen, &g_sheen_phase, 0); cui_pop_id(ui); }   /* o canvas é guardado por id: muda a cada passo da passada */
     }
     if (compact && briks_hover(ui, "b")) briks_tip(label);
     bool hit = briks_clicked_r(ui, "b", 9.0f);
@@ -489,11 +530,11 @@ static void do_tile(cui_ctx *ui, app_state_t *s, const tile_t *t, float w, float
     cui_pop_id(ui);
 }
 
-static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
-    cui_texture vt = 0; int vw = 0, vh = 0;
-    const bool mic_eff = s->mic_on;   /* ensurdecer e mutar são independentes (como no Electron) */
+/* blocos da chamada: eu primeiro, depois cada participante (câmera ligada = vídeo no bloco). names guarda os nomes (os blocos apontam para eles) */
+static int build_tiles(cui_ctx *ui, app_state_t *s, tile_t *T, char (*names)[64]) {
+    cui_texture vt = 0; int vw = 0, vh = 0, n = 0;
+    const bool mic_eff = s->mic_on;
     g_tile_me_deaf = s->deaf;
-    tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = 0;
     g_can_room_mute = s->rtc_owner_me && s->net_sfu;
     T[n++] = (tile_t){ s->user_name[0] ? s->user_name : "Você", true, false, mic_eff ? s->me_level : 0, SLOT_ME, false, false, s->sh.active, s->sh.active ? "Transmitindo a tela" : s->user_status, NULL, 0, 0, 0 };
     if (cam_frame(ui, s, SLOT_ME, &vt, &vw, &vh)) { T[0].vtex = vt; T[0].vw = vw; T[0].vh = vh; }
@@ -505,6 +546,12 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
                            s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
         if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }
+    return n;
+}
+
+static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
+    const bool mic_eff = s->mic_on;   /* ensurdecer e mutar são independentes (como no Electron) */
+    tile_t T[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = build_tiles(ui, s, T, names);
     const float gap = 14.0f;
     if (g_call.layout == 1 && n > 1 && (W >= 720.0f ? H >= 150.0f : H >= 260.0f)) {   /* palco baixo demais para um bloco grande + faixa: fica a grade */
         /* Foco: um bloco grande (fixado por clique ou quem está falando) e os demais numa faixa */
@@ -549,6 +596,26 @@ static void stage_people(cui_ctx *ui, app_state_t *s, float W, float H) {
             }
             cui_pop_id(ui);
         }
+    }
+}
+
+/* Modo Transmissão em Grade: faixa lateral rolável com quem NÃO está transmitindo (avatar, anel verde de fala, mudo/ensurdecido, menu do bloco).
+ * Só com largura de sobra; em janela estreita a faixa some e a grade fica com tudo. Devolve a largura reservada (0 = sem faixa). */
+#define SIDE_W 142.0f
+static float side_people_width(app_state_t *s, float W) {
+    g_side_n = 0;
+    if (g_call.layout != 0 || W < 640.0f) return 0.0f;
+    int n = (s->sh.active || s->sh.second.active) ? 0 : 1;   /* eu, se não estou transmitindo */
+    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !share_peer_live(s, i)) n++;
+    g_side_n = n;
+    return n > 0 ? SIDE_W : 0.0f;
+}
+static void stage_side_people(cui_ctx *ui, app_state_t *s, float H) {
+    tile_t T[BRIKS_MAX_PEERS + 2], L[BRIKS_MAX_PEERS + 2]; char names[BRIKS_MAX_PEERS][64]; int n = build_tiles(ui, s, T, names), k = 0;
+    for (int i = 0; i < n; i++) if (!T[i].live) { L[k] = T[i]; L[k].vtex = 0; L[k].badge = NULL; k++; }   /* só avatar: o vídeo da câmera fica na aba Call */
+    const float tw = SIDE_W - 12.0f, th = 112.0f;
+    cui_scroll(ui, .id = "side-people", .width = CUI_PX(SIDE_W), .height = CUI_PX(H)) {
+        cui_column(ui, .gap = 10, .width = CUI_PX(tw)) { for (int i = 0; i < k; i++) do_tile(ui, s, &L[i], tw, th, s->mic_on); }
     }
 }
 
@@ -627,6 +694,12 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
                             /* ids 11..16: as pílulas da barra usam 1..7 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
+                            {   /* alguém transmite e eu estou no modo Call: um brilho passa pelo botão "Transmissão" a cada poucos segundos; para no modo Transmissão ou sem transmissão */
+                                const bool nudge = s->call_mode == 0 && share_any_live(s); static int fast = -1; if (fast < 0) { const char *dv = getenv("BRIKS_DEV_SHARE"); fast = dv && !strcmp(dv, "demo-sheen"); }   /* captura de teste: passa quase sempre */
+                                const double tn = cui_time(ui), per = fast ? 1.0 : 4.5, ph = fmod(tn, per);
+                                g_sheen_phase = nudge && ph < 0.9 ? (float)(ph / 0.9) : -1.0f; g_sheen_seen += g_sheen_phase >= 0; g_tab_sheen = nudge;
+                                if (nudge) cui_request_wakeup(ui, ph < 0.9 ? 0.03f : fminf((float)(per - ph), 0.5f));   /* redesenha só enquanto o brilho corre */
+                            }
                             if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1, compact, 0)) s->call_mode = 1;
                         }
                         {   /* Grade/Foco vale nos dois modos (Call: participantes; Transmissão: as transmissões); só esmaece no Chat e clicar volta para a Chamada */
@@ -676,6 +749,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 if (W < 120) W = 120; if (H < 90) H = 90;
                 if (s->call_view == 1) stage_chat(ui, s);
                 else if (s->call_mode == 1) {
+                    const bool streams = share_any_live(s) || s->sh.active || s->sh.second.active;
+                    const float sw = streams ? side_people_width(s, W) : 0.0f;
+                    if (sw > 0) {
+                        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_FILL, .gap = 14) {
+                            cui_box(ui, .width = CUI_PX(W - 14.0f - sw), .height = CUI_PX(H)) { ui_share_stage(ui, s, W - 14.0f - sw, H, g_call.layout); }
+                            stage_side_people(ui, s, H);
+                        }
+                    } else
                     if (!ui_share_stage(ui, s, W, H, g_call.layout)) {
                         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .clip = true) {
                             empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui. Para pedir, clique com o botão direito em alguém na aba Call.");

@@ -43,6 +43,9 @@ int script_probe(const char *n) {
     { int sp = settings_probe(n, &state); if (sp != -9999) return sp; }
     { int sp = share_probe(n, &state); if (sp != -9999) return sp; }
     if (!strcmp(n, "profile")) return state.profile_open;
+    if (!strcmp(n, "status_emoji_len")) return (int)strlen(state.user_emoji);   /* bytes do emoji do status (0 = nenhum) */
+    if (!strcmp(n, "emoji_picking")) return msgui_emoji_picking();
+    if (!strcmp(n, "emoji_hits")) return msgui_emoji_hits();
     if (!strcmp(n, "settings")) return state.settings_open;
     if (!strcmp(n, "add_friend")) return state.add_friend_open;
     if (!strcmp(n, "create_group")) return state.create_group_open;
@@ -133,9 +136,9 @@ static void frame(cui_ctx *ui) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
             switch (state.screen) {
             case SCREEN_AUTH: ui_auth(ui, &state); break;
-            case SCREEN_SOCIAL: ui_social(ui, &state); break;
+            case SCREEN_SOCIAL: share_tick(ui, &state); ui_social(ui, &state); break;   /* share_tick também aqui: a miniatura da lateral (barra "Em chamada") precisa dele fora da chamada */
             case SCREEN_CALL: ui_call(ui, &state); break;
-            case SCREEN_HISTORY: ui_history(ui, &state); break;
+            case SCREEN_HISTORY: share_tick(ui, &state); ui_history(ui, &state); break;
             }
             briks_tip_draw(ui);
             net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */

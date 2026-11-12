@@ -1,6 +1,7 @@
 /* Sobreposição em jogos (lado do app): abre o briks_overlay.exe numa chamada, manda por stdin quem está na sala e o que mostrar,
  * e o fecha ao sair da chamada ou desligar a opção. Protocolo em src/overlay.c. Testes ocultos nunca abrem o processo (só montam o quadro). */
 #include "briks_ui.h"
+#include "sysint.h"
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -106,7 +107,9 @@ const char *overlay_tile_name(int j) { return j >= 0 && j < g_nshown ? g_lives[g
 bool overlay_tile_enabled(int j) { return j >= 0 && j < g_nshown && settings_tile_enabled(g_lives[g_shown[j]].key); }
 void overlay_tile_enable(int j, bool on) { if (j >= 0 && j < g_nshown) settings_tile_enable(g_lives[g_shown[j]].key, on); }
 
+static bool g_suppressed;   /* a sobreposição está escondida porque o Briks está em primeiro plano */
 int overlay_probe(const char *n) {
+    if (!strcmp(n, "overlay_suppressed")) return g_suppressed;
     if (!strcmp(n, "overlay_state")) return g_state;
     if (!strcmp(n, "overlay_lines")) return g_last_lines;
     if (!strcmp(n, "overlay_has_mute")) return strstr(g_last, "\nw Microfone mudo\n") != NULL;
@@ -287,6 +290,11 @@ void overlay_tick(cui_ctx *ui, app_state_t *s) {
         g_hk_state = on ? (dry_run() ? 1 : ovlkey_status()) : 0;
         if (!dry_run() && ovlkey_take() > 0 && on) overlay_edit_toggle();
     }
+    /* Briks em primeiro plano (maximizado ou não, visível, não minimizado): a sobreposição só faz sentido por cima de OUTROS apps/jogos, então
+       manda um quadro vazio (a janela do overlay se esconde e nenhuma miniatura decodifica). Minimizar, restaurar para trás de outro app ou
+       trocar de foco traz de volta; a edição (g_edit) continua visível. Roteiros: "sys focus 1|0|auto". */
+    g_suppressed = !g_edit && sys_window_focused();
+    if (g_suppressed) flags = 0;
     const bool want = on && (s->in_room || g_edit);
     if (!want) { tiles_idle(); g_nshown = 0; if (g_proc || g_pipe) stop(); if (g_state != 2 || !on) g_state = 0; g_last[0] = 0; return; }
     const double now = cui_time(ui);

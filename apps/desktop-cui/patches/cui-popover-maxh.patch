@@ -1,0 +1,13 @@
+diff --git a/src/cui_overlay.c b/src/cui_overlay.c
+index 7620d3f..0180b3e 100644
+--- a/src/cui_overlay.c
++++ b/src/cui_overlay.c
+@@ -118,7 +118,7 @@ bool cui__popup_begin(cui_ctx *ui, cui_id id, cui_id anchor, int placement, floa
+     if (width > 0) n->w = CUI_PX(width);
+     else if (anchor && cui__has_prev_rect(ui, anchor)) n->min_w = cui__prev_rect(ui, anchor).w;
+     n->min_w = CUI_MAX(n->min_w, menu ? 180.0f : 0.0f);
+-    n->max_h = 420;
++    n->max_h = width >= 480.0f ? CUI_MAX(420.0f, ui->vh - 48.0f) : 420;   /* Briks: paineis largos (qualidade da transmissao) podem crescer ate a janela; os demais seguem em 420 */
+     n->opacity = t;
+     n->scale = CUI__ENTER_SCALE + (1.0f - CUI__ENTER_SCALE) * t;
+     bool up = placement >= CUI_PLACE_TOP_START && placement <= CUI_PLACE_TOP_END;

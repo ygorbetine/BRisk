@@ -3,7 +3,7 @@ waitms 1200
 expect stage_toggles 0
 expect stage_layout 0
 shot x0
-click 648 231
+click 563 231
 waitms 500
 expect stage_toggles 1
 expect stage_layout 1
@@ -13,15 +13,23 @@ waitms 500
 expect stage_toggles 2
 expect stage_layout 0
 shot x2
-at 648 231
+# alterna na SOLTURA do botao (nao no aperto): apertar nao muda nada, soltar alterna; passos em quadros separados (sem depender do "down" no mesmo quadro)
+at 563 231
 down
-at 700 300
-waitms 200
+waitms 250
+expect stage_toggles 2
+expect stage_layout 0
 up
 waitms 400
-expect stage_toggles 2
-expect stage_layout 0
-click 300 300
+expect stage_toggles 3
+expect stage_layout 1
+# arrastar nao alterna: aperta no vao entre o destaque e a faixa, arrasta ao longo do vao e solta
+at 981 231
+down
+waitms 250
+at 981 400
+waitms 250
+up
 waitms 400
-expect stage_toggles 2
-expect stage_layout 0
+expect stage_toggles 3
+expect stage_layout 1

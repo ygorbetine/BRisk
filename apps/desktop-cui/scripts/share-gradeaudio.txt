@@ -1,0 +1,29 @@
+# Grade: controles do bloco nao abrem o Foco; roda amplia o bloco e, ampliado, clique sem arrasto nao abre o Foco
+waitms 1500
+expect stage_layout 0
+expect share_vol0 100
+shot ga-1-grade-com-volume
+# clique na barra de volume do 1o bloco: muda o volume e NAO abre o Foco
+click 440 373
+waitms 400
+expect stage_layout 0
+expect tile_opens 0
+shot ga-2-volume-clicado
+# roda sobre a imagem do 2o bloco (sem barra de volume): amplia (zoom) e NAO abre o Foco
+at 800 250
+waitms 250
+wheel 3
+waitms 500
+expect stage_layout 0
+expect tile_opens 0
+shot ga-3-zoom
+# clique curto (sem arrasto) no bloco ampliado: continua na Grade
+click 800 250
+waitms 400
+expect stage_layout 0
+expect tile_opens 0
+# clique curto num bloco nao ampliado (4o): abre em Foco
+click 267 563
+waitms 500
+expect stage_layout 1
+expect tile_opens 1

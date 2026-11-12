@@ -1,0 +1,17 @@
+# Sobreposicao some com o Briks em primeiro plano (maximizado ou nao) e volta ao restaurar/minimizar/trocar de foco
+sys focus 0
+waitms 800
+expect overlay_suppressed 0
+expect overlay_flags 15
+sys focus 1
+waitms 800
+expect overlay_suppressed 1
+expect overlay_flags 0
+expect overlay_lines 0
+shot ovl-1-briks-em-foco
+sys focus 0
+waitms 800
+expect overlay_suppressed 0
+expect overlay_flags 15
+sys focus auto
+waitms 500

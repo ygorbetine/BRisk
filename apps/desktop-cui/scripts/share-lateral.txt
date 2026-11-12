@@ -1,0 +1,18 @@
+# Modo Transmissao em Grade: faixa lateral com quem nao esta transmitindo (avatares, fala, mudo); janela estreita colapsa
+waitms 1500
+expect share_mode 1
+expect side_people 3
+shot lat-1-grade
+rclick 1200 300
+waitms 500
+shot lat-menu-pessoa
+esc
+waitms 300
+resize 900 700
+waitms 700
+expect side_people 3
+shot lat-2-900
+resize 600 700
+waitms 700
+expect side_people 0
+shot lat-3-estreita

@@ -1,0 +1,21 @@
+# Miniatura da transmissao na lateral (barra Em chamada): fora da chamada, duas telas no ar
+waitms 1500
+expect mini_on 1
+expect mini_n 2
+expect screen 1
+expect mini_key 0
+shot mini-1-lateral
+# seta "proxima": alterna para a 2a tela (outra chave)
+at 478 628
+waitms 300
+click 478 628
+waitms 600
+expect mini_key 33
+shot mini-2-proxima
+# clicar na imagem volta para a chamada, modo Transmissao, e a miniatura some
+click 386 555
+waitms 800
+expect screen 2
+expect share_mode 1
+expect mini_on 0
+shot mini-3-chamada

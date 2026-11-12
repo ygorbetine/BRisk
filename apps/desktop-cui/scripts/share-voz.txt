@@ -1,0 +1,3 @@
+# Painel "Sala de voz" (dock added): lista de participantes com avatar de quem transmite
+waitms 3000
+shot voz-1-lista

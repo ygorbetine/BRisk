@@ -271,6 +271,11 @@ static bool g_menu_live;
 static bool g_menu_open, g_emo_open, g_drag_on;
 static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic, g_dlg_select;
 static float g_emo_x, g_emo_y;
+static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;   /* estado do seletor (compartilhado: painel do chat e diálogo do status) */
+static void (*g_emo_cb)(const char *emoji, void *user); static void *g_emo_user;   /* seletor usado por outro ponto (status do perfil): escolher chama isto em vez de reagir */
+static bool g_emo_dlg;   /* modo status: o seletor abre como diálogo (um painel solto ficaria por baixo do diálogo do perfil) */
+void msgui_emoji_pick(float x, float y, void (*cb)(const char *emoji, void *user), void *user) { (void)x; (void)y; g_emo_dlg = cb != NULL; g_emo_open = cb == NULL; g_emo_cb = cb; g_emo_user = user; g_menu_open = false; }
+bool msgui_emoji_picking(void) { return g_emo_open || g_emo_dlg; }
 static char g_recent[160];
 static int g_tone;
 
@@ -287,6 +292,30 @@ static const cat_t CATS[NCAT] = {
  { "❤️", 40, { "❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💕","💞","💓","💗","💖","💯","💢","💥","💫","💦","💤","✨","⭐","🌟","🔥","🎉","🎊","👍","👎","👏","🙌","🙏","💪","👌","✌️","🤞","🫶","👀","🧠","👋","🤝" } },
  { "🏳️", 24, { "🏳️","🏴","🏁","🚩","🇧🇷","🇵🇹","🇺🇸","🇬🇧","🇫🇷","🇩🇪","🇮🇹","🇪🇸","🇯🇵","🇰🇷","🇨🇳","🇦🇷","🇲🇽","🇨🇦","🇦🇺","🇮🇳","✅","❌","❓","❗" } },
 };
+/* nomes (sem acento, minúsculas) de cada emoji, na mesma ordem de CATS, para a busca do seletor; CAT_KW: palavras da categoria inteira */
+static const char *const NAMES[NCAT][48] = {
+ { "sorriso feliz", "sorriso aberto feliz", "sorrindo olhos felizes", "sorriso largo", "rindo muito", "suor frio alivio", "gargalhada rolando", "chorando de rir risada", "sorriso leve", "piscadinha", "corado feliz", "anjo santo", "apaixonado coracoes", "olhos de coracao amei", "deslumbrado estrelas", "beijo", "delicioso saboroso", "lingua", "piscando lingua", "maluco louco", "abraco", "pensando", "sobrancelha duvida", "neutro", "sem expressao", "revirando olhos", "malicioso", "surpreso boca aberta", "espantado", "chocado", "envergonhado", "suplica pidao", "triste chorando", "chorando muito", "bufando", "bravo raiva", "festa comemorando", "oculos escuros legal", "cabeca explodindo", "dormindo sono", "enjoado vomito", "calor", "frio congelando", "gritando medo", "dentes cerrados", "boca fechada ziper", "diabo travesso", "caveira morte" },
+ { "cachorro cao", "gato", "rato camundongo", "hamster", "coelho", "raposa", "urso", "panda", "coala", "tigre", "leao", "vaca", "porco", "sapo", "macaco", "galinha", "pinguim", "passaro", "pato", "coruja", "morcego", "lobo", "cavalo", "unicornio", "abelha", "borboleta", "caracol", "joaninha", "tartaruga", "cobra", "polvo", "caranguejo", "peixe", "golfinho", "baleia", "tubarao", "cacto", "arvore pinheiro", "girassol", "rosa flor" },
+ { "maca verde", "maca vermelha", "pera", "laranja", "limao", "banana", "melancia", "uva", "morango", "cereja", "pessego", "manga", "abacaxi", "coco", "kiwi", "tomate", "abacate", "milho", "cenoura", "pao", "queijo", "ovo frito", "bacon", "hamburguer", "batata frita", "pizza", "cachorro quente", "taco", "sushi", "macarrao lamen", "sorvete", "rosquinha donut", "biscoito cookie", "bolo aniversario", "chocolate", "pipoca", "cafe", "cerveja", "vinho", "refrigerante bebida" },
+ { "futebol bola", "basquete", "futebol americano", "beisebol", "tenis", "volei", "sinuca", "ping pong", "boxe luva", "videogame controle jogo", "joystick", "dado", "alvo dardo", "boliche", "guitarra", "piano teclado", "bateria", "fone de ouvido", "microfone", "cinema claquete", "pintura arte", "trofeu", "medalha ouro primeiro", "medalha prata", "medalha bronze", "medalha", "circo", "teatro mascaras", "ingresso", "caca niquel", "quebra cabeca", "violino" },
+ { "carro", "taxi", "onibus", "ambulancia", "bombeiros", "policia", "bicicleta", "moto", "aviao", "foguete", "disco voador ovni", "helicoptero", "barco veleiro", "navio", "casa", "predio", "castelo", "torre", "estatua liberdade", "barraca acampamento", "vulcao", "praia", "nascer do sol", "noite cidade", "ponte", "roda gigante", "montanha russa", "posto gasolina", "semaforo", "mapa", "bussola", "planeta terra mundo" },
+ { "relogio", "celular telefone", "notebook computador", "desktop computador", "teclado", "mouse", "disquete", "camera foto", "camera filme", "televisao tv", "radio", "bateria pilha", "tomada plug", "lampada ideia", "lanterna", "livros", "livro aberto", "lapis", "alfinete", "clipe", "tesoura", "cadeado", "chave", "martelo", "ferramenta chave inglesa", "remedio pilula", "tubo de ensaio", "telescopio", "dinheiro", "diamante joia", "caixa pacote", "presente" },
+ { "coracao vermelho amor", "coracao laranja", "coracao amarelo", "coracao verde", "coracao azul", "coracao roxo", "coracao preto", "coracao branco", "coracao partido", "dois coracoes", "coracoes girando", "coracao batendo", "coracao crescendo", "coracao brilhante", "cem 100", "raiva", "explosao", "tontura", "gotas suor", "zzz sono", "brilho", "estrela", "estrela brilhante", "fogo", "festa confete", "confete", "joinha like positivo", "negativo dislike", "palmas aplausos", "maos para cima", "obrigado rezando", "forca musculo", "ok", "paz vitoria", "dedos cruzados sorte", "maos coracao", "olhos olhando", "cerebro", "tchau acenando", "aperto de mao" },
+ { "bandeira branca", "bandeira preta", "bandeira chegada corrida", "bandeira vermelha", "brasil", "portugal", "estados unidos eua", "reino unido inglaterra", "franca", "alemanha", "italia", "espanha", "japao", "coreia do sul", "china", "argentina", "mexico", "canada", "australia", "india", "certo check sim", "errado x nao", "interrogacao pergunta", "exclamacao" },
+};
+static const char *const CAT_KW[NCAT] = { "rostos carinhas emocoes expressoes pessoas", "animais natureza plantas bichos", "comida bebida frutas", "esportes jogos musica diversao", "viagem lugares transporte veiculos", "objetos tecnologia ferramentas", "simbolos gestos maos emojis amor", "bandeiras paises simbolos" };
+/* minúsculas e sem acento (UTF-8 latino básico): "Coração" == "coracao" */
+static void fold(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p && o + 1 < cap; p++) {
+        if (*p == 0xC3 && p[1]) {
+            p++; const unsigned char c = *p; const char *m = "aaaaaaaceeeeiiiidnooooo/ouuuuyps";   /* U+00C0..U+00DF; as minúsculas (U+00E0..) repetem o padrão */
+            unsigned idx = (c >= 0xA0 ? c - 0xA0 : c - 0x80) & 31; out[o++] = m[idx]; continue;
+        }
+        out[o++] = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : (char)*p;
+    }
+    out[o] = 0;
+}
 static bool inside(cui_rect r, cui_vec2 p) { return r.w > 0 && p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h; }
 
 static bool is_mine(const msg_t *m) { return m->mine; }
@@ -454,7 +483,7 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     bool pinned = t && t->pinned, fav = t && t->fav;
     cui_box(ui, .dir = CUI_ROW, .gap = 1, .pad = 3, .width = CUI_FILL, .radius = 12, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         for (int i = 0; i < NQUICK; i++) { char id[8]; snprintf(id, sizeof id, "q%d", i); if (chip(ui, id, g_quick[i], NULL, 18)) { toggle_react(m->id, g_quick[i]); act_close_menu(ui); } }
-        if (chip(ui, "qplus", NULL, CUI_ICON_PLUS, 0)) { g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
+        if (chip(ui, "qplus", NULL, CUI_ICON_PLUS, 0)) { g_emo_cb = NULL; g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
     }
     msep(ui);
     if (mrow(ui, 3, CUI_ICON_MESSAGE_SQUARE, "Responder", NULL, false)) { start_reply(m); act_close_menu(ui); }
@@ -488,6 +517,65 @@ void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     cui_pop_id(ui);
 }
 
+static char g_esearch[48]; static int g_esearch_hits;   /* busca do seletor (campo "Buscar emoji") */
+int msgui_emoji_hits(void) { return g_esearch_hits; }
+static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
+    cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
+                cui_row(ui, .gap = 6) {
+                    for (int i = 0; i < NQUICK; i++) {
+                        cui_push_id_int(ui, 7100 + i);
+                        cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "slot"));
+                        bool tgt = dragging && inside(sr, mp);
+                        cui_box(ui, .id = "slot", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 11, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                .bg = tgt ? CUI_RGBA(0x8b5cf655) : CUI_RGBA(0xffffff0c), .border = 1, .border_color = tgt ? CUI_RGB(0xc4b5fd) : CUI_RGBA(0xc4b5fd60)) {
+                            cui_emoji(ui, g_quick[i], 22);
+                        }
+                        if (dragging && prev_down && !down && tgt && cand[0]) { snprintf(g_quick[i], sizeof g_quick[i], "%s", cand); st_save(); }
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_input(ui, "emosearch", g_esearch, sizeof g_esearch, .placeholder = "Buscar emoji (nome ou categoria)", .width = CUI_FILL);
+                char q[64]; fold(g_esearch, q, sizeof q); const bool searching = q[0] != 0;
+                const char *list[NCAT * 48]; int n = 0;
+                if (searching) {
+                    for (int c = 0; c < NCAT; c++) {
+                        char ck[160]; fold(CAT_KW[c], ck, sizeof ck); const bool catHit = strstr(ck, q) != NULL;
+                        for (int k = 0; k < CATS[c].n; k++) if (catHit || strstr(NAMES[c][k], q)) list[n++] = CATS[c].e[k];
+                    }
+                } else { for (int k = 0; k < CATS[cat].n; k++) list[n++] = CATS[cat].e[k]; }
+                g_esearch_hits = searching ? n : -1;
+                if (!searching) cui_row(ui, .gap = 2) {
+                    for (int c = 0; c < NCAT; c++) {
+                        cui_push_id_int(ui, 7200 + c);
+                        cui_box(ui, .id = "t", .width = CUI_PX(38), .height = CUI_PX(30), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                .bg = c == cat ? CUI_RGBA(0x8b5cf65a) : CUI_RGBA(0x00000000)) { cui_emoji(ui, CATS[c].icon, 17); }
+                        if (briks_clicked_r(ui, "t", 9.0f)) cat = c;
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(228), .scroll_y = true, .gap = 2) {
+                    const int cols = 8;
+                    if (searching && n == 0) cui_text(ui, "Nenhum emoji com esse nome.", .size = 12, .color = B_MUTED);
+                    for (int r0 = 0; r0 < n; r0 += cols) {
+                        cui_push_id_int(ui, 7300 + r0);
+                        cui_row(ui, .gap = 2) {
+                            for (int k = r0; k < r0 + cols && k < n; k++) {
+                                cui_push_id_int(ui, 7400 + k);
+                                const char *e = list[k];
+                                cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "c"));
+                                bool hot = inside(cr, mp);
+                                cui_box(ui, .id = "c", .width = CUI_PX(40), .height = CUI_PX(38), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                                        .bg = hot ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) { cui_emoji(ui, e, 24); }
+                                if (down && !prev_down && hot) { snprintf(cand, sizeof cand, "%s", e); p0 = mp; dragging = false; }
+                                cui_pop_id(ui);
+                            }
+                        }
+                        cui_pop_id(ui);
+                    }
+                }
+                cui_text(ui, g_emo_cb ? "Clique num emoji para usá-lo no status." : "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+}
+
 void msgui_overlay(cui_ctx *ui, app_state_t *s) {
     st_load();
     cui_vec2 vp = cui_viewport_size(ui), mp = cui_mouse_pos(ui);
@@ -517,54 +605,11 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
     if (g_emo_open) {
         float pw = 372.0f, ph = 400.0f;
         float x = fminf(fmaxf(g_emo_x, 8), fmaxf(vp.x - pw - 8, 8)), y = fminf(fmaxf(g_emo_y, 8), fmaxf(vp.y - ph - 8, 8));
-        static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;
         bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
             cui_box(ui, .id = "msgemoji", .width = CUI_PX(pw), .pad = 10, .gap = 8, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
                     .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
-                cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
-                cui_row(ui, .gap = 6) {
-                    for (int i = 0; i < NQUICK; i++) {
-                        cui_push_id_int(ui, 7100 + i);
-                        cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "slot"));
-                        bool tgt = dragging && inside(sr, mp);
-                        cui_box(ui, .id = "slot", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 11, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
-                                .bg = tgt ? CUI_RGBA(0x8b5cf655) : CUI_RGBA(0xffffff0c), .border = 1, .border_color = tgt ? CUI_RGB(0xc4b5fd) : CUI_RGBA(0xc4b5fd60)) {
-                            cui_emoji(ui, g_quick[i], 22);
-                        }
-                        if (dragging && prev_down && !down && tgt && cand[0]) { snprintf(g_quick[i], sizeof g_quick[i], "%s", cand); st_save(); }
-                        cui_pop_id(ui);
-                    }
-                }
-                cui_row(ui, .gap = 2) {
-                    for (int c = 0; c < NCAT; c++) {
-                        cui_push_id_int(ui, 7200 + c);
-                        cui_box(ui, .id = "t", .width = CUI_PX(38), .height = CUI_PX(30), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
-                                .bg = c == cat ? CUI_RGBA(0x8b5cf65a) : CUI_RGBA(0x00000000)) { cui_emoji(ui, CATS[c].icon, 17); }
-                        if (briks_clicked_r(ui, "t", 9.0f)) cat = c;
-                        cui_pop_id(ui);
-                    }
-                }
-                cui_box(ui, .id = "egrid", .width = CUI_FILL, .height = CUI_PX(228), .scroll_y = true, .gap = 2) {
-                    int cols = 8, n = CATS[cat].n;
-                    for (int r0 = 0; r0 < n; r0 += cols) {
-                        cui_push_id_int(ui, 7300 + r0);
-                        cui_row(ui, .gap = 2) {
-                            for (int k = r0; k < r0 + cols && k < n; k++) {
-                                cui_push_id_int(ui, 7400 + k);
-                                const char *e = CATS[cat].e[k];
-                                cui_rect cr = cui_get_rect(ui, cui_make_id(ui, "c"));
-                                bool hot = inside(cr, mp);
-                                cui_box(ui, .id = "c", .width = CUI_PX(40), .height = CUI_PX(38), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
-                                        .bg = hot ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000)) { cui_emoji(ui, e, 24); }
-                                if (down && !prev_down && hot) { snprintf(cand, sizeof cand, "%s", e); p0 = mp; dragging = false; }
-                                cui_pop_id(ui);
-                            }
-                        }
-                        cui_pop_id(ui);
-                    }
-                }
-                cui_text(ui, "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+                emoji_body(ui, mp, down);
             }
         }
         if (down && cand[0] && !dragging && (fabsf(mp.x - p0.x) + fabsf(mp.y - p0.y)) > 6) dragging = true;
@@ -577,11 +622,22 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         }
         cui_rect er = cui_get_rect(ui, cui_make_id(ui, "msgemoji"));
         if (prev_down && !down) {
-            if (!dragging && cand[0]) { toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
+            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); else toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
             cand[0] = 0; dragging = false; g_drag_on = false;
         } else if (er.w > 0 && !inside(er, mp) && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !dragging) g_emo_open = false;
         if (cui_key_pressed(ui, CUI_KEY_ESCAPE)) { g_emo_open = false; cand[0] = 0; dragging = false; g_drag_on = false; }
         prev_down = down;
+    }
+
+    if (g_emo_dlg) {   /* seletor do status: o MESMO corpo do chat, dentro de um diálogo (fica acima do perfil) */
+        const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT); bool open = true;
+        cui_dialog(ui, "Escolher emoji", &open, .width = 420) { emoji_body(ui, mp, down); }
+        if (prev_down && !down) {
+            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); open = false; }
+            cand[0] = 0; dragging = false;
+        }
+        prev_down = down;
+        if (!open) g_emo_dlg = false;
     }
 
     float dw = fminf(400.0f, fmaxf(vp.x - 48.0f, 260.0f));

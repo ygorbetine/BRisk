@@ -18,9 +18,12 @@ foreach ($c in $Casos) {
     $psi.FileName = (Resolve-Path $exe).Path; $psi.WorkingDirectory = (Split-Path -Parent $psi.FileName); $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardError = $true
     $e = $psi.EnvironmentVariables
-    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = $(if ($c -eq "grade") { "4" } else { "3" }); $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
-    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "grade") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } else { "demo-remote" })
+    $e["BRIKS_HIDDEN"] = "1"; $e["BRIKS_DEMO"] = "call"; $e["BRIKS_DEMO_PEERS"] = $(if ($c -eq "grade" -or $c -eq "gradefoco" -or $c -eq "gradeaudio") { "4" } else { "3" }); $e["BRIKS_DOCK"] = "default"; $e["BRIKS_WINDOW"] = "1280x800"
+    $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "mini") { "demo-mini" } elseif ($c -eq "previa") { "demo-self" } elseif ($c -eq "sheen") { "demo-sheen" } elseif ($c -eq "lateral") { "demo-two" } elseif ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "gradeaudio") { "demo-audio" } elseif ($c -eq "grade" -or $c -eq "gradefoco") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } elseif ($c -eq "adaptando") { "demo-adapt" } else { "demo-remote" })
     $e["BRIKS_SCRIPT"] = (Join-Path $PSScriptRoot "share-$c.txt"); $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
+    if ($c -eq "emoji" -or $c -eq "emojibusca") { $e["BRIKS_DEV_OPEN"] = "profile:1"; $e["BRIKS_DEMO"] = "social" }
+    if ($c -eq "voz") { $e["BRIKS_DOCK"] = "added"; $e["BRIKS_DEMO"] = "social"; $e["BRIKS_DEV_ROOM"] = "voz-geral" }
+    if ($c -eq "overlay" -or $c -eq "overlayreal") { $e["BRIKS_OVERLAY_FORCE"] = "1"; $e["BRIKS_DEV_ROOM"] = "voz-geral" }
     $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"
     $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")
     $e["BRIKS_SETTINGS_FILE"] = (Join-Path $w "settings.cfg"); $e["BRIKS_GRADIENTS_FILE"] = (Join-Path $w "grad.json")

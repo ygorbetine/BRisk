@@ -128,7 +128,7 @@ typedef struct {
     bool reload_msgs;
     bool create_group_open, profile_open, logout_confirm_open;
     long long status_expires;                  /* epoch (s) em que o status some sozinho; 0 = não expira (profile.c) */
-    char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char user_emoji[16]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     char new_group[96];
     /* social */
@@ -363,6 +363,9 @@ const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "
 /* ui_share.c: transmissão de tela */
 struct jval;
 bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos share.* do core */
+bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h);   /* thumb minúscula (desfocada ao esticar) da transmissão de quem está no slot; false = sem quadro */
+bool share_any_live(const app_state_t *s);   /* alguém (outro participante) transmite a tela */
+bool share_mini(cui_ctx *ui, app_state_t *s, float w);        /* miniatura ao vivo da transmissão em foco, na barra "Em chamada" (ui_voice_mini) */
 void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
 void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */
 void share_stop(app_state_t *s);

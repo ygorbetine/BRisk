@@ -1,3 +1,9 @@
-# Janela "Qualidade da transmissao": abre ancorada no chip da barra, acima dele
+# Janela "Qualidade da transmissao" responsiva: grande, media e pequena (a barra de baixo nunca cobre o painel; o painel nunca sai da janela)
 waitms 2500
-shot qualidade-1-aberta
+shot qualidade-1-grande
+resize 900 640
+waitms 600
+shot qualidade-2-media
+resize 560 420
+waitms 600
+shot qualidade-3-pequena

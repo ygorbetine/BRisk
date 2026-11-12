@@ -126,7 +126,7 @@
     { "id": "grupos-busca", "demo": "group", "roteiro": "grupos-busca.txt", "checagens": [
       { "item": ["GRP-19", "MSG-15"], "de": "gb0", "para": "gb1", "esperado": "muda" } ] },
     { "id": "msg-anexar", "demo": "msgs", "roteiro": "msg-anexar.txt", "checagens": [
-      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "igual" } ] },
+      { "item": "MSG-09", "de": "a0", "para": "a1", "esperado": "muda", "min": 50 } ] },
     { "id": "net-offline", "demo": "social", "roteiro": "net-offline.txt", "env": { "BRIKS_NET": "offline" }, "checagens": [
       { "item": "BAS-32", "de": "o0", "para": "o1", "esperado": "igual", "regiao": [700, 0, 240, 45] } ] },
     { "id": "net-restaurada", "demo": "social", "roteiro": "net-restaurada.txt", "env": { "BRIKS_NET": "restored" }, "checagens": [
@@ -191,6 +191,8 @@
       { "item": "MSG-22", "de": "fila0-sem-estado", "para": "fila1-pendente", "esperado": "muda", "min": 5 },
       { "item": "MSG-22", "de": "fila1-pendente", "para": "fila2-entregue", "esperado": "muda", "min": 5 },
       { "item": "MSG-22", "de": "fila2-entregue", "para": "fila3-falhou", "esperado": "muda", "min": 5 } ] },
+    { "id": "dm-anexos", "demo": "social", "roteiro": "dm-anexos.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
+      { "item": "MSG-09", "de": "dm-anexos-oferta", "para": "dm-anexos-recusa", "esperado": "muda", "min": 50 } ] },
     { "id": "dm-convite", "demo": "social", "roteiro": "dm-convite.txt", "env": { "BRIKS_DEMO_P2P": "1" }, "checagens": [
       { "item": "MSG-22", "de": "conv0-sem", "para": "conv1-cartao", "esperado": "muda", "min": 50 } ] },
     { "id": "amigos-pendentes-indicador", "demo": "social", "roteiro": "amigos-pendentes-indicador.txt", "env": { "BRIKS_DEMO_FTAB": "0" }, "checagens": [

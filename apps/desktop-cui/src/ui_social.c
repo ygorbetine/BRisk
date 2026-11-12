@@ -513,7 +513,7 @@ static void content(cui_ctx *ui, app_state_t *s) {
             msgui_composer(ui, s);
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 7, .gap = 6, .radius = 18, .bg = B_GLASS_CARD,
                     .border = 1, .border_color = B_A(B_C3, 0x55), .align = CUI_ALIGN_CENTER) {
-                if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar arquivo (envia aos participantes da sala)")) attach_pick(s);
+                if (cui_icon_button(ui, CUI_ICON_PAPERCLIP, .tooltip = "Anexar foto, vídeo, áudio ou documento")) attach_pick(s);
                 msgui_emoji_button(ui, "draft-emo", s->draft, sizeof s->draft, false);
                 int r = cui_input(ui, "draft", s->draft, sizeof s->draft, .placeholder = "Escreva uma mensagem", .width = CUI_FILL);
                 attach_paste_key(ui, cui_make_id(ui, "draft"));   /* Ctrl+V com imagem na área de transferência vira anexo preparado */

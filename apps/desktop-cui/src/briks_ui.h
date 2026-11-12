@@ -302,6 +302,8 @@ void app_load_messages(app_state_t *s, const char *body);
 bool chat_in_message(app_state_t *s, const struct jval *j, bool history);   /* chat.message / chat.history do core: grava (idempotente), mostra e avisa */
 void chat_in_pump(app_state_t *s);                                          /* app_pump: grava a próxima mensagem recebida no backend local */
 void chat_in_done(app_state_t *s);                                          /* a gravação terminou: recarrega a conversa aberta */
+bool chat_in_call_with(const app_state_t *s, const char *fp);              /* o amigo está autenticado na minha chamada agora */
+void chat_dm_open_fp(app_state_t *s, const char *fp);                       /* abre/reabre o canal direto com o amigo (anexos na fila) */
 void chat_dm_wake(app_state_t *s, const char *fp);                          /* dm.wake: um amigo me tocou */
 bool chat_dm_wants_session(const app_state_t *s);                           /* a sessão do core (identidade) é precisa para receber DMs */
 bool chat_outbox_event(app_state_t *s, const struct jval *j);                /* outbox.state do core: refaz os tiques das mensagens na tela */

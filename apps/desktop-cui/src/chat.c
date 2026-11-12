@@ -72,6 +72,12 @@ static void dm_open_link(app_state_t *s, const person_t *f) {
     core_send(line); (void)s;
 }
 
+bool chat_in_call_with(const app_state_t *s, const char *fp) { return in_call_with(s, fp); }
+/* abre (ou reabre) o canal direto com o amigo de impressão digital `fp`, para um anexo da fila entregar quando ele aparecer */
+void chat_dm_open_fp(app_state_t *s, const char *fp) {
+    if (core_state() != CORE_READY || !fp || !fp[0]) return;
+    for (int i = 0; i < s->friend_count; i++) if (s->friends[i].fp[0] && !strcmp(s->friends[i].fp, fp)) { if (!in_call_with(s, fp)) dm_open_link(s, &s->friends[i]); return; }
+}
 bool chat_dm_wants_session(const app_state_t *s) { return s->acct_user_id[0] && !s->acct_demo && core_state() == CORE_READY; }
 
 static char g_inbox_for[64];
@@ -160,8 +166,13 @@ void chat_outbox_acked(const char *id) {   /* chat.ack: entregue */
 static void ob_tick(app_state_t *s) {
     static ULONGLONG t_open, t_get; const ULONGLONG now = GetTickCount64();
     if (!t_get || now - t_get > 30000) { t_get = now; core_send("{\"cmd\":\"outbox.get\"}"); }
-    if (now - t_open < 4000 || !g_pend_n) return;
+    char qfp[72];
+    if (now - t_open < 4000 || (!g_pend_n && !attach_queued_fp(0, qfp, sizeof qfp))) return;
     t_open = now;
+    for (int i = 0; attach_queued_fp(i, qfp, sizeof qfp); i++) {   /* anexo esperando na fila local: o mesmo reabrir do canal direto */
+        const person_t *f = friend_by_fp(s, qfp);
+        if (f && friends_online(s, f) && !in_call_with(s, f->fp)) dm_open_link(s, f);
+    }
     for (int i = 0; i < g_pend_n; i++) {
         const person_t *f = friend_by_fp(s, g_pend[i].fp);
         if (f && friends_online(s, f) && !in_call_with(s, f->fp)) dm_open_link(s, f);

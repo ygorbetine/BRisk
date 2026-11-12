@@ -1,0 +1,37 @@
+# 1.5: anexos na conversa direta (DM). Cartões da fila local, oferta recebida de um amigo, tipos (foto/video/audio/documento) e o aviso visível quando não dá para enviar.
+waitms 600
+expect screen 1
+expect attach_xf_queued 0
+# amigo offline: o anexo fica na fila deste PC
+coreev {"ev":"file","kind":"queued","id":"q-1","name":"foto.jpg","size":150000,"peer_fp":"fp-demo-0","mine":true,"path":"C:/x/foto.jpg","replaces":""}
+coreev {"ev":"file","kind":"queued","id":"q-2","name":"clipe.mp4","size":9000000,"peer_fp":"fp-demo-0","mine":true,"path":"C:/x/clipe.mp4","replaces":""}
+coreev {"ev":"file","kind":"queued","id":"q-3","name":"voz.mp3","size":300000,"peer_fp":"fp-demo-0","mine":true,"path":"C:/x/voz.mp3","replaces":""}
+coreev {"ev":"file","kind":"queued","id":"q-4","name":"contrato.pdf","size":220000,"peer_fp":"fp-demo-0","mine":true,"path":"C:/x/contrato.pdf","replaces":""}
+waitms 300
+expect attach_xf_queued 4
+shot dm-anexos-fila
+# o amigo apareceu: a oferta ganha o id do transporte e o cartao da fila vira "aguardando aceite" (nao duplica)
+coreev {"ev":"file","kind":"offer","id":"mid-1","qid":"q-1","name":"foto.jpg","size":150000,"mime":"image/jpeg","mine":true,"peer_fp":"fp-demo-0","path":"C:/x/foto.jpg"}
+waitms 300
+expect attach_xf_queued 3
+expect attach_xf_wait 1
+# conexao caiu no meio: volta para a fila no lugar do cartao antigo
+coreev {"ev":"file","kind":"queued","id":"q-1","name":"foto.jpg","size":150000,"peer_fp":"fp-demo-0","mine":true,"path":"C:/x/foto.jpg","replaces":"mid-1"}
+waitms 300
+expect attach_xf_queued 4
+expect attach_xf_wait 0
+# cancelar na fila
+coreev {"ev":"file","kind":"cancelled","id":"q-4","name":"contrato.pdf","peer_fp":"fp-demo-0","mine":true}
+waitms 300
+expect attach_xf_queued 3
+expect attach_xf_cancelled 1
+# oferta recebida do amigo: so mostra, nada baixado
+coreev {"ev":"file","kind":"offer","id":"in-1","name":"ferias.mp4","size":9000000,"mime":"video/mp4","mine":false,"peer_fp":"fp-demo-0"}
+waitms 300
+expect attach_xf_offer 1
+shot dm-anexos-oferta
+# recusa visivel: grande demais (o core manda rejected)
+coreev {"ev":"file","kind":"rejected","to_fp":"fp-demo-0","name":"filme.mkv","code":"toobig","error":"O arquivo tem 3.0 GB; o limite pela conversa direta é 2 GB."}
+waitms 300
+expect attach_err_dlg 1
+shot dm-anexos-recusa

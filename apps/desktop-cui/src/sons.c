@@ -346,7 +346,11 @@ static void emoji_cb(const char *e, void *user) { char *dst = user; if (e) snpri
 static void field_row(cui_ctx *ui, const char *name_id, char *name, size_t cap, char *emoji, const char *emoji_id) {
     cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
         cui_push_id(ui, emoji_id);
-        if (cui_button(ui, emoji[0] ? emoji : "😀", .variant = CUI_BUTTON_SECONDARY)) { cui_vec2 m = cui_mouse_pos(ui); msgui_emoji_pick(m.x, m.y, emoji_cb, emoji); }
+        cui_box(ui, .id = "e", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 12, .bg = CUI_RGBA(0xffffff12), .border = 1, .border_color = B_GLASS_BORDER_SOFT, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+            if (emoji[0]) cui_emoji(ui, emoji, 22); else cui_icon(ui, CUI_ICON_SMILE, 18, B_MUTED);
+        }
+        if (briks_hover(ui, "e")) briks_tip("Escolher um emoji (opcional)");
+        if (briks_clicked_r(ui, "e", 12.0f) && !msgui_emoji_picking()) { const cui_rect er = cui_get_rect(ui, cui_make_id(ui, "e")); msgui_emoji_pick(er.x, er.y + er.h + 6.0f, emoji_cb, emoji); }
         cui_pop_id(ui);
         cui_input(ui, name_id, name, cap, .placeholder = "Nome do som", .width = CUI_FILL);
     }
@@ -448,12 +452,13 @@ static const char *group_name(const app_state_t *s, const char *gid) { for (int 
 
 /* ficha de um som; devolve 1 = clique (tocar) · 2 = botão direito (opções) */
 static int chip(cui_ctx *ui, int i, bool usable, bool selected) {
-    const son_t *x = &g_s[i]; char lab[120]; sons_label(x->emoji, x->name, 18, lab, sizeof lab);
+    const son_t *x = &g_s[i]; char lab[120]; sons_label("", x->name, 18, lab, sizeof lab);
     cui_push_id_int(ui, i);
     const bool busy = !x->have;
     cui_box(ui, .id = "c", .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_PX(34), .radius = 17, .bg = selected ? CUI_RGBA(0x57d28b22) : CUI_RGBA(0xffffff12), .border = 1,
             .border_color = selected ? CUI_RGBA(0x57d28b99) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         if (x->fav) briks_icon(ui, CUI_ICON_STAR, 12, CUI_RGB(0xf5c542));
+        if (x->emoji[0]) cui_emoji(ui, x->emoji, 17);
         cui_text(ui, lab, .size = 13.5f, .color = usable && !busy ? B_TEXT : B_MUTED, .nowrap = true);
         if (busy) cui_text(ui, is_fetching(x->hash) ? "baixando…" : "falta o arquivo", .size = 11, .color = B_MUTED, .nowrap = true);
     }
@@ -500,8 +505,9 @@ void sons_popover(cui_ctx *ui, app_state_t *s) {
     pump(s);
     g_open_panel = false;
     const cui_vec2 vp = cui_viewport_size(ui);
-    float lh = vp.y - 380; if (lh < 110) lh = 110; if (lh > 300) lh = 300;
-    cui_popover(ui, "sonpop", .placement = CUI_PLACE_TOP, .width = vp.x < 460 ? vp.x - 24 : 420, .pad = 14, .gap = 8) {
+    const bool wide = vp.x >= 504;   /* a partir de 480 px o CUI deixa o painel crescer até a janela; abaixo disso ele pára em 420 */
+    float lh = (wide ? vp.y - 100.0f : 420.0f) - 385.0f; if (lh < 70) lh = 70; if (lh > 260) lh = 260;
+    cui_popover(ui, "sonpop", .placement = CUI_PLACE_TOP, .width = wide ? 480 : vp.x - 24, .pad = 14, .gap = 8) {
         g_open_panel = true;
         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Sons", .font = CUI_FONT_DISPLAY, .size = 16, .width = CUI_FILL);
@@ -523,17 +529,19 @@ void sons_popover(cui_ctx *ui, app_state_t *s) {
             section(ui, s, 3, "Meus sons", mine, nmine);
             if (g_n && !nord) cui_text(ui, "Nada com esse nome.", .size = 13, .color = B_MUTED);
         }
+        cui_box(ui, .width = CUI_FILL, .height = CUI_PX(34), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_START) {   /* altura fixa: selecionar um som não muda o tamanho do painel */
         if (g_sel >= 0 && g_sel < g_n) {   /* barra de opções do som selecionado (botão direito) */
             son_t *x = &g_s[g_sel];
-            cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true, .align = CUI_ALIGN_CENTER) {
-                char lab[100]; sons_label(x->emoji, x->name, 16, lab, sizeof lab); cui_text(ui, lab, .size = 12.5f, .color = B_MUTED, .nowrap = true);
+            cui_row(ui, .gap = 6, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+                char lab[100]; sons_label("", x->name, 10, lab, sizeof lab); cui_text(ui, lab, .size = 12.5f, .color = B_MUTED, .nowrap = true);
                 if (cui_button(ui, "Ouvir só eu", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .disabled = !x->have)) play_hash(x->hash, true);
-                if (cui_button(ui, x->fav ? "Tirar ★" : "Favoritar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { send_scoped("sound.fav", x, x->fav ? ",\"fav\":false" : ",\"fav\":true"); }
+                if (cui_button(ui, x->fav ? "Desfavoritar" : "Favoritar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { send_scoped("sound.fav", x, x->fav ? ",\"fav\":false" : ",\"fav\":true"); }
                 if (can_edit(s, x)) {
                     if (cui_button(ui, "Renomear", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { g_ren.open = true; snprintf(g_ren.hash, sizeof g_ren.hash, "%s", x->hash); snprintf(g_ren.scope, sizeof g_ren.scope, "%s", x->scope); snprintf(g_ren.name, sizeof g_ren.name, "%s", x->name); snprintf(g_ren.emoji, sizeof g_ren.emoji, "%s", x->emoji); }
                     if (cui_button(ui, "Apagar", .variant = CUI_BUTTON_DANGER, .size = CUI_SIZE_SM)) { g_del.open = true; snprintf(g_del.hash, sizeof g_del.hash, "%s", x->hash); snprintf(g_del.scope, sizeof g_del.scope, "%s", x->scope); snprintf(g_del.name, sizeof g_del.name, "%s", x->name); }
                 }
             }
+        }
         }
         if (note_live()) cui_text(ui, g_note, .size = 12.5f, .color = CUI_RGB(0x7be8a8));
         else cui_text(ui, "Clique para tocar para todos · botão direito para opções", .size = 12, .color = g_th.ph);

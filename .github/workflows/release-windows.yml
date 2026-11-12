@@ -1,0 +1,109 @@
+# Build do instalador do Briks (CUI) com assinatura de codigo gratuita da SignPath Foundation (projetos de codigo aberto).
+# Manual (workflow_dispatch): nunca roda sozinho e so publica com publish=true E a aprovacao do ambiente "release" (revisor obrigatorio).
+# Passo a passo e configuracao da SignPath: docs/assinatura-signpath.md
+name: Release Windows (assinado)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versao x.y.z (sem o v)"
+        required: true
+      publish:
+        description: "Publicar o release no GitHub depois de assinar (pede aprovacao do ambiente release)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-sign:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ferramentas (NSIS e Ninja)
+        run: choco install nsis ninja -y --no-progress
+      - name: Conferir a versao
+        shell: pwsh
+        run: |
+          if ("${{ inputs.version }}" -notmatch '^\d+\.\d+\.\d+$') { throw "Versao invalida" }
+      - name: supabase.json publico (URL e chave publishable)
+        shell: pwsh
+        run: |
+          @{ url = "${{ vars.BRIKS_SUPABASE_URL }}"; anon_key = "${{ vars.BRIKS_SUPABASE_PUBLISHABLE_KEY }}" } | ConvertTo-Json | Set-Content "$env:RUNNER_TEMP\supabase.json" -Encoding UTF8
+      - name: Compilar e montar o stage
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Version "${{ inputs.version }}" -StageOnly -SupabaseJson "$env:RUNNER_TEMP\supabase.json"
+
+      - name: Separar os executaveis a assinar
+        shell: pwsh
+        run: |
+          $s = "apps/desktop-cui/stage"; New-Item -ItemType Directory to-sign | Out-Null
+          Copy-Item "$s/Briks.exe","$s/briks_overlay.exe","$s/briks-core.exe","$s/backend/briks-desktop-backend.exe" to-sign
+      - uses: actions/upload-artifact@v4
+        id: unsigned
+        with: { name: exes-sem-assinatura, path: to-sign }
+      - name: Assinar os executaveis (SignPath)
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: briks
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: executaveis
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-exes
+      - name: Trocar pelos executaveis assinados e empacotar
+        shell: pwsh
+        run: |
+          $s = "apps/desktop-cui/stage"
+          foreach ($n in "Briks.exe","briks_overlay.exe","briks-core.exe") { Copy-Item "signed-exes/$n" "$s/$n" -Force }
+          Copy-Item "signed-exes/briks-desktop-backend.exe" "$s/backend/briks-desktop-backend.exe" -Force
+          ./scripts/verify-windows-signature.ps1 -Path "$s/Briks.exe","$s/briks_overlay.exe","$s/briks-core.exe","$s/backend/briks-desktop-backend.exe"
+          ./scripts/build-installer.ps1 -Version "${{ inputs.version }}" -PackageOnly
+          New-Item -ItemType Directory installer-to-sign | Out-Null
+          Copy-Item "apps/desktop-cui/installer-out/Briks-Setup-${{ inputs.version }}.exe" installer-to-sign
+      - uses: actions/upload-artifact@v4
+        id: unsigned-installer
+        with: { name: instalador-sem-assinatura, path: installer-to-sign }
+      - name: Assinar o instalador (SignPath)
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: briks
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: instalador
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+      - name: Conferir assinatura e gerar o latest.yml
+        shell: pwsh
+        run: |
+          $exe = "signed-installer/Briks-Setup-${{ inputs.version }}.exe"
+          ./scripts/verify-windows-signature.ps1 -Path $exe
+          ./scripts/make-latest-yml.ps1 -Installer $exe -Version "${{ inputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: briks-${{ inputs.version }}-assinado
+          path: |
+            signed-installer/Briks-Setup-${{ inputs.version }}.exe
+            signed-installer/latest.yml
+
+  publish:
+    needs: build-sign
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    environment: release   # configure "Required reviewers" neste ambiente: a publicacao so segue depois do seu OK
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: "briks-${{ inputs.version }}-assinado", path: dist }
+      - name: Criar o release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: >
+          gh release create "v${{ inputs.version }}" dist/Briks-Setup-${{ inputs.version }}.exe dist/latest.yml
+          --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Briks ${{ inputs.version }}" --notes "Briks ${{ inputs.version }} (app nativo, assinado)"

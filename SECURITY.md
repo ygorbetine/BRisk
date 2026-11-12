@@ -4,7 +4,7 @@
 
 Não abra uma issue pública para falhas de segurança. Envie um relato privado para:
 
-**CONTATO-DE-SEGURANCA: <PREENCHER — e-mail ou link de "Report a vulnerability" do GitHub>**
+**GitHub: [Report a vulnerability](https://github.com/ygorbetine/Briks/security/advisories/new)** (aba Security do repositório, relato privado).
 
 Inclua: o que acontece, passos para reproduzir, versão do app e impacto estimado. Responderemos assim que possível; pedimos que você aguarde a correção antes de divulgar publicamente.
 

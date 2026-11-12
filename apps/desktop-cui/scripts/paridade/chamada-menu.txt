@@ -1,0 +1,8 @@
+# 1.4.1 (CHM-32): botão "Menu" (seta + rótulo) no cabeçalho da chamada volta ao menu sem sair da sala; a barra "Em chamada" do menu leva de volta
+waitms 1200
+expect screen 2
+shot m0-chamada
+click 60 31
+waitms 600
+expect screen 1
+shot m1-menu

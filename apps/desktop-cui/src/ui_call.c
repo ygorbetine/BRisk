@@ -282,6 +282,20 @@ static bool head_icon(cui_ctx *ui, int id, const char *icon, const char *tip) {
     return hit;
 }
 
+/* 1.4.1: "Menu" com seta: volta ao menu SEM sair da chamada. Rotulado (antes era só um ícone ambíguo) e com alvo de 38 px de altura; em janela estreita fica só a seta. */
+static bool back_btn(cui_ctx *ui, bool compact) {
+    cui_push_id_int(ui, 902);
+    cui_box(ui, .id = "b", .dir = CUI_ROW, .gap = 7, .height = CUI_PX(38), .min_width = 38, .pad_x = compact ? 11 : 14, .radius = 13, .bg = B_GLASS, .border = 1,
+            .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+        cui_icon(ui, CUI_ICON_ARROW_LEFT, 16, B_TEXT);
+        if (!compact) cui_text(ui, "Menu", .font = CUI_FONT_DISPLAY, .size = 15, .nowrap = true);
+    }
+    if (briks_hover(ui, "b")) briks_tip("Voltar ao menu — a chamada continua (use \"Abrir chamada\" ou a barra \"Em chamada\" para voltar)");
+    const bool hit = briks_clicked_r(ui, "b", 13.0f);
+    cui_pop_id(ui);
+    return hit;
+}
+
 static void empty_state(cui_ctx *ui, const char *icon, const char *title, const char *sub) {
     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10, .pad = 20) {
         cui_box(ui, .width = CUI_PX(60), .height = CUI_PX(60), .radius = 30, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
@@ -590,8 +604,9 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                 /* cabeçalho */
                 cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(70), .pad_x = tiny ? 12 : 20, .gap = 12, .bg = B_GLASS_SOFT,
                         .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER, .clip = true) {
-                    cui_row(ui, .gap = 18, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .min_width = 60, .clip = true) {
-                        if (!tiny) briks_brand(ui, 20);
+                    cui_row(ui, .gap = 14, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .min_width = 60, .clip = true) {
+                        if (back_btn(ui, compact)) s->screen = SCREEN_SOCIAL;
+                        if (ew >= 1360.0f) briks_brand(ui, 20);   /* o botão Menu já ocupa o canto: a marca só cabe em janela larga, senão corta o estado */
                         cui_column(ui, .gap = 1, .width = CUI_FILL, .clip = true) {
                             cui_text(ui, title, .font = CUI_FONT_DISPLAY, .size = 16, .nowrap = true);
                             cui_text(ui, st, .size = 13, .color = B_MUTED, .nowrap = true);
@@ -599,7 +614,6 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     }
                     cui_row(ui, .gap = tiny ? 5 : 10, .align = CUI_ALIGN_CENTER) {
                         net_chip(ui, s, compact);
-                        if (head_icon(ui, 900, CUI_ICON_MINIMIZE_2, "Voltar ao menu sem sair da chamada")) s->screen = SCREEN_SOCIAL;
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
                             /* ids 11..16: as pílulas da barra usam 1..7 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;

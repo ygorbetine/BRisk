@@ -155,6 +155,8 @@
     { "id": "transmissao-audio", "demo": "call", "roteiro": "transmissao-audio.txt", "env": { "BRIKS_DEMO_PEERS": "3" }, "checagens": [
       { "item": "CHM-31", "de": "u0-com", "para": "u1-sem", "esperado": "muda", "min": 20 },
       { "item": "CHM-31", "de": "u1-sem", "para": "u2-com", "esperado": "muda", "min": 20 } ] },
+    { "id": "chamada-menu", "demo": "call", "roteiro": "chamada-menu.txt", "env": { "BRIKS_DEMO_PEERS": "3" }, "checagens": [
+      { "item": "CHM-32", "de": "m0-chamada", "para": "m1-menu", "esperado": "muda", "min": 200 } ] },
     { "id": "transmissao-vazio", "demo": "call", "roteiro": "transmissao-vazio.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEV_SHARE": "demo-many" }, "checagens": [
       { "item": "CHM-30", "de": "x0", "para": "x1", "esperado": "muda", "min": 100 },
       { "item": "CHM-30", "de": "x1", "para": "x2", "esperado": "muda", "min": 100 } ] },

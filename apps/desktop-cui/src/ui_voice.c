@@ -119,7 +119,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
     /* estado de verdade (antes tudo que não era "conectado" aparecia como "Conectando…", inclusive erro e reconexão) */
     const bool bad = !ok && !strcmp(s->rtc_state, "erro");
     const bool reconn = !ok && !strcmp(s->rtc_state, "reconectando");
-    const char *state_txt = ok ? (g_panel_w >= 262.0f ? "Voz conectada" : "Conectada") : bad ? "Sem conexão" : reconn ? "Reconectando…" : "Conectando…";
+    const char *state_txt = ok ? (g_panel_w >= 262.0f ? "Em chamada" : "Conectada") : bad ? "Sem conexão" : reconn ? "Reconectando…" : "Conectando…";
     const cui_color state_col = ok ? B_ONLINE : bad ? CUI_RGB(0xff9a9a) : CUI_RGB(0xf5d9a0);
     char title[120]; call_room_title(s, title, sizeof title);
     cui_push_id_int(ui, 6400);

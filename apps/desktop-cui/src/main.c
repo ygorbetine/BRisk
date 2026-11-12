@@ -44,6 +44,7 @@ int script_probe(const char *n) {
     if (!strcmp(n, "profile")) return state.profile_open;
     if (!strcmp(n, "status_emoji_len")) return (int)strlen(state.user_emoji);   /* bytes do emoji do status (0 = nenhum) */
     if (!strcmp(n, "emoji_picking")) return msgui_emoji_picking();
+    if (!strcmp(n, "emoji_hits")) return msgui_emoji_hits();
     if (!strcmp(n, "settings")) return state.settings_open;
     if (!strcmp(n, "add_friend")) return state.add_friend_open;
     if (!strcmp(n, "create_group")) return state.create_group_open;

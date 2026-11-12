@@ -1,0 +1,24 @@
+# Seletor de emoji completo (status): campo de busca por nome/categoria, sem acento e sem diferenciar maiuscula
+waitms 1200
+click 518 297
+waitms 500
+expect emoji_picking 1
+expect emoji_hits -1
+shot eb-1-seletor-com-busca
+click 640 321
+waitms 200
+type Cora
+waitms 400
+expect emoji_hits 18
+shot eb-2-busca-cora
+# por categoria e sem acento
+key backspace
+key backspace
+key backspace
+key backspace
+waitms 200
+expect emoji_hits -1
+type ANIMAIS
+waitms 400
+expect emoji_hits 40
+shot eb-3-categoria-animais

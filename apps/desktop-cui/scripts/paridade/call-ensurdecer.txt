@@ -1,0 +1,26 @@
+# 1.4.4 (CHM-40): Ensurdecer corta só as vozes; o áudio das transmissões assistidas continua e o volume/mudo de cada transmissão segue funcionando ensurdecido
+waitms 1500
+expect deaf_on 0
+snap e0
+mclick 341 787
+waitms 400
+expect deaf_on 1
+snap e1
+mat 341 787
+waitms 1200
+shot e-tip
+mat 1180 681
+waitms 200
+wheel 1
+waitms 300
+expect share_vol_0 105
+mclick 1093 681
+waitms 300
+expect share_vol_0 0
+mclick 1093 681
+waitms 300
+expect share_vol_0 105
+snap e2
+mclick 341 787
+waitms 400
+expect deaf_on 0

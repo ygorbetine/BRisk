@@ -105,7 +105,7 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
             if (briks_hover(ui, "vmic")) briks_tip(mic_eff ? "Silenciar microfone" : "Ligar microfone");
             if (briks_clicked_r(ui, "vmic", 12.0f)) { s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on); }
         }
-        if (cui_icon_button(ui, CUI_ICON_VOLUME_X, .variant = s->deaf ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .tooltip = s->deaf ? "Voltar a ouvir" : "Ensurdecer")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
+        if (cui_icon_button(ui, CUI_ICON_VOLUME_X, .variant = s->deaf ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .tooltip = s->deaf ? "Ensurdecido: só vozes; transmissões continuam com som. Clique para voltar a ouvir" : "Ensurdecer: para de ouvir as vozes (as transmissões continuam com som)")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
         if (cui_button(ui, "Abrir chamada", .variant = CUI_BUTTON_SECONDARY)) s->screen = SCREEN_CALL;
         if (cui_button(ui, "Sair", .variant = CUI_BUTTON_DANGER)) rtc_leave_room(s);
     }
@@ -151,7 +151,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
             if (mini_icon(ui, "mic", mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, mic_eff ? "Desligar o microfone" : "Ligar o microfone", mic_eff ? 1 : 2)) {
                 s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on);
             }
-            if (mini_icon(ui, "deaf", s->deaf ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala", s->deaf ? 2 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
+            if (mini_icon(ui, "deaf", s->deaf ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, s->deaf ? "Ensurdecido: só vozes; transmissões continuam com som. Clique para voltar a ouvir" : "Ensurdecer: para de ouvir as vozes (as transmissões continuam com som)", s->deaf ? 2 : 0)) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
             if (mini_icon(ui, "leave", CUI_ICON_PHONE, "Sair da chamada", 2)) rtc_leave_room(s);
         }
     }

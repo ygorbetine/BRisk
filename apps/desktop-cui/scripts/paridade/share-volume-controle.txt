@@ -1,0 +1,24 @@
+# 1.4.4 (CHM-39): volume de quem assiste uma transmissão: roda sobre a barra ajusta o volume (e não o zoom); ícone muta/desmuta; fora da barra a roda continua dando zoom
+waitms 1500
+expect share_vol_0 100
+snap s0
+mat 1180 681
+waitms 200
+wheel 1
+waitms 300
+expect share_vol_0 105
+expect share_zoom 100
+snap s1
+mclick 1093 681
+waitms 300
+expect share_vol_0 0
+snap s2
+mclick 1093 681
+waitms 300
+expect share_vol_0 105
+mat 640 420
+waitms 200
+wheel 3
+waitms 400
+expect share_zoomed 1
+expect share_vol_0 105

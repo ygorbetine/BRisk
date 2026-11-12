@@ -251,13 +251,14 @@ static const wchar_t *HINT = L"Arraste para mover · roda do mouse ou o canto mu
 
 static int rc_in(const RECT *r, int x, int y) { return r->right > r->left && x >= r->left && x < r->right && y >= r->top && y < r->bottom; }
 
-/* Geometria pura da barra para a largura ww (e "Trocar transmissão" só com mais de uma live). Linha 1: tudo/itens; linha 2: opacidade, trocar, concluir. */
+/* Geometria pura da barra para a largura ww (e "Trocar transmissão" só com mais de uma live). Com miniaturas, a 1ª fileira são os nomes das transmissões; depois: tudo/itens; e opacidade, trocar, concluir. */
 static void bar_layout(int ww, int lives, int ntile) {
     memset(g_bh, 0, sizeof g_bh);
     g_barh = BAR_PAD * 2 + BTN_H * 2 + BAR_GAP + (ntile > 0 ? BTN_H + BAR_GAP : 0);
     g_hintshape = (RECT){ 0, 0, 0, HINT_H };
     g_barshape = (RECT){ 0, HINT_H + 8, ww, HINT_H + 8 + BAR_H };
-    const int x0 = BAR_PAD, x1 = ww - BAR_PAD, iw = x1 - x0, y1 = g_barshape.top + BAR_PAD, y2 = y1 + BTN_H + BAR_GAP;
+    /* 1.4.1: com miniaturas, a fileira dos nomes das transmissões fica EM CIMA da fileira dos botões comuns */
+    const int x0 = BAR_PAD, x1 = ww - BAR_PAD, iw = x1 - x0, yt = g_barshape.top + BAR_PAD, y1 = yt + (ntile > 0 ? BTN_H + BAR_GAP : 0), y2 = y1 + BTN_H + BAR_GAP;
     static const int nat[5] = { 112, 100, 132, 120, 108 };   /* "Desativar tudo" e os 4 itens: larguras naturais, esticadas/encolhidas para encher a linha */
     int sum = 0; for (int i = 0; i < 5; i++) sum += nat[i];
     const int avail = iw - 4 * BAR_GAP; int x = x0, used = 0;
@@ -275,7 +276,7 @@ static void bar_layout(int ww, int lives, int ntile) {
     g_bh[B_SLIDER] = (RECT){ g_bh[B_OPM].right + BAR_GAP, y2, g_bh[B_OPP].left - BAR_GAP, y2 + BTN_H };
     if (g_bh[B_SLIDER].right - g_bh[B_SLIDER].left < 48) g_bh[B_SLIDER].right = g_bh[B_SLIDER].left + 48;
     if (ntile > 0) {   /* linha 3: uma chave por miniatura (liga/desliga só aquela transmissão) */
-        const int y3 = y2 + BTN_H + BAR_GAP, cw = (iw - 3 * BAR_GAP) / NT;
+        const int y3 = yt, cw = (iw - 3 * BAR_GAP) / NT;
         for (int t = 0; t < ntile && t < NT; t++) g_bh[B_T0 + t] = (RECT){ x0 + t * (cw + BAR_GAP), y3, x0 + t * (cw + BAR_GAP) + cw, y3 + BTN_H };
     }
 }
@@ -937,7 +938,7 @@ static int live_selftest(frame_t *b, frame_t *o, const char *dev) {
     { frame_t st = *o; st.t[2].on = 0; st.t[2].pct = 100; g_hold = GetTickCount() + 400; adopt_frame(&st); f += check(cur.t[2].on, "quadro velho do app logo após o clique não desfaz o liga/desliga");
       g_hold = 0; adopt_frame(&st); f += check(!cur.t[2].on, "passada a espera, o app (Configurações) prevalece: sincronia nos dois sentidos"); }
     /* barra: linha 3 com uma chave por miniatura */
-    paint_bar(&cur); f += check(g_bh[B_T0].right && g_bh[B_T1].right && g_bh[B_T2].right && g_bh[B_T3].right && g_bh[B_T0].top > g_bh[B_OPM].bottom, "a barra ganha a 3ª linha com uma chave por miniatura (até 4)");
+    paint_bar(&cur); f += check(g_bh[B_T0].right && g_bh[B_T1].right && g_bh[B_T2].right && g_bh[B_T3].right && g_bh[B_T0].bottom < g_bh[B_ALL].top, "a barra ganha a 3ª linha com uma chave por miniatura (até 4)");
     CLR(); bar_down(CTR(B_T1)); f += check(strstr(g_out, "tileon bbbb1 0\n") && !cur.t[1].on, "chave da barra oculta só a transmissão 2 ('tileon bbbb1 0')");
     CLR(); bar_down(CTR(B_T1)); f += check(strstr(g_out, "tileon bbbb1 1\n") && cur.t[1].on, "e liga de novo");
     { frame_t few = cur; few.ntile = 2; paint_bar(&few); f += check(g_bh[B_T1].right && !g_bh[B_T2].right, "com 2 transmissões a barra só tem 2 chaves"); frame_t none = cur; none.ntile = 0; paint_bar(&none); f += check(!g_bh[B_T0].right, "sem transmissões não há a 3ª linha"); paint_bar(&cur); }

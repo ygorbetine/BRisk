@@ -597,6 +597,9 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         if (ev) { jval *jj = json_parse(ev); if (jj) { share_handle_event(s, jj, strstr(ev, "share.local") ? "share.local" : "share.stats"); json_free(jj); } }
         cui_request_redraw(ui);
     }
+    if (d && !strcmp(d, "demo-dialog")) { static int once; if (!once && cui_time(ui) > 0.8) { once = 1; s->screen = SCREEN_CALL; q->loading = false;
+            jval *js = json_parse("{\"ev\":\"share.sources\",\"screens\":[{\"id\":\"0\",\"name\":\"Monitor 1\",\"sub\":\"1920 x 1080\"},{\"id\":\"1\",\"name\":\"Monitor 2\",\"sub\":\"2560 x 1440\"}],\"windows\":[]}");
+            if (js) { share_handle_event(s, js, "share.sources"); json_free(js); } q->loading = false; q->dialog_open = true; } }   /* captura sem core: diálogo de compartilhar tela aberto */
     if (d && !strcmp(d, "demo-quality")) { static int once; if (!once && cui_time(ui) > 1.0) { once = 1; g_dev_open_quality = true; } }   /* captura sem core: abre a janela de qualidade */
     if (d && core_state() == CORE_READY && s->in_room) {
         if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }
@@ -784,17 +787,26 @@ static void share_audio_live(cui_ctx *ui, app_state_t *s) {
 }
 
 /* ---------- diálogo ---------- */
+static bool g_pop_req; static int g_pop_grace; static cui_id g_shqd_id;   /* painel lateral de qualidade: pedido de abertura, tolerância de quadros e id (resolvido dentro do escopo do diálogo) */
 void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
-    if (!q->dialog_open) return;
+    if (!q->dialog_open) { if (g_shqd_id) cui_popover_set_id(ui, g_shqd_id, false); g_pop_req = false; return; }   /* fechar o diálogo fecha o painel */
     static double last_poll;   /* "Tocando agora" atualiza sozinho enquanto o diálogo está aberto */
     if (q->audio_mode == 1 && cui_time(ui) - last_poll > 2.0) { last_poll = cui_time(ui); cmd("{\"cmd\":\"share.audio.list\"}"); cui_request_redraw(ui); }
     cui_vec2 vp = cui_viewport_size(ui);
     float inner = 3 * CARD_W + 2 * 12;
-    cui_dialog(ui, "Compartilhar tela (beta)", &q->dialog_open, .description = q->pick_second ? "Escolha a 2ª tela: ela vai ao ar junto com a primeira" : "Escolha a fonte e confirme", .width = fminf(inner + 48, fmaxf(vp.x - 48, 520))) {
+    /* ajustes de qualidade ao LADO do diálogo (painel separado, mesma altura de topo) quando a janela comporta os dois lado a lado; senão, expandidos dentro como antes */
+    const float dlg_w = fminf(inner + 48, fmaxf(vp.x - 48, 520));
+    const float side_room = vp.x - dlg_w - 12.0f - 32.0f;
+    const bool side = q->quality_open && side_room >= 300.0f;
+    const float side_w = fminf(side_room, 460.0f);
+    static float off_x;   /* o diálogo desliza para a esquerda para o par ficar centrado na janela */
+    { const float tgt = side ? -(side_w + 12.0f) * 0.5f : 0.0f; if (fabsf(tgt - off_x) > 0.5f) { off_x += (tgt - off_x) * 0.35f; cui_request_redraw(ui); } else off_x = tgt; }
+    const cui_id pan = cui_dialog_panel_id(ui, "Compartilhar tela (beta)");   /* no mesmo escopo de ids de quem chama o diálogo */
+    cui_dialog(ui, "Compartilhar tela (beta)", &q->dialog_open, .offset_x = off_x, .description = q->pick_second ? "Escolha a 2ª tela: ela vai ao ar junto com a primeira" : "Escolha a fonte e confirme", .width = fminf(inner + 48, fmaxf(vp.x - 48, 520))) {
         int t = q->tab, n = q->nsrc[t];
         /* com os ajustes de qualidade abertos, fontes e áudio viram uma linha de resumo: o diálogo tem de caber em 800 px de altura */
-        if (!q->quality_open) {
+        if (!q->quality_open || side) {
         static const char *const tabs[2] = { "Telas", "Janelas" };
         cui_row(ui) { if (seg(ui, "tab", tabs, q->nsrc, 2, &q->tab)) { t = q->tab; n = q->nsrc[t]; } }
         if (q->err[0]) cui_text(ui, q->err, .size = 13, .color = B_DANGER);
@@ -858,7 +870,7 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
             }
             if (cui_button(ui, q->quality_open ? "Fechar ajustes" : "Ajustar", .size = CUI_SIZE_SM)) q->quality_open = !q->quality_open;
         }
-        if (q->quality_open) quality_controls(ui, q);
+        if (q->quality_open && !side) { g_qw = 0; quality_controls(ui, q); }
         cui_separator(ui);
         beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos antes de voltar.");
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
@@ -866,6 +878,25 @@ void ui_share_dialog(cui_ctx *ui, app_state_t *s) {
             char b[140]; bool ok = n > 0 && q->sel[t] < n && !q->loading;
             if (ok) snprintf(b, sizeof b, t == 0 ? "Transmitir %s" : "Transmitir janela", q->src[t][q->sel[t]].name); else snprintf(b, sizeof b, "Transmitir");
             if (cui_button(ui, b, .variant = CUI_BUTTON_PRIMARY, .disabled = !ok)) start_selected(s);
+        }
+        /* painel lateral: grudado à direita do diálogo, topo alinhado, rola por dentro; Esc fecha só ele; clique no diálogo não o fecha (sticky) */
+        g_shqd_id = cui_make_id(ui, "shqd");
+        { const bool isop = cui_popover_is_open(ui, "shqd");
+          if (!side) { g_pop_req = false; if (isop) cui_popover_set_id(ui, g_shqd_id, false); }
+          else if (!g_pop_req) { g_pop_req = true; g_pop_grace = 3; cui_popover_open(ui, "shqd"); }
+          else if (!isop) { if (g_pop_grace > 0) g_pop_grace--; else { q->quality_open = false; g_pop_req = false; } } }   /* Esc fechou só o painel */
+        {
+            const cui_rect pr = cui_get_rect(ui, pan);
+            float ph = pr.h > 0 ? pr.h : 560.0f;
+            g_qw = side_w - 32.0f - 8.0f;
+            cui_popover(ui, "shqd", .placement = CUI_PLACE_RIGHT_START, .width = side_w, .pad = 16, .gap = 12, .anchor = pan, .sticky = true) {
+                cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
+                const cui_rect qin = cui_get_rect(ui, cui_make_id(ui, "shqd-in"));
+                const float maxh = fmaxf(ph - 32.0f - 24.0f - 10.0f, 120.0f);
+                cui_scroll(ui, .id = "shqd-body", .width = CUI_FILL, .height = CUI_PX(qin.h > 0 ? fminf(maxh, qin.h + 2.0f) : maxh), .gap = 0, .fade_edges = true) {
+                    cui_box(ui, .id = "shqd-in", .width = CUI_FILL, .gap = 10, .pad_right = 8) { quality_controls(ui, q); }
+                }
+            }
         }
     }
 }
@@ -1157,6 +1188,10 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "tile_opens")) return g_tile_opens;
+    if (!strcmp(n, "dlg_quality")) return s->sh.quality_open ? 1 : 0;
+    if (!strcmp(n, "dlg_res")) return s->sh.res;
+    if (!strcmp(n, "dlg_fps")) return s->sh.fps;
+    if (!strcmp(n, "dlg_open")) return s->sh.dialog_open ? 1 : 0;
     if (!strcmp(n, "eye0")) return s->sh.vknown[0] ? s->sh.viewers[0] : -1;   /* -1 = sem dado (oculto) */
     if (!strcmp(n, "eye1")) return s->sh.vknown[1] ? s->sh.viewers[1] : -1;
     if (!strcmp(n, "share_vol0")) return (int)(s->sh.remote[0].volume * 100.0f + 0.5f);

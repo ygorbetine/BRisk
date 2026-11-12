@@ -202,14 +202,29 @@ pub struct H264Enc {
     pub hardware: bool,
     idr: bool,
     nv12: Vec<u8>,
+    /// só testes: este codificador obedece as falhas injetadas (FAULT_*); os outros testes que rodam em paralelo não são afetados
+    pub inject: bool,
+}
+
+/// Só testes: injeção de falhas do codificador. `FAULT_NEXT` = quantas das próximas chamadas a `encode` falham (qualquer codificador);
+/// `FAULT_HW` = `encode` de codificador de HARDWARE falha sempre (o de software passa: prova o fallback); `FAULT_HR` = HRESULT devolvido
+/// (0 = "não pediu entrada"). Zerados fora dos testes: custo de um load atômico por quadro.
+pub static FAULT_NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub static FAULT_HW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static FAULT_HR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+fn injected_fault() -> crate::mfenc::EncFault {
+    use crate::mfenc::{EncFault, FaultKind};
+    match FAULT_HR.load(std::sync::atomic::Ordering::Relaxed) { 0 => EncFault::new(FaultKind::Stalled, 0xC00D36B5u32 as i32, "o codificador não pediu entrada (injetado)"), hr => EncFault::from_hr(hr, "falha injetada") }
 }
 
 impl H264Enc {
-    pub fn new(w: usize, h: usize, fps: f32, bps: u32) -> Result<Self> {
+    pub fn new(w: usize, h: usize, fps: f32, bps: u32) -> Result<Self> { Self::new_with(w, h, fps, bps, true) }
+    /// `allow_hw = false`: pula o MFT de hardware (fallback depois de falhas repetidas do NVENC/GPU) e usa o de software da Microsoft ou o OpenH264.
+    pub fn new_with(w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> {
         let pref = std::env::var("BRIKS_ENCODER").unwrap_or_default();
         if pref != "openh264" {
-            match crate::mfenc::MfEnc::new(w, h, fps.round() as u32, bps, pref != "mf-soft") {
-                Ok(m) => { let (name, hardware) = (m.name.clone(), m.hardware); return Ok(H264Enc { be: Backend::Mf(m), w, h, bps, name, hardware, idr: true, nv12: vec![] }); }
+            match crate::mfenc::MfEnc::new(w, h, fps.round() as u32, bps, allow_hw && pref != "mf-soft") {
+                Ok(m) => { let (name, hardware) = (m.name.clone(), m.hardware); return Ok(H264Enc { be: Backend::Mf(m), w, h, bps, name, hardware, idr: true, nv12: vec![], inject: false }); }
                 Err(e) => eprintln!("codificador Media Foundation indisponível ({e}); usando OpenH264"),
             }
         }
@@ -220,7 +235,7 @@ impl H264Enc {
             .usage_type(if std::env::var("BRIKS_OH264_USAGE").as_deref() == Ok("screen") { UsageType::ScreenContentRealTime } else { UsageType::CameraVideoRealTime })   // medido: "screen" é estável nos saltos mas fica ~7 dB abaixo na rolagem lenta
             .enable_skip_frame(true);
         let enc = Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(|e| anyhow!("h264: {e}"))?;
-        Ok(H264Enc { be: Backend::Open(enc), w, h, bps, name: "OpenH264 (software)".into(), hardware: false, idr: true, nv12: vec![] })
+        Ok(H264Enc { be: Backend::Open(enc), w, h, bps, name: "OpenH264 (software)".into(), hardware: false, idr: true, nv12: vec![], inject: false })
     }
     pub fn force_idr(&mut self) { self.idr = true; }
     /// Muda o bitrate alvo sem recriar o codificador. false = este codificador não aceita (recrie).
@@ -232,6 +247,11 @@ impl H264Enc {
     /// Codifica um quadro I420; devolve as unidades de acesso prontas em Annex-B (nenhuma = o codificador não soltou quadro desta vez).
     pub fn encode(&mut self, yuv: &Yuv) -> Result<Vec<Vec<u8>>> {
         let idr = std::mem::take(&mut self.idr);
+        if self.inject {
+            use std::sync::atomic::Ordering::Relaxed;
+            if FAULT_NEXT.load(Relaxed) > 0 && FAULT_NEXT.fetch_sub(1, Relaxed) > 0 { self.idr = true; return Err(anyhow::Error::new(injected_fault())); }
+            if self.hardware && FAULT_HW.load(Relaxed) { self.idr = true; return Err(anyhow::Error::new(injected_fault())); }
+        }
         match &mut self.be {
             Backend::Mf(m) => { crate::mfenc::i420_to_nv12(&yuv.y, &yuv.u, &yuv.v, &mut self.nv12); m.encode(&self.nv12, idr) }
             Backend::Open(e) => { if idr { e.force_intra_frame(); } let bs = e.encode(yuv).map_err(|e| anyhow!("h264: {e}"))?; let v = bs.to_vec(); Ok(if v.is_empty() { vec![] } else { vec![v] }) }

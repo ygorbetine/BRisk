@@ -15,6 +15,41 @@ pub(crate) fn mf_startup() -> Result<()> {
     if *ONCE.get_or_init(|| unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).is_ok() }) { Ok(()) } else { Err(anyhow!("Media Foundation indisponível")) }
 }
 
+/// Falha do codificador, com o HRESULT para o diagnóstico e a classe para a recuperação (ver `share::EncSupervisor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaultKind {
+    /// o MFT não pediu entrada / recusou o quadro / mudou de formato: quadro perdido, o codificador costuma voltar sozinho (ou com flush)
+    Stalled,
+    /// GPU removida/reiniciada (TDR), driver caiu, MFT de hardware não iniciou: precisa recriar o codificador
+    DeviceLost,
+    /// qualquer outro erro do MFT
+    Other,
+}
+#[derive(Debug, Clone)]
+pub struct EncFault { pub kind: FaultKind, pub hr: i32, pub msg: String }
+impl std::fmt::Display for EncFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{} (HRESULT 0x{:08X})", self.msg, self.hr as u32) }
+}
+impl std::error::Error for EncFault {}
+impl EncFault {
+    pub fn new(kind: FaultKind, hr: i32, msg: impl Into<String>) -> Self { EncFault { kind, hr, msg: msg.into() } }
+    pub fn from_hr(hr: i32, what: &str) -> Self { EncFault::new(classify_hr(hr), hr, what) }
+    /// Classe de um erro qualquer do codificador (EncFault, erro do Windows ou texto).
+    pub fn of(e: &anyhow::Error) -> EncFault {
+        if let Some(f) = e.downcast_ref::<EncFault>() { return f.clone(); }
+        if let Some(w) = e.downcast_ref::<windows::core::Error>() { return EncFault::from_hr(w.code().0, &w.message()); }
+        EncFault::new(FaultKind::Other, 0, e.to_string())
+    }
+}
+/// HRESULTs de GPU perdida (DXGI_ERROR_DEVICE_REMOVED/HUNG/RESET/DRIVER_INTERNAL_ERROR, MF_E_HW_MFT_FAILED_START_STREAMING) e de "sem entrada".
+pub fn classify_hr(hr: i32) -> FaultKind {
+    match hr as u32 {
+        0x887A0005 | 0x887A0006 | 0x887A0007 | 0x887A0020 | 0xC00D3EA2 => FaultKind::DeviceLost,
+        0xC00D36B5 | 0xC00D6D61 | 0xC00D6D72 => FaultKind::Stalled,   // MF_E_NOTACCEPTING, MF_E_TRANSFORM_STREAM_CHANGE, MF_E_TRANSFORM_NEED_MORE_INPUT fora de hora
+        _ => FaultKind::Other,
+    }
+}
+
 pub struct MfEnc {
     /// o objeto de ativação que criou o MFT: precisa de ShutdownObject no fim, senão o MFT de hardware deixa handles para trás
     act: Option<IMFActivate>,
@@ -163,17 +198,32 @@ impl MfEnc {
     }
     pub fn set_fps(&mut self, fps: u32) { self.fps = fps.max(1); }
 
-    /// Consome eventos do MFT assíncrono. `wait` = bloqueia até chegar um.
-    unsafe fn pump(&mut self, wait: bool) -> bool {
-        let Some(ev) = &self.events else { return false };
+    /// Consome eventos do MFT assíncrono. `wait` = bloqueia até chegar um. Ok(false) = nenhum evento. MEError vira erro (recuperável por
+    /// recriação); DrainComplete/Marker e os demais são consumidos para não ficarem na fila.
+    unsafe fn pump(&mut self, wait: bool) -> Result<bool> {
+        let Some(ev) = &self.events else { return Ok(false) };
         match ev.GetEvent(if wait { MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0) } else { MF_EVENT_FLAG_NO_WAIT }) {
             Ok(e) => {
                 let t = e.GetType().unwrap_or(0);
-                if t == METransformNeedInput.0 as u32 { self.need_input += 1; } else if t == METransformHaveOutput.0 as u32 { self.have_output += 1; }
-                true
+                if t == METransformNeedInput.0 as u32 { self.need_input += 1; }
+                else if t == METransformHaveOutput.0 as u32 { self.have_output += 1; }
+                else if t == MEError.0 as u32 {
+                    let hr = e.GetStatus().map(|h| h.0).unwrap_or(0x80004005u32 as i32);
+                    return Err(anyhow::Error::new(EncFault::from_hr(hr, "evento MEError do codificador")));
+                }
+                Ok(true)
             }
-            Err(_) => false,
+            Err(_) => Ok(false),
         }
+    }
+
+    /// Ressincroniza o MFT assíncrono sem recriá-lo: descarta o que estava em voo e zera os contadores de eventos (depois de um
+    /// flush ele volta a mandar METransformNeedInput). Usado quando o codificador não pede entrada a tempo.
+    unsafe fn resync(&mut self) {
+        let _ = self.tr.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+        self.need_input = 0; self.have_output = 0;
+        let _ = self.tr.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+        while self.pump(false).unwrap_or(false) {}   // consome os eventos que o flush deixou
     }
 
     unsafe fn take_output(&mut self) -> Result<Option<Vec<u8>>> {
@@ -204,7 +254,7 @@ impl MfEnc {
                 if let Ok(t) = self.tr.GetOutputAvailableType(0, 0) { let _ = self.tr.SetOutputType(0, &t, 0); }
                 Ok(None)
             }
-            Err(e) => Err(anyhow!("ProcessOutput: {e}")),
+            Err(e) => Err(anyhow::Error::new(EncFault::from_hr(e.code().0, "ProcessOutput"))),
         }
     }
 
@@ -227,15 +277,26 @@ impl MfEnc {
             self.n += dur;   // relógio acumulado: o FPS pode mudar no meio
             let mut out: Vec<Vec<u8>> = vec![];
             if self.events.is_some() {
-                let t0 = std::time::Instant::now();
-                while self.need_input == 0 { if !self.pump(false) { if t0.elapsed().as_millis() > 500 { return Err(anyhow!("codificador não pediu entrada")); } std::thread::sleep(std::time::Duration::from_micros(300)); } }
+                let mut t0 = std::time::Instant::now();
+                let mut resynced = false;
+                while self.need_input == 0 {
+                    if !self.pump(false)? {
+                        if t0.elapsed().as_millis() > 500 {
+                            // GPU disputada, driver ocupado ou evento perdido depois de um flush/mudança de formato: uma ressincronização
+                            // (flush + novo START_OF_STREAM) e mais uma espera; se ainda assim nada, o quadro é descartado (recuperável)
+                            if resynced { return Err(anyhow::Error::new(EncFault::new(FaultKind::Stalled, 0xC00D36B5u32 as i32, "o codificador não pediu entrada"))); }
+                            self.resync(); resynced = true; t0 = std::time::Instant::now();
+                        }
+                        std::thread::sleep(std::time::Duration::from_micros(300));
+                    }
+                }
                 self.need_input -= 1;
-                self.tr.ProcessInput(0, &s, 0)?;
+                self.tr.ProcessInput(0, &s, 0).map_err(|e| anyhow::Error::new(EncFault::from_hr(e.code().0, "ProcessInput")))?;
                 let t0 = std::time::Instant::now();
-                while self.have_output == 0 && t0.elapsed().as_millis() < 250 { if !self.pump(false) { std::thread::sleep(std::time::Duration::from_micros(300)); } }
+                while self.have_output == 0 && t0.elapsed().as_millis() < 250 { if !self.pump(false)? { std::thread::sleep(std::time::Duration::from_micros(300)); } }
                 while self.have_output > 0 { self.have_output -= 1; if let Some(v) = self.take_output()? { out.push(v); } }
             } else {
-                self.tr.ProcessInput(0, &s, 0)?;
+                self.tr.ProcessInput(0, &s, 0).map_err(|e| anyhow::Error::new(EncFault::from_hr(e.code().0, "ProcessInput")))?;
                 while let Some(v) = self.take_output()? { out.push(v); }
             }
             Ok(out.into_iter().map(|a| self.with_params(a)).filter(|a| !a.is_empty()).collect())

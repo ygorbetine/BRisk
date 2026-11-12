@@ -244,6 +244,80 @@ impl BlackoutGuard {
     }
 }
 
+/// Recuperação do codificador sem derrubar a transmissão. O erro do codificador ("o codificador não pediu entrada", GPU reiniciada pelo
+/// Windows, MEError...) deixava de ser fatal: o quadro é descartado (o espectador segue vendo o último), o codificador é recriado com
+/// quadro-chave (backoff curto) e, se o de hardware falhar de novo e de novo, passa para o de software, com aviso discreto. Só quando
+/// o de software também esgota as tentativas a transmissão termina — com mensagem em português e o HRESULT no log.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Recovery {
+    /// descarta este quadro e segue (ainda dentro da tolerância, ou esperando o backoff)
+    Drop,
+    /// recria o codificador (com quadro-chave); `software` = sem o MFT de hardware
+    Recreate { software: bool },
+    /// esgotou: encerra com esta mensagem
+    GiveUp(String),
+}
+pub struct EncSupervisor {
+    fails: u32,
+    first_fail: Option<Instant>,
+    retry_at: Option<Instant>,
+    recreations: Vec<Instant>,
+    pub software: bool,
+    pub total_faults: u64,
+    pub total_recreations: u64,
+}
+impl EncSupervisor {
+    /// quadros seguidos sem entrada (ou o tempo) antes de recriar o codificador
+    pub const DROPS_BEFORE_RECREATE: u32 = 3;
+    pub const STALL_BEFORE_RECREATE: Duration = Duration::from_secs(2);
+    /// recriações do mesmo tipo (hardware, depois software) na janela antes de trocar de codificador / desistir
+    pub const ATTEMPTS: usize = 3;
+    pub const WINDOW: Duration = Duration::from_secs(30);
+    pub fn new() -> Self { EncSupervisor { fails: 0, first_fail: None, retry_at: None, recreations: vec![], software: false, total_faults: 0, total_recreations: 0 } }
+    pub fn on_ok(&mut self) { self.fails = 0; self.first_fail = None; }
+    pub fn on_error(&mut self, now: Instant, f: &crate::mfenc::EncFault) -> Recovery {
+        use crate::mfenc::FaultKind;
+        self.total_faults += 1;
+        self.fails += 1;
+        let first = *self.first_fail.get_or_insert(now);
+        if self.retry_at.map(|t| now < t).unwrap_or(false) { return Recovery::Drop; }   // acabou de recriar: dá tempo
+        let must = f.kind != FaultKind::Stalled || self.fails >= Self::DROPS_BEFORE_RECREATE || now.saturating_duration_since(first) >= Self::STALL_BEFORE_RECREATE;
+        if !must { return Recovery::Drop; }
+        self.recreations.retain(|t| now.saturating_duration_since(*t) < Self::WINDOW);
+        if self.recreations.len() >= Self::ATTEMPTS {
+            if !self.software {
+                self.software = true; self.recreations.clear();   // o hardware não se sustenta: troca de codificador
+            } else {
+                return Recovery::GiveUp(Self::explain(f));
+            }
+        }
+        self.recreations.push(now); self.total_recreations += 1;
+        self.fails = 0; self.first_fail = None;
+        self.retry_at = Some(now + Duration::from_millis(150 * self.recreations.len() as u64));   // backoff curto: 150, 300, 450 ms
+        Recovery::Recreate { software: self.software }
+    }
+    /// O codificador nem abriu (depois de uma recriação): conta como tentativa e cai para o software se for o de hardware.
+    pub fn on_create_error(&mut self, now: Instant, e: &str) -> Recovery {
+        let f = crate::mfenc::EncFault::new(crate::mfenc::FaultKind::Other, 0, e.to_string());
+        self.recreations.retain(|t| now.saturating_duration_since(*t) < Self::WINDOW);
+        self.recreations.push(now); self.total_faults += 1;
+        if !self.software { self.software = true; self.recreations.clear(); self.recreations.push(now); return Recovery::Recreate { software: true }; }
+        if self.recreations.len() > Self::ATTEMPTS { return Recovery::GiveUp(Self::explain(&f)); }
+        self.retry_at = Some(now + Duration::from_millis(150 * self.recreations.len() as u64));
+        Recovery::Drop
+    }
+    /// Mensagem final para o usuário (português): o que houve, o que o app fez, o que fazer. O HRESULT vai no log e entre parênteses.
+    pub fn explain(f: &crate::mfenc::EncFault) -> String {
+        let hr = if f.hr != 0 { format!(" (código 0x{:08X})", f.hr as u32) } else { String::new() };
+        let what = match f.kind {
+            crate::mfenc::FaultKind::DeviceLost => "A placa de vídeo foi reiniciada pelo Windows e o codificador não voltou",
+            crate::mfenc::FaultKind::Stalled => "O codificador de vídeo parou de responder (a placa de vídeo está sobrecarregada)",
+            crate::mfenc::FaultKind::Other => "O codificador de vídeo falhou",
+        };
+        format!("{what}{hr}. O Briks tentou reiniciá-lo e usar o codificador por software, sem sucesso. Clique em Tentar de novo; se repetir, atualize o driver da placa de vídeo.")
+    }
+}
+
 /// Bitrate do codificador para um orçamento de rede: desconta cabeçalhos RTP/UDP/IP e a folga das retransmissões.
 fn enc_bps(budget: u32) -> u32 { (budget as f64 * 0.85) as u32 }
 
@@ -287,6 +361,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
         let mut guard = BlackoutGuard::new();
+        let mut sup = EncSupervisor::new();
+        let mut recreated_for_fault = false;
         let mut held_win = 0u64;   // quadros pretos segurados na janela (telemetria)
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
@@ -393,11 +469,30 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
                 let tc = Instant::now();
-                let made = H264Enc::new(tw, th, fps as f32, bps);
+                let made = H264Enc::new_with(tw, th, fps as f32, bps, !sup.software);
                 if tc.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] criar codificador {tw}x{th}: {} ms", tc.elapsed().as_millis()); }
                 match made {
-                    Ok(e) => { id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; }   // codificador novo já começa com quadro-chave
-                    Err(e) => { closed_reason = format!("codificador: {e}"); break; }
+                    Ok(e) => {
+                        id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true;   // codificador novo já começa com quadro-chave
+                        if recreated_for_fault {
+                            recreated_for_fault = false;
+                            let st = if sup.software { "software" } else { "recovered" };
+                            let nm = enc.as_ref().map(|e| e.name.clone()).unwrap_or_default();
+                            eprintln!("[encoder] codificador recriado ({nm}), recriações {}, falhas {}", sup.total_recreations, sup.total_faults);
+                            let _ = ev.try_send(json!({ "ev": "share.encoder", "gen": gen, "state": st, "encoder": nm, "recreations": sup.total_recreations, "faults": sup.total_faults }));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[encoder] não foi possível criar o codificador {tw}x{th}: {e}");
+                        if !recreated_for_fault && sup.total_faults == 0 {
+                            // 1ª criação (início da transmissão): sem codificador nenhum não há o que recuperar
+                            closed_reason = format!("O codificador de vídeo não abriu: {e}. Clique em Tentar de novo; se repetir, atualize o driver da placa de vídeo."); break;
+                        }
+                        match sup.on_create_error(Instant::now(), &e.to_string()) {
+                            Recovery::GiveUp(m) => { closed_reason = m; break; }
+                            _ => { std::thread::sleep(Duration::from_millis(100)); continue; }
+                        }
+                    }
                 }
             }
             let e = enc.as_mut().unwrap();
@@ -431,8 +526,22 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         let _ = tx.send((au, samples.max(1), (cur_bps as f64 * 2.5) as u32));
                     }
                 }
-                Err(e) => { closed_reason = e.to_string(); break; }
+                Err(er) => {
+                    let f = crate::mfenc::EncFault::of(&er);
+                    eprintln!("[encoder] falha {:?} em {} ({}x{}): {f}; total de falhas {}", f.kind, e.name, tw, th, sup.total_faults + 1);
+                    skipped += 1;
+                    match sup.on_error(Instant::now(), &f) {
+                        Recovery::Drop => {}   // o último quadro segue no receptor; tenta de novo no próximo quadro
+                        Recovery::Recreate { software } => {
+                            enc = None; recreated_for_fault = true; idrs += 1;
+                            let _ = ev.try_send(json!({ "ev": "share.encoder", "gen": gen, "state": if software { "fallback" } else { "recovering" }, "hr": format!("0x{:08X}", f.hr as u32), "detail": f.msg, "recreations": sup.total_recreations, "faults": sup.total_faults }));
+                        }
+                        Recovery::GiveUp(m) => { eprintln!("[encoder] desistiu: {m}"); closed_reason = m; break; }
+                    }
+                    continue;
+                }
             }
+            sup.on_ok();
         }
         cap.stop();
         let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "off", "reason": closed_reason }));
@@ -748,5 +857,123 @@ mod blackout_tests {
         // sem quadro bom anterior (início já preto) também passa
         let mut g = BlackoutGuard::new();
         assert!(!g.hold(ms(0), 1.0));
+    }
+}
+
+#[cfg(test)]
+mod enc_recovery_tests {
+    use super::*;
+    use crate::mfenc::{EncFault, FaultKind};
+    use std::sync::atomic::Ordering::Relaxed;
+
+    fn stalled() -> EncFault { EncFault::new(FaultKind::Stalled, 0xC00D36B5u32 as i32, "o codificador não pediu entrada") }
+    fn lost() -> EncFault { EncFault::from_hr(0x887A0007u32 as i32, "GPU reiniciada") }
+
+    #[test]
+    fn stalled_encoder_drops_frames_then_recreates_and_device_loss_recreates_at_once() {
+        let (mut s, t) = (EncSupervisor::new(), Instant::now());
+        let ms = |n: u64| t + Duration::from_millis(n);
+        assert_eq!(s.on_error(ms(0), &stalled()), Recovery::Drop, "1ª falta de entrada: só descarta o quadro");
+        assert_eq!(s.on_error(ms(40), &stalled()), Recovery::Drop);
+        assert_eq!(s.on_error(ms(80), &stalled()), Recovery::Recreate { software: false }, "3 seguidas: recria o codificador");
+        // recém-recriado: espera o backoff em vez de recriar de novo
+        assert_eq!(s.on_error(ms(100), &stalled()), Recovery::Drop);
+        s.on_ok();
+        // GPU perdida (TDR): recria na hora
+        assert_eq!(s.on_error(ms(2000), &lost()), Recovery::Recreate { software: false });
+        // um sucesso zera a contagem seguida
+        let mut s = EncSupervisor::new();
+        s.on_error(ms(0), &stalled()); s.on_error(ms(40), &stalled()); s.on_ok();
+        assert_eq!(s.on_error(ms(80), &stalled()), Recovery::Drop);
+        // sem sucesso por 2 s: recria mesmo com poucos quadros
+        let mut s = EncSupervisor::new();
+        s.on_error(ms(0), &stalled());
+        assert_eq!(s.on_error(ms(2100), &stalled()), Recovery::Recreate { software: false });
+    }
+
+    #[test]
+    fn repeated_hardware_failures_fall_back_to_software_then_give_up_with_a_clear_message() {
+        let (mut s, t) = (EncSupervisor::new(), Instant::now());
+        let mut now = t;
+        let mut step = |s: &mut EncSupervisor, f: &EncFault| { now += Duration::from_millis(1000); s.on_error(now, f) };
+        for _ in 0..3 { assert_eq!(step(&mut s, &lost()), Recovery::Recreate { software: false }); }
+        assert_eq!(step(&mut s, &lost()), Recovery::Recreate { software: true }, "hardware falhou 3 vezes: troca para software");
+        assert!(s.software);
+        for _ in 0..2 { assert_eq!(step(&mut s, &lost()), Recovery::Recreate { software: true }); }
+        match step(&mut s, &lost()) {
+            Recovery::GiveUp(m) => {
+                assert!(m.contains("0x887A0007") && m.contains("Tentar de novo") && m.contains("placa de vídeo"), "mensagem: {m}");
+                assert!(!m.contains("MFT") && !m.contains("ProcessOutput"), "sem jargão: {m}");
+            }
+            r => panic!("esperava desistir: {r:?}"),
+        }
+        let m = EncSupervisor::explain(&stalled());
+        assert!(m.contains("parou de responder") && m.contains("0xC00D36B5"), "{m}");
+    }
+
+    fn frame(w: usize, h: usize, t: usize) -> video::Yuv {
+        let mut y = vec![0u8; w * h];
+        for (i, v) in y.iter_mut().enumerate() { *v = 40 + (((i % w) + t * 3 + (i / w)) % 180) as u8; }
+        video::Yuv { w, h, y, u: vec![128; w * h / 4], v: vec![128; w * h / 4] }
+    }
+
+    /// Mesmo laço do emissor, sem captura: codifica, e a cada erro consulta o supervisor (tempo simulado: 40 ms por quadro).
+    /// Devolve (unidades codificadas, quantas vieram de codificador de hardware, quadros descartados, desistiu?, recriações).
+    fn drive(frames: usize, sup: &mut EncSupervisor) -> (usize, usize, usize, bool, u64) {
+        let (t0, mut enc, mut out, mut hw, mut dropped, mut gave_up) = (Instant::now(), None::<video::H264Enc>, 0, 0, 0, false);
+        for i in 0..frames {
+            let now = t0 + Duration::from_millis(40 * i as u64);
+            if enc.is_none() { let mut e = video::H264Enc::new_with(320, 180, 25.0, 800_000, !sup.software).expect("codificador"); e.inject = true; enc = Some(e); }
+            let e = enc.as_mut().unwrap();
+            match e.encode(&frame(320, 180, i)) {
+                Ok(list) => { out += list.len(); if e.hardware { hw += list.len(); } sup.on_ok(); }
+                Err(er) => { dropped += 1; match sup.on_error(now, &EncFault::of(&er)) { Recovery::Drop => {} Recovery::Recreate { .. } => enc = None, Recovery::GiveUp(_) => { gave_up = true; break; } } }
+            }
+        }
+        (out, hw, dropped, gave_up, sup.total_recreations)
+    }
+
+    // Os testes abaixo mexem em estáticos globais de injeção: um de cada vez (o `inject` por codificador protege os outros testes).
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Falhas "o codificador não pediu entrada" por ~10 quadros seguidos no meio da transmissão: ela não para, recria o codificador
+    /// (com quadro-chave) e volta a produzir quadros.
+    #[test]
+    fn injected_stalls_do_not_stop_the_stream_it_recreates_and_keeps_producing() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        video::FAULT_HR.store(0, Relaxed); video::FAULT_HW.store(false, Relaxed); video::FAULT_NEXT.store(0, Relaxed);
+        let mut sup = EncSupervisor::new();
+        // 20 quadros normais, depois 10 falhas seguidas, depois normal
+        let (t0, mut enc) = (Instant::now(), None::<video::H264Enc>);
+        let (mut after_fault, mut dropped, mut idr_after) = (0usize, 0usize, false);
+        for i in 0..80 {
+            let now = t0 + Duration::from_millis(40 * i as u64);
+            if i == 20 { video::FAULT_NEXT.store(10, Relaxed); }
+            if enc.is_none() { let mut e = video::H264Enc::new_with(320, 180, 25.0, 800_000, !sup.software).expect("codificador"); e.inject = true; enc = Some(e); }
+            let e = enc.as_mut().unwrap();
+            match e.encode(&frame(320, 180, i)) {
+                Ok(list) => { if i >= 20 { after_fault += list.len(); } if i >= 20 && !list.is_empty() { if list.iter().any(|a| crate::mfenc::nals(a).iter().any(|n| n.0 == 5)) { idr_after = true; } } sup.on_ok(); }
+                Err(er) => { dropped += 1; assert_eq!(EncFault::of(&er).kind, FaultKind::Stalled); match sup.on_error(now, &EncFault::of(&er)) { Recovery::Recreate { .. } => enc = None, Recovery::GiveUp(m) => panic!("não podia desistir: {m}"), Recovery::Drop => {} } }
+            }
+        }
+        video::FAULT_NEXT.store(0, Relaxed);
+        assert_eq!(dropped, 10, "só os quadros com falha são descartados");
+        assert!(sup.total_recreations >= 1, "recriou o codificador");
+        assert!(after_fault >= 30, "voltou a produzir quadros: {after_fault}");
+        assert!(idr_after, "o codificador novo começa com quadro-chave (espectador volta a decodificar)");
+    }
+
+    /// O codificador de HARDWARE falha sempre (driver quebrado): depois das tentativas troca para software e a transmissão segue.
+    #[test]
+    fn hardware_encoder_that_always_fails_falls_back_to_software_and_the_stream_continues() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        video::FAULT_HR.store(0x887A0007u32 as i32, Relaxed); video::FAULT_HW.store(true, Relaxed); video::FAULT_NEXT.store(0, Relaxed);
+        let mut sup = EncSupervisor::new();
+        let (out, hw, _dropped, gave_up, rec) = drive(120, &mut sup);
+        video::FAULT_HW.store(false, Relaxed); video::FAULT_HR.store(0, Relaxed);
+        assert!(!gave_up, "não pode derrubar a transmissão");
+        assert!(sup.software || rec == 0, "caiu para software (ou a máquina não tem codificador de hardware: nada a recuperar)");
+        assert!(out >= 60, "a transmissão continua produzindo quadros com o codificador de software: {out}");
+        assert!(sup.software && hw == 0 || rec == 0, "sem quadros vindos do hardware depois do fallback");
     }
 }

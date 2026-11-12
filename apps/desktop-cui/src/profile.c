@@ -128,7 +128,7 @@ void profile_tick(app_state_t *s) {
         if (foreground_text(s, t, sizeof t) && strcmp(t, s->user_presence)) { snprintf(s->user_presence, sizeof s->user_presence, "%s", t); cui_request_redraw(cui_app_ui(s->app)); }
     }
     if (!s->rp_enabled && s->user_presence[0] && !demo) s->user_presence[0] = 0;
-    static char saved_status[64], saved_emoji[8], saved_ign[6 * 32 + 8]; static bool saved_rp, saved_inv, saved_notify; static int saved_aud = -1, saved_clear;
+    static char saved_status[64], saved_emoji[16], saved_ign[6 * 32 + 8]; static bool saved_rp, saved_inv, saved_notify; static int saved_aud = -1, saved_clear;
     char ign[6 * 32 + 8] = ""; for (int i = 0; i < s->rp_ignore_n; i++) { strncat(ign, s->rp_ignore[i], 31); strcat(ign, "|"); }
     if (saved_aud < 0) {
         snprintf(saved_status, sizeof saved_status, "%s", s->user_status); snprintf(saved_emoji, sizeof saved_emoji, "%s", s->user_emoji); snprintf(saved_ign, sizeof saved_ign, "%s", ign);

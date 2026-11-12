@@ -127,7 +127,7 @@ typedef struct {
     bool reload_msgs;
     bool create_group_open, profile_open, logout_confirm_open;
     long long status_expires;                  /* epoch (s) em que o status some sozinho; 0 = não expira (profile.c) */
-    char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
+    char user_emoji[16]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
     char rp_ignore[6][32]; int rp_ignore_n;    /* programas ignorados pela presença */
     char new_group[96];
     /* social */

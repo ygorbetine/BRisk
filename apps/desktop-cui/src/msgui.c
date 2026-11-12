@@ -271,6 +271,11 @@ static bool g_menu_live;
 static bool g_menu_open, g_emo_open, g_drag_on;
 static bool g_dlg_delete, g_dlg_forward, g_dlg_remind, g_dlg_pins, g_dlg_topic, g_dlg_select;
 static float g_emo_x, g_emo_y;
+static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;   /* estado do seletor (compartilhado: painel do chat e diálogo do status) */
+static void (*g_emo_cb)(const char *emoji, void *user); static void *g_emo_user;   /* seletor usado por outro ponto (status do perfil): escolher chama isto em vez de reagir */
+static bool g_emo_dlg;   /* modo status: o seletor abre como diálogo (um painel solto ficaria por baixo do diálogo do perfil) */
+void msgui_emoji_pick(float x, float y, void (*cb)(const char *emoji, void *user), void *user) { (void)x; (void)y; g_emo_dlg = cb != NULL; g_emo_open = cb == NULL; g_emo_cb = cb; g_emo_user = user; g_menu_open = false; }
+bool msgui_emoji_picking(void) { return g_emo_open || g_emo_dlg; }
 static char g_recent[160];
 static int g_tone;
 
@@ -454,7 +459,7 @@ static void menu_body(cui_ctx *ui, app_state_t *s) {
     bool pinned = t && t->pinned, fav = t && t->fav;
     cui_box(ui, .dir = CUI_ROW, .gap = 1, .pad = 3, .width = CUI_FILL, .radius = 12, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         for (int i = 0; i < NQUICK; i++) { char id[8]; snprintf(id, sizeof id, "q%d", i); if (chip(ui, id, g_quick[i], NULL, 18)) { toggle_react(m->id, g_quick[i]); act_close_menu(ui); } }
-        if (chip(ui, "qplus", NULL, CUI_ICON_PLUS, 0)) { g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
+        if (chip(ui, "qplus", NULL, CUI_ICON_PLUS, 0)) { g_emo_cb = NULL; g_emo_open = true; g_emo_x = g_menu_x; g_emo_y = g_menu_y; act_close_menu(ui); }
     }
     msep(ui);
     if (mrow(ui, 3, CUI_ICON_MESSAGE_SQUARE, "Responder", NULL, false)) { start_reply(m); act_close_menu(ui); }
@@ -488,41 +493,8 @@ void msgui_pinned_button(cui_ctx *ui, app_state_t *s) {
     cui_pop_id(ui);
 }
 
-void msgui_overlay(cui_ctx *ui, app_state_t *s) {
-    st_load();
-    cui_vec2 vp = cui_viewport_size(ui), mp = cui_mouse_pos(ui);
-    static bool emoji_ok; if (!emoji_ok) { emoji_ok = true; cui_emoji_font_load_system(ui); }
-
-    g_menu_live = g_menu_open || g_emo_open;
-    memcpy(g_hot_prev, g_hot_now, sizeof g_hot_prev); g_hot_now[0] = 0;   /* a seta de cada mensagem lê o hover do quadro anterior */
-
-    /* menu de contexto ancorado no mouse (vidro próprio, absoluto): sempre dentro da janela, rola se a janela for baixa */
-    if (g_menu_want) { g_menu_open = true; g_menu_want = false; g_emo_open = false; }
-    if (g_menu_open) {
-        float mw = 252.0f, mh = menu_height(s, &g_menu_m), maxh = fmaxf(vp.y - 16.0f, 120.0f);
-        float h = fminf(mh, maxh);
-        float x = fminf(fmaxf(g_menu_x, 8), fmaxf(vp.x - mw - 8, 8)), y = fminf(fmaxf(g_menu_y, 8), fmaxf(vp.y - h - 8, 8));
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-            cui_box(ui, .id = "msgmenu", .width = CUI_PX(mw), .height = CUI_PX(h), .pad = 6, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
-                    .elevation = CUI_ELEVATION_FLOATING, .scroll_y = mh > maxh, .clip = true) {
-                menu_body(ui, s);
-            }
-        }
-        cui_rect mr = cui_get_rect(ui, cui_make_id(ui, "msgmenu"));
-        bool outside = mr.w > 0 && !inside(mr, mp);
-        if (cui_key_pressed(ui, CUI_KEY_ESCAPE) || (outside && (cui_mouse_clicked(ui, CUI_MOUSE_LEFT) || cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)))) g_menu_open = false;
-    }
-
-    /* seletor de emojis: barra rápida em cima (espaços que recebem emojis arrastados) e a lista grande por categorias */
-    if (g_emo_open) {
-        float pw = 372.0f, ph = 400.0f;
-        float x = fminf(fmaxf(g_emo_x, 8), fmaxf(vp.x - pw - 8, 8)), y = fminf(fmaxf(g_emo_y, 8), fmaxf(vp.y - ph - 8, 8));
-        static int cat; static char cand[16]; static bool prev_down, dragging; static cui_vec2 p0;
-        bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
-            cui_box(ui, .id = "msgemoji", .width = CUI_PX(pw), .pad = 10, .gap = 8, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
-                    .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
-                cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
+static void emoji_body(cui_ctx *ui, cui_vec2 mp, bool down) {
+    cui_text(ui, "Barra rápida — arraste um emoji da lista até um espaço", .size = 11, .color = B_MUTED);
                 cui_row(ui, .gap = 6) {
                     for (int i = 0; i < NQUICK; i++) {
                         cui_push_id_int(ui, 7100 + i);
@@ -564,7 +536,43 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
                         cui_pop_id(ui);
                     }
                 }
-                cui_text(ui, "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+                cui_text(ui, g_emo_cb ? "Clique num emoji para usá-lo no status." : "Clique para reagir. As escolhas da barra rápida ficam salvas neste computador.", .size = 11, .color = B_MUTED);
+}
+
+void msgui_overlay(cui_ctx *ui, app_state_t *s) {
+    st_load();
+    cui_vec2 vp = cui_viewport_size(ui), mp = cui_mouse_pos(ui);
+    static bool emoji_ok; if (!emoji_ok) { emoji_ok = true; cui_emoji_font_load_system(ui); }
+
+    g_menu_live = g_menu_open || g_emo_open;
+    memcpy(g_hot_prev, g_hot_now, sizeof g_hot_prev); g_hot_now[0] = 0;   /* a seta de cada mensagem lê o hover do quadro anterior */
+
+    /* menu de contexto ancorado no mouse (vidro próprio, absoluto): sempre dentro da janela, rola se a janela for baixa */
+    if (g_menu_want) { g_menu_open = true; g_menu_want = false; g_emo_open = false; }
+    if (g_menu_open) {
+        float mw = 252.0f, mh = menu_height(s, &g_menu_m), maxh = fmaxf(vp.y - 16.0f, 120.0f);
+        float h = fminf(mh, maxh);
+        float x = fminf(fmaxf(g_menu_x, 8), fmaxf(vp.x - mw - 8, 8)), y = fminf(fmaxf(g_menu_y, 8), fmaxf(vp.y - h - 8, 8));
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
+            cui_box(ui, .id = "msgmenu", .width = CUI_PX(mw), .height = CUI_PX(h), .pad = 6, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
+                    .elevation = CUI_ELEVATION_FLOATING, .scroll_y = mh > maxh, .clip = true) {
+                menu_body(ui, s);
+            }
+        }
+        cui_rect mr = cui_get_rect(ui, cui_make_id(ui, "msgmenu"));
+        bool outside = mr.w > 0 && !inside(mr, mp);
+        if (cui_key_pressed(ui, CUI_KEY_ESCAPE) || (outside && (cui_mouse_clicked(ui, CUI_MOUSE_LEFT) || cui_mouse_clicked(ui, CUI_MOUSE_RIGHT)))) g_menu_open = false;
+    }
+
+    /* seletor de emojis: barra rápida em cima (espaços que recebem emojis arrastados) e a lista grande por categorias */
+    if (g_emo_open) {
+        float pw = 372.0f, ph = 400.0f;
+        float x = fminf(fmaxf(g_emo_x, 8), fmaxf(vp.x - pw - 8, 8)), y = fminf(fmaxf(g_emo_y, 8), fmaxf(vp.y - ph - 8, 8));
+        bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
+        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = x, .pad_top = y) {
+            cui_box(ui, .id = "msgemoji", .width = CUI_PX(pw), .pad = 10, .gap = 8, .radius = 16, .bg = B_GLASS_POPUP, .border = 1, .border_color = CUI_RGBA(0xc4b5fd40),
+                    .elevation = CUI_ELEVATION_FLOATING, .clip = true) {
+                emoji_body(ui, mp, down);
             }
         }
         if (down && cand[0] && !dragging && (fabsf(mp.x - p0.x) + fabsf(mp.y - p0.y)) > 6) dragging = true;
@@ -577,11 +585,22 @@ void msgui_overlay(cui_ctx *ui, app_state_t *s) {
         }
         cui_rect er = cui_get_rect(ui, cui_make_id(ui, "msgemoji"));
         if (prev_down && !down) {
-            if (!dragging && cand[0]) { toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
+            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); else toggle_react(g_menu_m.id, cand); g_emo_open = false; }   /* clique simples = reagir */
             cand[0] = 0; dragging = false; g_drag_on = false;
         } else if (er.w > 0 && !inside(er, mp) && cui_mouse_clicked(ui, CUI_MOUSE_LEFT) && !dragging) g_emo_open = false;
         if (cui_key_pressed(ui, CUI_KEY_ESCAPE)) { g_emo_open = false; cand[0] = 0; dragging = false; g_drag_on = false; }
         prev_down = down;
+    }
+
+    if (g_emo_dlg) {   /* seletor do status: o MESMO corpo do chat, dentro de um diálogo (fica acima do perfil) */
+        const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT); bool open = true;
+        cui_dialog(ui, "Escolher emoji", &open, .width = 420) { emoji_body(ui, mp, down); }
+        if (prev_down && !down) {
+            if (!dragging && cand[0]) { if (g_emo_cb) g_emo_cb(cand, g_emo_user); open = false; }
+            cand[0] = 0; dragging = false;
+        }
+        prev_down = down;
+        if (!open) g_emo_dlg = false;
     }
 
     float dw = fminf(400.0f, fmaxf(vp.x - 48.0f, 260.0f));

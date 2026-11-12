@@ -603,15 +603,14 @@ static void nick_text(const app_state_t *s, char *out, size_t cap) {
     else snprintf(out, cap, "@%.*s", (int)strcspn(s->user_email, "@"), s->user_email);
 }
 
+static void status_emoji_cb(const char *e, void *u) { app_state_t *s = (app_state_t *)u; if (strlen(e) < sizeof s->user_emoji) snprintf(s->user_emoji, sizeof s->user_emoji, "%s", e); }
 static void profile_dialog(cui_ctx *ui, app_state_t *s) {
     static char st_draft[64], name_draft[64], ig_add[32]; static bool was_open;
     static const char *CHIPS[] = { "Jogando", "Estudando", "Trabalhando", "Ouvindo música", "Ausente" };
     static const char *CLEAR[] = { "Não limpar", "1 hora", "4 horas", "Hoje" };   /* mesmas opções do Electron (StatusEditor) */
     /* a fonte do app não traz emoji colorido: o seletor usa os ícones do CUI (UI pronta; emoji de verdade depende de fonte) */
-    static const char *const EMOJI[] = { CUI_ICON_SMILE, CUI_ICON_MUSIC, CUI_ICON_BRIEFCASE, CUI_ICON_MOON, CUI_ICON_ROCKET, CUI_ICON_HEART, CUI_ICON_STAR, CUI_ICON_BOOKMARK };
-    static bool emoji_open;
     if (s->profile_open && !was_open) {
-        snprintf(st_draft, sizeof st_draft, "%s", s->user_status); snprintf(name_draft, sizeof name_draft, "%s", s->user_name); ig_add[0] = 0; emoji_open = false;
+        snprintf(st_draft, sizeof st_draft, "%s", s->user_status); snprintf(name_draft, sizeof name_draft, "%s", s->user_name); ig_add[0] = 0;
     }
     was_open = s->profile_open;
     cui_vec2 vp = cui_viewport_size(ui);
@@ -659,17 +658,13 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                     PCARD(ui, "STATUS") {
                         cui_text(ui, "Aparece num balão perto da sua foto.", .size = 12, .color = B_MUTED);
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
-                            if (cui_icon_button(ui, s->user_emoji[0] ? s->user_emoji : CUI_ICON_SMILE, .tooltip = "Escolher emoji")) emoji_open = !emoji_open;
-                            cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que está pensando?", .width = CUI_FILL);
-                        }
-                        if (emoji_open) {
-                            cui_row(ui, .gap = 4, .width = CUI_FILL, .wrap = true, .pad = 6, .radius = 12, .bg = CUI_RGBA(0xffffff0a)) {
-                                for (int i = 0; i < 8; i++) {
-                                    cui_push_id_int(ui, 4400 + i);
-                                    if (cui_icon_button(ui, EMOJI[i])) { snprintf(s->user_emoji, sizeof s->user_emoji, "%s", EMOJI[i]); emoji_open = false; }
-                                    cui_pop_id(ui);
-                                }
+                            cui_box(ui, .id = "pf-emo", .width = CUI_PX(40), .height = CUI_PX(40), .radius = 12, .bg = CUI_RGBA(0xffffff12), .border = 1, .border_color = B_GLASS_BORDER_SOFT,
+                                    .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                                if (s->user_emoji[0]) cui_emoji(ui, s->user_emoji, 22); else cui_icon(ui, CUI_ICON_SMILE, 18, B_MUTED);
                             }
+                            if (briks_hover(ui, "pf-emo")) briks_tip("Escolher emoji do status");
+                            if (briks_clicked_r(ui, "pf-emo", 12.0f) && !msgui_emoji_picking()) { const cui_rect er = cui_get_rect(ui, cui_make_id(ui, "pf-emo")); msgui_emoji_pick(er.x, er.y + er.h + 6.0f, status_emoji_cb, s); }   /* o MESMO seletor completo do chat (msgui.c) */
+                            cui_input(ui, "pf-status", st_draft, sizeof st_draft, .placeholder = "O que está pensando?", .width = CUI_FILL);
                         }
                         cui_row(ui, .gap = 6, .width = CUI_FILL, .wrap = true) {
                             for (int i = 0; i < 5; i++) {

@@ -1,0 +1,8 @@
+# 1500x900: sobra espaco, painel lateral na largura maxima
+resize 1500 900
+waitms 1500
+expect dlg_open 1
+click 1072 619
+waitms 900
+expect dlg_quality 1
+shot dlgqb-1-lado-largo

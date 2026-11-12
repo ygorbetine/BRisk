@@ -1,0 +1,36 @@
+# Dialogo "Compartilhar tela" 1280x800: "Ajustar" abre o painel de qualidade AO LADO do dialogo; escolher atualiza o chip; Esc fecha so o painel
+waitms 1500
+expect dlg_open 1
+shot dlgq-1-fechado
+click 962 569
+waitms 900
+expect dlg_quality 1
+shot dlgq-2-lado
+click 1034 178
+waitms 300
+click 986 247
+waitms 500
+expect dlg_res 0
+shot dlgq-3-escolhas-no-chip
+key esc
+waitms 700
+expect dlg_quality 0
+expect dlg_open 1
+shot dlgq-4-esc-fecha-so-o-painel
+click 962 569
+waitms 900
+expect dlg_quality 1
+click 705 569
+waitms 700
+expect dlg_quality 0
+expect dlg_open 1
+shot dlgq-5-fechar-ajustes
+click 962 569
+waitms 900
+key esc
+waitms 500
+key esc
+waitms 700
+expect dlg_open 0
+expect dlg_quality 0
+shot dlgq-6-esc-esc-fecha-tudo

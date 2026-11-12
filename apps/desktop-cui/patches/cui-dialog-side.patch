@@ -1,0 +1,95 @@
+diff --git a/include/cui/cui.h b/include/cui/cui.h
+--- a/include/cui/cui.h
++++ b/include/cui/cui.h
+@@ -704,7 +704,7 @@
+ 
+ /* Popover anchored to the previous component. Toggle it with
+  * cui_popover_toggle / cui_popover_open. */
+-typedef struct cui_popover_opts { int _; cui_placement placement; float width; float pad; float gap; } cui_popover_opts;
++typedef struct cui_popover_opts { int _; cui_placement placement; float width; float pad; float gap; cui_id anchor; bool sticky; } cui_popover_opts;   /* Briks: anchor = id do componente ao qual o painel gruda (0 = o anterior); sticky = clique fora nao fecha (so Esc / fechar explicito) */
+ CUI_API bool cui_popover_begin(cui_ctx *ui, const char *id, const cui_popover_opts *opts);
+ CUI_API void cui_popover_end(cui_ctx *ui);
+ 
+@@ -741,6 +741,7 @@
+ CUI_API void cui_popover_close(cui_ctx *ui, const char *id);
+ CUI_API void cui_popover_toggle(cui_ctx *ui, const char *id);
+ CUI_API bool cui_popover_is_open(cui_ctx *ui, const char *id);
++CUI_API void cui_popover_set_id(cui_ctx *ui, cui_id popup_id, bool open);   /* Briks: abre/fecha pelo id ja resolvido (fora do escopo de ids do dialogo) */
+ 
+ /* Dropdown menu: a button that opens a menu. Items return true when chosen. */
+ typedef struct cui_menu_opts { int _; const char *icon; cui_button_variant variant; cui_placement placement; float width; bool icon_only; } cui_menu_opts;
+@@ -768,7 +769,9 @@
+     float width;               /* default 440 */
+     bool no_close_button;
+     bool persistent;           /* clicking outside or Esc does not close */
++    float offset_x;            /* Briks: desloca o painel do dialogo na horizontal (px), p.ex. para abrir um painel lateral ao lado */
+ } cui_dialog_opts;
++CUI_API cui_id cui_dialog_panel_id(cui_ctx *ui, const char *title);   /* Briks: id do painel do dialogo (ancora para popovers laterais) */
+ /* Modal dialog. Shown while *open is true; closing sets it to false. */
+ CUI_API bool cui_dialog_begin(cui_ctx *ui, const char *title, bool *open, const cui_dialog_opts *opts);
+ CUI_API void cui_dialog_end(cui_ctx *ui);
+diff --git a/src/cui_internal.h b/src/cui_internal.h
+--- a/src/cui_internal.h
++++ b/src/cui_internal.h
+@@ -406,6 +406,7 @@
+     cui_rect anchor_rect;
+     bool open;
+     bool at_mouse;
++    bool sticky;               /* Briks: clique fora nao fecha */
+     cui_vec2 mouse;
+     uint64_t opened_frame;
+     int z;                     /* stacking order: later opens are on top */
+diff --git a/src/cui_overlay.c b/src/cui_overlay.c
+--- a/src/cui_overlay.c
++++ b/src/cui_overlay.c
+@@ -60,6 +60,7 @@
+     return false;
+ }
+ 
++void cui_popover_set_id(cui_ctx *ui, cui_id popup_id, bool open) { cui_popup *p = cui__popup_get(ui, popup_id, false); if (p) cui__popup_set(ui, popup_id, open); }
+ void cui_popover_open(cui_ctx *ui, const char *id) { cui__popup_set(ui, cui_make_id(ui, id), true); }
+ void cui_popover_close(cui_ctx *ui, const char *id) { cui__popup_set(ui, cui_make_id(ui, id), false); }
+ void cui_popover_toggle(cui_ctx *ui, const char *id) {
+@@ -92,7 +93,7 @@
+         if (ui->mpressed[0] || ui->mpressed[1]) {
+             bool inside = ui->hot_layer == id || cui__layer_is_open_popup_after(ui, ui->hot_layer, p);
+             bool on_anchor = anchor && ui->hot == anchor;
+-            if (!inside && !on_anchor && ui->frame > p->opened_frame) p->open = false;
++            if (!inside && !on_anchor && !p->sticky && ui->frame > p->opened_frame) p->open = false;
+         }
+     }
+     float target = p->open ? 1.0f : 0.0f;
+@@ -162,6 +163,8 @@
+     if (p->open && p->opened_frame == ui->frame) anchor = ui->last_id;
+     if (!p->anchor || p->opened_frame + 1 >= ui->frame) p->anchor = ui->last_id;
+     anchor = p->anchor;
++    p->sticky = o->sticky;
++    if (o->anchor) { anchor = o->anchor; p->anchor = o->anchor; }
+     return cui__popup_begin(ui, pid, anchor, o->placement, o->width, o->pad > 0 ? o->pad : 16, o->gap > 0 ? o->gap : 10, false);
+ }
+ 
+@@ -554,6 +557,8 @@
+ typedef struct { cui_spring t; uint64_t opened; bool was_open; int z; } cui__modal_state;
+ 
+ 
++static float g_dlg_offset_x;   /* Briks: deslocamento horizontal do proximo dialogo */
++cui_id cui_dialog_panel_id(cui_ctx *ui, const char *title) { return (cui_make_id(ui, title) ^ 0xD1A106u) ^ 0x9A4Eu; }
+ static bool cui__modal_begin(cui_ctx *ui, cui_id id, const char *title, bool *open, const char *description, float width,
+                              bool persistent, bool close_button, int kind, cui_side side) {
+     cui__modal_state *st = cui_state(ui, id, sizeof *st);
+@@ -616,6 +621,7 @@
+         pn->opacity = t;
+         pn->scale = CUI__ENTER_SCALE + (1.0f - CUI__ENTER_SCALE) * t;
+         pn->ty = (1 - t) * 10;
++        pn->tx = g_dlg_offset_x;
+     } else {
+         bool horiz = side == CUI_SIDE_LEFT || side == CUI_SIDE_RIGHT;
+         if (horiz) { pn->w = CUI_PX(CUI_MIN(width, ui->vw - 16)); pn->h = CUI_PX(ui->vh - 16); }
+@@ -687,6 +693,7 @@
+     memset(&d, 0, sizeof d);
+     if (!o) o = &d;
+     cui_id id = cui_make_id(ui, title) ^ 0xD1A106u;
++    g_dlg_offset_x = o->offset_x;
+     return cui__modal_begin(ui, id, title, open, o->description, o->width > 0 ? o->width : 440, o->persistent, !o->no_close_button, 0, CUI_SIDE_RIGHT);
+ }
+ 

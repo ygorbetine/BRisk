@@ -47,6 +47,10 @@ pub struct FakeState {
     /// buscas por @nick feitas por conta (0008: máximo 30 por hora) e servidor sem a 0008
     lookups: HashMap<String, u32>,
     pub no_lookup_rpc: bool,
+    /// códigos curtos de convite (0010): código -> (dono, pacote, expira em s, usos, máx.) e servidor sem a 0010
+    invites: Vec<(String, String, String, u64, u32, u32)>,
+    invite_lookups: HashMap<String, u32>,
+    pub no_invite_rpc: bool,
     /// computadores ligados às contas (profile_keys + 0009): usuário, peerId, nome, criado, último uso, revogado
     pub keys: Vec<FakeKey>,
     pub no_keys_rpc: bool,
@@ -500,6 +504,32 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
             let Some((other, p)) = found else { return pg("not_found") };
             if other == me || p["fingerprint"].is_null() || st.blocks.iter().any(|x| (x.0 == me && x.1 == other) || (x.0 == other && x.1 == me)) { return pg("not_found"); }
             ok(json!({ "user_id": other, "nick": p["nick"], "display_name": p["display_name"], "fingerprint": p["fingerprint"] }))
+        }
+        "group_invite_create" | "group_invite_lookup" if st.no_invite_rpc => {
+            ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))
+        }
+        "group_invite_create" => {
+            let pkg = b["p_package"].as_str().unwrap_or("");
+            if !pkg.starts_with("briks-grp1.") || pkg.len() > 16384 { return pg("invalid_package"); }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let ttl = b["p_ttl_hours"].as_u64().unwrap_or(24).clamp(1, 168); let uses = b["p_max_uses"].as_u64().unwrap_or(10).clamp(1, 100) as u32;
+            let n = st.invites.len() as u64 + 1;
+            let alpha: Vec<char> = "ABCDEFGHJKMNPQRSTUVWXYZ23456789".chars().collect();
+            let (mut x, mut s8) = (n.wrapping_mul(2654435761).wrapping_add(7), String::new());
+            for _ in 0..8 { s8.push(alpha[(x % 31) as usize]); x = x / 31 + n.wrapping_mul(40503); }
+            let code = format!("BRK-{}-{}", &s8[..4], &s8[4..]);
+            st.invites.push((code.clone(), pkg.to_string(), me.to_string(), now + ttl * 3600, 0, uses));
+            ok(json!({ "code": code, "expires_in_hours": ttl, "max_uses": uses }))
+        }
+        "group_invite_lookup" => {
+            let used = st.invite_lookups.entry(me.to_string()).or_insert(0);
+            if *used >= 30 { return pg("rate_limited"); }
+            *used += 1;
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
+            let want = b["p_code"].as_str().unwrap_or("");
+            let Some(i) = st.invites.iter().position(|v| v.0 == want && v.3 > now && v.4 < v.5) else { return pg("invite_not_found") };
+            st.invites[i].4 += 1;
+            ok(json!({ "package": st.invites[i].1, "uses_left": st.invites[i].5 - st.invites[i].4 }))
         }
         "presence_beat" | "presence_friends" | "presence_clear" if st.no_presence_rpc => {
             ("404 Not Found", String::new(), json!({ "code": "PGRST202", "message": "Could not find the function" }))

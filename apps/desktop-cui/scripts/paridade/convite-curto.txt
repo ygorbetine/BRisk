@@ -1,0 +1,15 @@
+# 1.4.1 (GRP-30): código curto de convite BRK-XXXX-XXXX no diálogo "Convite do grupo"; sem a tabela no servidor avisa e o convite longo segue valendo
+waitms 1200
+coreev {"ev":"group.result","op":"code","ok":true,"code":"briks-grp1.QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo"}
+waitms 600
+expect ginv_open 1
+expect ginv_short_st 0
+shot k0-longo
+coreev {"ev":"group.invite.short","ok":false,"error_code":"server_not_ready","message":"x"}
+waitms 400
+expect ginv_short_st 3
+shot k1-indisponivel
+coreev {"ev":"group.invite.short","ok":true,"code":"BRK-7QK2-M9XP","expires_in_hours":24,"max_uses":10}
+waitms 400
+expect ginv_short_st 2
+shot k2-curto

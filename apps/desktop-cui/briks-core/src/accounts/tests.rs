@@ -1378,3 +1378,42 @@ async fn declining_a_request_removes_it_and_unfriending_and_cancelling_work() {
     b.friend_remove(&ua.id).await.unwrap();
     assert!(a.friends().await.unwrap().is_empty() && b.friends().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn short_group_invite_code_roundtrip_expiry_uses_and_missing_table() {
+    let _g = FLOW.lock().await;
+    let f = fake::start(0).await.unwrap();
+    f.state.lock().unwrap().autoconfirm = true;
+    let (a, b) = (accounts(&f, &tmpdir("gi-a")), accounts(&f, &tmpdir("gi-b")));
+    let SignUpOutcome::SignedIn(_) = a.sign_up("ana@exemplo.com", "senha-boa-1", "Ana").await.unwrap() else { panic!() };
+    let SignUpOutcome::SignedIn(_) = b.sign_up("bia@exemplo.com", "senha-boa-1", "Bia").await.unwrap() else { panic!() };
+    let pkg = format!("briks-grp1.{}", "QUJDREVGR0hJSktMTU5PUA".repeat(3));
+    // pacote que não é convite longo: recusado antes de ir ao servidor
+    assert_eq!(a.group_invite_create("qualquer coisa", 24, 10).await.unwrap_err().code, "invalid_package");
+    let v = a.group_invite_create(&pkg, 24, 10).await.unwrap();
+    let code = v["code"].as_str().unwrap().to_string();
+    assert!(code.starts_with("BRK-") && code.len() == 13, "{code}");
+    // o código volta o MESMO pacote (a conferência da assinatura é do app de quem entra); aceita minúsculas, espaços e sem prefixo
+    assert_eq!(b.group_invite_lookup(&code).await.unwrap(), pkg);
+    assert_eq!(b.group_invite_lookup(&code.to_lowercase().replace('-', " ")).await.unwrap(), pkg);
+    // exato: código errado ou mal formado responde igual (sem pista)
+    assert_eq!(b.group_invite_lookup("BRK-ZZZZ-ZZZZ").await.unwrap_err().code, "invite_not_found");
+    assert_eq!(b.group_invite_lookup("BRK-0O1I-LLLL").await.unwrap_err().code, "invite_not_found");
+    // limite de usos (10): 2 já usados acima, mais 8 e o 11º falha
+    for _ in 0..8 { b.group_invite_lookup(&code).await.unwrap(); }
+    assert_eq!(b.group_invite_lookup(&code).await.unwrap_err().code, "invite_not_found");
+    // validade: 25 h depois o código novo também não vale
+    let v2 = a.group_invite_create(&pkg, 24, 10).await.unwrap();
+    let code2 = v2["code"].as_str().unwrap().to_string();
+    f.state.lock().unwrap().clock_skew = 25 * 3600;
+    assert_eq!(a.group_invite_lookup(&code2).await.unwrap_err().code, "invite_not_found");
+    f.state.lock().unwrap().clock_skew = 0;
+    // anti-adivinhação: no máximo 30 tentativas por hora por conta
+    let mut last = String::new();
+    for _ in 0..30 { if let Err(e) = a.group_invite_lookup("BRK-ZZZZ-ZZZZ").await { last = e.code; } }
+    assert_eq!(last, "rate_limited");
+    // servidor sem a 0010: o código curto avisa (server_not_ready) e o convite longo continua sendo só texto, sem servidor
+    f.state.lock().unwrap().no_invite_rpc = true;
+    assert_eq!(b.group_invite_create(&pkg, 24, 10).await.unwrap_err().code, "server_not_ready");
+    assert_eq!(b.group_invite_lookup("BRK-ABCD-EFGH").await.unwrap_err().code, "server_not_ready");
+}

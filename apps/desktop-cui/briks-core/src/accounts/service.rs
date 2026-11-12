@@ -552,6 +552,28 @@ impl Service {
                     let _ = tx.send(ev).await;
                 });
             }
+            "group.invite.short" => {
+                // código curto (0010): `package` = convite longo já assinado; evento group.invite.short {ok, code, expires_in_hours | error_code, message}
+                let pkg = s("package");
+                tokio::spawn(async move {
+                    let ev = match acc.group_invite_create(&pkg, 24, 10).await {
+                        Ok(v) => json!({ "ev": "group.invite.short", "ok": true, "code": v["code"], "expires_in_hours": v["expires_in_hours"], "max_uses": v["max_uses"] }),
+                        Err(e) => json!({ "ev": "group.invite.short", "ok": false, "error_code": e.code, "message": e.message }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
+            "group.invite.resolve" => {
+                // resolve o código curto para o convite longo; evento group.invite.resolve {ok, package, tag | error_code, message}: o app confere a assinatura
+                let code = s("code"); let tag = s("tag");
+                tokio::spawn(async move {
+                    let ev = match acc.group_invite_lookup(&code).await {
+                        Ok(p) => json!({ "ev": "group.invite.resolve", "ok": true, "package": p, "tag": tag }),
+                        Err(e) => json!({ "ev": "group.invite.resolve", "ok": false, "error_code": e.code, "message": e.message, "tag": tag }),
+                    };
+                    let _ = tx.send(ev).await;
+                });
+            }
             "presence.beat" | "presence.friends" | "presence.clear" => {
                 // batimento de presença (0007): o app manda a cada ~60 s; sem a RPC (`server_not_ready`) remote=false e a UI usa só "na chamada"
                 let (cmd, invisible) = (cmd.to_string(), v["invisible"].as_bool().unwrap_or(false));

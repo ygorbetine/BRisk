@@ -9,6 +9,7 @@ pub mod avatar;
 pub mod backup;
 pub mod config;
 pub mod fake;
+pub mod invite_code;
 pub mod legacy;
 pub mod loopback;
 pub mod pkce;
@@ -412,6 +413,23 @@ impl Accounts {
         let tok = self.access_token().await?;
         let (p, n) = (self.provider.clone(), nick.to_string());
         blk(move || p.nick_lookup(&tok, &n)).await
+    }
+    /// Código curto do convite (0010): `package` é o convite longo já assinado. Devolve `{code, expires_in_hours, max_uses}`.
+    pub async fn group_invite_create(&self, package: &str, ttl_hours: u32, max_uses: u32) -> AResult<serde_json::Value> {
+        if !invite_code::package_ok(package) { return Err(AccountError::new("invalid_package", "Convite inválido.")); }
+        let tok = self.access_token().await?;
+        let (p, k) = (self.provider.clone(), package.to_string());
+        blk(move || p.group_invite_create(&tok, &k, ttl_hours.clamp(1, 168), max_uses.clamp(1, 100))).await
+    }
+    /// Resolve o código curto para o pacote assinado (a conferência da assinatura e do destinatário é de quem chama).
+    pub async fn group_invite_lookup(&self, code: &str) -> AResult<String> {
+        let Some(norm) = invite_code::normalize(code) else { return Err(AccountError::new("invite_not_found", "Código inválido. Confira os 8 símbolos (BRK-XXXX-XXXX).")) };
+        let tok = self.access_token().await?;
+        let (p, k) = (self.provider.clone(), norm);
+        let v = blk(move || p.group_invite_lookup(&tok, &k)).await?;
+        let pkg = v["package"].as_str().unwrap_or("");
+        if !invite_code::package_ok(pkg) { return Err(AccountError::new("server", "Resposta inesperada do servidor de contas.")); }
+        Ok(pkg.to_string())
     }
     pub async fn presence_beat(&self, invisible: bool) -> AResult<()> {
         let tok = self.access_token().await?;

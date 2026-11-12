@@ -192,6 +192,10 @@ pub trait AuthProvider: Send + Sync {
     fn friend_remove(&self, access_token: &str, user_id: &str) -> AResult<()>;
     /// Busca exata por @nick de quem ainda não é amigo (0008). Sem a RPC: `server_not_ready`.
     fn nick_lookup(&self, _access_token: &str, _nick: &str) -> AResult<NickHit> { Err(AccountError::new("server_not_ready", "Busca por @nick ainda não disponível no servidor.")) }
+    /// Código curto de convite de grupo (0010): guarda o pacote já assinado e devolve `{code, expires_in_hours, max_uses}`. Sem a RPC: `server_not_ready`.
+    fn group_invite_create(&self, _access_token: &str, _package: &str, _ttl_hours: u32, _max_uses: u32) -> AResult<Value> { Err(AccountError::new("server_not_ready", "Código curto de convite ainda não disponível no servidor.")) }
+    /// Resolve um código curto exato para o pacote assinado (0010). Inexistente, vencido e esgotado respondem `invite_not_found`.
+    fn group_invite_lookup(&self, _access_token: &str, _code: &str) -> AResult<Value> { Err(AccountError::new("server_not_ready", "Código curto de convite ainda não disponível no servidor.")) }
     /// Presença por batimento (migração 0007). Sem a RPC o erro é `server_not_ready` e a UI mantém só "na chamada".
     fn presence_beat(&self, _access_token: &str, _invisible: bool) -> AResult<()> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }
     fn presence_friends(&self, _access_token: &str) -> AResult<Vec<Presence>> { Err(AccountError::new("server_not_ready", "Presença ainda não disponível no servidor.")) }

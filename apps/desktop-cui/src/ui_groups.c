@@ -350,6 +350,22 @@ void groups_core_event(app_state_t *s, const jval *j, const char *ev) {
         cui_request_redraw(ui);
         return;
     }
+    if (!strcmp(ev, "group.invite.short")) {   /* resposta do servidor ao pedido de código curto (migração 0010) */
+        const jval *okv = json_get(j, "ok");
+        if (okv && okv->type == J_BOOL && okv->b) { snprintf(s->ginv_short, sizeof s->ginv_short, "%s", json_str(j, "code", "")); s->ginv_short_st = s->ginv_short[0] ? 2 : 3; s->ginv_short_msg[0] = 0; }
+        else { s->ginv_short_st = 3; s->ginv_short[0] = 0;
+               snprintf(s->ginv_short_msg, sizeof s->ginv_short_msg, "%s", !strcmp(json_str(j, "error_code", ""), "server_not_ready") ? "O código curto ainda não está disponível no servidor. Use o convite longo (abaixo)." : json_str(j, "message", "Não foi possível gerar o código curto. Use o convite longo (abaixo).")); }
+        return;
+    }
+    if (!strcmp(ev, "group.invite.resolve")) {   /* código curto resolvido para o convite longo assinado: o app confere assinatura e destinatário como sempre (group.verify) */
+        const jval *okv = json_get(j, "ok");
+        if (okv && okv->type == J_BOOL && okv->b) {
+            sbuf jb = { 0 }; sb_put(&jb, "{\"cmd\":\"group.verify\",\"tag\":\"invite\",\"code\":"); sb_str(&jb, json_str(j, "package", "")); sb_put(&jb, "}");
+            if (!core_send(jb.p)) snprintf(s->join_err, sizeof s->join_err, "O motor do Briks ainda não está pronto. Tente de novo em instantes.");
+            free(jb.p);
+        } else snprintf(s->join_err, sizeof s->join_err, "%s", !strcmp(json_str(j, "error_code", ""), "server_not_ready") ? "O código curto ainda não está disponível no servidor. Use o convite longo (briks-grp1.…)." : json_str(j, "message", "Código inválido."));
+        return;
+    }
     if (strcmp(ev, "group.result")) return;
     const char *op = json_str(j, "op", ""); const jval *okv = json_get(j, "ok"); const bool ok = okv && okv->type == J_BOOL && okv->b;
     if (!strcmp(op, "sign")) {
@@ -358,9 +374,9 @@ void groups_core_event(app_state_t *s, const jval *j, const char *ev) {
         pend_add(1, json_str(j, "group_id", ""), b.p);
         send_obj("group.send", b.p, NULL, NULL);   /* quem está na sala e é membro recebe agora */
         free(b.p);
-        if (s->ginv_wait) { s->ginv_wait = false; free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
+        if (s->ginv_wait) { s->ginv_short[0] = 0; s->ginv_short_st = 0; s->ginv_short_msg[0] = 0; s->ginv_wait = false; free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
     } else if (!strcmp(op, "code")) {
-        if (ok) { free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
+        if (ok) { s->ginv_short[0] = 0; s->ginv_short_st = 0; s->ginv_short_msg[0] = 0; free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
     } else if (!strcmp(op, "verify")) {
         const bool invite = !strcmp(json_str(j, "tag", ""), "invite");
         if (!ok) { if (invite) snprintf(s->join_err, sizeof s->join_err, "%s", json_str(j, "message", "Convite inválido.")); return; }   /* de um peer, "versão antiga" é normal: silêncio */
@@ -672,12 +688,16 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     groups_tick(s);
     cui_dialog(ui, "Entrar com convite", &s->join_open, .width = 460.0f) {
         cui_text(ui, "Cole o código que um administrador do grupo mandou para você (ou abra o link do convite). Confira o código e toque em Entrar no grupo: o Briks nunca entra sozinho. Ele só vale para a sua conta.", .size = 12.5f, .color = B_MUTED);
-        int jr = cui_input(ui, "join-code", s->join_code, sizeof s->join_code, .placeholder = "briks-grp1.…", .autofocus = true);
+        int jr = cui_input(ui, "join-code", s->join_code, sizeof s->join_code, .placeholder = "BRK-XXXX-XXXX ou briks-grp1.…", .autofocus = true);
         if (s->join_err[0]) cui_text(ui, s->join_err, .size = 12.5f, .color = B_DANGER);
         cui_dialog_footer(ui) {
             if ((cui_button(ui, "Entrar no grupo", .variant = CUI_BUTTON_PRIMARY) || (jr & CUI_SUBMITTED)) && s->join_code[0]) {
                 s->join_err[0] = 0;
-                sbuf jb = { 0 }; sb_put(&jb, "{\"cmd\":\"group.verify\",\"tag\":\"invite\",\"code\":"); sb_str(&jb, s->join_code); sb_put(&jb, "}");
+                const char *jc = s->join_code; while (*jc == ' ') jc++;
+                const bool is_long = !strncmp(jc, "briks-grp1.", 11) || strlen(jc) > 40;   /* convite longo (assinado) ou o que não parece código curto */
+                sbuf jb = { 0 };
+                if (is_long) { sb_put(&jb, "{\"cmd\":\"group.verify\",\"tag\":\"invite\",\"code\":"); sb_str(&jb, s->join_code); sb_put(&jb, "}"); }
+                else { sb_put(&jb, "{\"cmd\":\"group.invite.resolve\",\"tag\":\"invite\",\"code\":"); sb_str(&jb, jc); sb_put(&jb, "}"); }   /* BRK-XXXX-XXXX: o servidor devolve o convite assinado e ele passa pela MESMA conferência */
                 if (!core_send(jb.p)) snprintf(s->join_err, sizeof s->join_err, "O motor do Briks ainda não está pronto. Tente de novo em instantes.");
                 free(jb.p);
             }
@@ -686,8 +706,22 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
     cui_dialog(ui, "Convite do grupo", &s->ginv_open, .width = 460.0f) {
         cui_text(ui, "Mande este código para a pessoa convidada. Ele é assinado por você e só funciona para quem está na lista de membros.", .size = 12.5f, .color = B_MUTED);
         char head[64] = ""; if (s->ginv_code) snprintf(head, sizeof head, "%.40s…", s->ginv_code);
+        if (s->ginv_short_st == 2) {   /* código curto pronto: grande, fácil de ditar */
+            cui_text(ui, s->ginv_short, .font = CUI_FONT_DISPLAY, .size = 26, .color = B_TEXT, .nowrap = true);
+            cui_text(ui, "Vale por 24 horas e até 10 usos. Quem entrar ainda precisa estar na lista de membros: o app confere a sua assinatura.", .size = 12, .color = B_MUTED);
+            if (cui_button(ui, "Copiar código curto", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_COPY)) set_clip(s->ginv_short);
+        } else {
+            if (s->ginv_short_st == 3) cui_text(ui, s->ginv_short_msg, .size = 12, .color = CUI_RGB(0xf5d9a0));
+            if (cui_button(ui, s->ginv_short_st == 1 ? "Gerando…" : "Gerar código curto (BRK-XXXX-XXXX)", .variant = CUI_BUTTON_PRIMARY, .loading = s->ginv_short_st == 1) && s->ginv_short_st != 1 && s->ginv_code) {
+                s->ginv_short_st = 1; s->ginv_short_msg[0] = 0;
+                sbuf jb = { 0 }; sb_put(&jb, "{\"cmd\":\"group.invite.short\",\"package\":"); sb_str(&jb, s->ginv_code); sb_put(&jb, "}");
+                if (!core_send(jb.p)) { s->ginv_short_st = 3; snprintf(s->ginv_short_msg, sizeof s->ginv_short_msg, "O motor do Briks ainda não está pronto. Tente de novo em instantes."); }
+                free(jb.p);
+            }
+        }
+        cui_text(ui, "Convite longo (funciona até sem internet, só para quem está na lista):", .size = 12, .color = B_MUTED);
         cui_text(ui, head, .size = 12, .color = B_MUTED, .nowrap = true);
-        cui_dialog_footer(ui) { if (cui_button(ui, "Copiar código", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_COPY) && s->ginv_code) set_clip(s->ginv_code); }
+        cui_dialog_footer(ui) { if (cui_button(ui, "Copiar convite longo", .variant = CUI_BUTTON_SECONDARY, .icon = CUI_ICON_COPY) && s->ginv_code) set_clip(s->ginv_code); }
     }
     int gi = s->active_group; group_t *g = (gi >= 0 && gi < s->group_count) ? &s->groups[gi] : NULL;
     if (!g) { s->chan_open = s->members_open = s->gren_open = s->gleave_open = g_ren_open = g_del_open = g_memrm_open = false; return; }

@@ -84,6 +84,10 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
         "too_many_blocks" => return e("rate_limited", "Você já bloqueou pessoas demais."),
         "key_revoked" => return e("key_revoked", "Este computador foi desconectado da conta."),
         "key_owned_by_other" | "invalid_peer" => return e("server", "O servidor recusou a identificação deste computador."),
+        "invite_not_found" => return e("invite_not_found", "Código inválido, vencido ou já usado o máximo de vezes."),
+        "invalid_package" => return e("server", "O servidor recusou este convite."),
+        "too_many_invites" => return e("rate_limited", "Este grupo já tem códigos curtos demais ativos. Aguarde algum vencer."),
+        "try_again" => return e("server", "Não deu para gerar o código agora. Tente de novo."),
         "blocked_by_you" => return e("blocked_by_you", "Você bloqueou essa pessoa. Desbloqueie para enviar um pedido."),
         _ => {}
     }
@@ -96,7 +100,7 @@ pub fn map_error(status: u16, v: &Value) -> AccountError {
     if low.contains("row-level security") {
         return e("server", "O servidor recusou a gravação.");
     }
-    if code == "PGRST202" || (status == 404 && low.contains("could not find the function")) {
+    if code == "PGRST202" || code == "PGRST205" || (status == 404 && low.contains("group_invite")) || (status == 404 && low.contains("could not find the function")) {
         return e("server_not_ready", "O servidor de contas ainda não foi preparado (faltam as migrações do banco).");
     }
     if code.starts_with("PGRST3") || low.contains("jwt expired") || code == "bad_jwt" || code == "session_not_found" || code == "session_expired"
@@ -284,6 +288,12 @@ impl AuthProvider for SupabaseProvider {
     fn nick_lookup(&self, access_token: &str, nick: &str) -> AResult<NickHit> {
         let v = self.rpc(access_token, "nick_lookup", json!({ "p_nick": nick }))?;
         serde_json::from_value(v).map_err(|_| AccountError::new("server", "Resposta inesperada do servidor de contas."))
+    }
+    fn group_invite_create(&self, access_token: &str, package: &str, ttl_hours: u32, max_uses: u32) -> AResult<Value> {
+        self.rpc(access_token, "group_invite_create", json!({ "p_package": package, "p_ttl_hours": ttl_hours, "p_max_uses": max_uses }))
+    }
+    fn group_invite_lookup(&self, access_token: &str, code: &str) -> AResult<Value> {
+        self.rpc(access_token, "group_invite_lookup", json!({ "p_code": code }))
     }
     fn presence_beat(&self, access_token: &str, invisible: bool) -> AResult<()> {
         self.rpc(access_token, "presence_beat", json!({ "p_invisible": invisible })).map(|_| ())

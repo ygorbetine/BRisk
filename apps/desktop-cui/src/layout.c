@@ -13,7 +13,6 @@ static const struct { const char *name, *title; float mw, mh; } PANELS[P_COUNT] 
     { "members", "Membros",      180, 200 },
     { "voice",   "Sala de voz",  220, 180 },
     { "history", "Histórico",    240, 180 },
-    { "chat2",   "Segunda conversa", 320, 260 },
 };
 
 const char *panel_name(int k) { return k >= 0 && k < P_COUNT ? PANELS[k].name : "?"; }
@@ -180,6 +179,7 @@ bool layout_resize(layout_t *l, int split, lrect area, float pos) {
     if (sa < ma) sa = ma;
     if (sa > total - mb) sa = total - mb;
     n->ratio = sa / total;
+    n->manual = true;
     return true;
 }
 
@@ -211,7 +211,7 @@ static size_t emit(const layout_t *l, int i, char *out, size_t cap, size_t pos) 
     int w;
     if (n->leaf) w = snprintf(out + pos, cap - pos, "{\"p\":\"%s\"}", panel_name(n->panel));
     else {
-        w = snprintf(out + pos, cap - pos, "{\"v\":%d,\"r\":%.4f,\"a\":", n->vertical ? 1 : 0, n->ratio);
+        w = snprintf(out + pos, cap - pos, n->manual ? "{\"v\":%d,\"r\":%.4f,\"m\":1,\"a\":" : "{\"v\":%d,\"r\":%.4f,\"a\":", n->vertical ? 1 : 0, n->ratio);
         if (w < 0) return cap;
         pos = emit(l, n->a, out, cap, pos + (size_t)w);
         if (pos >= cap) return pos;
@@ -233,6 +233,7 @@ static int parse_node(layout_t *l, const jval *j, int parent, int depth) {
     if (!j || j->type != J_OBJ || depth > 12) return -1;
     const char *p = json_str(j, "p", "");
     if (p[0]) {
+        if (!strcmp(p, "chat2")) return -2;   /* painel removido na 1.4.1: quem chama some com ele e o vizinho ocupa o lugar */
         int k = panel_from_name(p);
         if (k < 0) return -1;
         int i = new_leaf(l, k);
@@ -246,9 +247,16 @@ static int parse_node(layout_t *l, const jval *j, int parent, int depth) {
     l->n[i].parent = parent;
     l->n[i].ratio = (float)r->num;
     l->n[i].vertical = v && v->num != 0;
+    { const jval *m = json_get(j, "m"); l->n[i].manual = m && m->type == J_NUM && m->num != 0; }
     int a = parse_node(l, json_get(j, "a"), i, depth + 1);
-    int b = a < 0 ? -1 : parse_node(l, json_get(j, "b"), i, depth + 1);
-    if (a < 0 || b < 0) return -1;
+    int b = a == -1 ? -1 : parse_node(l, json_get(j, "b"), i, depth + 1);
+    if (a == -1 || b == -1) return -1;
+    if (a == -2 || b == -2) {   /* um lado era o painel removido: esta divisão some e o outro lado sobe para o lugar dela */
+        l->n[i].used = false;
+        int keep = a == -2 ? b : a;
+        if (keep >= 0) l->n[keep].parent = parent;
+        return keep;
+    }
     l->n[i].a = a; l->n[i].b = b;
     return i;
 }

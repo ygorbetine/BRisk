@@ -82,11 +82,10 @@ static int community_total(const app_state_t *s) { return demo_servers >= 0 ? de
 /* ---- uma arte por tipo de painel ---- */
 static void art_friends(cui_ctx *ui, const app_state_t *s, cui_rect c);
 /* conversa: título e ícone do que está aberto naquele painel (amigo, grupo/canal); sem conversa aberta o painel é a tela Amigos */
-static void art_chat(cui_ctx *ui, const app_state_t *s, cui_rect c, bool second) {
+static void art_chat(cui_ctx *ui, const app_state_t *s, cui_rect c) {
     float iw = c.w - PAD * 2, y0 = c.y + 40, x0 = c.x + PAD;
     const char *name = NULL; bool group = false;
-    if (second) { if (s && s->chat2_friend >= 0) name = friend_name(s, s->chat2_friend); if (!name) name = "Segunda conversa"; }
-    else if (s && s->active_group >= 0 && s->active_group < s->group_count) { name = s->groups[s->active_group].name; group = true; }
+    if (s && s->active_group >= 0 && s->active_group < s->group_count) { name = s->groups[s->active_group].name; group = true; }
     else if (s && s->active_friend >= 0) name = friend_name(s, s->active_friend);
     if (!name) { art_friends(ui, s, c); return; }
     header(ui, c, group ? CUI_ICON_USERS : CUI_ICON_MESSAGE_SQUARE, name);
@@ -270,8 +269,7 @@ static void art_generic(cui_ctx *ui, cui_rect c, int kind) {
 
 void drag_stack_art(cui_ctx *ui, const app_state_t *s, int kind, cui_rect c) {
     switch (kind) {
-    case P_CHAT: art_chat(ui, s, c, false); break;
-    case P_CHAT2: art_chat(ui, s, c, true); break;
+    case P_CHAT: art_chat(ui, s, c); break;
     case P_NAV: art_nav(ui, s, c); break;
     case P_SERVERS: art_servers(ui, s, c); break;
     case P_MEMBERS: art_members(ui, s, c); break;

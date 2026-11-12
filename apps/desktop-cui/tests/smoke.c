@@ -126,6 +126,19 @@ static void layout_tests(void) {
     layout_default(&back, 1280);
     layout_from_json(&back, "{\"v\":0,\"r\":2,\"a\":{\"p\":\"nav\"},\"b\":{\"p\":\"chat\"}}");
     CHECK(layout_valid(&back) && layout_count(&back) == 3, "layout anterior fica intacto quando o JSON é inválido");
+    /* 1.4.1: o painel "chat2" (segunda conversa) saiu; layouts salvos com ele são migrados (o vizinho ocupa o lugar) */
+    layout_t mg; layout_default(&mg, 1280);
+    CHECK(layout_from_json(&mg, "{\"v\":0,\"r\":0.3,\"a\":{\"p\":\"nav\"},\"b\":{\"v\":0,\"r\":0.6,\"a\":{\"p\":\"chat\"},\"b\":{\"p\":\"chat2\"}}}") && layout_valid(&mg) && layout_count(&mg) == 2 && layout_find(&mg, P_NAV) >= 0 && layout_find(&mg, P_CHAT) >= 0, "layout salvo com chat2 migra sem o painel");
+    CHECK(layout_from_json(&mg, "{\"v\":1,\"r\":0.5,\"a\":{\"p\":\"chat2\"},\"b\":{\"p\":\"chat\"}}") && layout_valid(&mg) && layout_count(&mg) == 1 && mg.n[mg.root].leaf && mg.n[mg.root].panel == P_CHAT && mg.n[mg.root].parent == -1, "chat2 num dos lados da raiz: o outro vira a raiz");
+    CHECK(!layout_from_json(&mg, "{\"p\":\"chat2\"}"), "layout só com chat2 é recusado (volta ao padrão)");
+    /* barra de grupos: a largura só deixa de ser automática depois que o usuário arrasta a divisória, e isso fica salvo */
+    layout_default(&l, 1280);
+    { int sv = layout_find(&l, P_SERVERS), sp = l.n[sv].parent; lrect ar = { 10, 10, 1260, 780 }, r[LAYOUT_MAX_NODES]; layout_compute(&l, ar, r);
+      CHECK(!l.n[sp].manual, "layout novo: largura da barra de grupos é automática");
+      CHECK(layout_resize(&l, sp, r[sp], r[sp].x + 140) && l.n[sp].manual, "arrastar a divisória marca como manual");
+      char mj[1024]; layout_to_json(&l, mj, sizeof mj); layout_t mb; memset(&mb, 0, sizeof mb);
+      CHECK(layout_from_json(&mb, mj) && mb.n[mb.n[layout_find(&mb, P_SERVERS)].parent].manual, "manual sobrevive ao salvar e carregar");
+      layout_t old; CHECK(layout_from_json(&old, "{\"v\":0,\"r\":0.1,\"a\":{\"p\":\"servers\"},\"b\":{\"p\":\"chat\"}}") && !old.n[old.n[layout_find(&old, P_SERVERS)].parent].manual, "layout salvo antes da 1.4.1 continua automático"); }
 }
 
 /* ---- pilha levantada: mola, inclinação por velocidade e fases ---- */

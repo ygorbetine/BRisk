@@ -44,7 +44,7 @@ typedef struct { char id[48]; char name[96]; char channel[64]; bool can_moderate
 typedef struct { char id[48]; char author[96]; char content[512]; char created[40]; bool mine; } msg_t;
 
 typedef enum { OP_NONE, OP_AUTH, OP_ME, OP_FRIENDS, OP_COMMUNITIES, OP_GROUPS, OP_ADD_FRIEND, OP_ACCEPT,
-               OP_MSG_LOAD, OP_MSG_LOAD2, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
+               OP_MSG_LOAD, OP_MSG_SEND, OP_GROUP_SAVE, OP_EVENT_SAVE, OP_BRIDGE_LOGIN, OP_LEGACY_FRIENDS } op_t;
 
 
 /* conta online (account.c): estado vindo do briks-core (eventos account.*) */
@@ -122,8 +122,6 @@ typedef struct {
     msg_t msgs[MAX_MSGS]; int msg_count;
     char chat_channel[160];
     bool reload_msgs;
-    msg_t msgs2[MAX_MSGS]; int msg2_count;   /* segunda conversa (painel chat2): só leitura */
-    char chat2_channel[160]; bool reload_msgs2; int chat2_friend;
     bool create_group_open, profile_open, logout_confirm_open;
     long long status_expires;                  /* epoch (s) em que o status some sozinho; 0 = não expira (profile.c) */
     char user_emoji[8]; int status_clear, profile_tab, settings_tab;      /* perfil: emoji do status e "limpar depois de" (0 não, 1 30 min, 2 1 h, 3 hoje) */
@@ -252,6 +250,7 @@ int groups_probe(const app_state_t *s, const char *name);                      /
 bool groups_members_panel(cui_ctx *ui, app_state_t *s);                        /* painel Membros: membros do grupo aberto (false = nenhum grupo aberto) */
 void groups_row_menu(cui_ctx *ui, app_state_t *s, int gi, cui_rect r);         /* botão direito na linha do grupo: menu de contexto */
 void account_friends(app_state_t *s);
+void account_friends_poll(app_state_t *s);   /* a cada 30 s e ao voltar o foco: convites novos aparecem sem reiniciar */
 void account_block_remote(app_state_t *s, const char *user_id, bool block);
 void account_remove_friend(app_state_t *s, const char *user_id);   /* desfaz a amizade ou cancela o pedido enviado */
 void account_add_friend(app_state_t *s);
@@ -286,8 +285,6 @@ void account_bridge_done(app_state_t *s, bool ok);          /* app.c avisa o fim
 void app_begin(app_state_t *s, op_t op, const char *method, const char *path, const char *body);
 void app_open_friend(app_state_t *s, int idx);   /* abre a DM e carrega o histórico persistido */
 void app_open_group(app_state_t *s, int idx);
-void app_open_chat2(app_state_t *s, int friend_idx);
-void app_load_messages2(app_state_t *s, const char *body);
 void app_send_message(app_state_t *s);
 void app_forward_message(app_state_t *s, bool to_group, int idx, const char *text);   /* encaminha o texto para outra conversa */
 void app_create_group(app_state_t *s);

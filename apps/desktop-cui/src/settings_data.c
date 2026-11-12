@@ -57,7 +57,7 @@ void settings_data_pump(app_state_t *s) {
         bk_free(purge_calls[i]); purge_calls[i] = NULL;
     }
     if (pending) return;
-    purge_running = false; s->msg_count = 0; s->msg2_count = 0; s->reload_msgs = true; s->reload_msgs2 = true;
+    purge_running = false; s->msg_count = 0; s->reload_msgs = true;
     if (purge_fail) say(true, "Apaguei %d conversa(s); %d não deu certo. Tente de novo.", purge_ok, purge_fail);
     else say(false, "Histórico apagado: %d conversa(s) neste computador. O que seus amigos guardam não é afetado.", purge_ok);
     storage_measure(&g_sz);

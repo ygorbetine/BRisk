@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef enum { P_SERVERS, P_NAV, P_CHAT, P_FRIENDS, P_MEMBERS, P_VOICE, P_HISTORY, P_CHAT2, P_COUNT } panel_kind;
+typedef enum { P_SERVERS, P_NAV, P_CHAT, P_FRIENDS, P_MEMBERS, P_VOICE, P_HISTORY, P_COUNT } panel_kind;   /* "chat2" (segunda conversa) saiu na 1.4.1: layouts salvos com ele são migrados em layout_from_json */
 typedef enum { Z_LEFT, Z_RIGHT, Z_TOP, Z_BOTTOM, Z_CENTER, Z_NONE } zone_t;
 
 #define LAYOUT_MAX_NODES 32
@@ -20,6 +20,7 @@ typedef struct {
     int panel;          /* folha: panel_kind */
     bool vertical;      /* divisão: true = a em cima e b embaixo; false = a à esquerda e b à direita */
     float ratio;        /* divisão: parte de a, 0..1 (do espaço sem o vão) */
+    bool manual;        /* divisão: o usuário arrastou a divisória; vale o ratio salvo e a largura automática (barra de grupos) não mexe mais */
     int a, b;           /* divisão: filhos */
     int parent;         /* -1 na raiz */
 } lnode;

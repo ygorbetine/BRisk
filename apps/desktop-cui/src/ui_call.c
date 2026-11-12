@@ -540,7 +540,8 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
         if (pill(ui, 1, mic_eff ? CUI_ICON_MIC : BRIKS_ICON_MIC_OFF, compact ? NULL : "Microfone", mic_eff ? 1 : 2, mic_eff ? "Desligar o microfone" : "Ligar o microfone")) {   /* desligado: vermelho e riscado */
             s->mic_on = !s->mic_on; rtc_set_mic(s, s->mic_on);   /* o microfone não mexe no ensurdecer */
         }
-        if (pill(ui, 2, CUI_ICON_VOLUME_2, compact ? NULL : "Ensurdecer", s->deaf ? 1 : 0, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
+        /* como o microfone, nunca neutro: verde ouvindo, vermelho ensurdecido (ícone com risco) */
+        if (pill(ui, 2, s->deaf ? CUI_ICON_VOLUME_X : CUI_ICON_VOLUME_2, compact ? NULL : "Ensurdecer", s->deaf ? 2 : 1, s->deaf ? "Voltar a ouvir" : "Parar de ouvir a sala")) { s->deaf = !s->deaf; rtc_set_deaf(s, s->deaf); }
         /* Câmera: liga/desliga de verdade (o estado vem do core); só abre o dispositivo enquanto ligada */
         {
             const bool cam_on = cam_active(), cam_wait = cam_starting();

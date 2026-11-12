@@ -457,8 +457,11 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
                 for (int i = 0; i < 6; i++) {
                     cui_push_id_int(ui, 9700 + i);
                     bool on = s->friends_tab == i;
-                    cui_box(ui, .id = "t", .width = CUI_FILL, .height = CUI_PX(32), .radius = 12, .bg = on ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000),
-                            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, tab_icons[i], 16, on ? B_TEXT : B_MUTED); }
+                    cui_box(ui, .id = "t", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_PX(32), .radius = 12, .bg = on ? CUI_RGBA(0xffffff1c) : CUI_RGBA(0x00000000),
+                            .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                        cui_icon(ui, tab_icons[i], 16, on ? B_TEXT : B_MUTED);
+                        if (i == 2 && s->pending_count) cui_box(ui, .width = CUI_PX(32), .height = CUI_PX(32), .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 4) { cui_box(ui, .width = CUI_PX(9), .height = CUI_PX(9), .radius = 5, .bg = B_DANGER); }   /* convite recebido esperando resposta */
+                    }
                     if (briks_hover(ui, "t")) briks_tip(i == 2 && s->pending_count ? pend : tabs[i]);
                     if (briks_clicked(ui, "t")) s->friends_tab = i;
                     cui_pop_id(ui);
@@ -467,6 +470,13 @@ void friends_hub(cui_ctx *ui, app_state_t *s) {
         } else cui_tabs(ui, "friends-tabs", items, 6, &s->friends_tab, .variant = CUI_TABS_PILL, .full_width = true);
     }
     cui_separator(ui);
+    if (s->pending_count && s->friends_tab != 2) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* convites recebidos: indicador vermelho com o número, leva à aba Pendentes */
+        cui_box(ui, .id = "pend-ind", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 14, .pad_y = 8, .gap = 8, .radius = 14, .bg = B_A(B_DANGER, 0x24), .border = 1, .border_color = B_A(B_DANGER, 0x66), .align = CUI_ALIGN_CENTER) {
+            cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = B_DANGER);
+            cui_textf(ui, s->pending_count == 1 ? "%d pedido de amizade para responder" : "%d pedidos de amizade para responder", s->pending_count);
+        }
+        if (briks_clicked(ui, "pend-ind")) s->friends_tab = 2;
+    }
     if (s->friends_tab != 4 && s->friend_count > 0) cui_box(ui, .width = CUI_FILL, .pad_x = 14, .pad_top = 10) {   /* botão sempre visível no topo da seção, em linha própria (não espreme as abas) */
         if (cui_button(ui, "Adicionar amigo", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_USER_PLUS, .full_width = true)) s->friends_tab = 4;
     }

@@ -6,6 +6,7 @@
 #include "backend.h"
 #include "core.h"
 #include "json.h"
+#include "sysint.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +138,21 @@ void account_logout(app_state_t *s) {
     wipe_phrase(s); memset(s->backup_input, 0, sizeof s->backup_input);
     s->backup_known = BKP_UNKNOWN; s->backup_msg[0] = 0; s->backup_busy = false;
     s->backup_phrase_open = s->backup_restore_open = s->backup_delete_open = false;
+}
+
+/* convites chegam com o app aberto: relê a lista de amigos/pedidos a cada 30 s (e na hora que a janela volta ao foco), sem exigir reiniciar */
+void account_friends_poll(app_state_t *s) {
+    static ULONGLONG last; static bool was_focus = true; static char who[48];
+    if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo) { last = 0; who[0] = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    HWND hw = s->app ? (HWND)cui_app_native_window(s->app) : NULL;
+    const bool focus = hw && GetForegroundWindow() == hw;
+    const bool entered = strcmp(who, s->acct_user_id) != 0;
+    if (entered) { copy(who, sizeof who, s->acct_user_id); last = now; was_focus = focus; return; }   /* ao entrar na conta quem chama já pediu a lista */
+    const bool regained = focus && !was_focus && now - last >= 5000; was_focus = focus;
+    if (!regained && now - last < 30000) return;
+    last = now;
+    core_send("{\"cmd\":\"friends.list\"}");
 }
 
 void account_friends(app_state_t *s) {
@@ -397,6 +413,7 @@ void account_presence_tick(app_state_t *s) {
 }
 
 static void on_friends(app_state_t *s, const jval *j) {
+    static char seen[MAX_FRIENDS][48]; static int seen_n; static bool seen_init;   /* convites recebidos já vistos: só o que é novo gera aviso */
     s->friends_loaded = true;
     const jval *f = json_get(j, "friends");
     char keep[48] = ""; if (s->active_friend >= 0 && s->active_friend < s->friend_count) copy(keep, sizeof keep, s->friends[s->active_friend].id);
@@ -419,6 +436,13 @@ static void on_friends(app_state_t *s, const jval *j) {
         const jval *pk = json_get(p, "public_key");
         if (pk && json_str(pk, "x", "")[0] && json_str(pk, "y", "")[0]) snprintf(d->jwk, sizeof d->jwk, "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"%s\",\"y\":\"%s\"}", json_str(pk, "x", ""), json_str(pk, "y", ""));
     }
+    for (int i = 0; i < s->pending_count; i++) {
+        bool known = false; for (int k = 0; k < seen_n; k++) if (!strcmp(seen[k], s->pending[i].id)) known = true;
+        if (!known && seen_init && !s->notify_off) { char t[140]; snprintf(t, sizeof t, "%s quer ser seu amigo", s->pending[i].name); notify_post(s, NT_REQUEST, NULL, "Briks", t); }
+    }
+    seen_n = 0; for (int i = 0; i < s->pending_count; i++) snprintf(seen[seen_n++], sizeof seen[0], "%s", s->pending[i].id);
+    seen_init = true;
+    cui_request_redraw(cui_app_ui(s->app));
     int idx = -1;
     for (int i = 0; i < s->friend_count; i++) if (keep[0] && !strcmp(s->friends[i].id, keep)) idx = i;
     if (s->active_friend >= 0 && idx < 0) { s->active_friend = -1; } else if (idx >= 0) s->active_friend = idx;
@@ -569,6 +593,7 @@ void account_tick(app_state_t *s) {
     if (cs != CORE_READY) { cui_request_redraw(cui_app_ui(s->app)); return; }
     if (!s->acct_asked) { s->acct_asked = true; core_send("{\"cmd\":\"account.status\"}"); }
     account_presence_tick(s);
+    account_friends_poll(s);
     {   /* ganchos de teste automatizado: BRIKS_DEV_ACCT_AUTO=google|discord entra sozinho; BRIKS_DEV_IMPORT=1 importa o Briks antigo */
         static bool auto_done, import_done; const char *a = getenv("BRIKS_DEV_ACCT_AUTO");
         if (a || getenv("BRIKS_DEV_REDRAW")) cui_request_redraw(cui_app_ui(s->app));   /* capturas: mantém os quadros andando */

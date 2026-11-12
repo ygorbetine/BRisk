@@ -549,36 +549,6 @@ static void panel_history(cui_ctx *ui, app_state_t *s) {
 }
 
 
-static void panel_chat2(cui_ctx *ui, app_state_t *s) {
-    if (!s->chat2_channel[0] && s->friend_count) app_open_chat2(s, s->chat2_friend < s->friend_count ? s->chat2_friend : 0);
-    cui_box(ui, GLASS_PANEL) {
-        const bool has = s->chat2_friend >= 0 && s->chat2_friend < s->friend_count;
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_left = 18, .pad_right = 18 + g_tools_w, .gap = 10, .align = CUI_ALIGN_CENTER,
-                .radius_tl = (int)g_th.panel_radius - 1, .radius_tr = (int)g_th.panel_radius - 1, .bg = CUI_RGBA(0xffffff0a)) {
-            cui_icon(ui, CUI_ICON_MESSAGE_SQUARE, 16, B_MUTED);
-            cui_text(ui, has ? s->friends[s->chat2_friend].name : "Escolha um amigo", .font = CUI_FONT_MEDIUM, .nowrap = true);   /* só o nome de quem está aberto; nome de painel fica nos menus de layout */
-        }
-        cui_separator(ui);
-        if (!has || !s->msg2_count) {
-            cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 8, .pad = 20) {
-                cui_box(ui, .width = CUI_PX(48), .height = CUI_PX(48), .radius = 24, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
-                        .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MESSAGE_SQUARE, 20, B_C3); }
-                cui_text(ui, has ? "Sem mensagens ainda" : "Nenhuma conversa aqui", .font = CUI_FONT_MEDIUM, .nowrap = true);
-                cui_text(ui, has ? "O que vocês escreverem aparece aqui." : s->friend_count ? "Use Escolher amigo, aqui embaixo, para abrir a conversa." : "Adicione um amigo para abrir uma conversa neste painel.", .size = 12, .color = B_MUTED);
-            }
-        } else cui_scroll(ui, .id = "chat2-scroll", .width = CUI_FILL, .height = CUI_FILL, .pad = 16) {
-            cui_column(ui, .gap = 10, .width = CUI_FILL) {
-                for (int i = 0; i < s->msg2_count; i++) { cui_push_id_int(ui, 8000 + i); bubble(ui, s, &s->msgs2[i], false); cui_pop_id(ui); }
-            }
-        }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 12, .gap = 8, .align = CUI_ALIGN_CENTER) {
-            if (s->friend_count > 0) cui_menu(ui, s->chat2_friend >= 0 && s->chat2_friend < s->friend_count ? "Trocar amigo" : "Escolher amigo", .placement = CUI_PLACE_TOP_START) {
-                for (int i = 0; i < s->friend_count; i++) { cui_push_id_int(ui, 8600 + i); if (cui_menu_item(ui, s->friends[i].name)) app_open_chat2(s, i); cui_pop_id(ui); }
-            }
-        }
-    }
-}
-
 /* chamado pelo dock: desenha o conteúdo do painel dentro do retângulo que ele reservou */
 void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
     switch (kind) {
@@ -589,7 +559,6 @@ void ui_panel(cui_ctx *ui, app_state_t *s, int kind) {
     case P_MEMBERS: panel_members(ui, s); break;
     case P_VOICE: panel_voice(ui, s); break;
     case P_HISTORY: panel_history(ui, s); break;
-    case P_CHAT2: panel_chat2(ui, s); break;
     }
 }
 

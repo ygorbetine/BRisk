@@ -110,7 +110,7 @@ void stack_card_size(int kind, float pw, float ph, float *w, float *h) {
     case P_SERVERS: minw = 196; break;
     case P_VOICE: minw = 188; break;
     case P_HISTORY: minw = 176; break;
-    case P_NAV: case P_CHAT: case P_CHAT2: minw = 164; break;
+    case P_NAV: case P_CHAT: minw = 164; break;
     default: break;
     }
     float hh = 118, ww = hh * aspect;

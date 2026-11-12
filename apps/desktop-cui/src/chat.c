@@ -114,41 +114,6 @@ void app_load_messages(app_state_t *s, const char *body) {
     json_free(j);
 }
 
-void app_open_chat2(app_state_t *s, int idx) {
-    s->chat2_friend = idx; s->msg2_count = 0;
-    if (idx < 0 || idx >= s->friend_count) return;
-    dm_channel(s, s->friends[idx].id, s->chat2_channel, sizeof s->chat2_channel);
-    s->reload_msgs2 = true;
-}
-
-static void add_msg2(app_state_t *s, const char *id, const char *author, const char *content, const char *created, bool mine) {
-    if (s->msg2_count >= MAX_MSGS) return;
-    msg_t *m = &s->msgs2[s->msg2_count++];
-    snprintf(m->id, sizeof m->id, "%s", id); snprintf(m->author, sizeof m->author, "%s", author);
-    snprintf(m->content, sizeof m->content, "%s", content); snprintf(m->created, sizeof m->created, "%s", created);
-    m->mine = mine;
-}
-
-void app_load_messages2(app_state_t *s, const char *body) {
-    jval *j = json_parse(body);
-    s->msg2_count = 0;
-    int cnt = json_len(j); if (cnt > MAX_MSGS) cnt = MAX_MSGS;
-    int order[MAX_MSGS];
-    for (int i = 0; i < cnt; i++) order[i] = i;
-    for (int i = 1; i < cnt; i++) {
-        int k = order[i], t = i - 1;
-        while (t >= 0 && strcmp(json_str(json_at(j, order[t]), "createdAt", ""), json_str(json_at(j, k), "createdAt", "")) > 0) { order[t + 1] = order[t]; t--; }
-        order[t + 1] = k;
-    }
-    for (int i = 0; i < cnt; i++) {
-        const jval *m = json_at(j, order[i]);
-        const char *author = json_str(m, "author", "?");
-        if (!*json_str(m, "deletedAt", ""))
-            add_msg2(s, json_str(m, "id", ""), author, json_str(m, "content", ""), json_str(m, "createdAt", ""), !strcmp(author, s->user_name));
-    }
-    json_free(j);
-}
-
 void app_create_group(app_state_t *s) {
     if (s->busy || !s->new_group[0]) return;
     char b[2200];
@@ -191,7 +156,7 @@ void app_demo(app_state_t *s, const char *mode) {
         for (int i = 0; i < 3; i++) snprintf(s->friends[i].nick, sizeof s->friends[i].nick, "%s", i == 0 ? "marina" : i == 1 ? "rafa_lima" : "bianog");
     } }
     if (getenv("BRIKS_DEMO_P2P")) { snprintf(s->friends[0].fp, sizeof s->friends[0].fp, "fp-demo-0"); s->in_room = true; }   /* captura: chamada aberta e identidade conhecida (menu Desconectar P2P) */
-    s->active_group = -1; s->active_friend = -1; s->chat2_friend = 1; snprintf(s->chat2_channel, sizeof s->chat2_channel, "demo");
+    s->active_group = -1; s->active_friend = -1;
     s->screen = SCREEN_SOCIAL;
     if (getenv("BRIKS_DEMO_EMPTY")) { s->friend_count = 0; s->group_count = 0; s->pending_count = 0; s->community_count = 0; }   /* conta nova: sem amigos nem grupos (capturas dos estados vazios) */
     if (getenv("BRIKS_DEMO_STATUS")) {   /* status em balão e rich presence de exemplo (captura) */
@@ -223,9 +188,6 @@ void app_demo(app_state_t *s, const char *mode) {
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
         add_msg(s, "m2", "Ygor", "Entro sim, só terminar o jantar.", "2026-11-09T23:42:00.000Z", true);
         add_msg(s, "m3", "Marina Costa", "Perfeito, te espero lá.", "2026-11-09T23:43:00.000Z", false);
-        add_msg2(s, "n1", "Rafael Lima", "Bora jogar hoje? Já abri a sala.", "2026-11-09T22:10:00.000Z", false);
-        add_msg2(s, "n2", "Ygor", "Boa! Chego em 10 minutos.", "2026-11-09T22:12:00.000Z", true);
-        add_msg2(s, "n3", "Rafael Lima", "Fechou, te espero.", "2026-11-09T22:13:00.000Z", false);
         if (!strcmp(mode, "bubbles")) {   /* uma linha, consecutivas e várias linhas: compara o alinhamento do balão com o avatar */
             add_msg(s, "m4", "Marina Costa", "Consegui os ingressos.", "2026-11-09T23:44:00.000Z", false);
             add_msg(s, "m5", "Marina Costa", "Só falta combinar o horário, o local de encontro e quem leva o carro, porque a vaga na garagem do prédio é limitada e eu preciso avisar a portaria com antecedência para ninguém ficar de fora.", "2026-11-09T23:45:00.000Z", false);

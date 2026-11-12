@@ -215,7 +215,8 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
     layout_compute(&L, area, c.r);
     /* barra de grupos responsiva: a largura acompanha a janela (ícones 36..56 px; larga, ~180..270 px com nome) */
     { int si = layout_find(&L, P_SERVERS), sp = si >= 0 ? L.n[si].parent : -1;
-      if (sp >= 0 && !L.n[sp].vertical && L.n[sp].a == si && c.r[sp].w > LAYOUT_GAP + 100) {
+      /* só enquanto o usuário não arrastou a divisória: depois disso vale o ratio salvo (manual) e a janela não o reescreve a cada quadro */
+      if (sp >= 0 && !L.n[sp].vertical && !L.n[sp].manual && L.n[sp].a == si && c.r[sp].w > LAYOUT_GAP + 100) {
           float want = servers_target_w(vp.x), nr = want / (c.r[sp].w - LAYOUT_GAP);
           if (nr > 0.02f && nr < 0.6f && fabsf(nr - L.n[sp].ratio) > 1e-4f) { L.n[sp].ratio = nr; layout_compute(&L, area, c.r); }
       } }

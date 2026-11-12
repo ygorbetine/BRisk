@@ -69,15 +69,15 @@ to zone:chat:bottom 34
 wait 28
 up
 wait 26
-# 6. Adicionar a segunda conversa (a prévia aparece antes do clique)
+# 6. Adicionar o painel Histórico (a prévia aparece antes do clique)
 caption Adicionar painel: botão + em qualquer painel
 to plus:chat 35
 wait 6
 down
 up
 wait 30
-caption Escolha Segunda conversa e leve o cursor a uma zona
-pick chat2
+caption Escolha Histórico e leve o cursor a uma zona
+pick history
 wait 6
 to zone:chat:right 40
 wait 30
@@ -87,14 +87,14 @@ up
 wait 30
 # 7. Sala de voz por cima
 caption Sala de voz: prévia por cima da conversa
-to plus:chat2 30
+to plus:history 30
 wait 6
 down
 up
 wait 24
 pick voice
 wait 6
-to zone:chat2:top 40
+to zone:history:top 40
 wait 30
 down
 up

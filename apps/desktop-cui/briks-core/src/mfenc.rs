@@ -54,10 +54,11 @@ unsafe fn friendly(act: &IMFActivate) -> String {
 fn vbv_bits(bps: u32) -> u32 {
     match std::env::var("BRIKS_ENC_VBV_MS").ok().and_then(|v| v.parse::<u64>().ok()) { Some(ms) => (bps as u64 * ms / 1000).min(u32::MAX as u64) as u32, None => bps / 8 }
 }
-/// Perfis H264 na ordem de tentativa; `BRIKS_ENC_PROFILE` = base | main | high põe o escolhido primeiro (diagnóstico).
+/// Perfis H264 na ordem de tentativa; `BRIKS_ENC_PROFILE` = cbase | base | main | high põe o escolhido primeiro (diagnóstico).
 fn profile_order() -> Vec<i32> {
-    let mut v = vec![eAVEncH264VProfile_ConstrainedBase.0, eAVEncH264VProfile_Base.0, eAVEncH264VProfile_Main.0, eAVEncH264VProfile_High.0];
-    let first = match std::env::var("BRIKS_ENC_PROFILE").as_deref() { Ok("base") => Some(eAVEncH264VProfile_Base.0), Ok("main") => Some(eAVEncH264VProfile_Main.0), Ok("high") => Some(eAVEncH264VProfile_High.0), _ => None };
+    // High primeiro (medido no NVENC, 1080p de tela: +4,6 dB a 3,5 Mbps e +6,4 dB a 6 Mbps sobre o Constrained Baseline); cai para os mais simples se o MFT recusar
+    let mut v = vec![eAVEncH264VProfile_High.0, eAVEncH264VProfile_Main.0, eAVEncH264VProfile_Base.0, eAVEncH264VProfile_ConstrainedBase.0];
+    let first = match std::env::var("BRIKS_ENC_PROFILE").as_deref() { Ok("cbase") => Some(eAVEncH264VProfile_ConstrainedBase.0), Ok("base") => Some(eAVEncH264VProfile_Base.0), Ok("main") => Some(eAVEncH264VProfile_Main.0), Ok("high") => Some(eAVEncH264VProfile_High.0), _ => None };
     if let Some(f) = first { v.retain(|x| *x != f); v.insert(0, f); }
     v
 }

@@ -7,6 +7,7 @@
 #include "msgui.h"
 #include "attach.h"
 #include "call.h"
+#include "ginvite.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -187,6 +188,11 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
     if (!f) { if (!history) notify_chat_message(s, json_str(j, "channel", ""), json_str(j, "author", ""), content); return false; }   /* quem não é amigo: sem histórico, só o aviso de antes */
     if (!id_ok(id) || !content[0]) return false;
     const jval *mv = json_get(j, "mine"); const bool mine = history && mv && mv->type == J_BOOL && mv->b;
+    char shown[640], summ[160]; const char *notif = content;
+    if (ginvite_is(content)) {   /* convite de grupo: o código fica só em invites.dat; na conversa e no banco vai o texto curto */
+        if (!ginvite_receive(s, id, f->id, content, mine, shown, sizeof shown)) return false;
+        ginvite_summary(shown, summ, sizeof summ); notif = summ; content = shown;
+    }
     char ch[160]; dm_channel(s, f->id, ch, sizeof ch);
     const bool active = !strcmp(ch, s->chat_channel) || (s->active_friend >= 0 && s->active_friend < s->friend_count && &s->friends[s->active_friend] == f);
     if (active) for (int i = 0; i < s->msg_count; i++) if (!strcmp(s->msgs[i].id, id)) return false;   /* já está na tela */
@@ -198,7 +204,7 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
         for (int i = 0; i < 16; i++) if (!strcmp(seen[i], id)) dup = true;
         if (dup) return false;
         snprintf(seen[sn++ % 16], sizeof seen[0], "%s", id);
-        notify_chat_message(s, ch, author, content);
+        notify_chat_message(s, ch, author, notif);
     }
     if (!s->token[0]) {   /* sem backend (capturas e testes de tela): só mostra */
         if (active && s->msg_count < MAX_MSGS) add_msg(s, id, author, content, iso, mine);
@@ -211,7 +217,39 @@ bool chat_in_message(app_state_t *s, const jval *j, bool history) {
     return false;
 }
 
+/* mensagens que a UI mesma escreve (convite de grupo): o core recebe na hora (fila local), o banco de mensagens quando estiver livre */
+typedef struct { char channel[160], id[72], shown[640], created[40]; } outmsg_t;
+static outmsg_t g_out[8]; static int g_out_n;
+bool chat_dm_post(app_state_t *s, int fi, const char *wire) {
+    if (fi < 0 || fi >= s->friend_count || !s->friends[fi].fp[0] || core_state() != CORE_READY || g_out_n >= 8) return false;
+    const person_t *f = &s->friends[fi];
+    char id[40], iso[40], shown[640]; new_id(id, sizeof id); now_iso(iso, sizeof iso);
+    snprintf(shown, sizeof shown, "%s", wire);
+    if (ginvite_is(wire) && !ginvite_receive(s, id, f->id, wire, true, shown, sizeof shown)) return false;
+    const size_t cap = strlen(wire) * 2 + 400; char *line = malloc(cap), *t = malloc(strlen(wire) * 2 + 8); if (!line || !t) { free(line); free(t); return false; }
+    char fp[160]; json_escape(f->fp, fp, sizeof fp); json_escape(wire, t, strlen(wire) * 2 + 8);
+    snprintf(line, cap, "{\"cmd\":\"chat.send\",\"to_fp\":\"%s\",\"id\":\"%s\",\"text\":\"%s\"}", fp, id, t);
+    if (!in_call_with(s, f->fp)) dm_open_link(s, f);
+    core_send(line); free(line); free(t);
+    pend_add(id, f->fp); attach_mark(id, ATT_SENT);
+    outmsg_t *o = &g_out[g_out_n++]; dm_channel(s, f->id, o->channel, sizeof o->channel);
+    snprintf(o->id, sizeof o->id, "%s", id); snprintf(o->shown, sizeof o->shown, "%s", shown); snprintf(o->created, sizeof o->created, "%s", iso);
+    return true;
+}
+static void out_pump(app_state_t *s) {
+    if (!g_out_n || !s->token[0] || s->busy) return;
+    outmsg_t o = g_out[0]; memmove(&g_out[0], &g_out[1], sizeof g_out[0] * (size_t)(g_out_n - 1)); g_out_n--;
+    char a[200], c[1400], b[2200], path[256];
+    json_escape(s->user_name, a, sizeof a); json_escape(o.shown, c, sizeof c);
+    snprintf(b, sizeof b, "{\"id\":\"%s\",\"channelId\":\"%s\",\"author\":\"%s\",\"content\":\"%s\",\"createdAt\":\"%s\",\"reactions\":{}}", o.id, o.channel, a, c, o.created);
+    snprintf(path, sizeof path, "/p2p/messages/%s", o.channel);
+    if (!strcmp(o.channel, s->chat_channel)) add_msg(s, o.id, s->user_name, o.shown, o.created, true);
+    attach_set_inflight(o.id);
+    app_begin(s, OP_MSG_SEND, "POST", path, b);
+}
+
 void chat_in_pump(app_state_t *s) {
+    out_pump(s); if (s->busy) return;
     if (!g_in_n || !s->token[0]) return;
     inmsg_t m = g_in[0]; memmove(&g_in[0], &g_in[1], sizeof g_in[0] * (size_t)(g_in_n - 1)); g_in_n--;
     char a[240], c[2200], b[3000], path[256];

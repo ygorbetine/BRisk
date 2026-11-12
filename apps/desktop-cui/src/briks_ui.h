@@ -306,6 +306,7 @@ bool chat_outbox_event(app_state_t *s, const struct jval *j);                /* 
 void chat_outbox_acked(const char *id);                                      /* chat.ack: a mensagem foi entregue */
 int  chat_pending_for_fp(const char *fp);                                    /* quantas mensagens minhas esperam esse amigo (fila neste PC) */
 void chat_dm_channel(const app_state_t *s, const char *peer, char *out, size_t cap);   /* canal "dm-a-b" da conversa com o amigo */
+bool chat_dm_post(app_state_t *s, int friend_idx, const char *wire);        /* envia pela fila local da DM (core) e grava no banco; false se não deu */
 void chat_dm_tick(app_state_t *s);                                          /* abre a minha caixa de chegada ao entrar na conta */
 void chat_dm_reset(app_state_t *s);                                         /* saiu da conta: fecha caixa e canais */
 void app_load_groups(app_state_t *s, const char *body);

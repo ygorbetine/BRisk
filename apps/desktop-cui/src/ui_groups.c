@@ -14,6 +14,7 @@
 #include <bcrypt.h>
 #include <commdlg.h>
 #include "core.h"
+#include "ginvite.h"
 
 static void new_id(char *out, size_t cap) {
     unsigned char r[16]; BCryptGenRandom(NULL, r, sizeof r, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
@@ -374,15 +375,17 @@ void groups_core_event(app_state_t *s, const jval *j, const char *ev) {
         pend_add(1, json_str(j, "group_id", ""), b.p);
         send_obj("group.send", b.p, NULL, NULL);   /* quem está na sala e é membro recebe agora */
         free(b.p);
+        ginvite_signed(s, json_str(j, "group_id", ""), json_str(json_get(j, "snapshot"), "name", ""), json_str(j, "code", ""));   /* "Convidar amigo": o cartão segue pela DM (fila local) */
         if (s->ginv_wait) { s->ginv_short[0] = 0; s->ginv_short_st = 0; s->ginv_short_msg[0] = 0; s->ginv_wait = false; free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
     } else if (!strcmp(op, "code")) {
         if (ok) { s->ginv_short[0] = 0; s->ginv_short_st = 0; s->ginv_short_msg[0] = 0; free(s->ginv_code); s->ginv_code = _strdup(json_str(j, "code", "")); s->ginv_open = s->ginv_code != NULL; }
     } else if (!strcmp(op, "verify")) {
         const bool invite = !strcmp(json_str(j, "tag", ""), "invite");
-        if (!ok) { if (invite) snprintf(s->join_err, sizeof s->join_err, "%s", json_str(j, "message", "Convite inválido.")); return; }   /* de um peer, "versão antiga" é normal: silêncio */
+        if (!ok) { if (invite) { snprintf(s->join_err, sizeof s->join_err, "%s", json_str(j, "message", "Convite inválido.")); ginvite_verified(s, "", false, json_str(j, "message", "")); } return; }   /* de um peer, "versão antiga" é normal: silêncio */
         const char *dec = json_str(j, "decision", ""); const jval *sn = json_get(j, "snapshot"); const char *gid = json_str(sn, "group_id", "");
         sbuf b = { 0 }; dump(&b, sn);
         if (invite) {
+            ginvite_verified(s, gid, true, NULL);   /* cartão da DM: aceito (a conferência de assinatura e destinatário é a mesma do código colado) */
             if (find_group(s, gid) >= 0) snprintf(s->join_err, sizeof s->join_err, "Você já está nesse grupo.");
             else { pend_add(3, gid, b.p); s->join_open = false; s->join_code[0] = 0; s->join_err[0] = 0; }
         } else if (!strcmp(dec, "update")) pend_add(2, gid, b.p);
@@ -460,6 +463,7 @@ static void add_member(app_state_t *s, int gi, const person_t *p, bool invite) {
     gmember_t *m = &g->m[g->nm++]; memset(m, 0, sizeof *m); snprintf(m->id, sizeof m->id, "%s", p->id); snprintf(m->name, sizeof m->name, "%s", p->name);
     snprintf(m->fp, sizeof m->fp, "%s", p->fp); snprintf(m->jwk, sizeof m->jwk, "%s", p->jwk);
     if (s->busy) return;
+    if (invite) { for (int i = 0; i < s->friend_count; i++) if (!strcmp(s->friends[i].id, p->id)) { ginvite_expect(p->id, g->id); break; } }   /* amigo: o convite também vai pela conversa */
     group_save_ex(s, gi, NULL); group_publish(s, gi, invite);
 }
 

@@ -7,6 +7,7 @@
 #include "call.h"
 #include "update.h"
 #include "sysint.h"
+#include "ginvite.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -205,9 +206,9 @@ static void bubbles_draw(cui_ctx *ui) {
 }
 
 static cui_rect g_last_row;   /* retângulo (quadro anterior) da última linha desenhada por person_row_ex: o menu de contexto do grupo usa */
-static int g_row_unread, g_row_pending;   /* definidos por quem chama antes de person_row_ex (não lidas e mensagens à espera do amigo); zerados aqui */
+static int g_row_unread, g_row_pending, g_row_invites;   /* definidos por quem chama antes de person_row_ex (não lidas e mensagens à espera do amigo); zerados aqui */
 static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_texture img) {
-    const int unread = g_row_unread, pending = g_row_pending; g_row_unread = g_row_pending = 0;
+    const int unread = g_row_unread, pending = g_row_pending, invites = g_row_invites; g_row_unread = g_row_pending = g_row_invites = 0;
     cui_push_id(ui, f->name);
     if (active && f->status[0]) cui_gap(ui, 52);   /* reserva o lugar do balão de status: ele não cobre o título nem outros itens */
     cui_box(ui, .id = "b", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12,
@@ -221,6 +222,7 @@ static bool person_row_ex(cui_ctx *ui, const person_t *f, bool active, cui_textu
             }
         } else cui_text(ui, f->name, .nowrap = true, .width = CUI_FILL);
         if (pending > 0) { cui_box(ui, .id = "pend") { cui_icon(ui, CUI_ICON_CLOCK, 12, B_MUTED); } if (briks_hover(ui, "pend")) briks_tip("Mensagens esperando este amigo ficar online"); }
+        if (invites > 0) { cui_box(ui, .id = "inv", .pad_x = 6, .pad_y = 1, .radius = 9, .border = 1, .border_color = B_C3, .align = CUI_ALIGN_CENTER) { cui_text(ui, invites == 1 ? "Convite" : "Convites", .size = 10, .color = B_C3); } }   /* convite de grupo esperando resposta */
         if (unread > 0) {   /* não lidas desta conversa (persistem entre aberturas do app) */
             char nb[8]; snprintf(nb, sizeof nb, "%d", unread > 99 ? 99 : unread);
             cui_box(ui, .id = "unr", .pad_x = 6, .pad_y = 1, .radius = 9, .bg = B_C1, .align = CUI_ALIGN_CENTER) { cui_text(ui, nb, .size = 11, .color = CUI_RGB(0xffffff)); }
@@ -323,7 +325,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             }
             for (int i = 0; i < s->friend_count; i++) {
                 cui_push_id_int(ui, i);
-                { char dc[160]; chat_dm_channel(s, s->friends[i].id, dc, sizeof dc); g_row_unread = s->active_friend == i ? 0 : notify_unread_for(dc); g_row_pending = s->friends[i].fp[0] ? chat_pending_for_fp(s->friends[i].fp) : 0; }
+                { char dc[160]; chat_dm_channel(s, s->friends[i].id, dc, sizeof dc); g_row_unread = s->active_friend == i ? 0 : notify_unread_for(dc); g_row_pending = s->friends[i].fp[0] ? chat_pending_for_fp(s->friends[i].fp) : 0; g_row_invites = ginvite_pending_from(s->friends[i].id); }
                 if (person_row_ex(ui, &s->friends[i], s->active_friend == i, friend_photo(s->friends[i].id))) app_open_friend(s, i);
                 cui_pop_id(ui);
             }
@@ -398,8 +400,11 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     if (interactive) attach_state_tag(ui, s, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
+                if (interactive && ginvite_card(ui, s, m)) {}
+                else {
                 if (interactive) attach_rich(ui, m->id, text); else cui_text(ui, text);
                 if (interactive) attach_link_card(ui, s, text);
+                }
                 if (interactive) msgui_reactions(ui, m);
             }
         } else {
@@ -414,8 +419,11 @@ static void bubble(cui_ctx *ui, app_state_t *s, const msg_t *m, bool interactive
                     if (interactive) msgui_tags(ui, m);
                 }
                 if (interactive) msgui_quote(ui, s, m);
+                if (interactive && ginvite_card(ui, s, m)) {}
+                else {
                 if (interactive) attach_rich(ui, m->id, text); else cui_text(ui, text);
                 if (interactive) attach_link_card(ui, s, text);
+                }
                 if (interactive) msgui_reactions(ui, m);
             }
             }

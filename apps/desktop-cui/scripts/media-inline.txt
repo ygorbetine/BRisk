@@ -1,0 +1,24 @@
+﻿# 1.4.3: previa inline de video e audio no balao do chat (Media Foundation + waveOut). Arquivos reais gerados (testsrc 640x360 6 s com seno de 440 Hz; mp3 de 5 s)
+waitms 2500
+shot mi0-cartoes
+expect media_state 0
+media play C:/Users/YgorM/AppData/Local/Temp/claude/4b04b1d012b04c96/5e1f07fa-de0b-456d-bdaa-ff2957be11ca/scratchpad/teste.mp4
+waitms 1500
+expect media_state 2
+expect media_playing 1
+shot mi1-tocando
+media pause
+waitms 300
+expect media_state 3
+shot mi2-pausado
+media resume
+media seek 4500
+waitms 3500
+expect media_state 4
+shot mi3-fim
+media play C:/Users/YgorM/AppData/Local/Temp/claude/4b04b1d012b04c96/5e1f07fa-de0b-456d-bdaa-ff2957be11ca/scratchpad/tom.mp3
+waitms 1200
+expect media_state 2
+media stop
+waitms 300
+expect media_state 0

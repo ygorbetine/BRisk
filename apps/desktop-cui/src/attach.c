@@ -3,6 +3,7 @@
 #include "core.h"
 #include "richtext.h"
 #include "msgui.h"
+#include "media_preview.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -421,6 +422,7 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
                 }
             }
         }
+        if (t->path[0] && media_kind_of(t->name)) cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = t->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START, .pad_top = 2) media_inline(ui, s, "media", t->path, t->name, t->mine, 360.0f);   /* 1.4.3: prévia de vídeo/áudio no balão */
         cui_pop_id(ui);
     }
 }
@@ -642,6 +644,11 @@ void attach_demo(app_state_t *s) {
     tl_t *t0 = &g_tl[0]; memset(t0, 0, sizeof *t0); t0->used = true; snprintf(t0->xid, sizeof t0->xid, "d1"); snprintf(t0->conv, sizeof t0->conv, "*"); snprintf(t0->when, sizeof t0->when, "2000-01-01T00:00:00.000Z");
     snprintf(t0->name, sizeof t0->name, "contrato-assinado.pdf"); t0->size = 1.2 * 1048576; snprintf(t0->path, sizeof t0->path, "C:/Users/demo/contrato-assinado.pdf");
     tl_t *t1 = &g_tl[1]; *t1 = *t0; snprintf(t1->xid, sizeof t1->xid, "d2"); snprintf(t1->name, sizeof t1->name, "capturas-da-tela.zip"); t1->size = 14.5 * 1048576; t1->mine = true;
+    { const char *mv = getenv("BRIKS_DEMO_MEDIA_VIDEO"), *ma = getenv("BRIKS_DEMO_MEDIA_AUDIO");   /* 1.4.3: anexos de vídeo/áudio de exemplo (arquivos reais) */
+      int k = 2;
+      if (mv && mv[0]) { tl_t *a = &g_tl[k++]; *a = *t0; snprintf(a->xid, sizeof a->xid, "dv1"); snprintf(a->name, sizeof a->name, "ferias.mp4"); snprintf(a->path, sizeof a->path, "%s", mv); a->mine = true; a->size = 4.2 * 1048576;
+                        a = &g_tl[k++]; *a = *t0; snprintf(a->xid, sizeof a->xid, "dv2"); snprintf(a->name, sizeof a->name, "festa.mp4"); snprintf(a->path, sizeof a->path, "%s", mv); a->mine = false; a->size = 4.2 * 1048576; }
+      if (ma && ma[0]) { tl_t *a = &g_tl[k++]; *a = *t0; snprintf(a->xid, sizeof a->xid, "da1"); snprintf(a->name, sizeof a->name, "recado.mp3"); snprintf(a->path, sizeof a->path, "%s", ma); a->mine = false; a->size = 0.4 * 1048576; } }
     snprintf(g_ty[0].name, sizeof g_ty[0].name, "Marina Costa"); g_ty[0].until = GetTickCount() + 600000;
 }
 

@@ -15,6 +15,7 @@ static volatile LONG g_state = CORE_STOPPED;
 static char g_error[256];
 static SOCKET g_sock = INVALID_SOCKET;
 static HANDLE g_job, g_proc;
+static bool g_in_job;   /* o core entrou no Job Object (falha se a UI já roda dentro de um job sem aninhamento) */
 static CRITICAL_SECTION g_lock;
 static bool g_lock_init;
 static char *g_q[Q_CAP];
@@ -101,7 +102,7 @@ static unsigned __stdcall start_thread(void *unused) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim = { 0 };
     lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     SetInformationJobObject(g_job, JobObjectExtendedLimitInformation, &lim, sizeof lim);
-    AssignProcessToJobObject(g_job, pi.hProcess);
+    g_in_job = AssignProcessToJobObject(g_job, pi.hProcess) != 0;
     ResumeThread(pi.hThread); CloseHandle(pi.hThread);
     g_proc = pi.hProcess;
 
@@ -156,9 +157,20 @@ void core_start(void) {
     if (t) CloseHandle(t); else fail("Falha ao criar a thread do core.");
 }
 
+/* 1.4.1 (item 20): encerramento do core sem sobra. Fecha o socket (o core sai sozinho), espera ~1 s e então MATA à força o core e qualquer filho dele
+ * (Job Object; e, se o Job não pegou, taskkill /F /T só deste PID). Rede de segurança além disto: KILL_ON_JOB_CLOSE (app morto no Gerenciador de
+ * Tarefas ou por crash) e BRIKS_PARENT_PID (o próprio core vigia o pai). Nunca mexe em processo de outra instalação: só no PID/Job que o app iniciou. */
 void core_stop(void) {
     if (g_sock != INVALID_SOCKET) { closesocket(g_sock); g_sock = INVALID_SOCKET; }
-    if (g_job) { CloseHandle(g_job); g_job = NULL; }
+    if (g_proc) {
+        if (WaitForSingleObject(g_proc, 1000) != WAIT_OBJECT_0) {
+            if (g_job && g_in_job) TerminateJobObject(g_job, 1);
+            else { char c[64]; snprintf(c, sizeof c, "taskkill /F /T /PID %lu", (unsigned long)GetProcessId(g_proc)); STARTUPINFOA si = { sizeof si }; PROCESS_INFORMATION pi;
+                   if (CreateProcessA(NULL, c, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) { WaitForSingleObject(pi.hProcess, 3000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); } }
+            TerminateProcess(g_proc, 1); WaitForSingleObject(g_proc, 1500);
+        }
+    }
+    if (g_job) { CloseHandle(g_job); g_job = NULL; }   /* KILL_ON_JOB_CLOSE: leva junto qualquer neto que sobrou */
     if (g_proc) { CloseHandle(g_proc); g_proc = NULL; }
     InterlockedExchange(&g_state, CORE_STOPPED);
 }

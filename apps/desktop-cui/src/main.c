@@ -48,6 +48,8 @@ int script_probe(const char *n) {
     if (!strcmp(n, "msg_count")) return state.msg_count;
     if (!strcmp(n, "active_friend")) return state.active_friend;
     if (!strcmp(n, "ginv_short_st")) return state.ginv_short_st;
+    if (!strcmp(n, "grp_collapsed")) return state.active_group >= 0 && state.active_group < state.group_count && groups_collapsed(state.groups[state.active_group].id);
+    if (!strcmp(n, "ginv_open"))
     if (!strcmp(n, "ginv_open")) return state.ginv_open;
     if (!strcmp(n, "active_group")) return state.active_group;
     if (!strcmp(n, "msgbox")) { extern int g_composer_seen; int v = g_composer_seen; g_composer_seen = 0; return v; }

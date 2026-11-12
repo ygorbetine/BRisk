@@ -239,6 +239,8 @@ void groups_core_event(app_state_t *s, const struct jval *j, const char *ev);   
 void groups_resend(app_state_t *s);                                            /* reenvia snapshots aos membros presentes (peer novo na sala) */
 void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */
 void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
+bool groups_collapsed(const char *gid);
+void groups_collapse_set(const char *gid, bool on);   /* 1.4.1: grupo recolhido na barra lateral */
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);
 void groups_create_json(const app_state_t *s, char *out, size_t cap);

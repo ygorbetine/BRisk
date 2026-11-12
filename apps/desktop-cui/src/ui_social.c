@@ -278,7 +278,22 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             for (int i = 0; i < s->group_count; i++) {
                 cui_push_id_int(ui, 2000 + i);
                 person_t g; memset(&g, 0, sizeof g); snprintf(g.name, sizeof g.name, "%s", s->groups[i].name);
-                if (person_row_ex(ui, &g, s->active_group == i, groups_image(s, s->groups[i].id))) app_open_group(s, i);
+                { /* 1.4.1 (item 19): cabeçalho de seção, sem o roxo cheio (esse é só do canal ativo): avatar + nome + seta de recolher/expandir */
+                  const bool act = s->active_group == i, coll = groups_collapsed(s->groups[i].id);
+                  cui_push_id(ui, s->groups[i].name);
+                  cui_box(ui, .id = "gh", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
+                          .bg = briks_hover(ui, "gh") ? CUI_RGBA(0xffffff0c) : CUI_RGBA(0x00000000)) {
+                      cui_box(ui, .id = "av") { cui_avatar_ex(ui, g.name, &(cui_avatar_opts){ .size = 30, .image = groups_image(s, s->groups[i].id) }); }
+                      cui_text(ui, g.name, .nowrap = true, .width = CUI_FILL, .font = CUI_FONT_DISPLAY, .size = 14, .color = act ? B_TEXT : B_MUTED);
+                      cui_box(ui, .id = "gc", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                              .bg = briks_hover(ui, "gc") ? CUI_RGBA(0xffffff20) : CUI_RGBA(0x00000000)) { cui_icon(ui, coll ? CUI_ICON_CHEVRON_RIGHT : CUI_ICON_CHEVRON_DOWN, 15, B_MUTED); }
+                      if (briks_hover(ui, "gc")) briks_tip(coll ? "Expandir o grupo" : "Recolher o grupo");
+                  }
+                  g_last_row = cui_get_rect(ui, cui_make_id(ui, "gh"));
+                  if (briks_clicked_r(ui, "gc", 8.0f)) groups_collapse_set(s->groups[i].id, !coll);
+                  else if (briks_clicked(ui, "gh")) { app_open_group(s, i); if (coll) groups_collapse_set(s->groups[i].id, false); }
+                  cui_pop_id(ui);
+                }
                 groups_row_menu(ui, s, i, g_last_row);
                 if (s->active_group == i) groups_sidebar(ui, s, i);
                 cui_pop_id(ui);

@@ -115,6 +115,8 @@ Section "Install"
     RMDir /r "$INSTDIR"
   ${EndIf}
 
+  ; 1.4.1: nenhum processo auxiliar (core, overlay, backend) deste diretorio pode segurar arquivo: encerra so os que rodam de $INSTDIR (outras instalacoes nao sao tocadas)
+  nsExec::Exec `powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command "Get-Process briks-core,briks_overlay,briks-desktop-backend -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force"`
   SetOutPath "$INSTDIR"
   File /r "${STAGE_DIR}\*.*"
   FileOpen $R9 "$INSTDIR\briks.installed" w
@@ -168,6 +170,8 @@ Function .onInstSuccess
 FunctionEnd
 
 Section "Uninstall"
+  ; 1.4.1: nenhum processo auxiliar (core, overlay, backend) deste diretorio pode segurar arquivo: encerra so os que rodam de $INSTDIR (outras instalacoes nao sao tocadas)
+  nsExec::Exec `powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command "Get-Process briks-core,briks_overlay,briks-desktop-backend -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force"`
   ; so apaga a pasta inteira se foi este instalador que a criou; os dados do usuario (%APPDATA%\Briks-CUI) nunca sao tocados
   ${If} ${FileExists} "$INSTDIR\briks.installed"
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FW_NAME}"'

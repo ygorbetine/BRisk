@@ -1,0 +1,14 @@
+# 1.4.1 (item 19): lista de grupo e canais na lateral: grupo como cabeçalho de seção (sem roxo cheio), canal ativo com barra de acento, TEXTO/VOZ, "+" ao lado do título
+waitms 1000
+shot l-largo
+expect grp_collapsed 0
+click 472 434
+waitms 500
+expect grp_collapsed 1
+shot l-recolhido
+click 472 434
+waitms 500
+expect grp_collapsed 0
+resize 760 700
+waitms 800
+shot l-estreito

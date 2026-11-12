@@ -612,55 +612,87 @@ static bool last_text_channel(const group_t *g, int ci) {
     return !g->ch[ci].voice && texts <= 1;
 }
 
-void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo aberto, sob a linha dele na barra lateral */
-    group_t *g = &s->groups[gi];
-    cui_box(ui, .width = CUI_FILL, .pad_left = 14, .gap = 2) {
-        for (int i = 0; i < g->nch; i++) {
-            cui_push_id_int(ui, 2500 + i);
-            const bool hov = g->can_moderate && briks_hover(ui, "ch");
-            bool ren = false, del = false;
-            cui_box(ui, .id = "ch", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 6, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER,
-                    .bg = (!g->ch[i].voice && g->active_ch == i) ? B_A(B_C1, 0x30) : CUI_RGBA(0x00000000)) {
-                cui_icon(ui, g->ch[i].voice ? CUI_ICON_VOLUME_2 : CUI_ICON_HASH, 15, B_MUTED);
-                cui_text(ui, g->ch[i].name, .nowrap = true, .width = CUI_FILL, .size = 14);
-                if (hov) {
-                    ren = mini_icon(ui, "chr", CUI_ICON_PENCIL, "Renomear", false);
-                    del = mini_icon(ui, "chd", CUI_ICON_TRASH_2, "Apagar", true);
-                }
-            }
-            if (ren) { g_ren_ci = i; g_ren_open = true; snprintf(g_ren_name, sizeof g_ren_name, "%s", g->ch[i].name); }
-            else if (del) { g_del_ci = i; g_del_open = true; }
-            else if (briks_clicked(ui, "ch")) select_channel(s, gi, i);
-            if (g->ch[i].voice) {   /* quem está na sala de voz, com "Ao vivo" e Assistir (ver roster_get para a origem dos dados) */
-                rmem_t who[8]; bool mine; const int nw = roster_get(s, &g->ch[i], who, &mine);
-                bool watch = false;
-                if (nw) cui_box(ui, .width = CUI_FILL, .pad_left = 14, .gap = 3) {
-                    for (int w = 0; w < nw; w++) {
-                        cui_push_id_int(ui, 100 + w);
-                        cui_box(ui, .width = CUI_FILL, .gap = 3) {
-                            cui_text(ui, who[w].name, .size = 13, .color = (mine && w == 0) ? B_ONLINE : B_MUTED, .nowrap = true);
-                            if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
-                                cui_text(ui, "AO VIVO", .size = 10, .color = B_C3, .nowrap = true);
-                                cui_box(ui, .id = "wt", .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(B_C1, 0x55)) { cui_text(ui, "Assistir", .size = 11, .nowrap = true); }
-                                if (briks_clicked_r(ui, "wt", 9.0f)) watch = true;
-                            }
-                        }
-                        cui_pop_id(ui);
-                    }
-                    { const rroster_t *rr = mine ? NULL : ros_slot(g->ch[i].room[0] ? g->ch[i].room : g->ch[i].id, false);
-                      if (rr && rr->more > 0) cui_textf(ui, "+%d na sala", rr->more); }
-                }
-                if (watch) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
-            }
-            cui_pop_id(ui);
+/* 1.4.1 (item 19): grupo = cabeçalho de seção. O grupo não tem mais fundo roxo cheio (ui_social.c desenha avatar + nome + seta); aqui ficam as duas
+ * subseções, TEXTO e VOZ, com o "+" de novo canal ao lado do título (só para quem pode criar), e só o canal de texto ATIVO recebe o roxo cheio, com
+ * barra de acento à esquerda. Sob cada sala de voz: ponto verde + quem está nela. Não lidas por canal de texto (notify_unread_for). */
+#define COLL_MAX 64
+static char g_coll[COLL_MAX][48]; static int g_ncoll;   /* grupos recolhidos (estado por grupo, guardado enquanto o app está aberto) */
+bool groups_collapsed(const char *gid) { for (int i = 0; i < g_ncoll; i++) if (!strcmp(g_coll[i], gid)) return true; return false; }
+void groups_collapse_set(const char *gid, bool on) {
+    for (int i = 0; i < g_ncoll; i++) if (!strcmp(g_coll[i], gid)) { if (!on) { memmove(g_coll[i], g_coll[i + 1], (size_t)(g_ncoll - i - 1) * sizeof g_coll[0]); g_ncoll--; } return; }
+    if (on && g_ncoll < COLL_MAX) snprintf(g_coll[g_ncoll++], sizeof g_coll[0], "%s", gid);
+}
+
+static void sub_title(cui_ctx *ui, app_state_t *s, group_t *g, const char *id, const char *title, int kind) {
+    cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_top = 6, .gap = 6, .align = CUI_ALIGN_CENTER) {
+        cui_text(ui, title, .size = 10.5f, .color = CUI_RGBA(0xa592b8cc), .nowrap = true, .width = CUI_FILL);
+        if (g->can_moderate && g->nch < GROUP_MAX_CH && mini_icon(ui, id, CUI_ICON_PLUS, kind ? "Novo canal de voz" : "Novo canal de texto", false)) {
+            s->chan_open = true; s->chan_name[0] = 0; s->chan_kind = kind;
         }
-        if (g->can_moderate && g->nch < GROUP_MAX_CH) {
-            cui_push_id(ui, "newch");
-            cui_box(ui, .id = "nc", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_y = 6, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER) {
-                cui_icon(ui, CUI_ICON_PLUS, 15, B_MUTED); cui_text(ui, "Novo canal", .size = 13.5f, .color = B_MUTED);
-            }
-            if (briks_clicked(ui, "nc")) { s->chan_open = true; s->chan_name[0] = 0; s->chan_kind = 0; }
+    }
+}
+
+void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi) {   /* canais do grupo aberto, sob o cabeçalho dele na barra lateral */
+    group_t *g = &s->groups[gi];
+    if (groups_collapsed(g->id)) return;
+    cui_box(ui, .width = CUI_FILL, .pad_left = 12, .gap = 2) {
+        for (int kind = 0; kind < 2; kind++) {   /* 0 = TEXTO, 1 = VOZ */
+            int count = 0; for (int i = 0; i < g->nch; i++) if ((int)g->ch[i].voice == kind) count++;
+            if (!count && !(g->can_moderate && g->nch < GROUP_MAX_CH)) continue;   /* subseção vazia só aparece para quem pode criar canal nela */
+            cui_push_id_int(ui, 2490 + kind);
+            sub_title(ui, s, g, "snew", kind ? "VOZ" : "TEXTO", kind);
             cui_pop_id(ui);
+            for (int i = 0; i < g->nch; i++) {
+                if ((int)g->ch[i].voice != kind) continue;
+                cui_push_id_int(ui, 2500 + i);
+                const bool hov = g->can_moderate && briks_hover(ui, "ch");
+                const bool act = !g->ch[i].voice && g->active_ch == i;
+                const int unread = (!g->ch[i].voice && !act) ? notify_unread_for(g->ch[i].id) : 0;
+                bool ren = false, del = false;
+                cui_box(ui, .id = "ch", .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 8, .pad_y = 6, .gap = 8, .radius = 12, .align = CUI_ALIGN_CENTER,
+                        .bg = act ? B_A(B_C1, 0x5a) : (briks_hover(ui, "ch") ? CUI_RGBA(0xffffff0c) : CUI_RGBA(0x00000000))) {
+                    cui_box(ui, .width = CUI_PX(3), .height = CUI_PX(16), .radius = 2, .bg = act ? B_C3 : CUI_RGBA(0x00000000)) {}   /* barra de acento (só o canal ativo) */
+                    cui_icon(ui, g->ch[i].voice ? CUI_ICON_VOLUME_2 : CUI_ICON_HASH, 15, act ? B_TEXT : B_MUTED);
+                    cui_text(ui, g->ch[i].name, .nowrap = true, .width = CUI_FILL, .size = 14, .color = act ? B_TEXT : unread ? B_TEXT : B_MUTED, .font = (act || unread) ? CUI_FONT_MEDIUM : CUI_FONT_BODY);
+                    if (unread > 0 && !hov) {   /* não lidas por canal de texto */
+                        char nb[8]; snprintf(nb, sizeof nb, "%d", unread > 99 ? 99 : unread);
+                        cui_box(ui, .pad_x = 6, .pad_y = 1, .radius = 9, .bg = B_C3) { cui_text(ui, nb, .size = 10.5f, .color = CUI_RGB(0x1b1226), .nowrap = true); }
+                    }
+                    if (hov) {
+                        ren = mini_icon(ui, "chr", CUI_ICON_PENCIL, "Renomear", false);
+                        del = mini_icon(ui, "chd", CUI_ICON_TRASH_2, "Apagar", true);
+                    }
+                }
+                if (ren) { g_ren_ci = i; g_ren_open = true; snprintf(g_ren_name, sizeof g_ren_name, "%s", g->ch[i].name); }
+                else if (del) { g_del_ci = i; g_del_open = true; }
+                else if (briks_clicked(ui, "ch")) select_channel(s, gi, i);
+                if (g->ch[i].voice) {   /* quem está na sala de voz, com ponto verde, "Ao vivo" e Assistir (ver roster_get para a origem dos dados) */
+                    rmem_t who[8]; bool mine; const int nw = roster_get(s, &g->ch[i], who, &mine);
+                    bool watch = false;
+                    if (nw) cui_box(ui, .width = CUI_FILL, .pad_left = 20, .gap = 3) {
+                        for (int w = 0; w < nw; w++) {
+                            cui_push_id_int(ui, 100 + w);
+                            cui_box(ui, .width = CUI_FILL, .gap = 3) {
+                                cui_box(ui, .dir = CUI_ROW, .gap = 6, .align = CUI_ALIGN_CENTER) {
+                                    cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = B_ONLINE) {}   /* ponto verde: há gente na sala */
+                                    cui_avatar(ui, who[w].name, .size = 16);
+                                    cui_text(ui, who[w].name, .size = 13, .color = (mine && w == 0) ? B_ONLINE : B_MUTED, .nowrap = true);
+                                }
+                                if (who[w].live) cui_box(ui, .dir = CUI_ROW, .gap = 8) {
+                                    cui_text(ui, "AO VIVO", .size = 10, .color = B_C3, .nowrap = true);
+                                    cui_box(ui, .id = "wt", .pad_x = 8, .pad_y = 2, .radius = 9, .bg = B_A(B_C1, 0x55)) { cui_text(ui, "Assistir", .size = 11, .nowrap = true); }
+                                    if (briks_clicked_r(ui, "wt", 9.0f)) watch = true;
+                                }
+                            }
+                            cui_pop_id(ui);
+                        }
+                        { const rroster_t *rr = mine ? NULL : ros_slot(g->ch[i].room[0] ? g->ch[i].room : g->ch[i].id, false);
+                          if (rr && rr->more > 0) cui_textf(ui, "+%d na sala", rr->more); }
+                    }
+                    if (watch) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
+                }
+                cui_pop_id(ui);
+            }
         }
     }
 }

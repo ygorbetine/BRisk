@@ -119,6 +119,7 @@ void bk_start(void) {
 }
 
 void bk_stop(void) {
+    if (g_proc) { if (WaitForSingleObject(g_proc, 300) != WAIT_OBJECT_0) TerminateProcess(g_proc, 1); }   /* 1.4.1: força o fim do backend local */
     if (g_job) { CloseHandle(g_job); g_job = NULL; }   /* KILL_ON_JOB_CLOSE */
     if (g_proc) { CloseHandle(g_proc); g_proc = NULL; }
     InterlockedExchange(&g_status, BK_STOPPED);

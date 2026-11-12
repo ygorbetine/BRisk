@@ -1,0 +1,12 @@
+# 1.4.1 (CHM-34): duas transmissões, cada uma com a sua qualidade (seletor "Transmissão 1/2" no diálogo de qualidade); a 2 não mexe na 1
+waitms 1000
+shot q-antes
+waitms 1800
+expect share_q0_res 1
+expect share_q0_fps 4
+expect share_q1_res 0
+expect share_q1_fps 1
+expect share_q0_kbps 0
+expect share_q1_kbps 3000
+expect share_qsel 1
+shot q-selecionada-2

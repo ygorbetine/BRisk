@@ -59,8 +59,10 @@ enum { BKP_UNKNOWN, BKP_NONE, BKP_OK, BKP_OTHER };   /* não consultado; sem có
 #define SH_MAX_APPS 16
 typedef struct { char id[24]; char name[96]; char sub[64]; char thumb[280]; int w, h; cui_texture tex; bool tex_tried; } share_src_t;
 typedef struct { unsigned pid; char name[64]; bool playing, on; } share_app_t;
+typedef struct { int res, fps, br_mode, content; float br_custom; } qual_t;   /* qualidade de UMA transmissão (1.4.1: cada tela tem a sua) */
 typedef struct {
     bool dialog_open, loading, quality_open;
+    qual_t qs[2]; bool qs_ok[2]; int qsel;       /* 1.4.1: qualidade guardada por transmissão (0 = 1ª, 1 = 2ª); res/fps/br_mode/br_custom/content abaixo são a da transmissão em edição (qsel) */
     int tab;                                   /* 0 telas, 1 janelas */
     int sel[2];                                /* fonte escolhida em cada aba */
     share_src_t src[2][SH_MAX_SRC]; int nsrc[2];
@@ -83,7 +85,7 @@ typedef struct {
     struct { bool on, audio, watching, has_frame, poor, stalled; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[BRIKS_MAX_PEERS];
     /* 2ª tela simultânea (segundo monitor), minha e dos outros: sem áudio próprio (o áudio da transmissão é o da 1ª) */
     bool pick_second;                          /* o seletor aberto vai iniciar a 2ª tela */
-    struct { bool active, starting; int w, h, fps, kbps; char label[64]; } second;
+    struct { bool active, starting; int w, h, fps, kbps; char label[64], kind[12], id[24]; } second;
     struct { bool on, watching, has_frame, stalled; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
 } share_state_t;
 

@@ -28,6 +28,7 @@ static int g_stage_toggles;   /* roteiros: quantas vezes um clique em área vazi
 static int g_tiles;                                 /* blocos desenhados no palco no último quadro (roteiros de teste) */   /* o que o selo mostrou no último quadro (roteiros de teste) */
 static struct { int slot; double until; } g_notice = { -1, -1 };
 static bool share_viewing(const app_state_t *s) { return s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0; }
+static int g_qk[2];   /* teste qual-slots: kbps pedido a cada transmissão */
 static bool g_dev_open_quality;   /* gancho de captura: abre o popover de qualidade/telemetria */
 
 /* ---------- qualidade ---------- */
@@ -52,6 +53,23 @@ static int chosen_kbps(const share_state_t *q) {   /* o que será pedido ao core
     else if (q->br_mode == 3) k = (int)(q->br_custom * 1000);
     return k > BR_MAX_KBPS ? BR_MAX_KBPS : k;
 }
+/* 1.4.1 (CHM-34): qualidade por transmissão. Os campos res/fps/br_mode/br_custom/content do estado são os da transmissão EM EDIÇÃO (qsel);
+ * a outra fica guardada em qs[]. Trocar de transmissão guarda uma e carrega a outra; enviar ao core usa a qualidade da transmissão certa. */
+static qual_t qual_view(const share_state_t *q) { return (qual_t){ q->res, q->fps, q->br_mode, q->content, q->br_custom }; }
+static void qual_set_view(share_state_t *q, const qual_t *v) { q->res = v->res; q->fps = v->fps; q->br_mode = v->br_mode; q->content = v->content; q->br_custom = v->br_custom; }
+static void qual_switch(share_state_t *q, int sel) {
+    if (sel < 0 || sel > 1 || sel == q->qsel) return;
+    q->qs[q->qsel] = qual_view(q); q->qs_ok[q->qsel] = true;
+    q->qsel = sel;
+    if (q->qs_ok[sel]) qual_set_view(q, &q->qs[sel]);   /* nunca editada: começa igual à outra */
+}
+static qual_t qual_enter(share_state_t *q, int slot) {   /* põe no estado a qualidade da transmissão `slot`; devolve o que estava (para qual_leave) */
+    qual_t prev = qual_view(q);
+    if (slot != q->qsel && q->qs_ok[slot]) qual_set_view(q, &q->qs[slot]);
+    return prev;
+}
+static void qual_leave(share_state_t *q, qual_t prev) { qual_set_view(q, &prev); }
+
 static void fmt_rate(int kbps, char *out, size_t cap) {
     if (kbps >= 10000) snprintf(out, cap, "%d Mbps", (kbps + 500) / 1000);
     else if (kbps >= 1000) { int d = (kbps + 50) / 100; if (d % 10) snprintf(out, cap, "%d,%d Mbps", d / 10, d % 10); else snprintf(out, cap, "%d Mbps", d / 10); }
@@ -129,6 +147,7 @@ static void preview_path(char *out, size_t cap) { preview_path_n(out, cap, false
 void share_open_dialog(app_state_t *s) {
     share_state_t *q = &s->sh;
     q->dialog_open = true; q->err[0] = 0; q->pick_second = false;
+    if (!q->second.active && !q->second.starting) qual_switch(q, 0);   /* sem 2ª tela no ar o seletor edita a 1ª */
     if (core_state() != CORE_READY) { q->loading = false; copy(q->err, sizeof q->err, "Entre numa sala para transmitir."); return; }
     q->loading = true;
     cmd("{\"cmd\":\"share.list\"}");
@@ -139,9 +158,11 @@ static void send_start(app_state_t *s, const char *kind, const char *id, const c
     share_state_t *q = &s->sh;
     char line[1024], lab[160], pids[400] = ""; size_t o = 0;
     json_escape(label, lab, sizeof lab);
+    const qual_t qprev = qual_enter(q, 0);
     for (int i = 0; i < q->napps && o < sizeof pids - 16; i++) if (q->apps[i].on) o += (size_t)snprintf(pids + o, sizeof pids - o, "%s%u", o ? "," : "", q->apps[i].pid);
     snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"%s\",\"pids\":[%s],\"content\":\"%s\"}",
              kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->audio_mode == 0 ? "source" : q->audio_mode == 1 ? "apps" : "none", pids, q->content ? "motion" : "detail");
+    qual_leave(q, qprev);
     cmd(line);
     copy(q->last_kind, sizeof q->last_kind, kind); copy(q->last_id, sizeof q->last_id, id); copy(q->label, sizeof q->label, label);
     q->starting = true; q->err[0] = 0;
@@ -152,10 +173,12 @@ static void send_start_second(app_state_t *s, const char *kind, const char *id, 
     share_state_t *q = &s->sh;
     char line[700], lab[160];
     json_escape(label, lab, sizeof lab);
+    const qual_t qprev = qual_enter(q, 1);
     snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"slot\":1,\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"none\",\"content\":\"%s\"}",
              kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->content ? "motion" : "detail");
+    qual_leave(q, qprev);
     cmd(line);
-    copy(q->second.label, sizeof q->second.label, label);
+    copy(q->second.label, sizeof q->second.label, label); copy(q->second.kind, sizeof q->second.kind, kind); copy(q->second.id, sizeof q->second.id, id);
     q->second.starting = true; q->err[0] = 0;
 }
 
@@ -183,9 +206,11 @@ void share_reset(app_state_t *s) {
     for (int t = 0; t < 2; t++) for (int i = 0; i < q->nsrc[t]; i++) if (q->src[t][i].tex && g_ntrash < 64) g_trash[g_ntrash++] = q->src[t][i].tex;
     for (int i = 0; i < 2 * FV_N; i++) fv_close(&g_fv[i]);
     memset(g_zoom, 0, sizeof g_zoom); g_notice.slot = -1;
-    int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode; float bc = q->br_custom;
+    int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode, ct = q->content, qsel = q->qsel; float bc = q->br_custom;
+    qual_t qs[2] = { q->qs[0], q->qs[1] }; bool qok[2] = { q->qs_ok[0], q->qs_ok[1] };
     memset(q, 0, sizeof *q);
-    q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc;
+    q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc; q->content = ct;
+    q->qs[0] = qs[0]; q->qs[1] = qs[1]; q->qs_ok[0] = qok[0]; q->qs_ok[1] = qok[1]; q->qsel = qsel;
 }
 
 bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < BRIKS_MAX_PEERS && s->sh.remote[slot].on; }
@@ -375,6 +400,18 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     /* ganchos de teste/captura: BRIKS_DEV_SHARE=dialog | dialog-apps | dialog-windows | screen | test (uma vez, com o core pronto) */
     static int dev; const char *d = getenv("BRIKS_DEV_SHARE");
     if (d) cui_request_redraw(ui);
+    if (d && !strcmp(d, "qual-slots")) {   /* teste (CHM-34): duas transmissões, cada uma com a sua qualidade; trocar/mudar a 2 não mexe na 1 */
+        static int step; double t = cui_time(ui);
+        if (step == 0 && t > 0.5) {
+            step = 1; q->res = 1; q->fps = FPS_DEFAULT; q->br_mode = 0;                 /* 1ª: 1080p 30 automático */
+            q->active = true; q->second.active = true; copy(q->label, sizeof q->label, "Monitor 1"); copy(q->second.label, sizeof q->second.label, "Janela do jogo");
+            qual_switch(q, 1); q->res = 0; q->fps = 1; q->br_mode = 3; q->br_custom = 3;   /* 2ª: 720p 15 personalizado 3 Mbps */
+            qual_switch(q, 0);
+            { qual_t p = qual_enter(q, 1); g_qk[1] = chosen_kbps(q); qual_leave(q, p); }
+            { qual_t p = qual_enter(q, 0); g_qk[0] = chosen_kbps(q); qual_leave(q, p); }
+            cui_request_redraw(ui);
+        } else if (step == 1 && t > 1.5) { step = 2; q->quality_open = true; q->dialog_open = true; q->pick_second = true; qual_switch(q, 1); }
+    }
     if (d && !strcmp(d, "fake-local")) {   /* teste sem core: começa/para/recomeça a MINHA transmissão pelo mesmo tratador de eventos do core (1 s liga, 4 s desliga, 7 s liga, 9 s repete o "on") */
         static int step; double t = cui_time(ui); const char *ev = NULL;
         if (step == 0 && t > 1) { step = 1; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":2500}"; }
@@ -468,7 +505,18 @@ static void wrap_line(cui_ctx *ui, const char *t, float size, cui_color col) {
 
 static bool quality_controls(cui_ctx *ui, share_state_t *q) {
     bool ch = false;
+    if (!q->second.active && !q->second.starting && !q->pick_second && q->qsel == 1) qual_switch(q, 0);   /* a 2ª terminou: volta a editar a 1ª */
     cui_column(ui, .gap = 10, .width = CUI_FILL) {
+        if (q->second.active || q->second.starting || q->pick_second) {   /* duas transmissões: escolhe qual delas os ajustes abaixo valem */
+            char l0[80], l1[80];
+            snprintf(l0, sizeof l0, "Transmissão 1: %.16s%s", q->label[0] ? q->label : "tela", strlen(q->label) > 16 ? "…" : "");
+            snprintf(l1, sizeof l1, "Transmissão 2: %.16s%s", q->second.label[0] ? q->second.label : "tela", strlen(q->second.label) > 16 ? "…" : "");
+            const char *labs[2] = { l0, l1 };
+            cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+                cui_text(ui, "Ajustes de", .size = 13, .color = B_MUTED);
+                int sel = q->qsel; if (seg(ui, "qsel", labs, NULL, 2, &sel)) qual_switch(q, sel);
+            }
+        }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Resolução", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "res", RES_LABEL, NULL, 4, &q->res);
@@ -623,7 +671,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                 cui_icon(ui, CUI_ICON_MONITOR, 14, on2 ? CUI_RGB(0x7be8a8) : B_TEXT);
                 cui_text(ui, q->second.starting ? "Iniciando 2ª…" : q->second.active ? "Parar 2ª tela" : "+ 2ª tela", .size = 12, .color = on2 ? CUI_RGB(0x7be8a8) : B_TEXT, .nowrap = true);
             }
-            if (!modal && briks_clicked_r(ui, "b2", 25.0f)) { if (on2) share_stop_second(s); else { share_open_dialog(s); q->pick_second = true; } }
+            if (!modal && briks_clicked_r(ui, "b2", 25.0f)) { if (on2) share_stop_second(s); else { share_open_dialog(s); q->pick_second = true; qual_switch(q, 1); } }
         }
         if (q->active) {   /* "Com áudio" / "Sem áudio": liga e desliga o áudio da transmissão AO VIVO (a faixa continua aberta: nada é renegociado) */
             vsep(ui);
@@ -660,7 +708,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                seguido de outro não reinicia duas vezes); fora da transmissão ficam salvas para a próxima */
             static double apply_at = -1;
             if (quality_controls(ui, q) && q->active) apply_at = cui_time(ui) + 0.4;
-            if (apply_at >= 0) { if (!q->active) apply_at = -1; else if (cui_time(ui) >= apply_at) { apply_at = -1; send_start(s, q->last_kind, q->last_id, q->label); } else cui_request_wakeup(ui, 0.2f); }
+            if (apply_at >= 0) { if (!q->active) apply_at = -1; else if (cui_time(ui) >= apply_at) { apply_at = -1; if (q->qsel == 1 && q->second.active) send_start_second(s, q->second.kind, q->second.id, q->second.label); else send_start(s, q->last_kind, q->last_id, q->label); } else cui_request_wakeup(ui, 0.2f); }
             if (q->active) {
                 /* telemetria local, ao vivo */
                 char st[240];
@@ -785,6 +833,13 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_remote_on")) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) c += s->sh.remote[i].on + s->sh.remote2[i].on; return c; }   /* transmissões dos outros no ar */
     if (!strcmp(n, "share_stalled")) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) c += s->sh.remote[i].stalled + s->sh.remote2[i].stalled; return c; }
     if (!strcmp(n, "share_muted")) return s->sh.audio_muted;
+    if (!strcmp(n, "share_qsel")) return s->sh.qsel;
+    if (!strcmp(n, "share_q0_res")) return s->sh.qsel == 0 ? s->sh.res : s->sh.qs[0].res;
+    if (!strcmp(n, "share_q1_res")) return s->sh.qsel == 1 ? s->sh.res : s->sh.qs[1].res;
+    if (!strcmp(n, "share_q0_fps")) return s->sh.qsel == 0 ? s->sh.fps : s->sh.qs[0].fps;
+    if (!strcmp(n, "share_q1_fps")) return s->sh.qsel == 1 ? s->sh.fps : s->sh.qs[1].fps;
+    if (!strcmp(n, "share_q0_kbps")) return g_qk[0];
+    if (!strcmp(n, "share_q1_kbps")) return g_qk[1];
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */

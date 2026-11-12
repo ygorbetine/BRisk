@@ -574,10 +574,11 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
 static void paint_grad(cui_ctx *ui, cui_rect r, void *user) { float rad = *(const float *)user; cui_draw_rect_gradient(ui, r, CUI_CORNERS(rad), B_C1, B_C2); }
 
 /* segmentado em vidro: ativa = pílula em degradê; devolve true se mudou */
+static float g_qw;   /* largura útil do painel de qualidade neste quadro (0 = sem limite): os segmentos quebram em 2+ linhas quando não cabem */
 static bool seg(cui_ctx *ui, const char *id, const char *const *labels, const int *counts, int n, int *idx) {
     static float rad = 8; bool changed = false;
     cui_push_id(ui, id);
-    cui_box(ui, .dir = CUI_ROW, .gap = 3, .pad = 3, .radius = 11, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
+    cui_box(ui, .dir = CUI_ROW, .gap = 3, .pad = 3, .radius = 11, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER, .wrap = g_qw > 0, .max_width = g_qw > 0 ? g_qw : 0) {
         for (int i = 0; i < n; i++) {
             bool on = *idx == i;
             cui_push_id_int(ui, i);
@@ -654,23 +655,23 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
                 int sel = q->qsel; if (seg(ui, "qsel", labs, NULL, 2, &sel)) qual_switch(q, sel);
             }
         }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Resolução", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "res", RES_LABEL, NULL, 4, &q->res);
         }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Quadros por segundo", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "fps", FPS_LABEL, NULL, FPS_N, &q->fps);
         }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
-            cui_column(ui, .gap = 1, .width = CUI_FILL) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+            cui_column(ui, .gap = 1, .max_width = g_qw > 0 ? fmaxf(g_qw - 190.0f, 150.0f) : 0, .width = CUI_FILL) {
                 wrap_line(ui, "Se a rede ou o PC apertar", 13, B_MUTED);
                 wrap_line(ui, q->content ? "Fluidez: cede resolução antes de quadros" : "Nitidez: cede quadros antes de resolução", 11, CUI_RGBA(0xa592b8aa));
             }
             static const char *const pr[2] = { "Nitidez", "Fluidez" };
             ch |= seg(ui, "pri", pr, NULL, 2, &q->content);
         }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Bitrate", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "br", BR_LABEL, NULL, 4, &q->br_mode);
         }
@@ -889,8 +890,16 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
         }
         if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
             cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);   /* âncora: topo do chip, com a largura dele */
-        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = 520, .pad = 16, .gap = 10) {
+        /* painel responsivo: largura até 520 mas nunca mais que a janela, altura limitada ao espaço ACIMA da barra (o cui limita a 420) com rolagem
+           interna; os textos quebram e os segmentos descem de linha. O cui já mantém o popover dentro da janela nos 4 lados. */
+        const cui_vec2 qvp = cui_viewport_size(ui); const cui_rect qar = cui_get_rect(ui, cui_make_id(ui, "shqanchor"));
+        const float qpw = fminf(520.0f, fmaxf(qvp.x - 24.0f, 240.0f));
+        float qh = 360.0f; if (qar.w > 0) qh = qar.y - (titlebar_height() + 4.0f) - 10.0f - 32.0f - 8.0f - 28.0f;   /* menos gap, padding, margem e o título */
+        qh = fminf(fmaxf(qh, 90.0f), 360.0f);
+        g_qw = qpw - 32.0f - 8.0f;
+        cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = qpw, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
+            cui_box(ui, .id = "shq-body", .width = CUI_FILL, .max_height = qh, .scroll_y = true, .gap = 10, .pad_right = 8) {
             beta_note(ui, "Em queda brusca de rede a imagem pode cair bastante ou travar por alguns segundos. Com mais de um espectador, quem estiver com a rede ruim pode ficar sem imagem.");
             /* as escolhas valem sozinhas: transmitindo, ~0,4 s depois da última mudança o codificador é reiniciado com elas (um clique
                seguido de outro não reinicia duas vezes); fora da transmissão ficam salvas para a próxima */
@@ -912,6 +921,7 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
                     wrap_line(ui, st, 12, CUI_RGB(0xf5d9a0));
                 }
             }
+            }   /* shq-body */
         }
         }
     }

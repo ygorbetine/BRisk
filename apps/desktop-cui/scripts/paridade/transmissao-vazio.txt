@@ -3,7 +3,7 @@ waitms 1200
 expect stage_toggles 0
 expect stage_layout 0
 shot x0
-click 648 231
+click 563 231
 waitms 500
 expect stage_toggles 1
 expect stage_layout 1
@@ -13,7 +13,7 @@ waitms 500
 expect stage_toggles 2
 expect stage_layout 0
 shot x2
-at 648 231
+at 563 231
 down
 at 700 300
 waitms 200

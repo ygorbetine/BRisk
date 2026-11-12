@@ -270,6 +270,7 @@ static const char *peer_name(const app_state_t *s, const char *fp) {
 
 static void add_done(app_state_t *s, const jval *j);
 static void check_done(const jval *j);
+static void ogg_done(const jval *j);
 
 void sons_core_event(app_state_t *s, const jval *j, const char *ev) {
     if (!strcmp(ev, "sound.list")) {
@@ -278,6 +279,7 @@ void sons_core_event(app_state_t *s, const jval *j, const char *ev) {
         for (int i = 0; m && m->type == J_ARR && i < json_len(m); i++) { const jval *e = json_at(m, i); if (e->type == J_STR) fetch_set(e->str, true); }
         const char *err = json_str(j, "error", ""); if (err[0]) say("%s", err);
     } else if (!strcmp(ev, "sound.checked")) check_done(j);
+    else if (!strcmp(ev, "sound.decoded")) ogg_done(j);
     else if (!strcmp(ev, "sound.imported")) add_done(s, j);
     else if (!strcmp(ev, "sound.path")) {
         const char *h = json_str(j, "hash", ""), *p = json_str(j, "path", "");
@@ -304,7 +306,7 @@ void sons_core_event(app_state_t *s, const jval *j, const char *ev) {
 #define MIN_CLIP_MS 200.0f
 #define MAX_FILE_BYTES (512 * 1024)
 static struct {
-    bool open, loaded; char path[1040], err[200], name[48], emoji[40]; int dest; bool ack;
+    bool open, loaded, converting; char path[1040], err[200], name[48], emoji[40]; int dest; bool ack;
     short *pcm; size_t ns; int rate, ch; float dur_ms, start_ms, end_ms, vol; float bars[NBARS];
 } g_add;
 static char g_tmp_import[1040];   /* arquivo temporário gerado pelo editor, apagado depois da importação */
@@ -422,7 +424,7 @@ static bool export_sel(char *outpath, size_t cap, char *err, size_t ecap) {
 
 static bool unedited_original_ok(void) {   /* arquivo já serve como está (mp3/wav/ogg curto e leve, sem recorte nem volume): vai sem reconverter */
     if (g_add.start_ms > 1.0f || g_add.end_ms < g_add.dur_ms - 1.0f || g_add.vol < 99.5f || g_add.dur_ms > MAX_CLIP_MS) return false;
-    const char *dot = strrchr(g_add.path, '.'); if (!dot || (_stricmp(dot, ".mp3") && _stricmp(dot, ".wav") && _stricmp(dot, ".ogg"))) return false;
+    const char *dot = strrchr(g_add.path, '.'); if (!dot || (_stricmp(dot, ".mp3") && _stricmp(dot, ".wav"))) return false;   /* OGG sempre passa pelo editor (vira MP3, que toca em qualquer Windows) */
     wchar_t wp[1040]; MultiByteToWideChar(CP_UTF8, 0, g_add.path, -1, wp, 1040);
     const long long sz = file_size_w(wp); return sz > 0 && sz <= MAX_FILE_BYTES;
 }
@@ -445,21 +447,49 @@ static bool editor_load(const char *path) {
     return true;
 }
 
+static void begin_load(const char *path, bool keep);
 static void pick_file(void) {
     wchar_t wp[1040] = { 0 }; OPENFILENAMEW of = { sizeof of };
     of.hwndOwner = GetActiveWindow(); of.lpstrFilter = L"Áudio e vídeo\0*.mp3;*.wav;*.ogg;*.m4a;*.aac;*.wma;*.flac;*.mp4;*.m4v;*.mov;*.webm;*.mkv\0"; of.lpstrFile = wp; of.nMaxFile = (DWORD)(sizeof wp / sizeof wp[0]);
     of.lpstrTitle = L"Escolher o áudio do som (você corta e ajusta depois)"; of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&of)) return;
     char path[1040]; if (!WideCharToMultiByte(CP_UTF8, 0, wp, -1, path, (int)sizeof path, NULL, NULL)) return;
-    const bool keep = g_add.open; char nm[48], em[40]; int dest = g_add.dest; snprintf(nm, sizeof nm, "%s", g_add.name); snprintf(em, sizeof em, "%s", g_add.emoji);
-    if (!editor_load(path)) { g_add.open = true; ed_free(); snprintf(g_add.err, sizeof g_add.err, "Não consegui ler o áudio desse arquivo. Use MP3, WAV, OGG ou um vídeo com som."); return; }
+    begin_load(path, g_add.open);
+}
+
+static char g_keep_nm[48], g_keep_em[40]; static int g_keep_dest; static bool g_keep_on; static char g_ogg_src[1040];   /* o que o editor lembra ao trocar de arquivo; origem do OGG em conversão */
+
+static void after_load(const char *path) {
     g_add.open = true;
-    if (keep && nm[0]) { snprintf(g_add.name, sizeof g_add.name, "%s", nm); snprintf(g_add.emoji, sizeof g_add.emoji, "%s", em); g_add.dest = dest; }
+    if (g_keep_on && g_keep_nm[0]) { snprintf(g_add.name, sizeof g_add.name, "%s", g_keep_nm); snprintf(g_add.emoji, sizeof g_add.emoji, "%s", g_keep_em); g_add.dest = g_keep_dest; }
     else { memset(g_add.name, 0, sizeof g_add.name); g_add.dest = 0; g_add.ack = false; }
     if (!g_add.name[0]) {
-        const char *b = strrchr(path, '\\'); b = b ? b + 1 : path; char stem[96]; snprintf(stem, sizeof stem, "%s", b); char *dot = strrchr(stem, '.'); if (dot) *dot = 0;
+        const char *b = strrchr(path, '\\'); const char *b2 = strrchr(path, '/'); if (b2 > b) b = b2; b = b ? b + 1 : path; char stem[96]; snprintf(stem, sizeof stem, "%s", b); char *dot = strrchr(stem, '.'); if (dot) *dot = 0;
         sons_clean_name(stem, g_add.name, sizeof g_add.name);
     }
+}
+
+static bool is_ogg(const char *path) { const char *dot = strrchr(path, '.'); return dot && !_stricmp(dot, ".ogg"); }
+
+/* abre o arquivo no editor. OGG não depende do Windows: o core decodifica (Vorbis embutido) para um WAV temporário e o editor abre esse WAV */
+static void begin_load(const char *path, bool keep) {
+    g_keep_on = keep; snprintf(g_keep_nm, sizeof g_keep_nm, "%s", g_add.name); snprintf(g_keep_em, sizeof g_keep_em, "%s", g_add.emoji); g_keep_dest = g_add.dest;
+    if (is_ogg(path)) {
+        ed_free(); g_add.open = true; g_add.err[0] = 0; g_add.converting = true; snprintf(g_ogg_src, sizeof g_ogg_src, "%s", path);
+        char e[2200], l[2300]; json_escape(path, e, sizeof e); snprintf(l, sizeof l, "{\"cmd\":\"sound.ogg\",\"path\":\"%s\"}", e); core_send(l);
+        return;
+    }
+    if (!editor_load(path)) { g_add.open = true; ed_free(); snprintf(g_add.err, sizeof g_add.err, "Não consegui ler o áudio desse arquivo. Use MP3, WAV, OGG ou um vídeo com som."); return; }
+    after_load(path);
+}
+
+static void ogg_done(const jval *j) {
+    if (!g_add.converting) return;
+    g_add.converting = false;
+    const jval *ok = json_get(j, "ok"); const char *wav = json_str(j, "wav", "");
+    if (ok && ok->type == J_BOOL && ok->b && wav[0] && editor_load(wav)) { snprintf(g_add.path, sizeof g_add.path, "%s", g_ogg_src); after_load(g_ogg_src); }
+    else { ed_free(); g_add.open = true; snprintf(g_add.err, sizeof g_add.err, "Não consegui ler esse OGG: %s", json_str(j, "message", "formato não suportado")); }
+    { const char *bn = strrchr(wav, '\\'); bn = bn ? bn + 1 : wav; if (!strncmp(bn, "briks-ogg-", 10)) DeleteFileA(wav); }   /* só apaga o temporário que o core criou */
 }
 
 static void check_done(const jval *j) { (void)j; }   /* o editor decodifica o arquivo aqui mesmo; o core confere o resultado na importação */
@@ -518,7 +548,7 @@ static void preview_selection(void) {
 static void editor_dialog(cui_ctx *ui, app_state_t *s) {
     cui_dialog(ui, "Adicionar som", &g_add.open, .width = 480) {
         if (!g_add.loaded) {
-            cui_text(ui, g_add.err[0] ? g_add.err : "Escolha um arquivo de áudio ou vídeo.", .color = g_add.err[0] ? CUI_RGB(0xfca5a5) : B_MUTED, .size = 13);
+            cui_text(ui, g_add.converting ? "Lendo o OGG…" : g_add.err[0] ? g_add.err : "Escolha um arquivo de áudio ou vídeo.", .color = g_add.err[0] ? CUI_RGB(0xfca5a5) : B_MUTED, .size = 13);
             cui_dialog_footer(ui) {
                 if (cui_button(ui, "Fechar", .variant = CUI_BUTTON_SECONDARY)) g_add.open = false;
                 if (cui_button(ui, "Procurar arquivo", .variant = CUI_BUTTON_PRIMARY)) pick_file();
@@ -776,8 +806,9 @@ void sons_script(app_state_t *s, const char *cmd, const char *arg) {
         for (int i = 0; i < 6; i++) { son_t *x = &g_s[g_n++]; memset(x, 0, sizeof *x); snprintf(x->hash, sizeof x->hash, "%064d", i + 1); snprintf(x->name, sizeof x->name, "%s", N[i]); snprintf(x->emoji, sizeof x->emoji, "%s", E[i]); snprintf(x->scope, sizeof x->scope, "me"); snprintf(x->fmt, sizeof x->fmt, "wav"); x->size = 40000; x->dur_ms = 1200 + (unsigned)i * 300; x->have = true; x->fav = i == 0; x->uses = i * 2; }
         g_loaded = true;
     } else if (!strcmp(cmd, "add")) {   /* sons add <arquivo>: abre o editor já com o arquivo carregado (sem janela de escolha) */
-        const bool ok = arg && arg[0] && editor_load(arg); g_add.open = true; if (!ok) { ed_free(); snprintf(g_add.err, sizeof g_add.err, "Não consegui ler o áudio desse arquivo."); }
-    } else if (!strcmp(cmd, "trim")) { float a2 = 0, b2 = 0; if (arg && sscanf(arg, "%f %f", &a2, &b2) == 2 && g_add.loaded) { g_add.start_ms = a2; g_add.end_ms = b2; } }   /* sons trim <ini_ms> <fim_ms> */
+        if (arg && arg[0]) begin_load(arg, false); else { g_add.open = true; }
+    } else if (!strcmp(cmd, "oggdone")) { char e[2200], l[2500]; json_escape(arg ? arg : "", e, sizeof e); snprintf(l, sizeof l, "{\"ev\":\"sound.decoded\",\"ok\":true,\"wav\":\"%s\"}", e); jval *j = json_parse(l); if (j) { ogg_done(j); json_free(j); } }   /* sons oggdone <wav>: o que o core responderia a sound.ogg */
+    else if (!strcmp(cmd, "trim")) { float a2 = 0, b2 = 0; if (arg && sscanf(arg, "%f %f", &a2, &b2) == 2 && g_add.loaded) { g_add.start_ms = a2; g_add.end_ms = b2; } }   /* sons trim <ini_ms> <fim_ms> */
     else if (!strcmp(cmd, "vol")) { if (arg && g_add.loaded) g_add.vol = (float)atof(arg); }
     else if (!strcmp(cmd, "export")) { char out[1040] = "", err[200] = ""; if (arg && g_add.loaded) { snprintf(out, sizeof out, "%s", arg); if (!export_sel(out, sizeof out, err, sizeof err)) fprintf(stderr, "sons export: %s\n", err); } }   /* sons export <saida.mp3|.wav> */
     else if (!strcmp(cmd, "ack")) g_add.ack = true;

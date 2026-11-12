@@ -34,6 +34,7 @@ livekit-protocol = "=0.8.2"
 prost = "0.14"
 env-libvpx-sys = { version = "5", optional = true }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+lewton = "0.10.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

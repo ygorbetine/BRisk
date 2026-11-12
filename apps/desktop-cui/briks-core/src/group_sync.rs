@@ -171,7 +171,7 @@ pub fn check_sounds(s: &Snapshot) -> Result<()> {
         if !crate::sons::valid_hash(&e.hash) || !seen.insert(e.hash.clone()) { return Err(anyhow!("som inválido ou repetido no catálogo")); }
         if crate::sons::clean_name(&e.name).as_deref() != Some(e.name.as_str()) { return Err(anyhow!("nome de som inválido")); }
         if e.emoji.len() > crate::sons::MAX_EMOJI_BYTES || e.emoji.chars().any(|c| c.is_control()) { return Err(anyhow!("emoji de som inválido")); }
-        if e.size == 0 || e.size > crate::sons::MAX_BYTES || e.dur_ms == 0 || e.dur_ms > crate::sons::MAX_MS { return Err(anyhow!("som fora dos limites (8 s, 512 KB)")); }
+        if e.size == 0 || e.size > crate::sons::MAX_BYTES || e.dur_ms == 0 || e.dur_ms > crate::sons::MAX_MS + crate::sons::MP3_PAD_MS { return Err(anyhow!("som fora dos limites (15 s, 512 KB)")); }
         if e.by.chars().count() > 12 || e.by.chars().any(|c| c.is_control()) { return Err(anyhow!("autor de som inválido")); }
     }
     if serde_json::to_string(s).map(|t| t.len()).unwrap_or(usize::MAX) > MAX_SNAPSHOT_WITH_SOUNDS { return Err(anyhow!("o catálogo de sons deixa o grupo grande demais para o canal de dados: apague alguns sons")); }
@@ -396,7 +396,7 @@ mod tests {
         assert!(check_structure(&mk((0..51).map(entry).collect())).unwrap_err().to_string().contains("máximo 50"));
         let mut dup = vec![entry(1), entry(1)]; assert!(check_structure(&mk(dup.clone())).is_err(), "repetido"); dup.pop();
         let mut e = entry(1); e.hash = "ABC".into(); assert!(check_structure(&mk(vec![e])).is_err(), "hash inválido");
-        let mut e = entry(1); e.dur_ms = 8001; assert!(check_structure(&mk(vec![e])).is_err(), "longo");
+        let mut e = entry(1); e.dur_ms = 15200; assert!(check_structure(&mk(vec![e])).is_err(), "longo");
         let mut e = entry(1); e.size = 512 * 1024 + 1; assert!(check_structure(&mk(vec![e])).is_err(), "grande");
         let mut e = entry(1); e.name = "  ".into(); assert!(check_structure(&mk(vec![e])).is_err(), "sem nome");
         let mut e = entry(1); e.emoji = "x".repeat(40); assert!(check_structure(&mk(vec![e])).is_err(), "emoji");

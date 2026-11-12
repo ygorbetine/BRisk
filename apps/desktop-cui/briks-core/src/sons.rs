@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 pub const MAX_BYTES: u64 = 512 * 1024;
 pub const MAX_MS: u32 = 15_000;
 /// folga de codificador: um MP3 de exatamente 15 s sai com ~50 ms de preenchimento do próprio codificador
-const MP3_PAD_MS: u32 = 150;
+pub const MP3_PAD_MS: u32 = 150;
 pub const MAX_PER_GROUP: usize = 50;
 pub const MAX_MINE: usize = 200;
 pub const MAX_NAME_CHARS: usize = 32;
@@ -410,6 +410,33 @@ impl Store {
     }
 }
 
+/// Decodifica OGG Vorbis (sem depender das "Extensões de mídia da Web" do Windows) para um WAV PCM16 temporário que o editor da UI abre.
+/// No máximo 120 s. Devolve o caminho do WAV.
+pub fn ogg_to_wav(path: &Path) -> Result<PathBuf> {
+    use lewton::inside_ogg::OggStreamReader;
+    let f = std::fs::File::open(path).map_err(|_| anyhow!("não consegui abrir o arquivo"))?;
+    let mut rd = OggStreamReader::new(std::io::BufReader::new(f)).map_err(|_| anyhow!("não é um OGG Vorbis válido"))?;
+    let (ch, rate) = (rd.ident_hdr.audio_channels as usize, rd.ident_hdr.audio_sample_rate);
+    if ch == 0 || ch > 2 || !(8000..=192_000).contains(&rate) { return Err(anyhow!("formato de áudio não suportado")); }
+    let cap = rate as usize * ch * 120;
+    let mut pcm: Vec<i16> = Vec::new();
+    while pcm.len() < cap {
+        match rd.read_dec_packet_itl() { Ok(Some(p)) => pcm.extend_from_slice(&p), Ok(None) => break, Err(_) => return Err(anyhow!("OGG corrompido")) }
+    }
+    pcm.truncate(cap);
+    if pcm.is_empty() { return Err(anyhow!("OGG sem áudio")); }
+    let data = (pcm.len() * 2) as u32;
+    let mut w = Vec::with_capacity(44 + data as usize);
+    w.extend_from_slice(b"RIFF"); w.extend_from_slice(&(36 + data).to_le_bytes()); w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes()); w.extend_from_slice(&1u16.to_le_bytes()); w.extend_from_slice(&(ch as u16).to_le_bytes());
+    w.extend_from_slice(&rate.to_le_bytes()); w.extend_from_slice(&(rate * ch as u32 * 2).to_le_bytes()); w.extend_from_slice(&((ch * 2) as u16).to_le_bytes()); w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data"); w.extend_from_slice(&data.to_le_bytes());
+    for s in &pcm { w.extend_from_slice(&s.to_le_bytes()); }
+    let out = std::env::temp_dir().join(format!("briks-ogg-{}.wav", uuid::Uuid::new_v4()));
+    std::fs::write(&out, &w).map_err(|_| anyhow!("não consegui gravar o áudio temporário"))?;
+    Ok(out)
+}
+
 /// Comandos da UI que só mexem no armazenamento local (a rede está em `sonsnet.rs`). Devolve os eventos de resposta.
 pub fn handle(store: &Arc<Mutex<Store>>, v: &Value, my_fp: &str) -> Vec<Value> {
     let s = |k: &str| v[k].as_str().unwrap_or("");
@@ -456,6 +483,10 @@ pub fn handle(store: &Arc<Mutex<Store>>, v: &Value, my_fp: &str) -> Vec<Value> {
             }
         }
         "sound.prefs" => { st.set_prefs(v); let mut l = st.snapshot(); l["ev"] = "sound.list".into(); vec![l] }
+        "sound.ogg" => vec![match ogg_to_wav(Path::new(s("path"))) {
+            Ok(w) => json!({ "ev": "sound.decoded", "ok": true, "path": s("path"), "wav": w.to_string_lossy() }),
+            Err(e) => json!({ "ev": "sound.decoded", "ok": false, "path": s("path"), "message": e.to_string() }),
+        }],
         "sound.path" => vec![json!({ "ev": "sound.path", "hash": s("hash"), "path": st.path(s("hash")).map(|p| p.to_string_lossy().to_string()) })],
         _ => vec![],
     }
@@ -722,5 +753,19 @@ mod tests_ipc {
         let p = std::env::var("BRIKS_PROBE_FILE").expect("defina BRIKS_PROBE_FILE");
         let b = std::fs::read(&p).unwrap();
         match probe(&b) { Ok(x) => println!("OK {} bytes, {} ms, formato {}", b.len(), x.dur_ms, x.format.ext()), Err(e) => panic!("recusado: {e}") }
+    }
+
+    #[test]
+    fn real_ogg_vorbis_is_decoded_to_a_valid_wav_without_system_codecs() {
+        let d = std::env::temp_dir().join(format!("briks-ogg-{}", uuid::Uuid::new_v4())); std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("som.ogg"); std::fs::write(&f, include_bytes!("../testdata/som.ogg")).unwrap();
+        let wav = ogg_to_wav(&f).expect("decodifica");
+        let b = std::fs::read(&wav).unwrap();
+        let p = probe(&b).expect("o WAV gerado é válido");
+        assert!(p.dur_ms > 100 && p.dur_ms < 15_000, "duração plausível: {} ms", p.dur_ms);
+        let _ = std::fs::remove_file(&wav);
+        std::fs::write(&f, b"OggS nao e vorbis").unwrap();
+        assert!(ogg_to_wav(&f).is_err(), "arquivo que não é Vorbis é recusado");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

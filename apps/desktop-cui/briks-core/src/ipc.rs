@@ -575,7 +575,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let set: std::collections::BTreeSet<String> = v["fps"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|f| !f.is_empty() && f.len() <= 100).take(200).map(String::from).collect()).unwrap_or_default();
                         st.lock().unwrap().roster = if set.is_empty() { None } else { Some(set) };
                     }
-                    c if c.starts_with("sound.") && matches!(c, "sound.list" | "sound.check" | "sound.import" | "sound.update" | "sound.fav" | "sound.remove" | "sound.prefs" | "sound.path" | "sound.catalog") => {
+                    c if c.starts_with("sound.") && matches!(c, "sound.list" | "sound.check" | "sound.import" | "sound.update" | "sound.fav" | "sound.remove" | "sound.prefs" | "sound.path" | "sound.catalog" | "sound.ogg") => {
                         let store = crate::sons::shared_for(&cfg.data_dir);
                         let my_fp = identity.as_ref().map(|i| i.fingerprint()).unwrap_or_default();
                         for ev in crate::sons::handle(&store, &v, &my_fp) {

@@ -54,3 +54,11 @@ expect sons_ed_clip_ms 4000
 snap k6
 sons ack
 waitms 300
+# OGG: o core decodifica (Vorbis embutido) e devolve um WAV temporario; o editor abre esse WAV e mostra o nome do arquivo OGG
+sons add C:/nao-existe/som.ogg
+waitms 300
+expect sons_ed_loaded 0
+sons oggdone {ASSETS}/som-teste.wav
+waitms 400
+expect sons_ed_loaded 1
+expect sons_ed_dur_ms 16500

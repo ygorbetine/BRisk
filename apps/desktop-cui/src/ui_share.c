@@ -229,7 +229,8 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
     } else if (jint(j, "slot") == 1 && (!strcmp(ev, "share.local") || !strcmp(ev, "share.stats") || !strcmp(ev, "share.hint") || !strcmp(ev, "share.rxstats") || !strcmp(ev, "share.remote"))) {
         /* 2ª tela (segundo monitor): estado próprio, mais enxuto que o da 1ª */
         if (!strcmp(ev, "share.local")) {
-            if (!strcmp(json_str(j, "state", ""), "on")) { q->second.active = true; q->second.starting = false; q->second.w = jint(j, "w"); q->second.h = jint(j, "h"); q->second.fps = jint(j, "fps"); q->second.kbps = jint(j, "kbps"); }
+            if (!strcmp(json_str(j, "state", ""), "on")) { if (!q->second.active && s->screen == SCREEN_CALL) s->call_mode = 1;   /* começou a MINHA 2ª tela: vai para Transmissão (uma vez por início) */
+                q->second.active = true; q->second.starting = false; q->second.w = jint(j, "w"); q->second.h = jint(j, "h"); q->second.fps = jint(j, "fps"); q->second.kbps = jint(j, "kbps"); }
             else { const char *why = json_str(j, "reason", ""); if (why[0]) copy(q->err, sizeof q->err, why); memset(&q->second, 0, sizeof q->second); fv_close(&g_fv[FV2(BRIKS_MAX_PEERS)]); }
         } else if (!strcmp(ev, "share.stats")) { q->second.kbps = jint(j, "kbps"); if (jint(j, "h")) q->second.h = jint(j, "h"); }
         else if (!strcmp(ev, "share.remote")) {
@@ -245,6 +246,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
         }
     } else if (!strcmp(ev, "share.local")) {
         if (!strcmp(json_str(j, "state", ""), "on")) {
+            if (!q->active && s->screen == SCREEN_CALL) s->call_mode = 1;   /* começou a MINHA transmissão: aba Transmissão, uma vez por início (o usuário pode voltar e não é puxado de novo) */
             q->active = true; q->starting = false;
             q->w = jint(j, "w"); q->h = jint(j, "h"); q->cur_fps = jint(j, "fps"); q->kbps = jint(j, "kbps");
             q->audio_on = jbool(j, "audio"); q->hardware = jbool(j, "hardware");
@@ -364,6 +366,15 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     /* ganchos de teste/captura: BRIKS_DEV_SHARE=dialog | dialog-apps | dialog-windows | screen | test (uma vez, com o core pronto) */
     static int dev; const char *d = getenv("BRIKS_DEV_SHARE");
     if (d) cui_request_redraw(ui);
+    if (d && !strcmp(d, "fake-local")) {   /* teste sem core: começa/para/recomeça a MINHA transmissão pelo mesmo tratador de eventos do core (1 s liga, 4 s desliga, 7 s liga, 9 s repete o "on") */
+        static int step; double t = cui_time(ui); const char *ev = NULL;
+        if (step == 0 && t > 1) { step = 1; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":2500}"; }
+        else if (step == 1 && t > 4) { step = 2; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"off\",\"reason\":\"\"}"; }
+        else if (step == 2 && t > 7) { step = 3; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":2500}"; }
+        else if (step == 3 && t > 9) { step = 4; ev = "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"on\",\"w\":1280,\"h\":720,\"fps\":30,\"kbps\":2500}"; }
+        if (ev) { jval *jj = json_parse(ev); if (jj) { share_handle_event(s, jj, "share.local"); json_free(jj); } }
+        cui_request_redraw(ui);
+    }
     if (d && !strcmp(d, "demo-quality")) { static int once; if (!once && cui_time(ui) > 1.0) { once = 1; g_dev_open_quality = true; } }   /* captura sem core: abre a janela de qualidade */
     if (d && core_state() == CORE_READY && s->in_room) {
         if (!strcmp(d, "adapt") && q->active) { static double t0; if (t0 == 0) t0 = cui_time(ui); if (cui_time(ui) - t0 > 3 && dev < 3) { dev = 3; g_dev_open_quality = true; } }

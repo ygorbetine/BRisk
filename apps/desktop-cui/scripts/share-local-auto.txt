@@ -1,0 +1,23 @@
+# Comecar a MINHA transmissao leva a chamada para a aba Transmissao (uma vez por inicio): BRIKS_DEV_SHARE=fake-local (1 s liga, 4 s desliga, 7 s liga, 9 s repete o "on")
+expect share_mode 0
+shot a0-call
+waitms 1800
+expect share_mode 1
+shot a1-auto-transmissao
+click 560 60
+waitms 400
+expect share_mode 0
+shot a2-voltou-call
+waitms 3000
+expect share_mode 0
+# 4 s: a transmissao parou -> nao muda a aba (continua Call); 7 s: nova transmissao -> volta a Transmissao
+waitms 2600
+expect share_mode 1
+shot a3-novo-inicio
+click 560 60
+waitms 400
+expect share_mode 0
+# 9 s: repeticao do "on" com a transmissao ja ativa -> nao puxa de novo
+waitms 3000
+expect share_mode 0
+shot a4-sem-puxar

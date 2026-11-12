@@ -211,6 +211,39 @@ pub fn cpu_ms() -> f64 {
     v(k) + v(u)
 }
 
+/// Fração (0..1) de amostras da luminância (I420, faixa limitada: preto = 16) que são preto. Amostra esparsa: custa ~20 mil leituras
+/// por quadro de 1080p.
+pub fn dark_fraction(y: &[u8]) -> f32 {
+    let (mut dark, mut n) = (0u32, 0u32);
+    for v in y.iter().step_by(97) { if *v <= 20 { dark += 1; } n += 1; }
+    if n == 0 { 0.0 } else { dark as f32 / n as f32 }
+}
+
+/// Guarda de quadro preto: ao trocar de aba no navegador (ou o app trocar de superfície) a captura entrega ~1 s de conteúdo
+/// totalmente preto, com só a moldura da janela visível, antes de o site pintar. Para quem assiste isso parecia "reload". Quando
+/// um quadro quase todo preto aparece logo depois de um quadro normal, ele NÃO é codificado: o último quadro bom segue na tela do
+/// espectador (o reenvio de tela parada o repete) até chegar o novo, por no máximo `MAX_HOLD`; se o preto persistir, é conteúdo
+/// de verdade (jogo, tela escura) e passa.
+pub struct BlackoutGuard { last_good: bool, since: Option<Instant>, pub held: u64 }
+impl BlackoutGuard {
+    pub const MAX_HOLD: Duration = Duration::from_millis(1500);
+    pub const BLACK: f32 = 0.80;
+    pub fn new() -> Self { BlackoutGuard { last_good: false, since: None, held: 0 } }
+    /// `dark` = `dark_fraction` do quadro novo. true = segura (não codifica este quadro).
+    pub fn hold(&mut self, now: Instant, dark: f32) -> bool {
+        if dark < Self::BLACK {
+            self.since = None;
+            if dark < 0.5 { self.last_good = true; }
+            return false;
+        }
+        if !self.last_good { return false; }   // já estava preto (ou nunca houve quadro bom): nada a segurar
+        let t = *self.since.get_or_insert(now);
+        if now.saturating_duration_since(t) < Self::MAX_HOLD { self.held += 1; return true; }
+        self.last_good = false; self.since = None;   // preto persistente: é o conteúdo
+        false
+    }
+}
+
 /// Bitrate do codificador para um orçamento de rede: desconta cabeçalhos RTP/UDP/IP e a folga das retransmissões.
 fn enc_bps(budget: u32) -> u32 { (budget as f64 * 0.85) as u32 }
 
@@ -244,6 +277,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
         let mut since_idr = 0u32;
+        let mut idrs0 = 0u64;
+        let mut trans_win = false;   // nível/codificador mudou na janela atual
         let mut idrs = 0u64;   // quadros-chave forçados (telemetria: rajada de IDR = "reload" no espectador)
         let mut pacer_drops = 0u64;
         let mut just_changed = false;
@@ -251,6 +286,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let (mut black_t, mut black_run, mut black_said) = (Instant::now(), 0u32, false);
         let mut last_idr = Instant::now() - Duration::from_secs(5);
         let mut announce = false;
+        let mut guard = BlackoutGuard::new();
+        let mut held_win = 0u64;   // quadros pretos segurados na janela (telemetria)
         let mut closed_reason = String::new();
         while !st.load(Ordering::Relaxed) {
             if cap.shared.closed.load(Ordering::Relaxed) {
@@ -284,10 +321,11 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     if std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[est] enviado {:.0} kbps | relatorio {:?} | nack {:.3} (perdidos {lost_new}) | est {:.0} kbps motivo {} tol {:.2}", sent_bps / 1000.0, worst, nack_ratio, est.est / 1000.0, est.reason, est.loss_tol); }
                     // o segundo logo depois de uma troca de nível mistura os dois níveis (e a recriação do codificador): não conta
                     if !no_cpu && !std::mem::take(&mut just_changed) { ctl.note_cpu(work_ms, offered, sent_fps); }
-                    if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h); } }
+                    if let Some(e) = enc.as_ref() { if frames >= 1 { ctl.note_encoder(sent_bps, e.bps as f64, sent_fps, e.w, e.h, idrs != idrs0 || trans_win); } }
                     let d = ctl.decide(est.est);
                     if d.level != dec.level {
                         just_changed = true;
+                        trans_win = true;
                         fps = d.level.fps; period = Duration::from_micros(1_000_000 / fps as u64);
                         cap.shared.retarget(fps, d.level.h);
                         if let Some(e) = enc.as_mut() { if !e.set_fps(fps) { enc = None; } }
@@ -301,20 +339,24 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         // Cada criação do MFT da NVIDIA deixa ~4 handles para trás (medido: 40 ciclos, +4,1 por ciclo, mesmo com
                         // Shutdown do MFT e do objeto de ativação), então só recria em queda para menos de 70% e no máximo uma vez
                         // a cada 2 s; o resto vai ao vivo.
-                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(2) { enc = None; recreated = Instant::now(); }
+                        if (want as f64) < e.bps as f64 * 0.7 && recreated.elapsed() >= Duration::from_secs(2) { enc = None; trans_win = true; recreated = Instant::now(); }
                         else if diff > 0.05 && !e.set_bitrate(want) { enc = None; }
                     }
                     dec = d;
                 }
                 let (loss, rtt, jit) = worst.unwrap_or((0.0, 0.0, 0.0));
+                // por que o nível está abaixo do configurado (prova nos logs): "cpu" = sobrecarga local, "conteudo" = o codificador não
+                // obedece o bitrate neste conteúdo (piso de bits por pixel), "rede" = banda estimada
+                let why = if !cfg.adaptive || ctl.idx == 0 { "" } else if dec.cpu_limited || (ctl.cpu_idx > 0 && ctl.cpu_idx >= ctl.idx) { "cpu" } else if ctl.floor_driven { "conteudo" } else { "rede" };
                 let adapting = if !cfg.adaptive { "" } else if dec.cpu_limited || (ctl.cpu_idx > 0 && ctl.cpu_idx >= ctl.idx) { "cpu" } else if ctl.idx > 0 || (dec.bps as f64) < ctl.top_ceil() * 0.9 { "rede" } else { "" };
                 let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (sent_fps * 10.0).round() / 10.0, "kbps": (sent_bps / 1000.0).round(),
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis, "idrs": idrs,
+                    "blackout_held": std::mem::take(&mut held_win), "bpp_floor": (ctl.bpp_floor * 1000.0).round() / 1000.0, "cpu_idx": ctl.cpu_idx, "why": why,
                     "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
-                frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
+                idrs0 = idrs; trans_win = false; frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
             let (yuv, pvw, raw, src) = {
@@ -330,6 +372,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 (None, Some(_)) if last_send.elapsed() >= Duration::from_millis(1000) => held.take().unwrap(),
                 _ => continue,
             };
+            // troca de aba / repintura: não deixa o preto passageiro chegar ao espectador (segura o último quadro bom)
+            if guard.hold(Instant::now(), dark_fraction(&yuv.y)) { held_win += 1; continue; }
             // fila do pacer acima de ~0,3 s do bitrate atual: a rede não dá vazão. Pula este quadro SEM codificar (a cadeia de
             // referência fica intacta; nada de quadro-chave, que só pioraria o congestionamento)
             if let Some(e) = enc.as_ref() { if queued.load(Ordering::Relaxed) * 8 > (e.bps as u64 * 3 / 10).max(250_000) { pacer_drops += 1; held = Some(yuv); continue; } }
@@ -670,5 +714,39 @@ mod jb_tests {
         assert!(jb.pop(t + Duration::from_millis(610)).0.is_empty(), "P sem referência não é entregue");
         jb.push(pk(18, 600, true, true));
         assert_eq!(jb.pop(t + Duration::from_millis(620)).0.len(), 1, "volta no quadro-chave");
+    }
+}
+
+#[cfg(test)]
+mod blackout_tests {
+    use super::*;
+
+    #[test]
+    fn dark_fraction_counts_black_samples() {
+        assert_eq!(dark_fraction(&vec![16u8; 10_000]), 1.0);
+        assert_eq!(dark_fraction(&vec![200u8; 10_000]), 0.0);
+        let mut f = vec![16u8; 10_000]; for v in f.iter_mut().take(1_000) { *v = 200; }   // moldura clara + conteúdo preto
+        let d = dark_fraction(&f); assert!(d > 0.85 && d < 0.95, "{d}");
+    }
+
+    /// Troca de aba: ~1 s de conteúdo preto no meio da transmissão. O preto não pode chegar ao espectador (segura o último
+    /// quadro bom), mas preto de verdade (que não passa) tem de ser entregue depois do prazo.
+    #[test]
+    fn tab_switch_blackout_holds_last_good_frame_then_releases_real_black() {
+        let (mut g, t) = (BlackoutGuard::new(), Instant::now());
+        let ms = |n: u64| t + Duration::from_millis(n);
+        assert!(!g.hold(ms(0), 0.02), "quadro normal passa");
+        // 1 s de preto: todos segurados
+        for k in 1..=25 { assert!(g.hold(ms(k * 40), 0.998), "quadro preto {k} tem de ser segurado"); }
+        assert_eq!(g.held, 25);
+        assert!(!g.hold(ms(1100), 0.65), "o site pintou: passa");
+        // de novo preto, mas agora não passa: depois de 1,5 s é conteúdo e é entregue
+        assert!(g.hold(ms(2000), 0.999));
+        assert!(g.hold(ms(3000), 0.999));
+        assert!(!g.hold(ms(3600), 0.999), "preto persistente é entregue");
+        assert!(!g.hold(ms(3640), 0.999), "e não volta a ser segurado enquanto continua preto");
+        // sem quadro bom anterior (início já preto) também passa
+        let mut g = BlackoutGuard::new();
+        assert!(!g.hold(ms(0), 1.0));
     }
 }

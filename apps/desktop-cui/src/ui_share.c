@@ -173,6 +173,7 @@ void share_open_dialog(app_state_t *s) {
     cmd("{\"cmd\":\"share.audio.list\"}");
 }
 
+static char g_last_err[320];   /* motivo completo da última parada da transmissão (o chip mostra só um resumo) */
 static void send_start(app_state_t *s, const char *kind, const char *id, const char *label) {
     share_state_t *q = &s->sh;
     char line[1024], lab[160], pids[400] = ""; size_t o = 0;
@@ -306,6 +307,11 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             share_stop_second(s);   /* a 2ª tela só existe junto com a 1ª */
             copy(q->err, sizeof q->err, json_str(j, "reason", ""));
         }
+    } else if (!strcmp(ev, "share.encoder")) {
+        /* o core recriou o codificador sozinho (a transmissão continua no ar): só um aviso discreto, nunca um erro */
+        const char *st = json_str(j, "state", "");
+        if (!strcmp(st, "fallback") || !strcmp(st, "software")) { q->hardware = false; settings_notice("Transmissão: o codificador da placa de vídeo falhou várias vezes; usando o codificador por software (a imagem pode ficar mais pesada)."); }
+        else if (!strcmp(st, "recovered")) settings_notice("Transmissão: o codificador de vídeo foi reiniciado automaticamente.");
     } else if (!strcmp(ev, "share.hint")) {
         q->black = !strcmp(json_str(j, "hint", ""), "black");
     } else if (!strcmp(ev, "share.stats")) {
@@ -767,9 +773,10 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             bool adapting = q->active && (q->adapting[0] || q->black);   /* a rede ou o PC apertou: o chip mostra o que está saindo de fato */
             if (failed) cui_icon(ui, CUI_ICON_TRIANGLE_ALERT, 13, B_DANGER);
             else if (adapting) cui_icon(ui, q->black ? CUI_ICON_TRIANGLE_ALERT : !strcmp(q->adapting, "cpu") ? CUI_ICON_CPU : CUI_ICON_TRENDING_DOWN, 13, CUI_RGB(0xf5b942));
-            cui_text(ui, failed ? q->err : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
+            cui_text(ui, failed ? (strlen(q->err) > 46 ? "A transmissão parou · toque para ver o motivo" : q->err) : (q->active && q->black) ? "Imagem preta" : chip, .size = 12, .color = failed ? CUI_RGB(0xffb4b4) : adapting ? CUI_RGB(0xf5d9a0) : B_TEXT, .nowrap = true);
+            if (failed && q->last_kind[0] && !q->starting && cui_button(ui, "Tentar de novo", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { copy(g_last_err, sizeof g_last_err, q->err); q->err[0] = 0; send_start(s, q->last_kind, q->last_id, q->label); }
         }
-        if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; q->err[0] = 0; cui_popover_open(ui, "shq"); }
+        if ((!modal && briks_clicked_r(ui, "q", 25.0f)) || g_dev_open_quality) { g_dev_open_quality = false; if (q->err[0]) copy(g_last_err, sizeof g_last_err, q->err); q->err[0] = 0; cui_popover_open(ui, "shq"); }
             cui_canvas(ui, "shqanchor", CUI_FILL, CUI_PX(1), NULL, NULL, 0);   /* âncora: topo do chip, com a largura dele */
         cui_popover(ui, "shq", .placement = CUI_PLACE_TOP, .width = 520, .pad = 16, .gap = 10) {
             cui_text(ui, "Qualidade da transmissão", .font = CUI_FONT_DISPLAY, .size = 15);
@@ -779,6 +786,8 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             static double apply_at = -1;
             if (quality_controls(ui, q) && q->active) apply_at = cui_time(ui) + 0.4;
             if (apply_at >= 0) { if (!q->active) apply_at = -1; else if (cui_time(ui) >= apply_at) { apply_at = -1; if (q->qsel == 1 && q->second.active) send_start_second(s, q->second.kind, q->second.id, q->second.label); else send_start(s, q->last_kind, q->last_id, q->label); } else cui_request_wakeup(ui, 0.2f); }
+            if (q->active) g_last_err[0] = 0;
+            else if (g_last_err[0]) wrap_line(ui, g_last_err, 12.5f, CUI_RGB(0xffb4b4));   /* por que a transmissão parou (o chip só mostra um resumo) */
             if (q->active) {
                 /* telemetria local, ao vivo */
                 char st[240];

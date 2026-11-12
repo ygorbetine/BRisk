@@ -29,6 +29,7 @@ const char *update_version(void) { return g_version; }
 const char *update_error(void) { return g_error; }
 void update_dismiss(void) { InterlockedExchange(&g_dismissed, 1); }
 bool update_dismissed(void) { return g_dismissed != 0; }
+void update_undismiss(void) { InterlockedExchange(&g_dismissed, 0); }
 const char *update_current_version(void) {
     const char *o = getenv("BRIKS_APP_VERSION");   /* testes: finge ser outra versão */
     return o && o[0] ? o : BRIKS_APP_VERSION;
@@ -255,7 +256,7 @@ bool update_auto_on(void) { return update_enabled(); }
 static unsigned __stdcall update_thread(void *unused) {
     (void)unused;
     const char *w = getenv("BRIKS_UPDATE_DELAY_MS");
-    Sleep(w ? (DWORD)atoi(w) : 15000);
+    Sleep(w ? (DWORD)atoi(w) : 5000);
     for (;;) {
         check_once();
         if (g_phase == UPD_READY) return 0;

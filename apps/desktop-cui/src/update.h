@@ -6,7 +6,7 @@
 
 typedef enum { UPD_IDLE, UPD_CHECKING, UPD_DOWNLOADING, UPD_READY, UPD_ERROR } upd_phase_t;
 
-void update_start(void);                 /* thread de segundo plano: 1ª checagem ~15 s após abrir e a cada 4 h (só no app instalado ou com BRIKS_UPDATE_FEED) */
+void update_start(void);                 /* thread de segundo plano: 1ª checagem ~5 s após abrir e a cada 4 h (só no app instalado ou com BRIKS_UPDATE_FEED) */
 upd_phase_t update_phase(void);
 int update_percent(void);
 const char *update_version(void);        /* versão disponível (quando há) */
@@ -14,6 +14,7 @@ const char *update_error(void);
 const char *update_current_version(void);
 void update_dismiss(void);               /* "Depois": não avisa de novo nesta sessão (a instalação ao fechar continua) */
 bool update_dismissed(void);
+void update_undismiss(void);             /* a seta da barra de título reabre o aviso "pronto para instalar" */
 bool update_install_now(void);           /* inicia o instalador (silencioso, reabre o app); o chamador fecha o app em seguida */
 void update_install_on_exit(void);       /* ao fechar: se há atualização pronta e verificada, instala em silêncio sem reabrir */
 

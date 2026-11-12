@@ -91,6 +91,7 @@ void net_friendly_error(const char *raw, char *out, size_t cap) {
     else if (strstr(low, "dns") || strstr(low, "resolve") || strstr(low, "no such host") || strstr(low, "11001")) m = "Não foi possível encontrar o servidor. Confira a internet e tente de novo.";
     else if (strstr(low, "connection refused") || strstr(low, "10061") || strstr(low, "connect error") || strstr(low, "network is unreachable") || strstr(low, "error sending request")) m = "Sem conexão com o servidor. Confira a internet e tente de novo.";
     else if (strstr(low, "certificate") || strstr(low, "ssl") || strstr(low, "tls")) m = "Não foi possível abrir uma conexão segura. Confira a data e a hora do computador.";
+    else if (strstr(low, "serviço de tokens recusou (401") || strstr(low, "serviço de tokens recusou (403")) m = "O servidor de chamadas recusou o acesso desta conta. Saia e entre de novo no Briks; se continuar, use P2P.";   /* não é senha: é a sessão/instalação que o servidor de chamadas não aceitou */
     else if (strstr(low, "401") || strstr(low, "unauthorized") || strstr(low, "invalid login")) m = "E-mail ou senha incorretos.";
     else if (strstr(low, "429") || strstr(low, "too many")) m = "Muitas tentativas seguidas. Espere um pouco e tente de novo.";
     else if (strstr(low, "500") || strstr(low, "502") || strstr(low, "503") || strstr(low, "504")) m = "O servidor está com problemas agora. Tente de novo em alguns minutos.";

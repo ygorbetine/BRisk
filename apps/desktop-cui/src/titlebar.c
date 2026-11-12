@@ -25,6 +25,8 @@ enum { TBA_MIN = 0, TBA_MAX = 1, TBA_CLOSE = 2 };
 static float g_scale = 1.0f;
 static int g_count[3], g_last = -1, g_drag_hint;
 static HWND g_hwnd;
+static int g_upd_clicks;
+static bool g_upd_visible;
 
 static float scale(void) { return g_scale < 0.5f ? 1.0f : g_scale; }
 
@@ -53,7 +55,8 @@ int titlebar_hit(int cx, int cy, int w, int h, bool maximized, float sc) {
     if (t && l) return HTTOPLEFT; if (t && r) return HTTOPRIGHT; if (b && l) return HTBOTTOMLEFT; if (b && r) return HTBOTTOMRIGHT;
     if (l) return HTLEFT; if (r) return HTRIGHT; if (t) return HTTOP; if (b) return HTBOTTOM;
     if (cy < bar) {
-        const int btns = (int)((3 * TB_BW + 2 * TB_GAP + TB_MARGIN) * sc + 0.5f);
+        const int nb = g_upd_visible ? 4 : 3;   /* a seta de atualização também é cliente, não arrasto */
+        const int btns = (int)((nb * TB_BW + (nb - 1) * TB_GAP + TB_MARGIN) * sc + 0.5f);
         return cx >= w - btns ? HTCLIENT : HTCAPTION;
     }
     return HTCLIENT;
@@ -121,6 +124,18 @@ void titlebar_draw(cui_ctx *ui, app_state_t *s) {
         cui_text(ui, v, .size = 12, .color = B_MUTED, .nowrap = true);
         cui_box(ui, .width = CUI_FILL, .height = CUI_PX(1)) {}   /* empurra os botões para a direita; a faixa é arrastável (HTCAPTION) */
         cui_row(ui, .gap = TB_GAP, .align = CUI_ALIGN_CENTER) {
+            /* Seta de atualização: aparece quando há versão baixando ou pronta; clicar reabre o aviso com "Reiniciar e instalar" (nunca instala sozinho, para não derrubar uma chamada). */
+            const upd_phase_t up = update_phase();
+            g_upd_visible = up == UPD_READY || up == UPD_DOWNLOADING;
+            if (up == UPD_READY || up == UPD_DOWNLOADING) {
+                const bool hov = tb_inside(ui, "tb-upd"), ready = up == UPD_READY;
+                cui_box(ui, .id = "tb-upd", .width = CUI_PX(TB_BW), .height = CUI_PX(TB_BH), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
+                        .bg = hov ? CUI_RGBA(0xffffff1f) : CUI_RGBA(0x00000000)) {
+                    cui_icon(ui, CUI_ICON_DOWNLOAD, 15, ready ? B_ONLINE : B_MUTED);
+                }
+                if (up == UPD_DOWNLOADING) cui_request_wakeup(ui, 0.5f);
+                if (hov && cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) { g_upd_clicks++; if (ready) update_undismiss(); }
+            }
             if (tb_btn(ui, "tb-min", CUI_ICON_MINUS, false)) titlebar_action(TBA_MIN);
             if (tb_btn(ui, "tb-max", max ? CUI_ICON_COPY : CUI_ICON_SQUARE, false)) titlebar_action(TBA_MAX);
             if (tb_btn(ui, "tb-close", CUI_ICON_X, true)) titlebar_action(TBA_CLOSE);
@@ -133,6 +148,7 @@ int titlebar_probe(const char *n) {
     if (!strcmp(n, "tb_max")) return g_count[TBA_MAX];
     if (!strcmp(n, "tb_close")) return g_count[TBA_CLOSE];
     if (!strcmp(n, "tb_last")) return g_last;
+    if (!strcmp(n, "tb_upd_clicks")) return g_upd_clicks;
     if (!strcmp(n, "tb_h")) return (int)(TB_H * scale() + 0.5f);
     if (!strcmp(n, "tb_nc_client")) {   /* o cliente cobre a janela toda? (sem moldura do sistema) */
         RECT w, c; if (!g_hwnd || !GetWindowRect(g_hwnd, &w) || !GetClientRect(g_hwnd, &c)) return -1;

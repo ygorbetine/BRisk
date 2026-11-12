@@ -197,6 +197,7 @@
     { "id": "msg-fixadas-min", "demo": "msgs", "roteiro": "msg-fixadas-min.txt", "env": { "BRIKS_WINDOW": "560x480", "BRIKS_TEXT_SIZE": "3" }, "checagens": [] },
     { "id": "msg-galeria", "demo": "msgs", "roteiro": "msg-galeria.txt", "env": { "BRIKS_DEMO_ATTACH": "1", "BRIKS_DEMO_GALERIA": "1" }, "checagens": [
       { "item": ["MSG-10", "MSG-11"], "de": "g0", "para": "g1", "esperado": "muda" } ] },
+    { "id": "msg-anexo-previa", "demo": "msgs", "roteiro": "msg-anexo-previa.txt", "env": { "BRIKS_DEMO_ATTACH": "1", "BRIKS_DEMO_ATTACH_IMG": "assets/login/discord.png" }, "checagens": [] },
     { "id": "campos-menu", "demo": "msgs", "roteiro": "campos-menu.txt", "env": { "BRIKS_FAKE_CLIPBOARD": "1" }, "checagens": [
       { "item": "BAS-02", "de": "c1", "para": "c2", "esperado": "muda" },
       { "item": "BAS-02", "de": "c2", "para": "c3", "esperado": "muda" },

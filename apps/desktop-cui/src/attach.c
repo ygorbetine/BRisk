@@ -395,6 +395,34 @@ static void tl_add(const app_state_t *s, const char *xid, const xf_t *x) {
     snprintf(t->path, sizeof t->path, "%s", x->path); tl_clean(t->path);
     t->size = x->size; t->mine = x->mine; tl_save();
 }
+/* 1.4.2: pré-visualização inline de imagem (png/jpg/jpeg/bmp) no cartão do anexo. Carrega o arquivo uma vez (só quando o cartão é desenhado), guarda até 12
+ * texturas (a menos usada sai) e nunca decodifica arquivo acima de 20 MB. Vídeo e áudio ficam para a 1.4.3. Se o arquivo sumiu, o cartão fica como era. */
+typedef struct { char path[MAX_PATH]; cui_texture tex; int w, h; bool failed; ULONGLONG used; } pv_t;
+#define NPV 12
+static pv_t g_pv[NPV];
+bool attach_is_image_name(const char *name) {
+    const char *dot = strrchr(name, '.'); if (!dot) return false;
+    return !_stricmp(dot, ".png") || !_stricmp(dot, ".jpg") || !_stricmp(dot, ".jpeg") || !_stricmp(dot, ".bmp");
+}
+static pv_t *pv_get(cui_ctx *ui, const char *path, double size) {
+    int slot = -1, lru = 0;
+    for (int i = 0; i < NPV; i++) { if (g_pv[i].path[0] && !strcmp(g_pv[i].path, path)) { g_pv[i].used = GetTickCount64(); return g_pv[i].failed ? NULL : &g_pv[i]; } }
+    for (int i = 0; i < NPV; i++) { if (!g_pv[i].path[0]) { slot = i; break; } if (g_pv[i].used < g_pv[lru].used) lru = i; }
+    if (slot < 0) { slot = lru; if (g_pv[slot].tex) cui_image_destroy(ui, g_pv[slot].tex); }
+    pv_t *p = &g_pv[slot]; memset(p, 0, sizeof *p); snprintf(p->path, sizeof p->path, "%s", path); p->used = GetTickCount64();
+    WIN32_FILE_ATTRIBUTE_DATA fa; unsigned long long sz = 0;
+    if (GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) sz = ((unsigned long long)fa.nFileSizeHigh << 32) | fa.nFileSizeLow; else { p->failed = true; return NULL; }
+    if (sz == 0 || sz > 20ull * 1024 * 1024 || (size > 0 && size > 20.0 * 1024 * 1024)) { p->failed = true; return NULL; }
+    p->tex = cui_image_load(ui, path, &p->w, &p->h);
+    if (!p->tex || p->w <= 0 || p->h <= 0) { p->failed = true; p->tex = 0; return NULL; }
+    return p;
+}
+int attach_preview_count(void) { int n = 0; for (int i = 0; i < NPV; i++) if (g_pv[i].tex) n++; return n; }
+static void pv_draw(cui_ctx *ui, pv_t *p, float maxw, float maxh) {
+    float sc = fminf(maxw / (float)p->w, maxh / (float)p->h); if (sc > 1.0f) sc = 1.0f;
+    cui_image(ui, p->tex, .width = CUI_PX(floorf((float)p->w * sc)), .height = CUI_PX(floorf((float)p->h * sc)), .radius = 10);
+}
+
 /* ordena por horário (ISO UTC compara como texto): desenha os itens desta conversa com horário < until (NULL = todos) a partir de *cur */
 void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
     tl_load();
@@ -405,8 +433,11 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
         if (!attach_search_match(t->name)) continue;
         char a[24]; cui_push_id_int(ui, 9000 + *cur);
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = t->mine ? CUI_JUSTIFY_END : CUI_JUSTIFY_START) {
-            cui_box(ui, .dir = CUI_ROW, .max_width = 420, .pad = 10, .gap = 10, .radius = 16, .bg = t->mine ? g_th.bubble_own : B_GLASS_CARD, .border = 1,
-                    .border_color = t->mine ? CUI_RGBA(0xffffff26) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
+            pv_t *pvw = (t->path[0] && attach_is_image_name(t->name)) ? pv_get(ui, t->path, t->size) : NULL;
+            cui_box(ui, .dir = pvw ? CUI_COLUMN : CUI_ROW, .max_width = 420, .pad = 10, .gap = 10, .radius = 16, .bg = t->mine ? g_th.bubble_own : B_GLASS_CARD, .border = 1,
+                    .border_color = t->mine ? CUI_RGBA(0xffffff26) : B_GLASS_BORDER, .align = pvw ? CUI_ALIGN_START : CUI_ALIGN_CENTER) {
+                if (pvw) pv_draw(ui, pvw, 300, 220);
+                cui_box(ui, .dir = CUI_ROW, .gap = 10, .align = CUI_ALIGN_CENTER, .width = pvw ? CUI_FILL : CUI_FIT) {
                 cui_box(ui, .width = CUI_PX(40), .height = CUI_PX(40), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 18, B_C3); }
                 cui_box(ui, .gap = 2, .max_width = 250) {
                     cui_text(ui, t->name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
@@ -418,6 +449,7 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
                     if (cui_icon_button(ui, CUI_ICON_FOLDER, .size = CUI_SIZE_SM, .tooltip = "Mostrar na pasta")) {
                         char arg[MAX_PATH + 16]; snprintf(arg, sizeof arg, "/select,\"%s\"", t->path); ShellExecuteA(NULL, "open", "explorer.exe", arg, NULL, SW_SHOWNORMAL);
                     }
+                }
                 }
             }
         }
@@ -642,6 +674,11 @@ void attach_demo(app_state_t *s) {
     tl_t *t0 = &g_tl[0]; memset(t0, 0, sizeof *t0); t0->used = true; snprintf(t0->xid, sizeof t0->xid, "d1"); snprintf(t0->conv, sizeof t0->conv, "*"); snprintf(t0->when, sizeof t0->when, "2000-01-01T00:00:00.000Z");
     snprintf(t0->name, sizeof t0->name, "contrato-assinado.pdf"); t0->size = 1.2 * 1048576; snprintf(t0->path, sizeof t0->path, "C:/Users/demo/contrato-assinado.pdf");
     tl_t *t1 = &g_tl[1]; *t1 = *t0; snprintf(t1->xid, sizeof t1->xid, "d2"); snprintf(t1->name, sizeof t1->name, "capturas-da-tela.zip"); t1->size = 14.5 * 1048576; t1->mine = true;
+    if (getenv("BRIKS_DEMO_ATTACH_IMG")) {   /* 1.4.2: anexo de imagem real com pré-visualização inline (caminho da imagem no env; o arquivo "faltando" mostra o cartão simples) */
+        tl_t *t2 = &g_tl[2]; *t2 = *t0; snprintf(t2->xid, sizeof t2->xid, "d3"); snprintf(t2->name, sizeof t2->name, "foto.png"); t2->size = 40 * 1024; t2->mine = false;
+        snprintf(t2->path, sizeof t2->path, "%s", getenv("BRIKS_DEMO_ATTACH_IMG"));
+        tl_t *t3 = &g_tl[3]; *t3 = *t2; snprintf(t3->xid, sizeof t3->xid, "d4"); snprintf(t3->name, sizeof t3->name, "sumiu.png"); snprintf(t3->path, sizeof t3->path, "C:/nao/existe/sumiu.png");
+    }
     snprintf(g_ty[0].name, sizeof g_ty[0].name, "Marina Costa"); g_ty[0].until = GetTickCount() + 600000;
 }
 
@@ -764,6 +801,7 @@ int attach_probe(const char *n) {
         for (int i = g_ps->msg_count - 1, k = 0; i >= 0; i--) if (g_ps->msgs[i].mine && k++ == atoi(n + 10)) return attach_state(g_ps->msgs[i].id);
         return 0;
     }
+    if (!strcmp(n, "pv_count")) return attach_preview_count();   /* 1.4.2: imagens com pré-visualização carregada */
     if (!strcmp(n, "pal_len")) return (int)strlen(g_pal_q);
     return -1;
 }

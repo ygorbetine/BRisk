@@ -346,6 +346,25 @@ impl Store {
         removed
     }
 
+    /// Espelha o catálogo assinado de um grupo no índice local: entradas novas entram (sem arquivo ainda), as que saíram do catálogo
+    /// saem daqui, favorito e uso são mantidos. Devolve os hashes cujo arquivo falta.
+    pub fn sync_catalog(&mut self, group: &str, entries: &[crate::group_sync::SoundEntry]) -> Vec<String> {
+        let scope = format!("g:{group}");
+        let old: HashMap<String, Item> = self.items.iter().filter(|i| i.scope == scope).map(|i| (i.hash.clone(), i.clone())).collect();
+        let keep: BTreeSet<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
+        let gone: Vec<String> = old.keys().filter(|h| !keep.contains(h.as_str())).cloned().collect();
+        for h in &gone { self.remove(h, &scope); }
+        for e in entries.iter().take(MAX_PER_GROUP) {
+            if !valid_hash(&e.hash) { continue; }
+            match self.items.iter_mut().find(|i| i.hash == e.hash && i.scope == scope) {
+                Some(it) => { it.name = e.name.clone(); it.emoji = e.emoji.clone(); it.by = e.by.clone(); }
+                None => self.items.push(Item { hash: e.hash.clone(), name: e.name.clone(), emoji: e.emoji.clone(), scope: scope.clone(), by: e.by.clone(), size: e.size, dur_ms: e.dur_ms, fmt: String::new(), fav: false, uses: 0, last_ms: 0, added_ms: now_ms() }),
+            }
+        }
+        self.save();
+        self.items.iter().filter(|i| i.scope == scope && !self.has(&i.hash)).map(|i| i.hash.clone()).collect()
+    }
+
     /// Apaga do cache os arquivos que nenhum item usa, os menos recentes primeiro, até caber em `max` bytes.
     pub fn cleanup(&mut self, max: u64) {
         let used: BTreeSet<String> = self.items.iter().map(|i| i.hash.clone()).collect();
@@ -374,7 +393,7 @@ impl Store {
 
     /// Fotografia para a UI: itens (com `have`), preferências e a pasta.
     pub fn snapshot(&self) -> Value {
-        let items: Vec<Value> = self.items.iter().map(|i| { let mut v = serde_json::to_value(i).unwrap_or(Value::Null); v["have"] = self.has(&i.hash).into(); v }).collect();
+        let items: Vec<Value> = self.items.iter().map(|i| { let mut v = serde_json::to_value(i).unwrap_or(Value::Null); let p = self.file_for(&i.hash); v["have"] = p.is_some().into(); if i.fmt.is_empty() { if let Some(e) = p.as_ref().and_then(|p| p.extension()) { v["fmt"] = e.to_string_lossy().to_string().into(); } } v }).collect();
         json!({ "items": items, "prefs": { "volume": self.prefs.volume, "muted": self.prefs.muted, "all_muted": self.prefs.all_muted, "cooldown_ms": self.prefs.cooldown_ms } })
     }
 
@@ -422,6 +441,17 @@ pub fn handle(store: &Arc<Mutex<Store>>, v: &Value, my_fp: &str) -> Vec<Value> {
             let mut l = st.snapshot(); l["ev"] = "sound.list".into();
             if let Err(e) = r { l["error"] = e.to_string().into(); }
             vec![l]
+        }
+        "sound.catalog" => {
+            // catálogo de sons de um grupo, vindo do snapshot assinado que a UI confia: confere estrutura + assinatura aqui também
+            match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()).map_err(|_| anyhow!("grupo inválido")).and_then(|sn| crate::group_sync::verify_signature(&sn).map(|_| sn)) {
+                Ok(sn) => {
+                    let missing = st.sync_catalog(&sn.group_id, &sn.sounds);
+                    let mut l = st.snapshot(); l["ev"] = "sound.list".into(); l["missing"] = json!(missing); l["group_id"] = sn.group_id.into();
+                    vec![l]
+                }
+                Err(e) => vec![json!({ "ev": "sound.catalog", "ok": false, "message": e.to_string() })],
+            }
         }
         "sound.prefs" => { st.set_prefs(v); let mut l = st.snapshot(); l["ev"] = "sound.list".into(); vec![l] }
         "sound.path" => vec![json!({ "ev": "sound.path", "hash": s("hash"), "path": st.path(s("hash")).map(|p| p.to_string_lossy().to_string()) })],
@@ -599,6 +629,34 @@ mod tests {
         assert!(s.has(&keep.hash), "item do índice nunca sai");
         assert!(!s.has(&ha), "o mais antigo saiu");
         assert!(s.has(&hb));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn catalog_sync_mirrors_entries_reports_missing_and_keeps_favorites() {
+        use crate::group_sync::SoundEntry;
+        let d = tmpdir("cat");
+        let mut s = Store::open(&d);
+        let w = wav(900, 0.3);
+        let have = sha256_hex(&w);
+        s.put_received(&have, &w).unwrap();
+        let e = |h: &str, n: &str| SoundEntry { hash: h.into(), name: n.into(), emoji: "🎺".into(), size: 100, dur_ms: 900, by: "abc".into() };
+        let miss = sha256_hex(b"faltando");
+        let missing = s.sync_catalog("g1", &[e(&have, "Tenho"), e(&miss, "Falta")]);
+        assert_eq!(missing, vec![miss.clone()]);
+        assert_eq!(s.items().iter().filter(|i| i.scope == "g:g1").count(), 2);
+        s.set_fav(&have, "g:g1", true);
+        let missing = s.sync_catalog("g1", &[e(&have, "Renomeado")]);
+        assert!(missing.is_empty());
+        let it = s.find(&have).unwrap();
+        assert!(it.fav && it.name == "Renomeado", "favorito sobrevive e o nome acompanha o catálogo");
+        assert!(s.find(&miss).is_none(), "saiu do catálogo, sai do índice");
+        let snap = s.snapshot();
+        assert_eq!(snap["items"][0]["have"], true); assert_eq!(snap["items"][0]["fmt"], "wav");
+        // outro grupo e Meus sons não são tocados
+        s.import_bytes(&wav(1000, 0.3), "meu", "", "me", "").unwrap();
+        s.sync_catalog("g1", &[]);
+        assert_eq!(s.items().len(), 1);
         let _ = std::fs::remove_dir_all(&d);
     }
 

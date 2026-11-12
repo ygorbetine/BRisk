@@ -523,11 +523,11 @@ fn rpc(st: &mut FakeState, name: &str, me: &str, b: &Value) -> Resp {
         }
         "group_invite_lookup" => {
             let used = st.invite_lookups.entry(me.to_string()).or_insert(0);
-            if *used >= 30 { return pg("rate_limited"); }
+            if *used >= 30 { return ok(json!({ "error": "rate_limited" })); }   // 0011: erro devolvido como jsonb, a tentativa fica contada
             *used += 1;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + st.clock_skew;
             let want = b["p_code"].as_str().unwrap_or("");
-            let Some(i) = st.invites.iter().position(|v| v.0 == want && v.3 > now && v.4 < v.5) else { return pg("invite_not_found") };
+            let Some(i) = st.invites.iter().position(|v| v.0 == want && v.3 > now && v.4 < v.5) else { return ok(json!({ "error": "invite_not_found" })) };
             st.invites[i].4 += 1;
             ok(json!({ "package": st.invites[i].1, "uses_left": st.invites[i].5 - st.invites[i].4 }))
         }

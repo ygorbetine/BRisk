@@ -22,7 +22,7 @@ foreach ($c in $Casos) {
     $e["BRIKS_DEV_SHARE"] = $(if ($c -eq "mini") { "demo-mini" } elseif ($c -eq "previa") { "demo-self" } elseif ($c -eq "sheen") { "demo-sheen" } elseif ($c -eq "lateral") { "demo-two" } elseif ($c -eq "zoom") { "demo-zoom" } elseif ($c -eq "duas") { "demo-two" } elseif ($c -eq "grade" -or $c -eq "gradefoco") { "demo-many" } elseif ($c -eq "qualidade") { "demo-quality" } else { "demo-remote" })
     $e["BRIKS_SCRIPT"] = (Join-Path $PSScriptRoot "share-$c.txt"); $e["BRIKS_SCRIPT_OUT"] = (Join-Path $w "capturas"); $e["BRIKS_SCRIPT_SHOTS"] = "1"
     if ($c -eq "emoji") { $e["BRIKS_DEV_OPEN"] = "profile:1"; $e["BRIKS_DEMO"] = "social" }
-    if ($c -eq "overlay") { $e["BRIKS_OVERLAY_FORCE"] = "1"; $e["BRIKS_DEV_ROOM"] = "voz-geral" }
+    if ($c -eq "overlay" -or $c -eq "overlayreal") { $e["BRIKS_OVERLAY_FORCE"] = "1"; $e["BRIKS_DEV_ROOM"] = "voz-geral" }
     $e["BRIKS_NO_BREATH"] = "1"; $e["BRIKS_NO_IMPORT"] = "1"; $e["BRIKS_DISABLE_UPDATE"] = "1"
     $e["BRIKS_LAYOUT_FILE"] = (Join-Path $w "layout.json"); $e["BRIKS_THEME_FILE"] = (Join-Path $w "theme.json")
     $e["BRIKS_SETTINGS_FILE"] = (Join-Path $w "settings.cfg"); $e["BRIKS_GRADIENTS_FILE"] = (Join-Path $w "grad.json")

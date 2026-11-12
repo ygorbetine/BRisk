@@ -295,6 +295,8 @@ void sys_before_destroy(app_state_t *s) {
 /* ---------------- roteiro de teste ---------------- */
 int sys_probe(const char *n) {
     RECT r = { 0 }; if (g_hwnd) GetWindowRect(g_hwnd, &r);
+    if (!strcmp(n, "win_state")) return !g_hwnd || !IsWindowVisible(g_hwnd) ? 3 : IsIconic(g_hwnd) ? 2 : IsZoomed(g_hwnd) ? 1 : 0;   /* 0 normal, 1 maximizada, 2 minimizada, 3 oculta */
+    if (!strcmp(n, "win_fg")) return g_hwnd && GetForegroundWindow() == g_hwnd;
     if (!strcmp(n, "tray")) return tray_present();
     if (!strcmp(n, "to_tray")) return g_in_tray;
     if (!strcmp(n, "quitting")) return g_quitting;
@@ -328,6 +330,12 @@ int sys_probe(const char *n) {
 }
 
 static int tokens(char *s, char **t, int max) { int n = 0; for (char *p = strtok(s, " "); p && n < max; p = strtok(NULL, " ")) t[n++] = p; return n; }
+static void win_to_front(HWND h) {   /* o Windows só deixa trazer à frente quem já tem a vez: liga a nossa thread à da janela da frente por um instante */
+    HWND fg = GetForegroundWindow(); DWORD me = GetCurrentThreadId(), ft = fg ? GetWindowThreadProcessId(fg, NULL) : 0;
+    if (ft && ft != me) AttachThreadInput(me, ft, TRUE);
+    SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); SetForegroundWindow(h);
+    if (ft && ft != me) AttachThreadInput(me, ft, FALSE);
+}
 bool sys_script(const char *args) {
     char buf[600]; snprintf(buf, sizeof buf, "%s", args ? args : ""); char *t[8]; int n = tokens(buf, t, 8); if (!n) return false;
     const char *c = t[0]; char rest[400] = "", rest1[400] = "";   /* rest1 = depois do 1º termo; rest = depois do 2º */
@@ -336,6 +344,19 @@ bool sys_script(const char *args) {
     else if (!strcmp(c, "tray") && n > 1) { UINT ev = !strcmp(t[1], "balloon") ? NIN_BALLOONUSERCLICK : !strcmp(t[1], "menu") ? WM_CONTEXTMENU : NIN_SELECT; if (ev != WM_CONTEXTMENU && g_hwnd) PostMessageW(g_hwnd, WM_TRAY, 1, ev); }
     else if (!strcmp(c, "cmd") && n > 1) run_cmd(!strcmp(t[1], "open") ? TRAY_CMD_OPEN : !strcmp(t[1], "mute") ? TRAY_CMD_MUTE : !strcmp(t[1], "restart") ? TRAY_CMD_RESTART : !strcmp(t[1], "quit") ? TRAY_CMD_QUIT : 0);
     else if (!strcmp(c, "focus") && n > 1) notify_set_force_focus(!strcmp(t[1], "auto") ? -1 : atoi(t[1]));
+    else if (!strcmp(c, "win") && n > 1 && g_hwnd) {   /* win max|restore|min|show|fg|game|gameoff: janela REAL (ShowWindow/SetForegroundWindow); "game" = janela cheia de outro app à frente */
+        static HWND game;
+        if (!strcmp(t[1], "max")) { ShowWindow(g_hwnd, SW_SHOWMAXIMIZED); win_to_front(g_hwnd); }
+        else if (!strcmp(t[1], "restore")) { ShowWindow(g_hwnd, SW_RESTORE); win_to_front(g_hwnd); }
+        else if (!strcmp(t[1], "show")) { ShowWindow(g_hwnd, SW_SHOWNORMAL); win_to_front(g_hwnd); }
+        else if (!strcmp(t[1], "min")) ShowWindow(g_hwnd, SW_MINIMIZE);
+        else if (!strcmp(t[1], "fg")) win_to_front(g_hwnd);
+        else if (!strcmp(t[1], "game") && !game) {
+            game = CreateWindowExW(WS_EX_TOPMOST, L"STATIC", L"jogo-teste", WS_POPUP | WS_VISIBLE, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), NULL, NULL, GetModuleHandleW(NULL), NULL);
+            if (game) win_to_front(game);
+        }
+        else if (!strcmp(t[1], "gameoff") && game) { DestroyWindow(game); game = NULL; }
+    }
     else if (!strcmp(c, "grace") && n > 1) notify_set_grace_ms((unsigned)atoi(t[1]));
     else if (!strcmp(c, "second") && g_hwnd && g_msg_show) PostMessageW(g_hwnd, g_msg_show, 0, 0);   /* o que a segunda instância faz */
     else if (!strcmp(c, "save")) capture_window();

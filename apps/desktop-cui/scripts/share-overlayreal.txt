@@ -1,0 +1,40 @@
+# Janela REAL do Briks (ShowWindow/SetForegroundWindow, sem "sys focus"): em primeiro plano maximizada ou nao => sobreposicao escondida;
+# Briks maximizado ATRAS de outro app (o "jogo") => sobreposicao volta; restaurar/minimizar/trocar de foco seguem a regra
+sys win show
+waitms 900
+expect win_state 0
+expect win_fg 1
+expect overlay_suppressed 1
+expect overlay_flags 0
+sys win max
+waitms 900
+expect win_state 1
+expect win_fg 1
+expect overlay_suppressed 1
+expect overlay_flags 0
+shot ovr-1-maximizado-na-frente
+sys win game
+waitms 900
+expect win_state 1
+expect win_fg 0
+expect overlay_suppressed 0
+expect overlay_flags 15
+sys win gameoff
+sys win fg
+waitms 900
+expect win_fg 1
+expect overlay_suppressed 1
+sys win min
+waitms 900
+expect win_state 2
+expect overlay_suppressed 0
+expect overlay_flags 15
+sys win restore
+waitms 900
+expect win_state 1
+expect overlay_suppressed 1
+sys win restore
+waitms 900
+expect win_state 0
+expect overlay_suppressed 1
+sys win min

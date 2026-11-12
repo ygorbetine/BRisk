@@ -7,8 +7,9 @@
  *   place <monitor> <x> <y> <largura>        posição salva (x,y relativos à área útil do monitor); monitor ausente = canto do monitor principal
  *   edit <0|1>                             modo de edição: o painel aceita o mouse (arrastar, canto inferior direito ou roda do mouse redimensionam) e aparece a barra de edição (2ª janela, embaixo da tela)
  *   flags <0-15>                           itens ligados (1 transmissão, 2 quem está na sala, 4 sala conectada, 8 aviso de mudo): estado dos botões da barra
- *   livemap <nome>                        memória compartilhada com a miniatura da transmissão (cabeçalho 'BOVL', seq, w, h, n; BGRA reduzido a ~320 px)
- *   v <nome>                               miniatura ao vivo de <nome> (selo "Ao vivo"); sem imagem ainda mostra "Carregando transmissão…"
+ *   livemap <nome>                        memória compartilhada com as miniaturas (4 regiões; cabeçalho 'BOVL', seq, w, h, n; BGRA reduzido a ~320 px)
+ *   tile <i> <chave> <0|1> <nome>          miniatura i (0-3) de uma transmissão: chave estável da pessoa, ligada (1) ou oculta (0) e o nome
+ *   tplace <i> <monitor> <x> <y> <%>       posição salva (relativa à área útil) e escala 50-200 da miniatura i
  *   lives <n>                              quantas transmissões ao vivo há na sala (n > 1 mostra "Trocar transmissão")
  *   begin                                  começa um quadro novo (apaga as linhas)
  *   p <0|1> <nome>                         pessoa na sala (1 = falando)
@@ -17,7 +18,8 @@
  *   end                                    mostra o quadro (sem linhas = esconde a janela)
  *   quit                                   fecha
  * O overlay responde pela saída padrão (uma linha por evento):  layout <monitor> <x> <y> <largura>  (soltou depois de mover/redimensionar)  |  edit 0  (Concluir ou Esc)
- *   widget <live|voice|status|mute|all> <0|1>  (botão da barra)  |  opacity <10-100>  (opacidade da barra)  |  selectlive  (Trocar transmissão)
+ *   widget <live|voice|status|mute|all> <0|1>  (botão da barra)  |  opacity <10-100>  (opacidade da barra)  |  selectlive  (Trocar transmissão, só com mais de 4 lives)
+ *   tile <chave> <monitor> <x> <y> <%>  (miniatura movida/redimensionada)  |  tileon <chave> <0|1>  (ligou/ocultou a miniatura)
  * Só desenha por cima de janelas e jogos em modo janela ou janela sem bordas; tela cheia exclusiva do jogo cobre qualquer sobreposição. */
 #define UNICODE
 #define _UNICODE
@@ -31,8 +33,10 @@
 
 #define MAXR 12
 enum { R_IDLE, R_SPEAK, R_INFO, R_WARN, R_LIVE };
+#define NT 4   /* miniaturas de transmissão */
+typedef struct { char key[16]; int on, pvalid, px, py, pct; char pdev[40]; wchar_t name[64]; } tspec_t;
 typedef struct { wchar_t text[64]; int kind; } row_t;
-typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, flags, lives; char lmap[48]; char pdev[40]; int pvalid, px, py, pw; } frame_t;
+typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, flags, lives; char lmap[48]; tspec_t t[NT]; int ntile; char pdev[40]; int pvalid, px, py, pw; } frame_t;
 #define W_DEF 260
 #define W_MIN 216
 #define W_MAX 640
@@ -60,7 +64,19 @@ static int apply_line(frame_t *build, frame_t *out, const char *ln) {
     if (!strncmp(ln, "cfg ", 4)) { int o = 92, c = 0; sscanf(ln + 4, "%d %d", &o, &c); build->opacity = o < 0 ? 0 : o > 100 ? 100 : o; build->corner = c < 0 || c > 3 ? 0 : c; return 0; }
     if (!strncmp(ln, "edit ", 5)) { build->edit = atoi(ln + 5) != 0; return 0; }
     if (!strncmp(ln, "livemap ", 8)) { snprintf(build->lmap, sizeof build->lmap, "%s", ln + 8); return 0; }
-    if (ln[0] == 'v' && ln[1] == ' ') { MultiByteToWideChar(CP_UTF8, 0, ln + 2, -1, w, 128); add_row(build, R_LIVE, w); return 0; }
+    if (!strncmp(ln, "tile ", 5)) {
+        int i, on, c = 0; char key[16];
+        if (sscanf(ln + 5, "%d %15s %d %n", &i, key, &on, &c) >= 3 && c > 0 && i >= 0 && i < NT) {
+            tspec_t *t = &build->t[i]; memset(t, 0, sizeof *t); snprintf(t->key, sizeof t->key, "%s", key); t->on = on != 0;
+            MultiByteToWideChar(CP_UTF8, 0, ln + 5 + c, -1, t->name, 64); if (i >= build->ntile) build->ntile = i + 1;
+        }
+        return 0;
+    }
+    if (!strncmp(ln, "tplace ", 7)) {
+        int i, x, y, p; char dev[40];
+        if (sscanf(ln + 7, "%d %39s %d %d %d", &i, dev, &x, &y, &p) == 5 && i >= 0 && i < build->ntile) { tspec_t *t = &build->t[i]; snprintf(t->pdev, sizeof t->pdev, "%s", dev); t->px = x; t->py = y; t->pct = p < 50 ? 50 : p > 200 ? 200 : p; t->pvalid = 1; }
+        return 0;
+    }
     if (!strncmp(ln, "flags ", 6)) { int v = atoi(ln + 6); build->flags = v < 0 ? 0 : v > 15 ? 15 : v; return 0; }
     if (!strncmp(ln, "lives ", 6)) { int v = atoi(ln + 6); build->lives = v < 0 ? 0 : v > 99 ? 99 : v; return 0; }
     if (!strncmp(ln, "place ", 6)) {
@@ -69,7 +85,7 @@ static int apply_line(frame_t *build, frame_t *out, const char *ln) {
         else build->pvalid = 0;
         return 0;
     }
-    if (!strcmp(ln, "begin")) { build->n = 0; return 0; }
+    if (!strcmp(ln, "begin")) { build->n = 0; build->ntile = 0; return 0; }
     if ((ln[0] == 'p' && ln[1] == ' ' && (ln[2] == '0' || ln[2] == '1') && ln[3] == ' ') || (ln[0] == 'i' && ln[1] == ' ') || (ln[0] == 'w' && ln[1] == ' ')) {
         const char *t = ln[0] == 'p' ? ln + 4 : ln + 2;
         MultiByteToWideChar(CP_UTF8, 0, t, -1, w, 128);
@@ -126,8 +142,8 @@ static void set_click_through(int through) {
     SetWindowLongW(hwnd, GWL_EXSTYLE, through ? (ex | WS_EX_TRANSPARENT) : (ex & ~WS_EX_TRANSPARENT));
 }
 
-/* cópia dos últimos quadros desenhados (0 painel, 1 barra) para a captura --shot */
-static struct { unsigned *px; int w, h, x, y; } g_snap[2]; static int g_snap_on;
+/* cópia dos últimos quadros desenhados (0 painel, 1 barra, 2+k miniatura k) para a captura --shot */
+static struct { unsigned *px; int w, h, x, y; } g_snap[2 + NT]; static int g_snap_on; static int g_tdrag = -1;   /* g_tdrag: miniatura sendo arrastada */
 static void snap_keep(int i, const unsigned *px, int w, int h, int x, int y) {
     if (!g_snap_on) return;
     free(g_snap[i].px); g_snap[i].px = (unsigned *)malloc((size_t)w * h * 4); if (!g_snap[i].px) return;
@@ -137,47 +153,16 @@ static void snap_keep(int i, const unsigned *px, int w, int h, int x, int y) {
 static void px_rr(unsigned *px, int w, int h, RECT r, float rad, COLORREF c, float a, float ring);
 static HFONT bar_font(int px, int weight);
 
-/* ---- miniatura ao vivo: o app escreve quadros BGRA reduzidos numa memória compartilhada (nome vindo em "livemap"); aqui só se lê ---- */
-#define LV_MAXW 320
-#define LV_MAXH 240
-static HANDLE g_lvh; static const unsigned char *g_lvp; static char g_lvname[48];
-static unsigned *g_lvpx; static int g_lvw, g_lvh_, g_lvvalid; static unsigned long long g_lvn;
-static void lv_close(void) { if (g_lvp) UnmapViewOfFile(g_lvp); if (g_lvh) CloseHandle(g_lvh); g_lvp = NULL; g_lvh = NULL; g_lvname[0] = 0; g_lvvalid = 0; g_lvn = 0; }
-static void lv_open(const char *name) {
-    if (!name[0]) { if (g_lvp) lv_close(); return; }
-    if (g_lvp && !strcmp(name, g_lvname)) return;
-    lv_close();
-    wchar_t wn[64]; MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 64);
-    g_lvh = OpenFileMappingW(FILE_MAP_READ, FALSE, wn); if (!g_lvh) return;
-    g_lvp = (const unsigned char *)MapViewOfFile(g_lvh, FILE_MAP_READ, 0, 0, 0);
-    if (!g_lvp) { CloseHandle(g_lvh); g_lvh = NULL; return; }
-    snprintf(g_lvname, sizeof g_lvname, "%s", name);
-    if (!g_lvpx) g_lvpx = (unsigned *)malloc((size_t)LV_MAXW * LV_MAXH * 4);
-}
-/* 1 se há quadro novo copiado (e válido); trata o início/fim do escritor (seq ímpar = escrevendo) */
-static int lv_poll(void) {
-    if (!g_lvp || !g_lvpx) return 0;
-    const volatile unsigned *seq = (const volatile unsigned *)(g_lvp + 4); unsigned a = *seq;
-    if (memcmp(g_lvp, "BOVL", 4) || (a & 1)) return 0;
-    int w = *(const int *)(g_lvp + 8), h = *(const int *)(g_lvp + 12); unsigned long long n = *(const unsigned long long *)(g_lvp + 16);
-    if (n == 0 || w <= 0 || h <= 0 || w > LV_MAXW || h > LV_MAXH) { int ch = g_lvvalid; g_lvvalid = 0; g_lvn = 0; return ch; }
-    if (n == g_lvn) return 0;
-    memcpy(g_lvpx, g_lvp + 64, (size_t)w * h * 4);
-    if (*seq != a) return 0;   /* o escritor mexeu no meio da cópia: tenta no próximo ciclo */
-    g_lvw = w; g_lvh_ = h; g_lvn = n; g_lvvalid = 1; return 1;
-}
-static RECT g_tile;   /* retângulo da miniatura no painel (teste) */
+static void paint_tiles(const frame_t *f);   /* miniaturas de transmissão (janelas próprias) */
 
 static void paint(const frame_t *f) {
     frame_t tmp;
-    if (f->edit && !f->n) { tmp = *f; add_row(&tmp, R_INFO, L"Pré-visualização da sobreposição"); f = &tmp; }
-    if (!f->n) { KillTimer(hwnd, 1); if (!g_noshow) ShowWindow(hwnd, SW_HIDE); g_edit = f->edit; paint_bar(f); return; }
+    if (f->edit && !f->n && !f->ntile) { tmp = *f; add_row(&tmp, R_INFO, L"Pré-visualização da sobreposição"); f = &tmp; }
+    if (!f->n) { if (!g_noshow) ShowWindow(hwnd, SW_HIDE); g_edit = f->edit; paint_bar(f); paint_tiles(f); return; }
     const int w = g_dragging && g_pw ? g_pw : (f->pvalid && f->pw ? f->pw : W_DEF);
     const float sc = (float)w / (float)W_DEF;
     const int rowh = (int)(30 * sc + 0.5f), pad = (int)(12 * sc + 0.5f), ebar = 0;
-    const int tileh = (int)((w - 2 * pad) * 9 / 16);
-    int h = pad * 2 + ebar; for (int i = 0; i < f->n; i++) h += f->r[i].kind == R_LIVE ? tileh + (int)(6 * sc) : rowh;
-    lv_open(f->lmap);
+    const int h = pad * 2 + f->n * rowh + ebar;
     const int fh = (int)(15 * sc + 0.5f) < 12 ? 12 : (int)(15 * sc + 0.5f);
     g_pw = w; g_ph = h; g_edit = f->edit;
     HDC screen = GetDC(NULL), mem = CreateCompatibleDC(screen);
@@ -191,11 +176,8 @@ static void paint(const frame_t *f) {
     HFONT font = CreateFontW(-fh, 0, 0, 0, FW_MEDIUM, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
     HGDIOBJ oldf = SelectObject(mem, font);
     const int dot = (int)(16 * sc + 0.5f);
-    int yy = pad, tile_i = -1; RECT tile = { 0, 0, 0, 0 };
     for (int i = 0; i < f->n; i++) {
-        int y = yy, k = f->r[i].kind;
-        if (k == R_LIVE) { tile_i = i; tile = (RECT){ pad, y, w - pad, y + tileh }; yy += tileh + (int)(6 * sc); continue; }
-        yy += rowh;
+        int y = pad + i * rowh, k = f->r[i].kind;
         if (k == R_IDLE || k == R_SPEAK) {
             HBRUSH db = CreateSolidBrush(k == R_SPEAK ? ACCENT : RGB(0x4a, 0x3a, 0x5c));
             HGDIOBJ ob = SelectObject(mem, db), op = SelectObject(mem, GetStockObject(NULL_PEN));
@@ -206,43 +188,6 @@ static void paint(const frame_t *f) {
         RECT tr = { pad + (k <= R_SPEAK ? (int)(30 * sc + 0.5f) : 4), y, w - pad, y + rowh };
         DrawTextW(mem, f->r[i].text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
-    memset(&g_tile, 0, sizeof g_tile);
-    if (tile_i >= 0) {   /* miniatura ao vivo: cantos arredondados, selo "Ao vivo" e nome de quem transmite */
-        GdiFlush(); g_tile = tile;
-        const int tw = tile.right - tile.left, th = tile.bottom - tile.top; const float rad = 10.0f * sc;
-        const float hw = tw * 0.5f, hh = th * 0.5f;
-        const int have = g_lvvalid && g_lvpx && g_lvw > 0;
-        int iw = tw, ih = th, ix0 = tile.left, iy0 = tile.top;   /* imagem encaixada (sem cortar) e centralizada */
-        if (have) { if (g_lvw * th > g_lvh_ * tw) { ih = g_lvh_ * tw / g_lvw; iy0 += (th - ih) / 2; } else { iw = g_lvw * th / g_lvh_; ix0 += (tw - iw) / 2; } }
-        for (int y = tile.top; y < tile.bottom; y++) for (int x = tile.left; x < tile.right; x++) {
-            float d = rr_dist(x + 0.5f - (tile.left + hw), y + 0.5f - (tile.top + hh), hw, hh, rad);
-            float cov = 0.5f - d; cov = cov < 0 ? 0 : cov > 1 ? 1 : cov; if (cov <= 0) continue;
-            unsigned c = 0x0c0414;
-            if (have && x >= ix0 && x < ix0 + iw && y >= iy0 && y < iy0 + ih) {
-                int sx = (x - ix0) * g_lvw / iw, sy = (y - iy0) * g_lvh_ / ih; c = g_lvpx[sy * g_lvw + sx] & 0xffffff;
-            }
-            unsigned o = px[y * w + x];
-            int R = (int)((o >> 16) & 255), G = (int)((o >> 8) & 255), B = (int)(o & 255);
-            R += (int)((((int)(c >> 16) & 255) - R) * cov + 0.5f); G += (int)((((int)(c >> 8) & 255) - G) * cov + 0.5f); B += (int)(((int)(c & 255) - B) * cov + 0.5f);
-            px[y * w + x] = ((unsigned)R << 16) | ((unsigned)G << 8) | (unsigned)B;
-        }
-        px_rr(px, w, h, tile, rad, RGB(255, 255, 255), 0.16f, 1);
-        const int bm = (int)(6 * sc + 0.5f), bh = (int)(20 * sc + 0.5f) < 18 ? 18 : (int)(20 * sc + 0.5f), bw = (int)(66 * sc + 0.5f);
-        RECT badge = { tile.left + bm, tile.top + bm, tile.left + bm + bw, tile.top + bm + bh };
-        px_rr(px, w, h, badge, bh / 2.0f, RGB(0xdc, 0x26, 0x26), 0.95f, 0);
-        RECT bdot = { badge.left + bh / 2 - 3, badge.top + bh / 2 - 3, badge.left + bh / 2 + 3, badge.top + bh / 2 + 3 }; px_rr(px, w, h, bdot, 3, RGB(255, 255, 255), 1.0f, 0);
-        HFONT sf = bar_font(bh - 8 < 11 ? 11 : bh - 8, FW_SEMIBOLD); HGDIOBJ osf = SelectObject(mem, sf);
-        SetTextColor(mem, RGB(255, 255, 255)); RECT bt = { badge.left + bh / 2 + 6, badge.top, badge.right - 4, badge.bottom }; DrawTextW(mem, L"Ao vivo", -1, &bt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-        /* nome: pílula escura embaixo, à esquerda, com a largura do texto (limitada à miniatura, com reticências) */
-        SelectObject(mem, font); const wchar_t *nm = f->r[tile_i].text; RECT mr = { 0, 0, 0, 0 }; DrawTextW(mem, nm, -1, &mr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-        int nw = mr.right + 16, nmax = tw - 2 * bm; if (nw > nmax) nw = nmax;
-        RECT np = { tile.left + bm, tile.bottom - bm - bh, tile.left + bm + nw, tile.bottom - bm };
-        px_rr(px, w, h, np, bh / 2.0f, RGB(0, 0, 0), 0.62f, 0);
-        RECT nt = { np.left + 8, np.top, np.right - 8, np.bottom }; DrawTextW(mem, nm, -1, &nt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
-        if (!have) { SelectObject(mem, font); SetTextColor(mem, MUTED); RECT lt = { tile.left, tile.top, tile.right, tile.bottom }; DrawTextW(mem, L"Carregando transmissão…", -1, &lt, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS); SelectObject(mem, osf); }
-        SelectObject(mem, osf); DeleteObject(sf);
-    }
-    if (tile_i >= 0) SetTimer(hwnd, 1, 250, NULL); else KillTimer(hwnd, 1);
     memset(&g_grip, 0, sizeof g_grip);
     if (f->edit) {   /* canto inferior direito = redimensionar (a barra de ferramentas é outra janela, embaixo da tela) */
         g_grip.left = w - (int)(22 * sc + 0.5f); g_grip.top = h - (int)(22 * sc + 0.5f); g_grip.right = w; g_grip.bottom = h;
@@ -279,24 +224,24 @@ static void paint(const frame_t *f) {
     }
     snap_keep(0, px, w, h, pos.x, pos.y);
     SelectObject(mem, old); DeleteObject(font); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(NULL, screen);
-    paint_bar(f);
+    paint_bar(f); paint_tiles(f);
 }
 
 /* ---- arrastar e redimensionar (modo de edição). O cursor vem de cursor_pos(): em teste é injetado. ---- */
 static int g_inject; static POINT g_inj;
 static POINT cursor_pos(void) { if (g_inject) return g_inj; POINT p; GetCursorPos(&p); return p; }
 /* ---- barra de edição: 2ª janela (embaixo da tela, no monitor do painel), vidro escuro de cantos arredondados ---- */
-enum { B_NONE, B_ALL, B_W0, B_W1, B_W2, B_W3, B_OPM, B_OPP, B_SLIDER, B_LIVE, B_DONE, B_N };
+enum { B_NONE, B_ALL, B_W0, B_W1, B_W2, B_W3, B_OPM, B_OPP, B_SLIDER, B_LIVE, B_DONE, B_T0, B_T1, B_T2, B_T3, B_N };
 #define BAR_MAXW 680
 #define BAR_MINW 560
 #define HINT_H 26
 #define BAR_PAD 10
 #define BTN_H 32
 #define BAR_GAP 8
-#define BAR_H (BAR_PAD * 2 + BTN_H * 2 + BAR_GAP)
-#define BAR_TOTAL (HINT_H + 8 + BAR_H)
+#define BAR_H g_barh   /* 2 linhas; 3 com miniaturas (uma chave por transmissão) */
+#define BAR_TOTAL (HINT_H + 8 + g_barh)
 #define OP_MIN 10
-static HWND hbar;
+static HWND hbar; static int g_barh = BAR_PAD * 2 + BTN_H * 2 + BAR_GAP;
 static RECT g_bh[B_N];                         /* acertos, px da janela da barra (vazio = não existe) */
 static RECT g_barshape, g_hintshape, g_oplab;   /* formas arredondadas e rótulo da opacidade */
 static int g_bww, g_bar_on, g_bhover, g_bar_drag, g_esc_reg;
@@ -307,8 +252,9 @@ static const wchar_t *HINT = L"Arraste para mover · roda do mouse ou o canto mu
 static int rc_in(const RECT *r, int x, int y) { return r->right > r->left && x >= r->left && x < r->right && y >= r->top && y < r->bottom; }
 
 /* Geometria pura da barra para a largura ww (e "Trocar transmissão" só com mais de uma live). Linha 1: tudo/itens; linha 2: opacidade, trocar, concluir. */
-static void bar_layout(int ww, int lives) {
+static void bar_layout(int ww, int lives, int ntile) {
     memset(g_bh, 0, sizeof g_bh);
+    g_barh = BAR_PAD * 2 + BTN_H * 2 + BAR_GAP + (ntile > 0 ? BTN_H + BAR_GAP : 0);
     g_hintshape = (RECT){ 0, 0, 0, HINT_H };
     g_barshape = (RECT){ 0, HINT_H + 8, ww, HINT_H + 8 + BAR_H };
     const int x0 = BAR_PAD, x1 = ww - BAR_PAD, iw = x1 - x0, y1 = g_barshape.top + BAR_PAD, y2 = y1 + BTN_H + BAR_GAP;
@@ -322,12 +268,16 @@ static void bar_layout(int ww, int lives) {
     const int donew = 100, livew = 150;
     g_bh[B_DONE] = (RECT){ x1 - donew, y2, x1, y2 + BTN_H };
     int right = g_bh[B_DONE].left - 16;
-    if (lives > 1) { g_bh[B_LIVE] = (RECT){ right - livew, y2, right, y2 + BTN_H }; right -= livew + 16; }
+    if (lives > NT) { g_bh[B_LIVE] = (RECT){ right - livew, y2, right, y2 + BTN_H }; right -= livew + 16; }
     g_oplab = (RECT){ x0, y2, x0 + 112, y2 + BTN_H };
     g_bh[B_OPM] = (RECT){ g_oplab.right, y2, g_oplab.right + BTN_H, y2 + BTN_H };
     g_bh[B_OPP] = (RECT){ right - BTN_H, y2, right, y2 + BTN_H };
     g_bh[B_SLIDER] = (RECT){ g_bh[B_OPM].right + BAR_GAP, y2, g_bh[B_OPP].left - BAR_GAP, y2 + BTN_H };
     if (g_bh[B_SLIDER].right - g_bh[B_SLIDER].left < 48) g_bh[B_SLIDER].right = g_bh[B_SLIDER].left + 48;
+    if (ntile > 0) {   /* linha 3: uma chave por miniatura (liga/desliga só aquela transmissão) */
+        const int y3 = y2 + BTN_H + BAR_GAP, cw = (iw - 3 * BAR_GAP) / NT;
+        for (int t = 0; t < ntile && t < NT; t++) g_bh[B_T0 + t] = (RECT){ x0 + t * (cw + BAR_GAP), y3, x0 + t * (cw + BAR_GAP) + cw, y3 + BTN_H };
+    }
 }
 static int bar_hit(int x, int y) { for (int i = B_ALL; i < B_N; i++) if (rc_in(&g_bh[i], x, y)) return i; return B_NONE; }
 static int slider_value(int x) {
@@ -368,8 +318,8 @@ static void paint_bar(const frame_t *f) {
     if (!f->edit) { g_bar_on = 0; g_bar_drag = 0; memset(g_bh, 0, sizeof g_bh); esc_register(0); if (!g_noshow) ShowWindow(hbar, SW_HIDE); return; }
     const RECT wa = bar_workarea();
     int ww = wa.right - wa.left - 24; if (ww > BAR_MAXW) ww = BAR_MAXW; if (ww < BAR_MINW) ww = BAR_MINW;
-    const int hh = BAR_TOTAL; g_bww = ww; g_bar_on = 1;
-    bar_layout(ww, f->lives);
+    g_bww = ww; g_bar_on = 1;
+    bar_layout(ww, f->lives, f->ntile); const int hh = BAR_TOTAL;
     HDC screen = GetDC(NULL), mem = CreateCompatibleDC(screen);
     BITMAPINFO bi = { { sizeof(BITMAPINFOHEADER), ww, -hh, 1, 32, BI_RGB } };
     unsigned *px = NULL; HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, (void **)&px, NULL, 0);
@@ -395,6 +345,12 @@ static void paint_bar(const frame_t *f) {
             RECT dot = { r.left + 11, (r.top + r.bottom) / 2 - 4, r.left + 19, (r.top + r.bottom) / 2 + 4 };
             if (on) px_rr(px, ww, hh, dot, 4, WHITE, 1.0f, 0); else px_rr(px, ww, hh, dot, 4, WHITE, 0.6f, 1.5f);
         }
+        else if (i >= B_T0 && i <= B_T3) {
+            const int on = f->t[i - B_T0].on;
+            if (on) px_rr(px, ww, hh, r, BTN_H / 2, PURP, hov ? 1.0f : 0.92f, 0); else { px_rr(px, ww, hh, r, BTN_H / 2, WHITE, hov ? 0.16f : 0.05f, 0); px_rr(px, ww, hh, r, BTN_H / 2, WHITE, 0.28f, 1); }
+            RECT dot = { r.left + 11, (r.top + r.bottom) / 2 - 4, r.left + 19, (r.top + r.bottom) / 2 + 4 };
+            if (on) px_rr(px, ww, hh, dot, 4, WHITE, 1.0f, 0); else px_rr(px, ww, hh, dot, 4, WHITE, 0.6f, 1.5f);
+        }
         else if (i == B_OPM || i == B_OPP) { px_rr(px, ww, hh, r, BTN_H / 2, WHITE, hov ? 0.18f : 0.08f, 0); px_rr(px, ww, hh, r, BTN_H / 2, WHITE, 0.28f, 1); }
         else if (i == B_SLIDER) {
             const int v = f->opacity < OP_MIN ? OP_MIN : f->opacity > 100 ? 100 : f->opacity, cy = (r.top + r.bottom) / 2;
@@ -414,6 +370,7 @@ static void paint_bar(const frame_t *f) {
         RECT r = g_bh[i]; if (r.right <= r.left) continue;
         if (i == B_ALL) bar_text(mem, any ? L"Desativar tudo" : L"Ativar tudo", r, TEXT, DT_CENTER | DT_END_ELLIPSIS);
         else if (i >= B_W0 && i <= B_W3) { r.left += 26; r.right -= 8; bar_text(mem, WG[i - B_W0].label, r, (f->flags & WG[i - B_W0].bit) ? RGB(255, 255, 255) : RGB(0xc9, 0xbd, 0xd8), DT_LEFT | DT_END_ELLIPSIS); }
+        else if (i >= B_T0 && i <= B_T3) { r.left += 26; r.right -= 8; bar_text(mem, f->t[i - B_T0].name, r, f->t[i - B_T0].on ? RGB(255, 255, 255) : RGB(0xc9, 0xbd, 0xd8), DT_LEFT | DT_END_ELLIPSIS); }
         else if (i == B_OPM) bar_text(mem, L"\x2212", r, TEXT, DT_CENTER);
         else if (i == B_OPP) bar_text(mem, L"+", r, TEXT, DT_CENTER);
         else if (i == B_LIVE) { r.left += 8; r.right -= 8; bar_text(mem, L"Trocar transmissão", r, TEXT, DT_CENTER | DT_END_ELLIPSIS); }
@@ -452,6 +409,7 @@ static void bar_act(int id, int x) {
     else if (id == B_OPM) bar_set_opacity(cur.opacity - 5);
     else if (id == B_OPP) bar_set_opacity(cur.opacity + 5);
     else if (id == B_SLIDER) { g_bar_drag = 1; if (!g_inject) SetCapture(hbar); bar_set_opacity(slider_value(x)); }
+    else if (id >= B_T0 && id <= B_T3) { int k = id - B_T0; if (k < cur.ntile) { cur.t[k].on = !cur.t[k].on; emit("tileon %s %d\n", cur.t[k].key, cur.t[k].on); bar_touch(); } }
     else if (id == B_LIVE) emit("selectlive\n");
     else if (id == B_DONE) emit("edit 0\n");
 }
@@ -463,8 +421,213 @@ static void bar_move(int x, int y) {
 static void bar_up(void) { if (!g_bar_drag) return; g_bar_drag = 0; if (!g_inject) ReleaseCapture(); }
 /* quadro vindo do app: dentro da janela de espera, o que o usuário acabou de mudar vale mais */
 static void adopt_frame(const frame_t *nw) {
-    const int fl = cur.flags, op = cur.opacity; cur = *nw;
-    if ((int)(g_hold - GetTickCount()) > 0 || g_bar_drag) { cur.flags = fl; cur.opacity = op; }
+    const int fl = cur.flags, op = cur.opacity, on = cur.ntile; tspec_t old[NT]; memcpy(old, cur.t, sizeof old); cur = *nw;
+    if ((int)(g_hold - GetTickCount()) > 0 || g_bar_drag || g_tdrag >= 0) {
+        cur.flags = fl; cur.opacity = op;
+        for (int k = 0; k < cur.ntile && k < on; k++) if (!strcmp(cur.t[k].key, old[k].key)) {
+            cur.t[k].on = old[k].on; cur.t[k].pct = old[k].pct;
+            if (old[k].pvalid) { cur.t[k].pvalid = 1; snprintf(cur.t[k].pdev, sizeof cur.t[k].pdev, "%s", old[k].pdev); cur.t[k].px = old[k].px; cur.t[k].py = old[k].py; }
+        }
+    }
+}
+
+/* ---- miniaturas ao vivo: até NT janelas, uma por transmissão, cada uma com posição e escala próprias.
+ * As imagens vêm do app por memória compartilhada (livemap): NT regiões de LV_SLOT bytes (cabeçalho 'BOVL', seq, w, h, n + BGRA reduzido a ~320 px). ---- */
+#define LV_MAXW 320
+#define LV_MAXH 240
+#define LV_SLOT (64 + LV_MAXW * LV_MAXH * 4)
+#define TILE_BASE 320            /* largura a 100% */
+#define TH 28                    /* altura da alça (só em edição) */
+#define PCT_MIN 50
+#define PCT_MAX 200
+static HANDLE g_lvh; static const unsigned char *g_lvp; static char g_lvname[48];
+static unsigned g_lvpx[NT][LV_MAXW * LV_MAXH]; static int g_lvw[NT], g_lvhh[NT], g_lvvalid[NT]; static unsigned long long g_lvn[NT];
+static void lv_close(void) { if (g_lvp) UnmapViewOfFile(g_lvp); if (g_lvh) CloseHandle(g_lvh); g_lvp = NULL; g_lvh = NULL; g_lvname[0] = 0; for (int k = 0; k < NT; k++) { g_lvvalid[k] = 0; g_lvn[k] = 0; } }
+static void lv_open(const char *name) {
+    if (!name[0]) { if (g_lvp) lv_close(); return; }
+    if (g_lvp && !strcmp(name, g_lvname)) return;
+    lv_close();
+    wchar_t wn[64]; MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 64);
+    g_lvh = OpenFileMappingW(FILE_MAP_READ, FALSE, wn); if (!g_lvh) return;
+    g_lvp = (const unsigned char *)MapViewOfFile(g_lvh, FILE_MAP_READ, 0, 0, 0);
+    if (!g_lvp) { CloseHandle(g_lvh); g_lvh = NULL; return; }
+    snprintf(g_lvname, sizeof g_lvname, "%s", name);
+}
+/* 1 se a miniatura k mudou (quadro novo copiado, ou imagem apagada); trata o escritor no meio (seq ímpar) */
+static int lv_poll(int k) {
+    if (!g_lvp) return 0;
+    const unsigned char *m = g_lvp + (size_t)k * LV_SLOT; const volatile unsigned *seq = (const volatile unsigned *)(m + 4); unsigned a = *seq;
+    if (memcmp(m, "BOVL", 4) || (a & 1)) return 0;
+    int w = *(const int *)(m + 8), h = *(const int *)(m + 12); unsigned long long n = *(const unsigned long long *)(m + 16);
+    if (n == 0 || w <= 0 || h <= 0 || w > LV_MAXW || h > LV_MAXH) { int ch = g_lvvalid[k]; g_lvvalid[k] = 0; g_lvn[k] = 0; return ch; }
+    if (n == g_lvn[k]) return 0;
+    memcpy(g_lvpx[k], m + 64, (size_t)w * h * 4);
+    if (*seq != a) return 0;   /* o escritor mexeu no meio da cópia: tenta no próximo ciclo */
+    g_lvw[k] = w; g_lvhh[k] = h; g_lvn[k] = n; g_lvvalid[k] = 1; return 1;
+}
+
+typedef struct { HWND wnd; int shown, edit, x, y, w, h, ty; RECT bminus, bplus, bclose, bpct; } tile_t;   /* x,y: canto da MINIATURA na tela; ty: altura da alça acima dela */
+static tile_t T[NT]; static POINT g_tc0; static int g_tx0, g_ty0;
+
+static int tile_pct(const tspec_t *s) { int p = s->pct ? s->pct : 100; return p < PCT_MIN ? PCT_MIN : p > PCT_MAX ? PCT_MAX : p; }
+/* posição da miniatura k: a salva (no monitor dela, se existe) ou, sem posição, uma coluna no lado oposto ao do painel */
+static POINT tile_pos(int k, const frame_t *f, int w, int h) {
+    RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    POINT pos = { (f->corner == 1 || f->corner == 3) ? wa.right - w - 20 : wa.left + 20, wa.top + 20 + k * (h + 14) };
+    if (pos.y > wa.bottom - h - 20) pos.y = wa.bottom - h - 20;
+    const tspec_t *s = &f->t[k];
+    if (s->pvalid) {
+        monq_t q = { s->pdev, { 0 }, 0 }; EnumDisplayMonitors(NULL, NULL, mon_cb, (LPARAM)&q);
+        if (q.found) {
+            pos.x = q.work.left + s->px; pos.y = q.work.top + s->py;
+            if (pos.x > q.work.right - w) pos.x = q.work.right - w;
+            if (pos.y > q.work.bottom - h) pos.y = q.work.bottom - h;
+            if (pos.x < q.work.left) pos.x = q.work.left;
+            if (pos.y < q.work.top) pos.y = q.work.top;
+        }
+    }
+    return pos;
+}
+
+static void paint_tile(int k, const frame_t *f) {
+    tile_t *t = &T[k]; if (!t->wnd) return;
+    if (k >= f->ntile || (!f->t[k].on && !f->edit)) { t->shown = 0; t->edit = 0; if (!g_noshow) ShowWindow(t->wnd, SW_HIDE); return; }
+    const tspec_t *sp = &f->t[k]; const int edit = f->edit, on = sp->on;
+    const int w = TILE_BASE * tile_pct(sp) / 100, h = w * 9 / 16, ty = edit ? TH + 4 : 0, wh = h + ty;
+    const float sc = (float)w / TILE_BASE, rad = 10.0f * sc;
+    t->shown = 1; t->edit = edit; t->w = w; t->h = h; t->ty = ty;
+    POINT pos = g_tdrag == k ? (POINT){ t->x, t->y } : tile_pos(k, f, w, h);
+    if (pos.y - ty < 0 && ty) pos.y = ty;
+    t->x = pos.x; t->y = pos.y;
+    HDC screen = GetDC(NULL), mem = CreateCompatibleDC(screen);
+    BITMAPINFO bi = { { sizeof(BITMAPINFOHEADER), w, -wh, 1, 32, BI_RGB } };
+    unsigned *px = NULL; HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, (void **)&px, NULL, 0);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    HBRUSH bg = CreateSolidBrush(RGB(0x0c, 0x04, 0x14)); RECT all = { 0, 0, w, wh }; FillRect(mem, &all, bg); DeleteObject(bg);
+    GdiFlush();
+    const RECT TR = { 0, ty, w, wh };
+    const int have = on && g_lvvalid[k] && g_lvw[k] > 0;
+    int iw = w, ih = h, ix0 = 0, iy0 = ty;   /* imagem encaixada (sem cortar), centralizada */
+    if (have) { if (g_lvw[k] * h > g_lvhh[k] * w) { ih = g_lvhh[k] * w / g_lvw[k]; iy0 += (h - ih) / 2; } else { iw = g_lvw[k] * h / g_lvhh[k]; ix0 += (w - iw) / 2; } }
+    if (have) for (int y = iy0; y < iy0 + ih; y++) for (int x = ix0; x < ix0 + iw; x++) {
+        int sx = (x - ix0) * g_lvw[k] / iw, sy = (y - iy0) * g_lvhh[k] / ih; px[y * w + x] = g_lvpx[k][sy * g_lvw[k] + sx] & 0xffffff;
+    }
+    if (edit && !on) px_rr(px, w, wh, TR, rad, RGB(0, 0, 0), 0.62f, 0);   /* oculta: véu escuro */
+    px_rr(px, w, wh, TR, rad, RGB(255, 255, 255), 0.16f, 1);
+    if (edit) px_rr(px, w, wh, TR, rad, ACCENT, 0.97f, 2);
+    memset(&t->bminus, 0, sizeof t->bminus); memset(&t->bplus, 0, sizeof t->bplus); memset(&t->bclose, 0, sizeof t->bclose); memset(&t->bpct, 0, sizeof t->bpct);
+    const RECT HR = { 0, 0, w, TH };
+    if (edit) {   /* alça: nome + − 100% + × (oculta: "Ligar") */
+        px_rr(px, w, wh, HR, TH / 2.0f, RGB(0x1c, 0x0e, 0x2c), 0.97f, 0); px_rr(px, w, wh, HR, TH / 2.0f, RGB(255, 255, 255), 0.18f, 1);
+        const int bs = TH - 8, by = 4, wide = w >= 220;
+        if (on) { t->bclose = (RECT){ w - 6 - bs, by, w - 6, by + bs }; } else { t->bclose = (RECT){ w - 6 - 52, by, w - 6, by + bs }; }
+        const int rl = t->bclose.left - 4;
+        if (on) { t->bplus = (RECT){ rl - bs, by, rl, by + bs }; t->bpct = (RECT){ t->bplus.left - 38, by, t->bplus.left, by + bs }; t->bminus = (RECT){ (wide ? t->bpct.left : t->bplus.left) - bs - (wide ? 0 : 4), by, (wide ? t->bpct.left : t->bplus.left) - (wide ? 0 : 4), by + bs }; if (!wide) memset(&t->bpct, 0, sizeof t->bpct); }
+        if (on) { px_rr(px, w, wh, t->bminus, bs / 2.0f, RGB(255, 255, 255), 0.12f, 0); px_rr(px, w, wh, t->bplus, bs / 2.0f, RGB(255, 255, 255), 0.12f, 0); px_rr(px, w, wh, t->bclose, bs / 2.0f, RGB(0xdc, 0x26, 0x26), 0.85f, 0); }
+        else px_rr(px, w, wh, t->bclose, bs / 2.0f, RGB(0x7c, 0x3a, 0xed), 0.95f, 0);
+    } else {
+        /* selo "Ao vivo" e nome (pílulas): só fora da edição; na edição o nome está na alça */
+    }
+    const int bm = (int)(6 * sc + 0.5f), bh = (int)(20 * sc + 0.5f) < 18 ? 18 : (int)(20 * sc + 0.5f), bw = (int)(66 * sc + 0.5f) < 62 ? 62 : (int)(66 * sc + 0.5f);
+    RECT badge = { bm, ty + bm, bm + bw, ty + bm + bh };
+    if (on) { px_rr(px, w, wh, badge, bh / 2.0f, RGB(0xdc, 0x26, 0x26), 0.95f, 0); RECT bdot = { badge.left + bh / 2 - 3, badge.top + bh / 2 - 3, badge.left + bh / 2 + 3, badge.top + bh / 2 + 3 }; px_rr(px, w, wh, bdot, 3, RGB(255, 255, 255), 1.0f, 0); }
+    HFONT sf = bar_font(bh - 8 < 11 ? 11 : bh - 8, FW_SEMIBOLD), nf = bar_font(12 * sc < 12 ? 12 : (int)(12 * sc), FW_MEDIUM);
+    SetBkMode(mem, TRANSPARENT); HGDIOBJ osf = SelectObject(mem, nf);
+    RECT np = { 0, 0, 0, 0 };
+    if (!edit) {
+        RECT mr = { 0, 0, 0, 0 }; DrawTextW(mem, sp->name, -1, &mr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        int nw = mr.right + 16, nmax = w - 2 * bm; if (nw > nmax) nw = nmax;
+        np = (RECT){ bm, wh - bm - bh, bm + nw, wh - bm }; px_rr(px, w, wh, np, bh / 2.0f, RGB(0, 0, 0), 0.62f, 0);
+    }
+    GdiFlush();
+    if (!edit) { SetTextColor(mem, RGB(255, 255, 255)); RECT nt = { np.left + 8, np.top, np.right - 8, np.bottom }; DrawTextW(mem, sp->name, -1, &nt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS); }
+    if (on) { SelectObject(mem, sf); SetTextColor(mem, RGB(255, 255, 255)); RECT bt = { badge.left + bh / 2 + 6, badge.top, badge.right - 4, badge.bottom }; DrawTextW(mem, L"Ao vivo", -1, &bt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX); SelectObject(mem, nf); }
+    if (edit) {
+        SetTextColor(mem, RGB(255, 255, 255));
+        const int right = on ? (t->bpct.right ? t->bpct.left : t->bminus.left) : t->bclose.left;
+        RECT nt = { 12, 0, right - 6, TH }; DrawTextW(mem, sp->name, -1, &nt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+        if (on) {
+            DrawTextW(mem, L"\x2212", -1, &t->bminus, DT_SINGLELINE | DT_VCENTER | DT_CENTER); DrawTextW(mem, L"+", -1, &t->bplus, DT_SINGLELINE | DT_VCENTER | DT_CENTER); DrawTextW(mem, L"\xd7", -1, &t->bclose, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+            if (t->bpct.right) { wchar_t pt[16]; swprintf(pt, 16, L"%d%%", tile_pct(sp)); SetTextColor(mem, MUTED); DrawTextW(mem, pt, -1, &t->bpct, DT_SINGLELINE | DT_VCENTER | DT_CENTER); }
+        } else {
+            DrawTextW(mem, L"Ligar", -1, &t->bclose, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+            SetTextColor(mem, MUTED); RECT hm = TR; DrawTextW(mem, L"Oculta: sem quadros, sem CPU", -1, &hm, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+        }
+    }
+    if (on && !have) { SelectObject(mem, nf); SetTextColor(mem, MUTED); RECT lt = TR; DrawTextW(mem, L"Carregando transmissão…", -1, &lt, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX); }
+    SelectObject(mem, osf); DeleteObject(sf); DeleteObject(nf);
+    GdiFlush();
+    /* alfa: união da miniatura e da alça, cantos arredondados; a opacidade do overlay vale para a imagem (a alça fica quase opaca) */
+    const float base = (f->opacity < 30 ? 30 : f->opacity > 100 ? 100 : f->opacity) / 100.0f;
+    for (int y = 0; y < wh; y++) for (int x = 0; x < w; x++) {
+        float d = rr_dist(x + 0.5f - w * 0.5f, y + 0.5f - (ty + h * 0.5f), w * 0.5f, h * 0.5f, rad), cov = 0.5f - d; cov = cov < 0 ? 0 : cov > 1 ? 1 : cov;
+        float a = cov * (on ? base : base * 0.9f);
+        if (edit) { float d2 = rr_dist(x + 0.5f - w * 0.5f, y + 0.5f - TH * 0.5f, w * 0.5f, TH * 0.5f, TH * 0.5f), c2 = 0.5f - d2; c2 = c2 < 0 ? 0 : c2 > 1 ? 1 : c2; c2 *= 0.97f; if (y < TH + 2 && c2 > a) a = c2; }
+        unsigned c = px[y * w + x]; unsigned r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+        px[y * w + x] = ((unsigned)(a * 255) << 24) | ((unsigned)(r * a) << 16) | ((unsigned)(g * a) << 8) | (unsigned)(b * a);
+    }
+    POINT wp = { t->x, t->y - ty }, src = { 0, 0 }; SIZE sz = { w, wh }; BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    LONG ex = GetWindowLongW(t->wnd, GWL_EXSTYLE); SetWindowLongW(t->wnd, GWL_EXSTYLE, edit ? (ex & ~WS_EX_TRANSPARENT) : (ex | WS_EX_TRANSPARENT));
+    UpdateLayeredWindow(t->wnd, screen, &wp, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+    snap_keep(2 + k, px, w, wh, wp.x, wp.y);
+    if (!g_noshow) { if (!IsWindowVisible(t->wnd)) ShowWindow(t->wnd, SW_SHOWNOACTIVATE); SetWindowPos(t->wnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+    SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(NULL, screen);
+}
+/* o timer de 250 ms só existe com alguma miniatura LIGADA na tela (nada roda para as ocultas) */
+static void paint_tiles(const frame_t *f) {
+    lv_open(f->lmap);
+    int any = 0;
+    for (int k = 0; k < NT; k++) { paint_tile(k, f); if (T[k].shown && k < f->ntile && f->t[k].on && g_lvp) any = 1; }
+    if (any && hwnd) SetTimer(hwnd, 1, 250, NULL); else if (hwnd) KillTimer(hwnd, 1);
+}
+static void tiles_poll(void) { for (int k = 0; k < NT; k++) if (T[k].shown && k < cur.ntile && cur.t[k].on && lv_poll(k)) paint_tile(k, &cur); }
+
+/* ---- interação com as miniaturas (modo de edição): arrastar, − / + / roda (escala), × (oculta) e Ligar ---- */
+enum { TH_NONE, TH_MOVE, TH_MINUS, TH_PLUS, TH_CLOSE };
+static int tile_hit(int k, int x, int y) {
+    const tile_t *t = &T[k]; if (!t->edit || !t->shown || x < 0 || y < 0 || x >= t->w || y >= t->h + t->ty) return TH_NONE;
+    if (rc_in(&t->bminus, x, y)) return TH_MINUS; if (rc_in(&t->bplus, x, y)) return TH_PLUS; if (rc_in(&t->bclose, x, y)) return TH_CLOSE;
+    return TH_MOVE;
+}
+static void tile_send(int k) {   /* soltou ou mudou a escala: "tile <chave> <monitor> x y %" (e já vale na cópia local) */
+    const tile_t *t = &T[k];
+    HMONITOR m = MonitorFromPoint((POINT){ t->x + t->w / 2, t->y + t->h / 2 }, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXW mi; mi.cbSize = sizeof mi; if (!GetMonitorInfoW(m, (MONITORINFO *)&mi)) return;
+    char d[40]; WideCharToMultiByte(CP_UTF8, 0, mi.szDevice, -1, d, sizeof d, NULL, NULL);
+    tspec_t *s = &cur.t[k]; s->pvalid = 1; snprintf(s->pdev, sizeof s->pdev, "%s", d); s->px = t->x - (int)mi.rcWork.left; s->py = t->y - (int)mi.rcWork.top;
+    emit("tile %s %s %d %d %d\n", s->key, d, s->px, s->py, tile_pct(s));
+}
+static void tile_set_pct(int k, int pct) {
+    if (k >= cur.ntile) return; pct = pct < PCT_MIN ? PCT_MIN : pct > PCT_MAX ? PCT_MAX : pct;
+    if (pct == tile_pct(&cur.t[k])) return;
+    cur.t[k].pct = pct; g_hold = GetTickCount() + 500; paint_tile(k, &cur); tile_send(k);
+}
+static void tile_scale(int k, int dir) { if (cur.edit && k < cur.ntile && cur.t[k].on && dir) tile_set_pct(k, tile_pct(&cur.t[k]) + (dir > 0 ? 10 : -10)); }
+static void tile_set_on(int k, int on) { if (k >= cur.ntile || !!cur.t[k].on == !!on) return; cur.t[k].on = on; emit("tileon %s %d\n", cur.t[k].key, on); g_hold = GetTickCount() + 500; paint_tile(k, &cur); paint_bar(&cur); }
+static void tile_down(int k, int x, int y) {
+    int h = tile_hit(k, x, y);
+    if (h == TH_MINUS) tile_scale(k, -1); else if (h == TH_PLUS) tile_scale(k, 1); else if (h == TH_CLOSE) tile_set_on(k, !cur.t[k].on);
+    else if (h == TH_MOVE) { g_tdrag = k; g_tc0 = cursor_pos(); g_tx0 = T[k].x; g_ty0 = T[k].y; if (!g_inject) SetCapture(T[k].wnd); }
+}
+static void tile_move(int k) {
+    if (g_tdrag != k) return; POINT c = cursor_pos();
+    T[k].x = g_tx0 + (c.x - g_tc0.x); T[k].y = g_ty0 + (c.y - g_tc0.y);
+    POINT p = { T[k].x, T[k].y - T[k].ty }; UpdateLayeredWindow(T[k].wnd, NULL, &p, NULL, NULL, NULL, 0, NULL, 0);   /* só move */
+}
+static void tile_up(int k) { if (g_tdrag != k) return; g_tdrag = -1; if (!g_inject) ReleaseCapture(); tile_send(k); }
+
+static LRESULT CALLBACK tproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    int k = (int)(GetWindowLongPtrW(h, GWLP_USERDATA) - 1); if (k < 0 || k >= NT) return DefWindowProcW(h, m, w, l);
+    switch (m) {
+    case WM_NCHITTEST: return T[k].edit ? HTCLIENT : HTTRANSPARENT;
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_SETCURSOR: if (T[k].edit) { POINT p; GetCursorPos(&p); ScreenToClient(h, &p); int t = tile_hit(k, p.x, p.y); SetCursor(LoadCursor(NULL, g_tdrag == k ? IDC_SIZEALL : t >= TH_MINUS ? IDC_HAND : IDC_SIZEALL)); return TRUE; } break;
+    case WM_LBUTTONDOWN: tile_down(k, (short)LOWORD(l), (short)HIWORD(l)); return 0;
+    case WM_MOUSEMOVE: tile_move(k); return 0;
+    case WM_LBUTTONUP: case WM_CAPTURECHANGED: tile_up(k); return 0;
+    case WM_MOUSEWHEEL: tile_scale(k, (short)HIWORD(w) > 0 ? 1 : -1); return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
 }
 
 static int g_mode;                          /* 0 nada, 1 mover, 2 redimensionar */
@@ -541,7 +704,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEMOVE: drag_move(); return 0;
     case WM_LBUTTONUP: case WM_CAPTURECHANGED: drag_end(); return 0;
     case WM_DISPLAYCHANGE: paint(&cur); return 0;
-    case WM_TIMER: if (w == 1 && !g_dragging && lv_poll()) paint(&cur); return 0;   /* ~4 quadros/s da miniatura; só roda com a miniatura na tela */
+    case WM_TIMER: if (w == 1 && g_tdrag < 0) tiles_poll(); return 0;   /* ~4 quadros/s por miniatura; o timer só existe com miniatura ligada na tela */
     case WM_MOUSEWHEEL: wheel_step((short)HIWORD(w) > 0 ? 1 : -1); return 0;
     case WM_FRAME: { frame_t nw; EnterCriticalSection(&cs); nw = ready; LeaveCriticalSection(&cs); adopt_frame(&nw); if (!g_dragging) paint(&cur); return 0; }
     case WM_DESTROY: PostQuitMessage(0); return 0;
@@ -614,10 +777,11 @@ static int bar_selftest(frame_t *b, frame_t *o) {
     f += check((ex & WS_EX_NOACTIVATE) && (ex & WS_EX_TOPMOST) && !(ex & WS_EX_TRANSPARENT) && SendMessageW(hbar, WM_NCHITTEST, 0, 0) == HTCLIENT, "barra: no topo, sem ativar, recebe o mouse");
     /* geometria em várias larguras: tudo dentro da barra, sem sobreposição, alvos de pelo menos 28 px */
     int geo = 1, tall = 1, over = 0;
-    for (int ww = BAR_MINW; ww <= BAR_MAXW; ww += 40) for (int lv = 0; lv <= 2; lv += 2) {
-        bar_layout(ww, lv);
+    for (int ww = BAR_MINW; ww <= BAR_MAXW; ww += 40) for (int lv = 0; lv <= 6; lv += 6) {
+        bar_layout(ww, lv, lv ? NT : 0);
         for (int i = B_ALL; i < B_N; i++) {
-            const RECT *r = &g_bh[i]; if (i == B_LIVE && lv < 2) { if (r->right) geo = 0; continue; }
+            const RECT *r = &g_bh[i]; if (i == B_LIVE && lv <= NT) { if (r->right) geo = 0; continue; }
+            if (i >= B_T0 && !r->right) { if (lv) geo = 0; continue; }
             if (r->left < BAR_PAD || r->right > ww - BAR_PAD || r->top < g_barshape.top || r->bottom > g_barshape.bottom) geo = 0;
             if (r->bottom - r->top < 28) tall = 0;
             for (int j = i + 1; j < B_N; j++) { const RECT *q = &g_bh[j]; if (q->right && r->right && r->left < q->right && q->left < r->right && r->top < q->bottom && q->top < r->bottom) over++; }
@@ -627,17 +791,17 @@ static int bar_selftest(frame_t *b, frame_t *o) {
     }
     f += check(geo && !over, "botões sempre dentro da barra (560 a 680 px), sem sobrepor e com o controle de opacidade >= 48 px");
     f += check(tall, "alvos de clique com 28 px ou mais de altura");
-    bar_layout(g_bww, 2);
+    bar_layout(g_bww, 6, 0);
     {   /* textos: com a largura cheia nenhum rótulo precisa de reticências; nas menores a elipse protege (DT_END_ELLIPSIS) */
         HDC dc = CreateCompatibleDC(NULL); HFONT fm = bar_font(13, FW_MEDIUM); HGDIOBJ oo = SelectObject(dc, fm); int fit = 1; SIZE sz;
-        bar_layout(BAR_MAXW, 2);
+        bar_layout(BAR_MAXW, 6, 0);
         for (int i = 0; i < 4; i++) { GetTextExtentPoint32W(dc, WG[i].label, (int)wcslen(WG[i].label), &sz); if (sz.cx > g_bh[B_W0 + i].right - g_bh[B_W0 + i].left - 34) fit = 0; }
         GetTextExtentPoint32W(dc, L"Trocar transmissão", 18, &sz); if (sz.cx > g_bh[B_LIVE].right - g_bh[B_LIVE].left - 16) fit = 0;
         GetTextExtentPoint32W(dc, L"Desativar tudo", 14, &sz); if (sz.cx > g_bh[B_ALL].right - g_bh[B_ALL].left - 8) fit = 0;
         GetTextExtentPoint32W(dc, L"Opacidade 100%", 14, &sz); if (sz.cx > g_oplab.right - g_oplab.left) fit = 0;
         SelectObject(dc, oo); DeleteObject(fm); DeleteDC(dc);
         f += check(fit, "na largura cheia todos os textos cabem inteiros (sem reticências)");
-        bar_layout(g_bww, 2);
+        bar_layout(g_bww, 6, 0);
     }
     /* cantos: nada de canto reto (alfa ~0 na quina, opaco logo dentro do arco) na barra, na dica e no painel */
     {
@@ -688,49 +852,100 @@ static int bar_selftest(frame_t *b, frame_t *o) {
     (void)b; return f;
 }
 
-/* escreve um quadro de cor lisa (BGRA) na memória compartilhada de teste, como o app faz */
-static void lv_fake_write(unsigned char *m, int w, int h, unsigned long long n, unsigned bgr) {
-    volatile unsigned *seq = (volatile unsigned *)(m + 4); *seq += 1;
+/* escreve um quadro de cor lisa (BGRA) na região k da memória compartilhada de teste, como o app faz */
+static void lv_fake_write(unsigned char *m, int k, int w, int h, unsigned long long n, unsigned rgb) {
+    m += (size_t)k * LV_SLOT; volatile unsigned *seq = (volatile unsigned *)(m + 4); *seq += 1;
     memcpy(m, "BOVL", 4); memcpy(m + 8, &w, 4); memcpy(m + 12, &h, 4); memcpy(m + 16, &n, 8);
-    for (int i = 0; i < w * h; i++) ((unsigned *)(m + 64))[i] = 0xff000000u | bgr;
+    for (int i = 0; i < w * h && i < LV_MAXW * LV_MAXH; i++) ((unsigned *)(m + 64))[i] = 0xff000000u | rgb;
     *seq += 1;
 }
-static unsigned snap_px(int x, int y) { return g_snap[0].px[y * g_snap[0].w + x]; }
+static unsigned snap_px(int k, int x, int y) { return g_snap[k].px && x >= 0 && y >= 0 && x < g_snap[k].w && y < g_snap[k].h ? g_snap[k].px[y * g_snap[k].w + x] : 0; }
+static unsigned tile_center(int k) { return snap_px(2 + k, T[k].w / 2, T[k].ty + T[k].h / 2); }
+#define CH_R(c) (int)(((c) >> 16) & 255)
+#define CH_G(c) (int)(((c) >> 8) & 255)
+#define CH_B(c) (int)((c) & 255)
 
-/* Miniatura ao vivo: leitura da memória compartilhada, tile 16:9 arredondado, selo/nome, sem imagem, troca de quadro. */
-static int live_selftest(frame_t *b, frame_t *o) {
-    int f = 0; char nm[64]; snprintf(nm, sizeof nm, "Local\\BriksOvlTest-%lu", (unsigned long)GetCurrentProcessId());
-    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 64 + LV_MAXW * LV_MAXH * 4, nm);
+/* Miniaturas ao vivo (até 4, cada uma uma janela): leitura da memória compartilhada, escala/posição próprias, liga/desliga, edição, quinas. */
+static int live_selftest(frame_t *b, frame_t *o, const char *dev) {
+    int f = 0; char nm[64], ln[240]; snprintf(nm, sizeof nm, "Local\\BriksOvlTest-%lu", (unsigned long)GetCurrentProcessId());
+    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, NT * LV_SLOT, nm);
     unsigned char *m = mh ? (unsigned char *)MapViewOfFile(mh, FILE_MAP_WRITE, 0, 0, 0) : NULL;
-    f += check(m != NULL, "memória compartilhada de teste criada");
+    f += check(m != NULL, "memória compartilhada de teste criada (4 regiões)");
     if (!m) return f;
-    memset(m, 0, 64); lv_fake_write(m, 160, 90, 1, 0xff0000);   /* vermelho (0xRRGGBB) */
-    char ln[200]; apply_line(b, o, "edit 0"); apply_line(b, o, "flags 15"); snprintf(ln, sizeof ln, "livemap %s", nm); apply_line(b, o, ln);
-    apply_line(b, o, "begin"); apply_line(b, o, "i Sala conectada"); apply_line(b, o, "v Rafael Lima Souza de Albuquerque Montenegro Filho"); apply_line(b, o, "p 1 Marina"); apply_line(b, o, "end");
-    f += check(o->n == 3 && o->r[1].kind == R_LIVE && !strcmp(o->lmap, nm), "linha 'v <nome>' vira miniatura e 'livemap' entra no quadro");
-    cur = *o; paint(&cur); lv_poll(); paint(&cur);
-    const int pad = (int)(12 * ((float)g_pw / W_DEF) + 0.5f);
-    f += check(g_tile.right > g_tile.left && g_tile.left == pad && g_tile.right == g_pw - pad && (g_tile.bottom - g_tile.top) == (g_pw - 2 * pad) * 9 / 16, "miniatura 16:9 na largura útil do painel");
-    f += check(g_tile.bottom <= g_ph - pad, "a miniatura cabe no painel");
-    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255, G = (c >> 8) & 255;
-      f += check(g_lvvalid && R > 120 && G < 40, "o quadro da memória aparece no centro da miniatura (vermelho)"); }
-    { unsigned c = snap_px(g_tile.left, g_tile.top), c2 = snap_px(g_tile.right - 1, g_tile.bottom - 1); int R = (c >> 16) & 255, R2 = (c2 >> 16) & 255;
-      f += check(R < 100 && R2 < 100, "cantos da miniatura arredondados: a quina não é pintada com a imagem (nada de canto reto)"); }
-    { unsigned c = snap_px(g_tile.left + 14, g_tile.top + 22); int R = (c >> 16) & 255, G = (c >> 8) & 255; f += check(R > 150 && G < 90, "selo 'Ao vivo' vermelho no canto superior esquerdo"); }
-    f += check(snap_px(0, 0) >> 24 < 8 && snap_px(g_pw - 1, g_ph - 1) >> 24 < 8, "painel com miniatura mantém as quinas transparentes");
-    lv_fake_write(m, 160, 90, 2, 0x00ff00);   /* verde, quadro novo */
-    f += check(lv_poll() == 1 && g_lvn == 2, "quadro novo na memória é detectado");
-    f += check(lv_poll() == 0, "sem quadro novo não repinta (baixo consumo)");
-    paint(&cur);
-    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255, G = (c >> 8) & 255; f += check(G > 120 && R < 40, "o quadro novo (verde) aparece"); }
-    lv_fake_write(m, 160, 90, 0, 0);   /* o app parou de mandar (n = 0) */
-    f += check(lv_poll() == 1 && !g_lvvalid, "n = 0 (app parou de enviar) apaga a imagem");
-    paint(&cur);
-    { unsigned c = snap_px((g_tile.left + g_tile.right) / 2, (g_tile.top + g_tile.bottom) / 2); int R = (c >> 16) & 255; f += check(R < 60, "sem imagem o tile fica escuro (\"Carregando transmissão…\")"); }
-    { int bw = 4000; unsigned long long n9 = 9; memcpy(m + 8, &bw, 4); memcpy(m + 12, &bw, 4); memcpy(m + 16, &n9, 8); } f += check(lv_poll() == 0 && !g_lvvalid, "cabeçalho com dimensão absurda é ignorado");
-    apply_line(b, o, "livemap "); apply_line(b, o, "begin"); apply_line(b, o, "i x"); apply_line(b, o, "end"); cur = *o; paint(&cur);
-    f += check(g_lvp == NULL && g_tile.right == 0, "sem 'v' e sem livemap: solta a memória e esconde a miniatura");
-    UnmapViewOfFile(m); CloseHandle(mh); return f;
+    memset(m, 0, NT * LV_SLOT > 4096 ? 4096 : NT * LV_SLOT);
+    lv_fake_write(m, 0, 160, 90, 1, 0xff0000); lv_fake_write(m, 1, 320, 180, 1, 0x00ff00); lv_fake_write(m, 2, 320, 180, 1, 0x0000ff); lv_fake_write(m, 3, 320, 180, 1, 0xffff00);
+    RECT wk; { HMONITOR pm = MonitorFromPoint((POINT){ 0, 0 }, MONITOR_DEFAULTTOPRIMARY); MONITORINFO mi; mi.cbSize = sizeof mi; GetMonitorInfoW(pm, &mi); wk = mi.rcWork; }
+    apply_line(b, o, "cfg 90 0"); apply_line(b, o, "edit 0"); apply_line(b, o, "flags 15"); apply_line(b, o, "lives 4"); snprintf(ln, sizeof ln, "livemap %s", nm); apply_line(b, o, ln);
+    apply_line(b, o, "begin"); apply_line(b, o, "i Sala conectada");
+    apply_line(b, o, "tile 0 aaaa1 1 Rafael Lima Souza de Albuquerque Montenegro Filho"); apply_line(b, o, "tile 1 bbbb1 1 Marina"); apply_line(b, o, "tile 2 cccc1 0 Oculta"); apply_line(b, o, "tile 3 dddd1 1 Quarta");
+    snprintf(ln, sizeof ln, "tplace 1 %s 300 200 150", dev); apply_line(b, o, ln);
+    apply_line(b, o, "end");
+    f += check(o->ntile == 4 && !strcmp(o->t[0].key, "aaaa1") && o->t[0].on && !o->t[2].on && !wcscmp(o->t[1].name, L"Marina") && o->t[1].pct == 150 && o->t[1].pvalid, "linhas 'tile' e 'tplace' entram no quadro (até 4, com chave, ligada, nome, posição e escala)");
+    apply_line(b, o, "begin"); apply_line(b, o, "tile 9 x 1 y"); apply_line(b, o, "tplace 5 d 1 1 1"); apply_line(b, o, "tile 0 k 1"); f += check(b->ntile == 1 && b->t[0].on, "tile fora de 0-3 é ignorado; tplace de miniatura inexistente também");
+    apply_line(b, o, "begin"); apply_line(b, o, "i Sala conectada");
+    apply_line(b, o, "tile 0 aaaa1 1 Rafael Lima Souza de Albuquerque Montenegro Filho"); apply_line(b, o, "tile 1 bbbb1 1 Marina"); apply_line(b, o, "tile 2 cccc1 0 Oculta"); apply_line(b, o, "tile 3 dddd1 1 Quarta");
+    snprintf(ln, sizeof ln, "tplace 1 %s 300 200 150", dev); apply_line(b, o, ln); apply_line(b, o, "end");
+    cur = *o; paint(&cur); for (int k = 0; k < NT; k++) lv_poll(k); for (int k = 0; k < NT; k++) paint_tile(k, &cur);
+    f += check(T[0].shown && T[1].shown && !T[2].shown && T[3].shown, "fora da edição só aparecem as miniaturas ligadas (a oculta não tem janela na tela)");
+    f += check(T[0].w == 320 && T[0].h == 180 && T[1].w == 480 && T[1].h == 270, "escala própria: 100% = 320x180, 150% = 480x270 (16:9)");
+    { RECT r; GetWindowRect(T[1].wnd, &r); f += check(r.left == wk.left + 300 && r.top == wk.top + 200 && r.right - r.left == 480, "posição salva da miniatura 2, relativa à área útil do monitor"); }
+    { RECT a, c; GetWindowRect(T[0].wnd, &a); GetWindowRect(T[3].wnd, &c); f += check(!(a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom), "sem posição salva, as miniaturas ficam empilhadas sem sobrepor"); }
+    f += check(CH_R(tile_center(0)) > 150 && CH_G(tile_center(0)) < 40 && CH_G(tile_center(1)) > 150 && CH_R(tile_center(1)) < 40 && CH_R(tile_center(3)) > 150 && CH_G(tile_center(3)) > 150, "cada miniatura mostra o quadro da própria região (vermelho, verde, amarelo)");
+    { int a = (int)(snap_px(2, T[0].w / 2, T[0].h / 2) >> 24); f += check(a > 215 && a < 245, "a opacidade do overlay (90%) vale para a imagem"); }
+    for (int k = 0; k < NT; k++) if (T[k].shown) {
+        const int w = T[k].w, h = T[k].h;
+        int ok = (snap_px(2 + k, 0, 0) >> 24) < 8 && (snap_px(2 + k, w - 1, 0) >> 24) < 8 && (snap_px(2 + k, 0, h - 1) >> 24) < 8 && (snap_px(2 + k, w - 1, h - 1) >> 24) < 8 && (snap_px(2 + k, 6, 6) >> 24) > 150;
+        snprintf(ln, sizeof ln, "miniatura %d: quinas transparentes e raio 10 (nenhum canto reto)", k + 1); f += check(ok, ln);
+    }
+    f += check(CH_R(snap_px(2, 14, 20)) > 150 && CH_G(snap_px(2, 14, 20)) < 90, "selo 'Ao vivo' vermelho no canto superior esquerdo");
+    { LONG ex = GetWindowLongW(T[0].wnd, GWL_EXSTYLE); f += check((ex & WS_EX_TRANSPARENT) && (ex & WS_EX_NOACTIVATE) && (ex & WS_EX_TOPMOST) && SendMessageW(T[0].wnd, WM_NCHITTEST, 0, 0) == HTTRANSPARENT, "miniatura fora da edição: clique atravessa, não ativa, no topo"); }
+    f += check(lv_poll(0) == 0 && lv_poll(1) == 0, "sem quadro novo não há repintura (baixo consumo)");
+    lv_fake_write(m, 1, 320, 180, 2, 0xff00ff); f += check(lv_poll(1) == 1 && g_lvn[1] == 2 && lv_poll(0) == 0, "quadro novo numa região só mexe naquela miniatura");
+    paint_tile(1, &cur); f += check(CH_R(tile_center(1)) > 150 && CH_B(tile_center(1)) > 150 && CH_G(tile_center(1)) < 40, "o quadro novo (magenta) aparece só na miniatura 2");
+    lv_fake_write(m, 3, 320, 180, 0, 0); f += check(lv_poll(3) == 1 && !g_lvvalid[3], "n = 0 (app parou de enviar) apaga a imagem daquela miniatura");
+    paint_tile(3, &cur); f += check(CH_R(tile_center(3)) < 70 && CH_G(tile_center(3)) < 70, "sem imagem fica o fundo escuro com 'Carregando transmissão…'");
+    { int bw = 4000; unsigned long long n9 = 9; memcpy(m + 2 * LV_SLOT + 8, &bw, 4); memcpy(m + 2 * LV_SLOT + 12, &bw, 4); memcpy(m + 2 * LV_SLOT + 16, &n9, 8); f += check(lv_poll(2) <= 1 && !g_lvvalid[2], "cabeçalho com dimensão absurda é ignorado"); }
+    lv_fake_write(m, 3, 320, 180, 3, 0xffff00); lv_poll(3);
+
+    /* ---- modo de edição ---- */
+    apply_line(b, o, "edit 1"); apply_line(b, o, "end"); cur = *o; g_inject = 1;
+    paint(&cur); for (int k = 0; k < NT; k++) paint_tile(k, &cur);
+    f += check(T[0].shown && T[1].shown && T[2].shown && T[3].shown && T[2].edit, "em edição a miniatura oculta também aparece (esmaecida, com 'Ligar')");
+    { RECT r; GetWindowRect(T[1].wnd, &r); f += check(r.left == wk.left + 300 && r.top == wk.top + 200 - (TH + 4) && r.bottom - r.top == 270 + TH + 4, "a alça fica ACIMA da miniatura: a imagem não muda de lugar ao entrar na edição"); }
+    f += check(!(GetWindowLongW(T[0].wnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) && SendMessageW(T[0].wnd, WM_NCHITTEST, 0, 0) == HTCLIENT, "em edição a miniatura recebe o mouse");
+    { int geo = 1; for (int k = 0; k < NT; k++) { const tile_t *t = &T[k]; const RECT *rr[4] = { &t->bminus, &t->bplus, &t->bclose, &t->bpct }; for (int q = 0; q < 4; q++) if (rr[q]->right && (rr[q]->left < 0 || rr[q]->right > t->w || rr[q]->top < 0 || rr[q]->bottom > TH)) geo = 0; if (t->bminus.right && t->bplus.right && !(t->bminus.right <= t->bplus.left)) geo = 0; if (t->bclose.right && t->bplus.right && !(t->bplus.right <= t->bclose.left)) geo = 0; }
+      f += check(geo, "botões da alça (− / + / ×) sempre dentro da alça e sem sobrepor, em qualquer escala"); }
+    f += check(snap_px(2, 0, 0) >> 24 < 8 && snap_px(2, T[0].w - 1, 0) >> 24 < 8 && snap_px(2, 0, T[0].ty + T[0].h - 1) >> 24 < 8 && snap_px(2, 2, TH / 2) > 0, "edição: quinas da alça e da miniatura arredondadas (transparentes)");
+    CLR(); { const RECT *p = &T[0].bplus; tile_down(0, (p->left + p->right) / 2, (p->top + p->bottom) / 2); }
+    snprintf(ln, sizeof ln, "tile aaaa1 %s ", dev); f += check(strstr(g_out, ln) && strstr(g_out, " 110\n") && tile_pct(&cur.t[0]) == 110 && T[0].w == 352, "'+' sobe a escala 10% e manda 'tile <chave> <monitor> x y %'");
+    CLR(); { const RECT *p = &T[0].bminus; tile_down(0, (p->left + p->right) / 2, (p->top + p->bottom) / 2); tile_down(0, (T[0].bminus.left + T[0].bminus.right) / 2, (T[0].bminus.top + T[0].bminus.bottom) / 2); }
+    f += check(tile_pct(&cur.t[0]) == 90 && strstr(g_out, " 90\n"), "'−' desce 10% de cada vez");
+    CLR(); tile_scale(0, 1); tile_scale(0, 1); f += check(tile_pct(&cur.t[0]) == 110, "a roda do mouse sobre a miniatura também muda a escala (±10%)");
+    for (int i = 0; i < 30; i++) tile_scale(0, 1); f += check(tile_pct(&cur.t[0]) == PCT_MAX, "escala limitada a 200%"); for (int i = 0; i < 40; i++) tile_scale(0, -1); f += check(tile_pct(&cur.t[0]) == PCT_MIN, "e a 50%");
+    tile_set_pct(0, 100);
+    { RECT r0; GetWindowRect(T[1].wnd, &r0); const int x0 = T[1].x, y0 = T[1].y; CLR();
+      g_inj = (POINT){ 600, 600 }; tile_down(1, 30, T[1].ty + 40); f += check(g_tdrag == 1, "clicar no corpo da miniatura começa o arraste");
+      g_inj = (POINT){ 640, 625 }; tile_move(1); { RECT r1; GetWindowRect(T[1].wnd, &r1); f += check(r1.left == r0.left + 40 && r1.top == r0.top + 25, "arrastar move só aquela miniatura junto com o cursor"); }
+      tile_up(1); snprintf(ln, sizeof ln, "tile bbbb1 %s %d %d 150\n", dev, x0 + 40 - (int)wk.left, y0 + 25 - (int)wk.top); f += check(strstr(g_out, ln) != NULL && g_tdrag < 0, "ao soltar manda a posição (relativa ao monitor) e a escala");
+      f += check(cur.t[1].pvalid && cur.t[1].px == x0 + 40 - wk.left, "a posição nova vale na hora (sem esperar o app)"); }
+    f += check(T[0].x != T[1].x || T[0].y != T[1].y, "as outras miniaturas ficam onde estavam");
+    CLR(); { const RECT *p = &T[0].bclose; tile_down(0, (p->left + p->right) / 2, (p->top + p->bottom) / 2); }
+    f += check(strstr(g_out, "tileon aaaa1 0\n") && !cur.t[0].on && T[0].shown, "× oculta só aquela transmissão ('tileon <chave> 0') e a alça vira 'Ligar'");
+    lv_poll(0); f += check(!cur.t[0].on, "oculta fica oculta (a leitura de quadros do overlay só roda nas ligadas)");
+    CLR(); { const RECT *p = &T[0].bclose; tile_down(0, (p->left + p->right) / 2, (p->top + p->bottom) / 2); } f += check(strstr(g_out, "tileon aaaa1 1\n") && cur.t[0].on, "'Ligar' volta a mostrar ('tileon <chave> 1')");
+    CLR(); { const RECT *p = &T[2].bclose; tile_down(2, (p->left + p->right) / 2, (p->top + p->bottom) / 2); } f += check(strstr(g_out, "tileon cccc1 1\n") && cur.t[2].on, "'Ligar' numa miniatura que estava oculta");
+    { frame_t st = *o; st.t[2].on = 0; st.t[2].pct = 100; g_hold = GetTickCount() + 400; adopt_frame(&st); f += check(cur.t[2].on, "quadro velho do app logo após o clique não desfaz o liga/desliga");
+      g_hold = 0; adopt_frame(&st); f += check(!cur.t[2].on, "passada a espera, o app (Configurações) prevalece: sincronia nos dois sentidos"); }
+    /* barra: linha 3 com uma chave por miniatura */
+    paint_bar(&cur); f += check(g_bh[B_T0].right && g_bh[B_T1].right && g_bh[B_T2].right && g_bh[B_T3].right && g_bh[B_T0].top > g_bh[B_OPM].bottom, "a barra ganha a 3ª linha com uma chave por miniatura (até 4)");
+    CLR(); bar_down(CTR(B_T1)); f += check(strstr(g_out, "tileon bbbb1 0\n") && !cur.t[1].on, "chave da barra oculta só a transmissão 2 ('tileon bbbb1 0')");
+    CLR(); bar_down(CTR(B_T1)); f += check(strstr(g_out, "tileon bbbb1 1\n") && cur.t[1].on, "e liga de novo");
+    { frame_t few = cur; few.ntile = 2; paint_bar(&few); f += check(g_bh[B_T1].right && !g_bh[B_T2].right, "com 2 transmissões a barra só tem 2 chaves"); frame_t none = cur; none.ntile = 0; paint_bar(&none); f += check(!g_bh[B_T0].right, "sem transmissões não há a 3ª linha"); paint_bar(&cur); }
+    { frame_t many = cur; many.lives = 7; paint_bar(&many); f += check(g_bh[B_LIVE].right != 0, "'Trocar transmissão' só aparece com mais de 4 transmissões"); frame_t four = cur; four.lives = 4; paint_bar(&four); f += check(!g_bh[B_LIVE].right, "com 4 ou menos não aparece"); paint_bar(&cur); }
+    /* encerra: sem tiles nem livemap solta tudo */
+    apply_line(b, o, "livemap "); apply_line(b, o, "edit 0"); apply_line(b, o, "begin"); apply_line(b, o, "i x"); apply_line(b, o, "end"); cur = *o; paint(&cur);
+    f += check(g_lvp == NULL && !T[0].shown && !T[1].shown && !T[2].shown && !T[3].shown, "sem miniaturas e sem livemap: solta a memória e esconde todas as janelas");
+    g_inject = 1; UnmapViewOfFile(m); CloseHandle(mh); return f;
 }
 
 /* Teste do modo de edição, sem mostrar janela e com o cursor injetado: arrastar, redimensionar, Concluir, por monitor. */
@@ -739,7 +954,7 @@ static int edit_selftest(void) {
     HMONITOR pm = MonitorFromPoint((POINT){ 0, 0 }, MONITOR_DEFAULTTOPRIMARY); MONITORINFOEXW mi; mi.cbSize = sizeof mi; GetMonitorInfoW(pm, (MONITORINFO *)&mi);
     char dev[40]; WideCharToMultiByte(CP_UTF8, 0, mi.szDevice, -1, dev, sizeof dev, NULL, NULL);
     frame_t b, o; memset(&b, 0, sizeof b); memset(&o, 0, sizeof o); char ln[160];
-    apply_line(&b, &o, "cfg 90 0"); apply_line(&b, &o, "edit 1"); apply_line(&b, &o, "flags 15"); apply_line(&b, &o, "lives 2"); apply_line(&b, &o, "begin"); apply_line(&b, &o, "p 1 Marina"); apply_line(&b, &o, "p 0 Rafael");
+    apply_line(&b, &o, "cfg 90 0"); apply_line(&b, &o, "edit 1"); apply_line(&b, &o, "flags 15"); apply_line(&b, &o, "lives 6"); apply_line(&b, &o, "begin"); apply_line(&b, &o, "p 1 Marina"); apply_line(&b, &o, "p 0 Rafael");
     snprintf(ln, sizeof ln, "place %s 100 80 300", dev); apply_line(&b, &o, ln);
     apply_line(&b, &o, "end"); cur = o; paint(&cur);
     RECT r; GetWindowRect(hwnd, &r);
@@ -773,7 +988,7 @@ static int edit_selftest(void) {
     f += check(r.right == wa.right - 20 && r.top == wa.top + 20, "monitor salvo que sumiu: volta ao canto escolhido do principal");
     snprintf(ln, sizeof ln, "place %s 99999 99999 260", dev); apply_line(&b, &o, ln); apply_line(&b, &o, "end"); cur = o; paint(&cur); GetWindowRect(hwnd, &r);
     f += check(r.right <= mi.rcWork.right && r.bottom <= mi.rcWork.bottom, "posição salva fora da tela é trazida para dentro");
-    f += live_selftest(&b, &o);
+    f += live_selftest(&b, &o, dev);
     return f;
 }
 
@@ -791,28 +1006,42 @@ static int shot_main(const wchar_t *path) {
     g_noshow = 1; g_capture_out = 1; g_inject = 1; g_snap_on = 1;
     frame_t b, o; memset(&b, 0, sizeof b); memset(&o, 0, sizeof o);
     char mn[64]; snprintf(mn, sizeof mn, "Local\\BriksOvlShot-%lu", (unsigned long)GetCurrentProcessId());
-    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 64 + LV_MAXW * LV_MAXH * 4, mn);
+    HANDLE mh = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, NT * LV_SLOT, mn);
     unsigned char *mm = mh ? (unsigned char *)MapViewOfFile(mh, FILE_MAP_WRITE, 0, 0, 0) : NULL;
-    if (mm) {   /* "jogo" de mentira de 16:9: céu, chão e um personagem */
-        lv_fake_write(mm, 320, 180, 1, 0);
-        for (int y = 0; y < 180; y++) for (int x = 0; x < 320; x++) {
-            unsigned r = y < 120 ? 60 + y / 2 : 40, g = y < 120 ? 120 + y / 3 : 150 - (y - 120), bl = y < 120 ? 220 - y / 2 : 60;
-            if (x > 140 && x < 180 && y > 70 && y < 140) { r = 240; g = 190; bl = 60; }
-            ((unsigned *)(mm + 64))[y * 320 + x] = 0xff000000u | (r << 16) | (g << 8) | bl;
+    if (mm) {   /* 4 "jogos" de mentira (16:9) com cores diferentes: céu, chão e um personagem */
+        for (int k = 0; k < NT; k++) {
+            lv_fake_write(mm, k, 320, 180, 1, 0);
+            unsigned *dst = (unsigned *)(mm + (size_t)k * LV_SLOT + 64);
+            for (int y = 0; y < 180; y++) for (int x = 0; x < 320; x++) {
+                unsigned r = y < 120 ? 60 + y / 2 : 40, g = y < 120 ? 120 + y / 3 : 150 - (y - 120), bl = y < 120 ? 220 - y / 2 : 60, t;
+                if (k == 1) { t = r; r = bl / 2 + 40; bl = t; } else if (k == 2) { t = g; g = r; r = t; } else if (k == 3) { r = r / 2 + 90; g = g / 2; }
+                if (x > 140 + k * 8 && x < 180 + k * 8 && y > 70 && y < 140) { r = 240; g = 190; bl = 60; }
+                dst[y * 320 + x] = 0xff000000u | (r << 16) | (g << 8) | bl;
+            }
         }
         char lm[100]; snprintf(lm, sizeof lm, "livemap %s", mn); apply_line(&b, &o, lm);
     }
-    apply_line(&b, &o, "cfg 86 0"); apply_line(&b, &o, "edit 1"); apply_line(&b, &o, "flags 11"); apply_line(&b, &o, "lives 2");
-    apply_line(&b, &o, "begin"); apply_line(&b, &o, "i Sala conectada"); apply_line(&b, &o, "v Rafael Lima"); apply_line(&b, &o, "p 1 Marina Costa"); apply_line(&b, &o, "p 0 Rafael Lima"); apply_line(&b, &o, "p 0 Você");
+    apply_line(&b, &o, "cfg 86 0"); apply_line(&b, &o, "edit 1"); apply_line(&b, &o, "flags 11"); apply_line(&b, &o, "lives 4");
+    apply_line(&b, &o, "begin"); apply_line(&b, &o, "i Sala conectada"); apply_line(&b, &o, "p 1 Marina Costa"); apply_line(&b, &o, "p 0 Rafael Lima"); apply_line(&b, &o, "p 0 Você");
+    apply_line(&b, &o, "tile 0 k1 1 Rafael Lima"); apply_line(&b, &o, "tile 1 k2 1 Marina Costa"); apply_line(&b, &o, "tile 2 k3 0 Júlia Andrade"); apply_line(&b, &o, "tile 3 k4 1 Pedro");
+    {   /* posições salvas: uma coluna no lado direito, tamanhos diferentes */
+        MONITORINFOEXW mi; mi.cbSize = sizeof mi; GetMonitorInfoW(MonitorFromPoint((POINT){ 0, 0 }, MONITOR_DEFAULTTOPRIMARY), (MONITORINFO *)&mi);
+        char dev[40], ln[120]; WideCharToMultiByte(CP_UTF8, 0, mi.szDevice, -1, dev, sizeof dev, NULL, NULL);
+        const int W = (int)(mi.rcWork.right - mi.rcWork.left);
+        snprintf(ln, sizeof ln, "tplace 0 %s %d 60 100", dev, W - 720); apply_line(&b, &o, ln);
+        snprintf(ln, sizeof ln, "tplace 1 %s %d 330 70", dev, W - 720); apply_line(&b, &o, ln);
+        snprintf(ln, sizeof ln, "tplace 2 %s %d 520 100", dev, W - 720); apply_line(&b, &o, ln);
+        snprintf(ln, sizeof ln, "tplace 3 %s 40 360 100", dev); apply_line(&b, &o, ln);
+    }
     apply_line(&b, &o, "end");
-    cur = o; g_bhover = B_W1; paint(&cur); lv_poll(); paint(&cur);
+    cur = o; g_bhover = B_W1; paint(&cur); for (int k = 0; k < NT; k++) lv_poll(k); for (int k = 0; k < NT; k++) paint_tile(k, &cur);
     RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0); const int cw = wa.right - wa.left, ch = wa.bottom - wa.top;
     unsigned char *rgb = (unsigned char *)malloc((size_t)cw * ch * 3); if (!rgb) return 1;
     for (int y = 0; y < ch; y++) for (int x = 0; x < cw; x++) {   /* "jogo": céu em degradê com blocos */
         unsigned char *d = rgb + ((size_t)y * cw + x) * 3; int t = y * 255 / ch;
         d[0] = (unsigned char)(70 + t / 3 + ((x / 90 + y / 90) % 2) * 14); d[1] = (unsigned char)(110 - t / 4 + ((x / 90 + y / 90) % 2) * 10); d[2] = (unsigned char)(150 - t / 3);
     }
-    blend_snap(rgb, cw, ch, 0, wa.left, wa.top); blend_snap(rgb, cw, ch, 1, wa.left, wa.top);
+    for (int k = 0; k < 2 + NT; k++) blend_snap(rgb, cw, ch, k, wa.left, wa.top);
     HANDLE fh = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL); if (fh == INVALID_HANDLE_VALUE) { free(rgb); return 1; }
     const int stride = (cw * 3 + 3) & ~3; BITMAPFILEHEADER bf = { 0x4d42, (DWORD)(54 + (size_t)stride * ch), 0, 0, 54 }; BITMAPINFOHEADER bh = { sizeof bh, cw, ch, 1, 24, BI_RGB, (DWORD)((size_t)stride * ch), 0, 0, 0, 0 };
     DWORD w; WriteFile(fh, &bf, sizeof bf, &w, NULL); WriteFile(fh, &bh, sizeof bh, &w, NULL);
@@ -849,6 +1078,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show) {
     if (!hwnd) return 1;
     { WNDCLASSW bc = { 0 }; bc.lpfnWndProc = barproc; bc.hInstance = inst; bc.lpszClassName = L"BriksOverlayBar"; bc.hCursor = LoadCursor(NULL, IDC_ARROW); RegisterClassW(&bc);
       hbar = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, bc.lpszClassName, L"Briks overlay - barra de edicao", WS_POPUP, 0, 0, 10, 10, NULL, NULL, inst, NULL); }
+    { WNDCLASSW tc = { 0 }; tc.lpfnWndProc = tproc; tc.hInstance = inst; tc.lpszClassName = L"BriksOverlayTile"; tc.hCursor = LoadCursor(NULL, IDC_ARROW); RegisterClassW(&tc);
+      for (int k = 0; k < NT; k++) { T[k].wnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, tc.lpszClassName, L"Briks overlay - transmissao", WS_POPUP, 0, 0, 10, 10, NULL, NULL, inst, NULL); if (T[k].wnd) SetWindowLongPtrW(T[k].wnd, GWLP_USERDATA, k + 1); } }
     if (!hbar) return 1;
     if (shot) { int r = shot_main(shot); DestroyWindow(hbar); DestroyWindow(hwnd); return r; }
     if (edittest) { int fl = edit_selftest(); say(fl ? "\n%d falha(s)\n" : "\ntudo certo\n", fl); DestroyWindow(hwnd); return fl ? 1 : 0; }

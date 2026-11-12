@@ -10,9 +10,9 @@ expect overlay_edit 1
 expect overlay_has_edit 1
 expect overlay_flags 15
 expect overlay_lives 0
-sys ovl lives 2
+sys ovl lives 6
 waitms 500
-expect overlay_lives 2
+expect overlay_lives 6
 expect overlay_has_oplive 1
 sys ovl line widget mute 0
 waitms 500

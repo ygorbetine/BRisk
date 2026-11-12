@@ -10,6 +10,7 @@
 #include "storage.h"
 #include "json.h"
 void update_settings_cards(cui_ctx *ui, app_state_t *s); int update_probe(const char *n);   /* ui_update.c */
+int overlay_tile_count(void); const char *overlay_tile_name(int j); bool overlay_tile_enabled(int j); void overlay_tile_enable(int j, bool on);   /* overlay_host.c */
 void overlay_edit_toggle(void); bool overlay_edit_active(void); void overlay_edit_set(bool on); void settings_ovl_reset(void);   /* overlay_host.c */
 void nettest_card(cui_ctx *ui, app_state_t *s); int nettest_probe(const char *n, app_state_t *s);   /* ui_nettest.c */
 int overlay_state(void); int overlay_probe(const char *n);   /* overlay_host.c */
@@ -37,6 +38,7 @@ typedef struct {
     bool nt_online, nt_stream;
     bool telemetry;
     int text_size;
+    char ov_tiles[480], ov_toff[120];   /* miniaturas de transmissão do overlay: "chave|monitor|x|y|%;..." (posição/escala) e chaves ocultas "chave;chave" */
     char ov_lay[190], ov_dev[48];   /* posições da sobreposição por monitor ("dev|x|y|w;...") e o monitor ativo */
 } settings_t;
 settings_t g_set;
@@ -57,6 +59,7 @@ static const struct { const char *k; char t; void *p; int cap; } F[] = {
     { "ptt_on", 'b', &g_set.ptt_on }, { "ptt_delay", 'f', &g_set.ptt_delay }, { "nt_online", 'b', &g_set.nt_online }, { "nt_stream", 'b', &g_set.nt_stream },
     { "telemetry", 'b', &g_set.telemetry }, { "text_size", 'i', &g_set.text_size },
     { "ov_lay", 's', g_set.ov_lay, 190 }, { "ov_dev", 's', g_set.ov_dev, 48 },
+    { "ov_tiles", 's', g_set.ov_tiles, 480 }, { "ov_toff", 's', g_set.ov_toff, 120 },
 };
 #define NF ((int)(sizeof F / sizeof *F))
 
@@ -180,7 +183,41 @@ bool settings_ovl_widget(const char *id, bool on) {
     return hit;
 }
 void settings_ovl_opacity(int pct) { g_set.ov_opacity = (float)(pct < 10 ? 10 : pct > 100 ? 100 : pct); }
-void settings_ovl_reset(void) { g_set.ov_lay[0] = 0; g_set.ov_dev[0] = 0; }
+/* Miniaturas de transmissão (até 4, cada uma com chave estável da pessoa): posição/escala por monitor e liga/desliga por transmissão. */
+bool settings_tile_place(const char *key, char *dev, size_t cap, int *x, int *y, int *pct) {
+    char b[480]; snprintf(b, sizeof b, "%s", g_set.ov_tiles); bool got = false;
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) {
+        char k[24], d[48]; int a, c, p; char *t1 = strchr(e, '|'); if (!t1) continue; *t1 = 0; snprintf(k, sizeof k, "%s", e);
+        char *t2 = strchr(t1 + 1, '|'); if (!t2) continue; *t2 = 0; snprintf(d, sizeof d, "%s", t1 + 1);
+        if (strcmp(k, key) || sscanf(t2 + 1, "%d|%d|%d", &a, &c, &p) != 3) continue;
+        if (!got || !strcmp(d, g_set.ov_dev)) { snprintf(dev, cap, "%s", d); *x = a; *y = c; *pct = p; got = true; }   /* vale o do monitor ativo; senão o último salvo */
+    }
+    return got;
+}
+void settings_tile_set(const char *key, const char *dev, int x, int y, int pct) {
+    char keep[480] = "", b[480]; snprintf(b, sizeof b, "%s", g_set.ov_tiles);
+    const size_t kl = strlen(key), dl = strlen(dev);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) {
+        if (!strncmp(e, key, kl) && e[kl] == '|' && !strncmp(e + kl + 1, dev, dl) && e[kl + 1 + dl] == '|') continue;   /* troca a entrada (chave, monitor) */
+        size_t n = strlen(keep); if (n + strlen(e) + 2 < sizeof keep) snprintf(keep + n, sizeof keep - n, "%s%s", n ? ";" : "", e);
+    }
+    pct = pct < 50 ? 50 : pct > 200 ? 200 : pct;
+    char now[560]; snprintf(now, sizeof now, "%s%s%s|%s|%d|%d|%d", keep, keep[0] ? ";" : "", key, dev, x, y, pct);
+    while (strlen(now) > 470) { char *sc = strchr(now, ';'); if (!sc) break; memmove(now, sc + 1, strlen(sc)); }   /* sobra: descarta o mais antigo */
+    snprintf(g_set.ov_tiles, sizeof g_set.ov_tiles, "%s", now);
+}
+bool settings_tile_enabled(const char *key) {
+    char b[120]; snprintf(b, sizeof b, "%s", g_set.ov_toff);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) if (!strcmp(e, key)) return false;
+    return true;
+}
+void settings_tile_enable(const char *key, bool on) {
+    char keep[120] = "", b[120]; snprintf(b, sizeof b, "%s", g_set.ov_toff);
+    for (char *e = strtok(b, ";"); e; e = strtok(NULL, ";")) { if (!strcmp(e, key)) continue; size_t n = strlen(keep); if (n + strlen(e) + 2 < sizeof keep) snprintf(keep + n, sizeof keep - n, "%s%s", n ? ";" : "", e); }
+    if (!on) { char now[160]; snprintf(now, sizeof now, "%s%s%s", keep, keep[0] ? ";" : "", key); while (strlen(now) > 110) { char *sc = strchr(now, ';'); if (!sc) break; memmove(now, sc + 1, strlen(sc)); } snprintf(keep, sizeof keep, "%s", now); }
+    snprintf(g_set.ov_toff, sizeof g_set.ov_toff, "%s", keep);
+}
+void settings_ovl_reset(void) { g_set.ov_tiles[0] = 0;  g_set.ov_lay[0] = 0; g_set.ov_dev[0] = 0; }
 bool settings_echo(void) { return g_set.echo; }
 bool settings_nt_online(void) { return g_set.nt_online; }
 bool settings_nt_stream(void) { return g_set.nt_stream; }
@@ -273,6 +310,8 @@ int settings_probe(const char *n, app_state_t *s) {
     { int op = overlay_probe(n); if (op != -9999) return op; }
     { int cp = cam_probe(n); if (cp != -9999) return cp; }
     if (!strcmp(n, "cfg_ov_on")) return g_set.ov_on;
+    if (!strcmp(n, "cfg_ov_tiles")) { int c = 0; for (const char *p = g_set.ov_tiles; *p; p++) if (*p == ';') c++; return g_set.ov_tiles[0] ? c + 1 : 0; }
+    if (!strcmp(n, "cfg_ov_toff")) { int c = 0; for (const char *p = g_set.ov_toff; *p; p++) if (*p == ';') c++; return g_set.ov_toff[0] ? c + 1 : 0; }
     if (!strcmp(n, "cfg_ov_flags")) return (g_set.ov_live ? 1 : 0) | (g_set.ov_voice ? 2 : 0) | (g_set.ov_status ? 4 : 0) | (g_set.ov_mute ? 8 : 0);
     if (!strcmp(n, "cfg_ov_opacity")) return (int)(g_set.ov_opacity + 0.5f);
     if (!strcmp(n, "rec_slot")) return rec_slot;
@@ -556,7 +595,17 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         cui_text(ui, "O que aparece", .size = 12, .color = B_MUTED);
                         sw(ui, "Quem está na sala", "Você e as pessoas da chamada; quem fala fica destacado.", &g_set.ov_voice);
                         sw(ui, "Sala conectada", "Uma linha dizendo que a sala está conectada.", &g_set.ov_status);
-                        sw(ui, "Transmissão", "Avisa que você está transmitindo a tela.", &g_set.ov_live);
+                        sw(ui, "Transmissão", "Miniaturas ao vivo das transmissões da sala (até 4), cada uma com posição e tamanho próprios.", &g_set.ov_live);
+                        if (g_set.ov_live) {   /* uma chave por transmissão: oculta não gasta CPU nem recebe quadros */
+                            const int nt = overlay_tile_count();
+                            if (!nt) sub(ui, "As transmissões aparecem aqui quando alguém transmite na sua sala.");
+                            for (int j = 0; j < nt; j++) {
+                                char lb[120]; snprintf(lb, sizeof lb, "Miniatura de %s", overlay_tile_name(j));
+                                bool on = overlay_tile_enabled(j); const bool was = on;
+                                sw(ui, lb, "Mostra ou oculta só esta transmissão (no modo de edição também dá para usar o botão da barra ou o × da alça).", &on);
+                                if (on != was) overlay_tile_enable(j, on);
+                            }
+                        }
                         sw(ui, "Aviso de mudo", "Mostra quando seu microfone está mudo ou você está ensurdecido.", &g_set.ov_mute);
                         cui_textf(ui, "Opacidade: %d%%", (int)g_set.ov_opacity); cui_slider(ui, "##cfg-ovop", &g_set.ov_opacity, 10, 100);
                         static const char *COR[] = { "Sup. direito", "Sup. esquerdo", "Inf. direito", "Inf. esquerdo" };

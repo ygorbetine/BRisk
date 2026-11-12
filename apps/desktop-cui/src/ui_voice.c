@@ -123,7 +123,9 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
     const cui_color state_col = ok ? B_ONLINE : bad ? CUI_RGB(0xff9a9a) : CUI_RGB(0xf5d9a0);
     char title[120]; call_room_title(s, title, sizeof title);
     cui_push_id_int(ui, 6400);
-    cui_box(ui, .width = CUI_FILL, .pad_x = 10, .pad_top = 8) {
+    g_cov_own++;   /* a barra cobre linhas da lista rolada por baixo dela (clicar na seta/mic abria a conversa escondida): cobertura só para o que está sob ela */
+    cui_box(ui, .id = "vmbar", .width = CUI_FILL, .pad_x = 10, .pad_top = 8, .gap = 6) {
+        share_mini(ui, s, g_panel_w - 20.0f);   /* transmissão no ar e fora da tela da chamada: miniatura ao vivo acima da barra (ui_share.c) */
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .height = CUI_PX(56), .pad_x = 9, .gap = 4, .radius = 16, .bg = B_GLASS_CARD, .clip = true,
                 .border = 1, .border_color = ok ? CUI_RGBA(0x57d28b66) : bad ? CUI_RGBA(0xe9555566) : B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = narrow ? CUI_JUSTIFY_CENTER : CUI_JUSTIFY_START) {
             if (!narrow) {
@@ -145,5 +147,7 @@ void ui_voice_mini(cui_ctx *ui, app_state_t *s) {
             if (mini_icon(ui, "leave", CUI_ICON_PHONE, "Sair da chamada", 2)) rtc_leave_room(s);
         }
     }
+    g_cov_own--;
+    { cui_rect r = cui_get_rect(ui, cui_make_id(ui, "vmbar")); if (r.w > 0) briks_cover(r.x, r.y, r.w, r.h); }
     cui_pop_id(ui);
 }

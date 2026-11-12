@@ -357,6 +357,7 @@ const char *rtc_status_text(const app_state_t *s, char *buf, size_t cap);   /* "
 /* ui_share.c: transmissão de tela */
 struct jval;
 bool share_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos share.* do core */
+bool share_mini(cui_ctx *ui, app_state_t *s, float w);        /* miniatura ao vivo da transmissão em foco, na barra "Em chamada" (ui_voice_mini) */
 void share_tick(cui_ctx *ui, app_state_t *s);                 /* a cada quadro: assistir só no modo Transmissão, ganchos de teste */
 void share_open_dialog(app_state_t *s);                       /* pede as fontes e os apps com áudio e abre o seletor */
 void share_stop(app_state_t *s);

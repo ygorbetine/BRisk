@@ -127,9 +127,9 @@ static void frame(cui_ctx *ui) {
         cui_box(ui, .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL) {
             switch (state.screen) {
             case SCREEN_AUTH: ui_auth(ui, &state); break;
-            case SCREEN_SOCIAL: ui_social(ui, &state); break;
+            case SCREEN_SOCIAL: share_tick(ui, &state); ui_social(ui, &state); break;   /* share_tick também aqui: a miniatura da lateral (barra "Em chamada") precisa dele fora da chamada */
             case SCREEN_CALL: ui_call(ui, &state); break;
-            case SCREEN_HISTORY: ui_history(ui, &state); break;
+            case SCREEN_HISTORY: share_tick(ui, &state); ui_history(ui, &state); break;
             }
             briks_tip_draw(ui);
             net_banner(ui, &state);      /* pílula no topo: sem conexão / reconectando / restabelecida */

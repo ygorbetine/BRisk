@@ -31,6 +31,7 @@ int main(void) {
     OK(sm_toast_allowed(NT_MESSAGE, &f) && !sm_toast_allowed(NT_FRIEND_ONLINE, &f) && !sm_toast_allowed(NT_STREAM, &f), "em foco: mensagem de outra conversa avisa; amigo/transmissão não");
     f.same_chat = true; OK(!sm_toast_allowed(NT_MESSAGE, &f), "em foco na própria conversa: não avisa");
     sm_ctx k = c; k.in_call = true; OK(!sm_toast_allowed(NT_MESSAGE, &k) && !sm_toast_allowed(NT_FRIEND_CALL, &k) && !sm_toast_allowed(NT_STREAM, &k), "durante a chamada: nada (NOT-05)");
+    OK(sm_toast_allowed(NT_REQUEST, &k) && !sm_toast_allowed(NT_REQUEST, &f), "pedido de transmissão: avisa na chamada com o app em segundo plano, não em foco (NOT-04)");
     sm_ctx g = c; g.grace = true; OK(!sm_toast_allowed(NT_MESSAGE, &g), "logo ao abrir: nada (NOT-05)");
     sm_ctx off = c; off.nt_msg = off.nt_online = off.nt_stream = false; OK(!sm_toast_allowed(NT_MESSAGE, &off) && !sm_toast_allowed(NT_FRIEND_ONLINE, &off) && !sm_toast_allowed(NT_STREAM, &off), "interruptores desligados: nada");
     sm_ctx fa = c; fa.friend_alerts_off = true; OK(!sm_toast_allowed(NT_FRIEND_ONLINE, &fa) && sm_toast_allowed(NT_MESSAGE, &fa), "avisos de amigo desligados no perfil: só amigos calam");

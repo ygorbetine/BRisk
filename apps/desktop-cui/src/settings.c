@@ -125,6 +125,8 @@ static void enum_devices(void) {
 /* ---- avisos (erros/avisos do app) ---- */
 static char notices[8][120]; static int notice_n;
 void settings_notice(const char *text) {
+    if (!text || !text[0]) return;
+    if (notice_n && !strncmp(notices[notice_n - 1], text, 119)) return;   /* o mesmo aviso em seguida não se repete */
     if (notice_n == 8) { memmove(notices[0], notices[1], 7 * 120); notice_n = 7; }
     snprintf(notices[notice_n++], 120, "%s", text);
 }
@@ -177,11 +179,13 @@ void settings_audio_set(float in_vol, float out_vol, bool gate_on, float gate_db
 static void tag_nofx(cui_ctx *ui) {   /* selo discreto: controle salvo localmente, sem efeito real ainda */
     cui_text(ui, "Em breve · salvo neste computador, ainda sem efeito", .size = 12, .color = g_th.ph);
 }
+static void upd_dot_paint(cui_ctx *ui, cui_rect r, void *user) { (void)user; cui_draw_circle(ui, (cui_vec2){ r.x + r.w * 0.5f, r.y + r.h * 0.5f }, r.w * 0.5f, CUI_RGB(0x4ade80)); }
 static bool menu_item(cui_ctx *ui, const char *icon, const char *label, bool active) {
     cui_box(ui, .id = label, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 12, .pad_y = 7, .gap = 10, .radius = 12, .align = CUI_ALIGN_CENTER,
             .bg = active ? B_A(B_C3, 0x33) : briks_hover(ui, label) ? (cui_mouse_down(ui, CUI_MOUSE_LEFT) ? CUI_RGBA(0xffffff24) : CUI_RGBA(0xffffff12)) : CUI_RGBA(0x00000000), .border = active ? 1 : 0, .border_color = B_A(B_C3, 0x66)) {   /* hover e clique visíveis também dentro do diálogo */
         cui_icon(ui, icon, 15, active ? B_TEXT : B_MUTED);
         cui_text(ui, label, .size = 13, .color = active ? B_TEXT : B_MUTED, .nowrap = true);
+        if (!strcmp(label, "Atualizações") && update_phase() == UPD_READY) cui_canvas(ui, "upd-dot", CUI_PX(8), CUI_PX(8), upd_dot_paint, NULL, 0);   /* ATU-05: bolinha quando há atualização pronta */
     }
     return briks_clicked(ui, label);
 }

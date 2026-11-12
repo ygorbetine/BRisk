@@ -5,6 +5,7 @@
 #include "attach.h"
 #include "richtext.h"
 #include "call.h"
+#include "update.h"
 #include <stdio.h>
 #include <string.h>
 #include <windows.h>
@@ -123,10 +124,17 @@ static void space_button(cui_ctx *ui, const char *label, const char *name, const
 }
 
 /* ícone compacto (26 px) do rodapé do usuário: cabe três na largura do menu sem espremer o nome/status */
+static void upd_dot_paint(cui_ctx *ui, cui_rect r, void *user) {   /* ATU-05: bolinha verde de "atualização pronta" (com anel na cor do fundo) */
+    (void)user; cui_vec2 c = { r.x + r.w * 0.5f, r.y + r.h * 0.5f };
+    cui_draw_circle(ui, c, r.w * 0.5f, CUI_RGB(0x15101f));
+    cui_draw_circle(ui, c, r.w * 0.5f - 1.5f, CUI_RGB(0x4ade80));
+}
 static bool foot_icon(cui_ctx *ui, const char *id, const char *icon, const char *tip) {
     cui_push_id(ui, id);
-    cui_box(ui, .id = "b", .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
+    const bool dot = !strcmp(id, "ft-cfg") && update_phase() == UPD_READY;
+    cui_box(ui, .id = "b", .dir = dot ? CUI_STACK : CUI_COLUMN, .width = CUI_PX(26), .height = CUI_PX(26), .radius = 9, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .bg = CUI_RGBA(0xffffff0c)) {
         cui_icon(ui, icon, 15, B_MUTED);
+        if (dot) cui_box(ui, .width = CUI_PX(26), .height = CUI_PX(26), .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START) { cui_canvas(ui, "dot", CUI_PX(9), CUI_PX(9), upd_dot_paint, NULL, 0); }
     }
     if (tip && briks_hover(ui, "b")) briks_tip(tip);   /* tip NULL = sem dica (botão Sair: LAY-12) */
     bool hit = briks_clicked_r(ui, "b", 9.0f);

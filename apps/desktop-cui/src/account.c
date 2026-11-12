@@ -348,6 +348,7 @@ static void on_state(app_state_t *s, const jval *j) {
         s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE;
         s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL); fph_clear(cui_app_ui(s->app));
         copy(s->acct_error, sizeof s->acct_error, strcmp(json_str(j, "error_code", ""), "cancelled") ? msg : "");
+        if (s->acct_error[0]) { char nt[120]; snprintf(nt, sizeof nt, "Conta: %s", s->acct_error); settings_notice(nt); }   /* CFG-26: erro de conta também na aba Avisos */
         copy(s->acct_info, sizeof s->acct_info, strcmp(json_str(j, "error_code", ""), "cancelled") || !was_busy ? "" : "Login cancelado.");
         if (s->acct_view == AV_NEWPASS) s->acct_view = AV_MAIN;
         memset(s->password, 0, sizeof s->password); memset(s->confirm, 0, sizeof s->confirm);

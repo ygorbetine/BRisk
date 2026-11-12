@@ -309,6 +309,7 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         if (!(s->screen == SCREEN_CALL && s->call_view == 1)) g_call.unread++;
     } else if (!strcmp(ev, "stream.request")) {
         call_request_in(json_str(j, "peer_id", ""), json_str(j, "name", ""));
+        { const char *nm = json_str(j, "name", ""); char t[140]; snprintf(t, sizeof t, "%s pediu para você transmitir a tela", nm[0] ? nm : "Alguém"); notify_post(s, NT_REQUEST, NULL, "Briks", t); }   /* NOT-04: aviso do sistema com o app em segundo plano */
     } else if (!strcmp(ev, "stream.reply")) {
         const jval *a = json_get(j, "accepted"); const char *nm = json_str(j, "name", ""); char t[160];
         if (a && a->type == J_BOOL && a->b) snprintf(t, sizeof t, "%s vai transmitir.", nm[0] ? nm : "A pessoa");
@@ -328,19 +329,25 @@ bool rtc_handle_event(app_state_t *s, const char *line) {
         const char *md = json_str(j, "mode", ""), *er = json_str(j, "error", "");
         s->net_sfu = !strcmp(md, "sfu");
         s->net_failed = !strcmp(md, "none");
+        if (s->net_failed) { char nt[120]; snprintf(nt, sizeof nt, "Rede: sem chamada%s%s", er[0] ? " · " : "", er); settings_notice(nt); }
         snprintf(s->net_note, sizeof s->net_note, "%s · %s%s%s%s%s", !strcmp(md, "sfu") ? "SFU" : !strcmp(md, "none") ? "Sem chamada" : "P2P", json_str(j, "reason", ""),
                  json_str(j, "server", "")[0] ? " · servidor " : "", json_str(j, "server", ""), er[0] ? " · " : "", er);
         changed = true;
     } else if (!strncmp(ev, "share.", 6)) {
+        if (!strcmp(ev, "share.local") && !strcmp(json_str(j, "state", ""), "off") && json_str(j, "reason", "")[0]) { char nt[120]; snprintf(nt, sizeof nt, "Transmissão: %s", json_str(j, "reason", "")); settings_notice(nt); }   /* a transmissão caiu/não iniciou */
         changed = share_handle_event(s, j, ev);
     } else if (!strncmp(ev, "cam.", 4)) {
         changed = cam_handle_event(s, j, ev);
     } else if (!strcmp(ev, "error")) {
         net_friendly_error(json_str(j, "message", ""), s->rtc_msg, sizeof s->rtc_msg);
+        { const char *w = json_str(j, "where", ""); char nt[120];   /* CFG-26: o erro também vai para a aba Avisos, com a área */
+          const char *area = !strncmp(w, "share", 5) || !strncmp(w, "stream", 6) || !strncmp(w, "cam", 3) ? "Transmissão" : !strncmp(w, "file", 4) || !strncmp(w, "chat", 4) ? "Arquivo" : !strncmp(w, "account", 7) ? "Conta" : !strncmp(w, "net", 3) || !strncmp(w, "mesh", 4) || !strncmp(w, "group", 5) ? "Rede" : "Chamada";
+          snprintf(nt, sizeof nt, "%s: %s", area, s->rtc_msg); settings_notice(nt); }
         if (!strcmp(json_str(j, "where", ""), "session.start") || !strcmp(json_str(j, "where", ""), "room.join")) copy(s->rtc_state, sizeof s->rtc_state, "erro");
     } else if (!strcmp(ev, "core.closed")) {
         copy(s->rtc_state, sizeof s->rtc_state, "erro");
         copy(s->rtc_msg, sizeof s->rtc_msg, "O serviço de chamadas encerrou.");
+        settings_notice("Chamada: o serviço de chamadas encerrou.");
         s->rtc_session_ready = s->rtc_session_sent = false; groups_roster_reset();
     } else changed = account_handle_event(s, line);   /* account.*, friends.*, local.*, import.* */
     json_free(j);
@@ -370,6 +377,13 @@ void rtc_pump(app_state_t *s) {
     static int demo_speak = -1;   /* BRIKS_DEMO_SPEAK=0.7: fixa o nível de fala local (captura de tela do halo, sem microfone) */
     if (demo_speak < 0) demo_speak = getenv("BRIKS_DEMO_SPEAK") ? 1 : 0;
     if (demo_speak) s->me_level = (float)atof(getenv("BRIKS_DEMO_SPEAK"));
+    static bool demo_avisos_done;   /* BRIKS_DEMO_AVISOS=1: eventos de erro de exemplo pelo mesmo tratador do core (aba Avisos; captura e teste) */
+    if (!demo_avisos_done && getenv("BRIKS_DEMO_AVISOS")) {
+        demo_avisos_done = true;
+        rtc_handle_event(s, "{\"ev\":\"error\",\"where\":\"room.join\",\"message\":\"sala inválida\"}");
+        rtc_handle_event(s, "{\"ev\":\"share.local\",\"slot\":0,\"state\":\"off\",\"reason\":\"a captura da tela falhou\"}");
+        rtc_handle_event(s, "{\"ev\":\"error\",\"where\":\"net.config\",\"message\":\"servidor de relé indisponível\"}");
+    }
     static bool demo_peers_done;   /* BRIKS_DEMO_PEERS=1: dois participantes de exemplo e eu como dono (captura do menu/diálogo de expulsar) */
     if (!demo_peers_done && getenv("BRIKS_DEMO_PEERS")) {
         demo_peers_done = true;

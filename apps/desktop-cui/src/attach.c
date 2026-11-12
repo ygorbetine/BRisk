@@ -104,7 +104,7 @@ void attach_inflight_done(app_state_t *s, bool ok) {
 bool attach_event(app_state_t *s, const char *ev, const jval *j) {
     if (!strcmp(ev, "file")) {
         const char *kind = json_str(j, "kind", ""), *id = json_str(j, "id", "");
-        if (!id[0]) { snprintf(s->notice, sizeof s->notice, "Anexo: %s", json_str(j, "error", "falhou")); return true; }
+        if (!id[0]) { snprintf(s->notice, sizeof s->notice, "Anexo: %s", json_str(j, "error", "falhou")); settings_notice(s->notice); return true; }
         xf_t *x = xf_find(id, !strcmp(kind, "offer") || !strcmp(kind, "failed")); if (!x) return false;
         const jval *mn = json_get(j, "mine"); if (mn && mn->type == J_BOOL) x->mine = mn->b;
         if (json_str(j, "name", "")[0]) snprintf(x->name, sizeof x->name, "%s", json_str(j, "name", ""));
@@ -119,7 +119,8 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
             thumb_from_json(&x->th, json_get(j, "thumb"));
             tl_add(s, id, x);
         } else if (!strcmp(kind, "cancelled")) x->st = XF_CANCELLED;
-        else if (!strcmp(kind, "failed")) { x->st = XF_FAILED; snprintf(x->err, sizeof x->err, "%s", json_str(j, "error", "falhou")); }
+        else if (!strcmp(kind, "failed")) { x->st = XF_FAILED; snprintf(x->err, sizeof x->err, "%s", json_str(j, "error", "falhou"));
+            { char nt[120]; snprintf(nt, sizeof nt, "Arquivo%s%s: %s", x->name[0] ? " " : "", x->name, x->err); settings_notice(nt); } }
         return true;
     }
     if (!strcmp(ev, "link.preview")) {

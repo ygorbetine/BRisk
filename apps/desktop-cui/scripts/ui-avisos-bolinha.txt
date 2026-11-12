@@ -1,0 +1,2 @@
+waitms 1500
+shot n1

@@ -40,7 +40,7 @@ static inline int wf_fit(const wf_rect *work, int n, wf_rect saved, int minw, in
 }
 
 /* ---------- avisos: quando um aviso do sistema pode aparecer ---------- */
-typedef enum { NT_MESSAGE, NT_FRIEND_ONLINE, NT_FRIEND_CALL, NT_STREAM, NT_REMINDER, NT_INFO } notify_kind_t;
+typedef enum { NT_MESSAGE, NT_FRIEND_ONLINE, NT_FRIEND_CALL, NT_STREAM, NT_REMINDER, NT_INFO, NT_REQUEST } notify_kind_t;   /* NT_REQUEST: "<nome> pediu para você transmitir" */
 typedef struct {
     bool nt_msg, nt_online, nt_stream;   /* interruptores de Configurações > Notificações */
     bool friend_alerts_off;              /* "avisos de amigo" desligados no perfil (notify_off) */
@@ -50,6 +50,7 @@ typedef struct {
     bool same_chat;                      /* mensagem da conversa que está aberta na tela */
 } sm_ctx;
 static inline bool sm_toast_allowed(notify_kind_t k, const sm_ctx *c) {
+    if (k == NT_REQUEST) return !c->focused && !c->grace;   /* é um pedido a você, dentro da chamada: só avisa com o Briks em segundo plano (em foco já há a faixa) */
     if (c->in_call || c->grace) return false;
     switch (k) {
     case NT_MESSAGE: return c->nt_msg && !(c->focused && c->same_chat);   /* conversa aberta e em foco: já está vendo */

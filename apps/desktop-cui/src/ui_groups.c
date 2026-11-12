@@ -615,13 +615,8 @@ static bool last_text_channel(const group_t *g, int ci) {
 /* 1.4.1 (item 19): grupo = cabeçalho de seção. O grupo não tem mais fundo roxo cheio (ui_social.c desenha avatar + nome + seta); aqui ficam as duas
  * subseções, TEXTO e VOZ, com o "+" de novo canal ao lado do título (só para quem pode criar), e só o canal de texto ATIVO recebe o roxo cheio, com
  * barra de acento à esquerda. Sob cada sala de voz: ponto verde + quem está nela. Não lidas por canal de texto (notify_unread_for). */
-#define COLL_MAX 64
-static char g_coll[COLL_MAX][48]; static int g_ncoll;   /* grupos recolhidos (estado por grupo, guardado enquanto o app está aberto) */
-bool groups_collapsed(const char *gid) { for (int i = 0; i < g_ncoll; i++) if (!strcmp(g_coll[i], gid)) return true; return false; }
-void groups_collapse_set(const char *gid, bool on) {
-    for (int i = 0; i < g_ncoll; i++) if (!strcmp(g_coll[i], gid)) { if (!on) { memmove(g_coll[i], g_coll[i + 1], (size_t)(g_ncoll - i - 1) * sizeof g_coll[0]); g_ncoll--; } return; }
-    if (on && g_ncoll < COLL_MAX) snprintf(g_coll[g_ncoll++], sizeof g_coll[0], "%s", gid);
-}
+bool groups_collapsed(const char *gid) { return settings_group_collapsed(gid); }   /* 1.4.2: guardado em settings.cfg (por hash do id), sobrevive ao reinício */
+void groups_collapse_set(const char *gid, bool on) { settings_group_collapse(gid, on); }
 
 static void sub_title(cui_ctx *ui, app_state_t *s, group_t *g, const char *id, const char *title, int kind) {
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad_x = 10, .pad_top = 6, .gap = 6, .align = CUI_ALIGN_CENTER) {

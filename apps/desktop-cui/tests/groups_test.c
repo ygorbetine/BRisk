@@ -8,6 +8,9 @@ static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }
 int notify_unread_for(const char *chan) { (void)chan; return 0; }
+static char g_coll_stub[8][48]; static int g_ncoll_stub;   /* settings.c: grupos recolhidos */
+bool settings_group_collapsed(const char *gid) { for (int i = 0; i < g_ncoll_stub; i++) if (!strcmp(g_coll_stub[i], gid)) return true; return false; }
+void settings_group_collapse(const char *gid, bool on) { if (on && !settings_group_collapsed(gid) && g_ncoll_stub < 8) snprintf(g_coll_stub[g_ncoll_stub++], 48, "%s", gid); }
 char g_tip[160]; void app_open_group(app_state_t *s, int i) { s->active_group = i; } bool friends_online(const app_state_t *s, const person_t *p) { (void)s; (void)p; return false; }
 static char core_sent[16384]; static int core_n;
 core_status_t core_state(void) { return CORE_STOPPED; }

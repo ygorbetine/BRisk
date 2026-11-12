@@ -240,6 +240,7 @@ void groups_resend(app_state_t *s);                                            /
 void groups_tick(app_state_t *s);                                              /* grava o que os eventos deixaram pendente */
 void groups_sidebar(cui_ctx *ui, app_state_t *s, int gi);
 bool groups_collapsed(const char *gid);
+bool settings_group_collapsed(const char *gid); void settings_group_collapse(const char *gid, bool on);   /* settings.c */
 void groups_collapse_set(const char *gid, bool on);   /* 1.4.1: grupo recolhido na barra lateral */
 void groups_header(cui_ctx *ui, app_state_t *s);
 void groups_dialogs(cui_ctx *ui, app_state_t *s);

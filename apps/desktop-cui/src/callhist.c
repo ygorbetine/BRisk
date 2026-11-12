@@ -141,3 +141,22 @@ bool share_zoom_clamp(float *zoom, float *cx, float *cy, float fit, float max_mu
     if (max_mult > 1 && *zoom > fit * max_mult) *zoom = fit * max_mult;
     return true;
 }
+
+/* 1.4.2: redução por média de blocos do quadro compartilhado (receptor): ver ui_share.c */
+int share_ds_steps(int w, int want) {
+    int k = 0; if (want <= 0) return 0;
+    while (k < 3 && (w >> (k + 1)) >= (int)(want * 1.25f) && (w >> (k + 1)) >= 64) k++;
+    return k;
+}
+void share_box_down(const unsigned char *src, int w, int k, int ow, int oh, unsigned char *dst) {
+    const int b = 1 << k, sh = 2 * k;
+    for (int y = 0; y < oh; y++) for (int x = 0; x < ow; x++) {
+        unsigned s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+        for (int dy = 0; dy < b; dy++) {
+            const unsigned char *row = src + ((size_t)(y * b + dy) * (size_t)w + (size_t)(x * b)) * 4;
+            for (int dx = 0; dx < b; dx++) { s0 += row[dx * 4]; s1 += row[dx * 4 + 1]; s2 += row[dx * 4 + 2]; s3 += row[dx * 4 + 3]; }
+        }
+        unsigned char *o = dst + ((size_t)y * (size_t)ow + (size_t)x) * 4;
+        o[0] = (unsigned char)(s0 >> sh); o[1] = (unsigned char)(s1 >> sh); o[2] = (unsigned char)(s2 >> sh); o[3] = (unsigned char)(s3 >> sh);
+    }
+}

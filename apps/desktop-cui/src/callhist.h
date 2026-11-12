@@ -46,4 +46,6 @@ bool share_notice_wanted(bool was_on, bool now_on, bool viewing);
  * o encaixe limita; devolve true se a imagem ficou ampliada. */
 int share_zoom_pct(float zoom, float fit);
 bool share_zoom_clamp(float *zoom, float *cx, float *cy, float fit, float max_mult);
+int share_ds_steps(int w, int want);   /* quantas metades (0..3) do quadro de largura w ainda ficam >= 1,25x da largura em que aparece (want; 0 = sem redução) */
+void share_box_down(const unsigned char *src, int w, int k, int ow, int oh, unsigned char *dst);   /* média de blocos (2^k)^2 de pixels de 4 bytes */
 #endif

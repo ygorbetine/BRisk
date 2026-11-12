@@ -100,6 +100,9 @@ int main(void) {
     OK(!share_notice_wanted(false, true, true), "sem aviso para quem já está no modo Transmissão");
     OK(!share_notice_wanted(true, true, false), "sem aviso repetido a cada atualização da mesma transmissão");
     OK(!share_notice_wanted(true, false, false), "sem aviso quando a transmissão termina");
+    OK(share_ds_steps(1920, 0) == 0 && share_ds_steps(1920, 1800) == 0 && share_ds_steps(1920, 700) == 1 && share_ds_steps(1920, 400) == 1 && share_ds_steps(1920, 300) == 2 && share_ds_steps(1920, 100) == 3, "redução do quadro: só quando aparece bem menor (e nunca abaixo de 1,25x)");
+    { unsigned char src[4 * 4 * 4], dst[2 * 2 * 4]; for (int i = 0; i < 16; i++) { src[i * 4] = (unsigned char)(i % 2 ? 200 : 100); src[i * 4 + 1] = 50; src[i * 4 + 2] = 0; src[i * 4 + 3] = 255; }
+      share_box_down(src, 4, 1, 2, 2, dst); OK(dst[0] == 150 && dst[1] == 50 && dst[2] == 0 && dst[3] == 255 && dst[12] == 150, "média dos 4 pixels de cada bloco 2x2"); }
     OK(share_zoom_pct(0, 0.5f) == 100 && share_zoom_pct(0.5f, 0.5f) == 100, "encaixada = 100%");
     OK(share_zoom_pct(1.0f, 0.5f) == 200 && share_zoom_pct(0.75f, 0.5f) == 150, "percentual relativo ao encaixe");
     OK(share_zoom_pct(0.2f, 0.5f) == 100 && share_zoom_pct(1.0f, 0) == 100, "nunca abaixo de 100%");

@@ -1,8 +1,8 @@
-# Compila o app nativo (CUI): backend local (Rust) -> briks-core (Rust) -> briks_cui.exe (C99 + CMake/Ninja).
+﻿# Compila o app nativo (CUI): backend local (Rust) -> briks-core (Rust) -> briks_cui.exe (C99 + CMake/Ninja).
 # Uso (na raiz do repositório): powershell -NoProfile -File scripts/build-cui.ps1 [-SkipTests]
 # Saída: apps/desktop-cui/build/{briks_cui.exe, briks-core.exe, backend/briks-desktop-backend.exe, briks_smoke.exe}
 # Só compila localmente: não publica, não versiona e não gera instalador.
-param([switch]$SkipTests)
+param([switch]$SkipTests, [switch]$NoVpx)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $cui = Join-Path $root "apps\desktop-cui"
@@ -22,8 +22,9 @@ cargo build --release --manifest-path "$root\desktop-backend\Cargo.toml"; if ($L
 $backend = "$root\desktop-backend\target\release\briks-desktop-backend.exe"
 
 Write-Host "== briks-core =="
-if (-not $SkipTests) { cargo test --release --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo test (briks-core) falhou" } }
-cargo build --release --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo build (briks-core) falhou" }
+$feat = @(); if (-not $NoVpx) { & "$PSScriptRoot\build-vpx.ps1"; $feat = @("--features", "vpx"); $env:VPX_LIB_DIR = "$cui\briks-core\vendor\vpx"; $env:VPX_VERSION = "1.13.0"; $env:VPX_STATIC = "1" }   # VP8/VP9 (libvpx estática); -NoVpx = só H264
+if (-not $SkipTests) { cargo test --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo test (briks-core) falhou" } }
+cargo build --release @feat --manifest-path "$cui\briks-core\Cargo.toml"; if ($LASTEXITCODE) { throw "cargo build (briks-core) falhou" }
 
 Write-Host "== app nativo =="
 Push-Location $cui

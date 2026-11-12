@@ -28,3 +28,14 @@
 - Instalar (ou vendorizar após auditoria) a libvpx e compilar com `cc`/`vpx-sys` atrás de uma *feature* do Cargo (`vpx`), desligada por padrão.
 - Começar por **VP9 só como decodificador opcional** (receber de quem enviar VP9), depois o codificador, com H264 sempre como reserva.
 - Negociar por capacidade anunciada na presença do par, nunca por suposição.
+
+## 1.4.4: implementado (atualização)
+O ambiente passou a ser viável sem instalar nada no sistema: `scripts/build-vpx.ps1` baixa libvpx 1.14.1, nasm 2.16.03 e GNU make 4.4.1 para um cache
+local (`%LOCALAPPDATA%\briks-vpx-build`), confere SHA-256 fixados, compila a `libvpx.lib` estática (MSVC, /MD, sem LTCG) e a coloca em
+`apps/desktop-cui/briks-core/vendor/vpx/` (fora do git). nasm e make são só ferramentas de build; só a libvpx (BSD-3) vai no binário.
+- P2P (malha): VP8 e VP9 na transmissão de tela, escolha por transmissão; capacidades trocadas no `peer.state` (`vcodecs`); par sem o campo = só H264;
+  se algum espectador não decodifica, a transmissão cai sozinha para H264 (troca da faixa por `replace_track`, sem renegociar).
+- SFU (LiveKit): **continua só H264**. A faixa é publicada uma vez com codec fixo, o LiveKit não troca codec no meio da chamada e o emissor não
+  sabe o que cada espectador decodifica; precisaria de troca de capacidades por data packets e republicar a faixa. Fica para depois.
+- Câmera: continua H264. Seletor na UI (Qualidade da transmissão): H.264 (padrão), VP9, VP8.
+- Build: `build-cui.ps1`/`build-installer.ps1` compilam com `--features vpx` (`-NoVpx` = só H264).

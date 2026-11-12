@@ -29,6 +29,7 @@ static int g_stage_toggles;   /* roteiros: quantas vezes um clique em área vazi
 static int g_tiles;                                 /* blocos desenhados no palco no último quadro (roteiros de teste) */   /* o que o selo mostrou no último quadro (roteiros de teste) */
 static struct { int slot; double until; } g_notice = { -1, -1 };
 static bool share_viewing(const app_state_t *s) { return s->screen == SCREEN_CALL && s->call_mode == 1 && s->call_view == 0; }
+static const char *const CODEC_NAME[3] = { "h264", "vp9", "vp8" };   /* 1.4.4: índice de share_state_t.codec */
 static int g_qk[2];   /* teste qual-slots: kbps pedido a cada transmissão */
 static bool g_dev_open_quality;   /* gancho de captura: abre o popover de qualidade/telemetria */
 
@@ -180,8 +181,8 @@ static void send_start(app_state_t *s, const char *kind, const char *id, const c
     json_escape(label, lab, sizeof lab);
     const qual_t qprev = qual_enter(q, 0);
     for (int i = 0; i < q->napps && o < sizeof pids - 16; i++) if (q->apps[i].on) o += (size_t)snprintf(pids + o, sizeof pids - o, "%s%u", o ? "," : "", q->apps[i].pid);
-    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"%s\",\"pids\":[%s],\"content\":\"%s\"}",
-             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->audio_mode == 0 ? "source" : q->audio_mode == 1 ? "apps" : "none", pids, q->content ? "motion" : "detail");
+    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"%s\",\"pids\":[%s],\"content\":\"%s\",\"codec\":\"%s\"}",
+             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->audio_mode == 0 ? "source" : q->audio_mode == 1 ? "apps" : "none", pids, q->content ? "motion" : "detail", CODEC_NAME[q->codec]);
     qual_leave(q, qprev);
     cmd(line);
     copy(q->last_kind, sizeof q->last_kind, kind); copy(q->last_id, sizeof q->last_id, id); copy(q->label, sizeof q->label, label);
@@ -194,8 +195,8 @@ static void send_start_second(app_state_t *s, const char *kind, const char *id, 
     char line[700], lab[160];
     json_escape(label, lab, sizeof lab);
     const qual_t qprev = qual_enter(q, 1);
-    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"slot\":1,\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"none\",\"content\":\"%s\"}",
-             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->content ? "motion" : "detail");
+    snprintf(line, sizeof line, "{\"cmd\":\"share.start\",\"slot\":1,\"kind\":\"%s\",\"id\":\"%s\",\"height\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":\"none\",\"content\":\"%s\",\"codec\":\"%s\"}",
+             kind, id, RES_H[q->res], FPS_V[q->fps], chosen_kbps(q), lab, q->content ? "motion" : "detail", CODEC_NAME[q->codec]);
     qual_leave(q, qprev);
     cmd(line);
     copy(q->second.label, sizeof q->second.label, label); copy(q->second.kind, sizeof q->second.kind, kind); copy(q->second.id, sizeof q->second.id, id);
@@ -226,10 +227,10 @@ void share_reset(app_state_t *s) {
     for (int t = 0; t < 2; t++) for (int i = 0; i < q->nsrc[t]; i++) if (q->src[t][i].tex && g_ntrash < 64) g_trash[g_ntrash++] = q->src[t][i].tex;
     for (int i = 0; i < 2 * FV_N; i++) fv_close(&g_fv[i]);
     memset(g_zoom, 0, sizeof g_zoom); g_notice.slot = -1;
-    int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode, ct = q->content, qsel = q->qsel; float bc = q->br_custom;
+    int res = q->res, fps = q->fps, br = q->br_mode, am = q->audio_mode, ct = q->content, qsel = q->qsel, cdc = q->codec; float bc = q->br_custom;
     qual_t qs[2] = { q->qs[0], q->qs[1] }; bool qok[2] = { q->qs_ok[0], q->qs_ok[1] };
     memset(q, 0, sizeof *q);
-    q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc; q->content = ct;
+    q->res = res; q->fps = fps; q->br_mode = br; q->audio_mode = am; q->br_custom = bc; q->content = ct; q->codec = cdc;
     q->qs[0] = qs[0]; q->qs[1] = qs[1]; q->qs_ok[0] = qok[0]; q->qs_ok[1] = qok[1]; q->qsel = qsel;
 }
 
@@ -557,6 +558,14 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             }
             static const char *const pr[2] = { "Nitidez", "Fluidez" };
             ch |= seg(ui, "pri", pr, NULL, 2, &q->content);
+        }
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
+            cui_column(ui, .gap = 1, .width = CUI_FILL) {
+                wrap_line(ui, "Codec de vídeo", 13, B_MUTED);
+                wrap_line(ui, q->codec ? "Se alguém não decodificar, cai para H.264" : "H.264: o mais compatível (padrão)", 11, CUI_RGBA(0xa592b8aa));
+            }
+            static const char *const cd[3] = { "H.264", "VP9", "VP8" };
+            ch |= seg(ui, "codec", cd, NULL, 3, &q->codec);
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Bitrate", .size = 13, .color = B_MUTED);

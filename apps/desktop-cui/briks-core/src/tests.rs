@@ -558,7 +558,7 @@ async fn screen_share_flows_end_to_end_in_loopback() {
     let (w, h) = (1280usize, 720usize);
     for round in 0..2 {
         let sent_png = dir.join(format!("enviado-{round}.png"));
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: Some(dir.join("preview.bin")), dump: Some(sent_png.clone()) }).await.unwrap();
         let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
         assert_eq!((on["w"].as_u64(), on["h"].as_u64(), on["fps"].as_u64()), (Some(1280), Some(720), Some(30)), "{on}");
         let rpath = dir.join(format!("recebido-{round}.bin"));
@@ -632,7 +632,7 @@ async fn scroll_text_end_to_end() {
         let mut b = node(port, PB, "Beto", &room, ib);
         assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
         let rpath = out.join(format!("recebido-{name}.bin"));
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestScroll, height: 1080, fps: fps as u32, kbps, label: "Rolagem".into(), audio: crate::procaudio::AudioMode::None, content, adaptive: true }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestScroll, height: 1080, fps: fps as u32, kbps, label: "Rolagem".into(), audio: crate::procaudio::AudioMode::None, content, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
         let on = wait_share(&mut a, |v| v["ev"] == "share.local" && v["state"] == "on", 20).await.expect("emissor");
         eprintln!("[{name}] codificador: {} ({}), início {}x{}", on["encoder"], if on["hardware"] == true { "GPU" } else { "software" }, on["w"], on["h"]);
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("receptor");
@@ -703,7 +703,7 @@ async fn real_screen_share_stats() {
     eprintln!("tela de teste: {} {}x{}; conversão: {}", scr["name"], scr["w"], scr["h"], std::env::var("BRIKS_CONVERT").unwrap_or_else(|_| "gpu".into()));
     let rpath = dir.join("recebido.bin");
     for (height, fps, kbps) in [(1080usize, 30u32, 0u32), (1080, 60, 0)] {
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Screen(hm), height, fps, kbps, label: "Tela".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
         wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
         b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: rpath.clone() }).await.unwrap();
         wait_share(&mut a, |v| v["ev"] == "share.stats", 10).await;   // descarta a 1ª janela (parcial)
@@ -731,7 +731,7 @@ async fn process_audio_reaches_the_viewer() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", r"$p = New-Object Media.SoundPlayer 'C:\Windows\Media\Alarm01.wav'; $p.PlayLooping(); Start-Sleep -Seconds 9"]).spawn().expect("powershell");
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 15, kbps: 0, label: "Teste".into(), audio: AudioMode::Tree(child.id()), content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 15, kbps: 0, label: "Teste".into(), audio: AudioMode::Tree(child.id()), content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
     assert_eq!(on["audio"], true, "{on}");
     let key = format!("{PA}#screen");
@@ -760,7 +760,7 @@ async fn late_joiner_resize_and_leave_keep_the_share_alive() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-share3-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestResize, height: 1080, fps: 30, kbps: 0, label: "Janela".into(), audio: AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestResize, height: 1080, fps: 30, kbps: 0, label: "Janela".into(), audio: AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B: on");
     b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
     let f = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 20).await.expect("B: 1º quadro");
@@ -819,7 +819,7 @@ async fn adapt_profile(content: crate::adapt::Content, name: &str, room: &str, s
     let mut b = node(port, &pb, "Beto", room, ib);
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await, "não autenticou pelo proxy");
     let rpath = out.join(format!("rx-{name}.bin"));
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 12_000, label: "Adaptação".into(), audio: crate::procaudio::AudioMode::None, content, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 12_000, label: "Adaptação".into(), audio: crate::procaudio::AudioMode::None, content, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: rpath.clone() }).await.unwrap();
     if wait_share(&mut b, |v| { if v["ev"] == "share.rxstats" { eprintln!("[dbg rx] {v}"); } v["ev"] == "share.remote" && v["state"] == "frame" }, 30).await.is_none() {
@@ -911,7 +911,7 @@ async fn loss_is_repaired_by_retransmission() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
     let dir = std::env::temp_dir().join(format!("briks-perda-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 720, fps: 30, kbps: 3000, label: "Perda".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 720, fps: 30, kbps: 3000, label: "Perda".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
@@ -945,7 +945,7 @@ async fn local_overload_lowers_fps_and_recovers() {
     use std::sync::atomic::Ordering;
     let port = crate::mock::start(0).await.unwrap();
     let mut a = node(port, "aaaaaaaa-1111-4111-8111-0000000000d1", "Ana", "lento1", Arc::new(Identity::generate()));
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 20_000, label: SLOW_LABEL.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 1080, fps: 30, kbps: 20_000, label: SLOW_LABEL.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     let mut csv = String::from("t_s,atraso_ms,fps_alvo,fps_enviado,ms_por_quadro,altura,adaptando\n");
     let mut t = 0;
     let mut rows: Vec<(u64, u64, f64, f64, String)> = vec![];
@@ -992,7 +992,7 @@ async fn screen_audio_is_stereo_and_av_offset_is_measured() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-av-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "AV".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "AV".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     let on = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
     assert_eq!(on["audio"], true);
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
@@ -1045,7 +1045,7 @@ async fn live_audio_source_switch_changes_what_the_viewer_hears() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-avlive-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 360, fps: 15, kbps: 0, label: "AO VIVO".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 360, fps: 15, kbps: 0, label: "AO VIVO".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     let key = format!("{pa}#screen");
@@ -1084,7 +1084,7 @@ async fn slow_viewer_does_not_drag_the_others() {
     let mut a = node(port, pa, "Ana", "multi1", Arc::new(Identity::generate()));
     let mut b = node(port, pb, "Beto", "multi1", Arc::new(Identity::generate()));
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 720, fps: 30, kbps: 3000, label: "Multi".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 720, fps: 30, kbps: 3000, label: "Multi".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("B on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("B quadro");
@@ -1135,7 +1135,7 @@ async fn survives_a_four_second_network_outage() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
     let dir = std::env::temp_dir().join(format!("briks-queda-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Queda".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Queda".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
@@ -1177,7 +1177,7 @@ async fn two_simultaneous_shares_in_one_room() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-duas-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let cfg = |kind, label: &str| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    let cfg = |kind, label: &str| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false };
     a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "de A"), preview: None, dump: None }).await.unwrap();
     b.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::TestResize, "de B"), preview: None, dump: None }).await.unwrap();
     let on_b = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão de A");
@@ -1224,7 +1224,7 @@ async fn one_person_shares_two_screens_at_once() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await);
     let dir = std::env::temp_dir().join(format!("briks-duastelas-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 30, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false };
     a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "Tela 1", 720), preview: Some(dir.join("previa-1.bin")), dump: None }).await.unwrap();
     a.cmd.send(MeshCmd::Share2Start { cfg: cfg(SourceKind::TestMotion, "Tela 2", 540), preview: Some(dir.join("previa-2.bin")), dump: None }).await.unwrap();
     // quem transmite recebe um "share.local on" por tela, cada um com o seu slot
@@ -1305,7 +1305,7 @@ async fn soak_no_leaks_no_latency_drift() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
     let dir = std::env::temp_dir().join(format!("briks-soak-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longo".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, adaptive: true }, preview: Some(dir.join("pv.bin")), dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longo".into(), audio: AudioMode::TestBeep, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: Some(dir.join("pv.bin")), dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
@@ -1360,7 +1360,7 @@ async fn black_source_is_detected_and_reported() {
     use crate::share::ShareCfg;
     let port = crate::mock::start(0).await.unwrap();
     let mut a = node(port, "aaaaaaaa-1111-4111-8111-0000000000c5", "Ana", "preto1", Arc::new(Identity::generate()));
-    let cfg = |kind| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: "Preto".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true };
+    let cfg = |kind| ShareCfg { kind, height: 720, fps: 30, kbps: 0, label: "Preto".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true };
     a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::TestBlack), preview: None, dump: None }).await.unwrap();
     let t0 = std::time::Instant::now();
     let h = wait_share(&mut a, |v| v["ev"] == "share.hint", 10).await.expect("não avisou da fonte preta");
@@ -1388,7 +1388,7 @@ async fn survives_a_long_network_outage_and_resumes() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
     let dir = std::env::temp_dir().join(format!("briks-quedalonga-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longa".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Longa".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("quadro");
@@ -1435,7 +1435,7 @@ async fn viewer_that_leaves_and_comes_back_gets_a_picture_fast() {
     assert!(authed(&mut a, 1, 30).await && authed(&mut b, 1, 30).await);
     let dir = std::env::temp_dir().join(format!("briks-volta-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Volta".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Volta".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("on");
     b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b1.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 30).await.expect("1º quadro");
@@ -1474,7 +1474,7 @@ async fn many_viewers_all_receive_full_frame_rate() {
         vs.push(node(port, &id, &format!("V{i}"), "muitos1", Arc::new(Identity::generate())));
     }
     assert!(authed(&mut a, n, 60).await, "o emissor não autenticou com os {n} espectadores");
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 3000, label: "Muitos".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: true }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 3000, label: "Muitos".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
     for (i, v) in vs.iter_mut().enumerate() {
         wait_share(v, |e| e["ev"] == "share.remote" && e["state"] == "on", 60).await.unwrap_or_else(|| panic!("V{i}: sem aviso da transmissão"));
         v.cmd.send(MeshCmd::ShareWatch { key: pa.clone(), on: true, path: dir.join(format!("v{i}.bin")) }).await.unwrap();
@@ -1594,6 +1594,10 @@ mod sala;   // chat da sala e pedido de transmissao
 #[path = "tests_camera.rs"]
 mod camera_e2e;   // camera na chamada (camera falsa, sem hardware)
 
+#[cfg(feature = "vpx")]
+#[path = "tests_vpx.rs"]
+mod vpx_e2e;   // VP8/VP9 de ponta a ponta e queda para H264
+
 /// O ícone do app (assets/briks.ico, usado por src/briks.rc, instalador e bandeja) traz os 7 tamanhos e o logo de 128 px existe.
 #[test]
 fn app_icon_has_all_seven_sizes() {
@@ -1619,7 +1623,7 @@ async fn remote_share_ends_when_the_sharer_leaves() {
     assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await, "não autenticou");
     let dir = std::env::temp_dir().join(format!("briks-saiu-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
     b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
     wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("nenhum quadro chegou ao B");

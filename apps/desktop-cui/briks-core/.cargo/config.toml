@@ -2,3 +2,7 @@
 # Para rede real: BRIKS_NET_LOOPBACK_ONLY=0 (ou BRIKS_TEST_REAL_NET=1 nos testes marcados). Nao afeta o exe instalado.
 [env]
 BRIKS_NET_LOOPBACK_ONLY = "1"
+# libvpx (feature `vpx`): biblioteca estática gerada por scripts/build-vpx.ps1. Só é lida quando a feature está ligada.
+VPX_LIB_DIR = { value = "vendor/vpx", relative = true }
+VPX_VERSION = "1.13.0"   # versão dos bindings gerados do env-libvpx-sys (ABI igual à 1.14.1; a libvpx confere em tempo de execução)
+VPX_STATIC = "1"

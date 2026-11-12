@@ -51,7 +51,7 @@ async fn authed(h: &mut MeshHandle, n: usize, secs: u64) -> bool {
 fn drain(h: &mut MeshHandle) { while h.events.try_recv().is_ok() {} }
 
 fn cfg(kind: SourceKind, label: &str, audio: AudioMode) -> ShareCfg {
-    ShareCfg { kind, height: 360, fps: 15, kbps: 0, label: label.into(), audio, content: crate::adapt::Content::Detail, adaptive: false }
+    ShareCfg { kind, height: 360, fps: 15, kbps: 0, label: label.into(), audio, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }
 }
 async fn start_share(h: &MeshHandle, label: &str) { h.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, label, AudioMode::None), preview: None, dump: None }).await.unwrap(); }
 

@@ -664,7 +664,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let kind2 = kind.clone();
                         let scfg = crate::share::ShareCfg { kind, height: v["height"].as_u64().unwrap_or(1080).clamp(240, 2160) as usize, fps: v["fps"].as_u64().unwrap_or(30).clamp(5, 60) as u32,
                             kbps: v["kbps"].as_u64().unwrap_or(0).min(50_000) as u32, label: v["label"].as_str().unwrap_or("").chars().take(64).collect(), audio: audio_mode(&v, &kind2),
-                            content: if v["content"] == "motion" { crate::adapt::Content::Motion } else { crate::adapt::Content::Detail }, adaptive: v["adaptive"].as_bool().unwrap_or(true) };
+                            content: if v["content"] == "motion" { crate::adapt::Content::Motion } else { crate::adapt::Content::Detail }, codec: v["codec"].as_str().and_then(crate::codec::Codec::from_name).unwrap_or_default(), adaptive: v["adaptive"].as_bool().unwrap_or(true) };
                         // "slot": 1 = 2ª tela simultânea (segundo monitor), com prévia própria; sem "slot" (ou 0) é a transmissão de sempre
                         let second = v["slot"].as_u64() == Some(1);
                         let preview = cfg.data_dir.join("video").join(if second { "preview-2.bin" } else { "preview.bin" });

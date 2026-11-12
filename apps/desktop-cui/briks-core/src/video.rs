@@ -189,7 +189,7 @@ pub fn bgra_to_i420_stride(src: &[u8], stride: usize, sw: usize, sh: usize, dw: 
 // ---------------------------------------------------------------------------------------------------------------------
 // Codificador / decodificador
 // ---------------------------------------------------------------------------------------------------------------------
-enum Backend { Mf(crate::mfenc::MfEnc), Open(Encoder) }
+enum Backend { Mf(crate::mfenc::MfEnc), Open(Encoder), #[cfg(feature = "vpx")] Vpx(crate::vpx::VpxEnc) }
 
 /// Codificador H264: Media Foundation (GPU quando há; senão o de software da Microsoft) e, se nada disso abrir, OpenH264.
 /// `BRIKS_ENCODER` = `openh264` | `mf-soft` força um deles (testes/diagnóstico).
@@ -219,6 +219,16 @@ fn injected_fault() -> crate::mfenc::EncFault {
 
 impl H264Enc {
     pub fn new(w: usize, h: usize, fps: f32, bps: u32) -> Result<Self> { Self::new_with(w, h, fps, bps, true) }
+    /// Codificador do codec pedido: H264 como sempre; VP8/VP9 pela libvpx (feature `vpx`). `allow_hw` só vale para H264.
+    pub fn new_codec(codec: crate::codec::Codec, w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> {
+        match codec {
+            crate::codec::Codec::H264 => Self::new_with(w, h, fps, bps, allow_hw),
+            #[cfg(feature = "vpx")]
+            c => { let e = crate::vpx::VpxEnc::new(c, w, h, fps, bps)?; Ok(H264Enc { be: Backend::Vpx(e), w, h, bps, name: format!("libvpx {} (software)", c.name().to_uppercase()), hardware: false, idr: true, nv12: vec![], inject: false }) }
+            #[cfg(not(feature = "vpx"))]
+            c => Err(anyhow!("{} indisponível nesta build", c.name())),
+        }
+    }
     /// `allow_hw = false`: pula o MFT de hardware (fallback depois de falhas repetidas do NVENC/GPU) e usa o de software da Microsoft ou o OpenH264.
     pub fn new_with(w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> {
         let pref = std::env::var("BRIKS_ENCODER").unwrap_or_default();
@@ -240,10 +250,10 @@ impl H264Enc {
     pub fn force_idr(&mut self) { self.idr = true; }
     /// Muda o bitrate alvo sem recriar o codificador. false = este codificador não aceita (recrie).
     pub fn set_bitrate(&mut self, bps: u32) -> bool {
-        match &mut self.be { Backend::Mf(m) => { if m.set_bitrate(bps) { self.bps = bps; true } else { false } } Backend::Open(_) => false }
+        match &mut self.be { Backend::Mf(m) => { if m.set_bitrate(bps) { self.bps = bps; true } else { false } } Backend::Open(_) => false, #[cfg(feature = "vpx")] Backend::Vpx(e) => { if e.set_bitrate(bps) { self.bps = bps; true } else { false } } }
     }
     /// Informa o novo FPS (duração dos quadros para o controle de taxa). false = recrie.
-    pub fn set_fps(&mut self, fps: u32) -> bool { match &mut self.be { Backend::Mf(m) => { m.set_fps(fps); true } Backend::Open(_) => false } }
+    pub fn set_fps(&mut self, fps: u32) -> bool { match &mut self.be { Backend::Mf(m) => { m.set_fps(fps); true } Backend::Open(_) => false, #[cfg(feature = "vpx")] Backend::Vpx(e) => { e.set_fps(fps); true } } }
     /// Codifica um quadro I420; devolve as unidades de acesso prontas em Annex-B (nenhuma = o codificador não soltou quadro desta vez).
     pub fn encode(&mut self, yuv: &Yuv) -> Result<Vec<Vec<u8>>> {
         let idr = std::mem::take(&mut self.idr);
@@ -254,16 +264,28 @@ impl H264Enc {
         }
         match &mut self.be {
             Backend::Mf(m) => { crate::mfenc::i420_to_nv12(&yuv.y, &yuv.u, &yuv.v, &mut self.nv12); m.encode(&self.nv12, idr) }
+            #[cfg(feature = "vpx")]
+            Backend::Vpx(e) => { if idr { e.force_idr(); } Ok(e.encode(yuv)?.into_iter().map(|(d, _)| d).collect()) }
             Backend::Open(e) => { if idr { e.force_intra_frame(); } let bs = e.encode(yuv).map_err(|e| anyhow!("h264: {e}"))?; let v = bs.to_vec(); Ok(if v.is_empty() { vec![] } else { vec![v] }) }
         }
     }
 }
 
-enum DecBackend { Mf(crate::mfenc::MfDec), Open(Decoder) }
+enum DecBackend { Mf(crate::mfenc::MfDec), Open(Decoder), #[cfg(feature = "vpx")] Vpx(crate::vpx::VpxDec) }
 
 /// Decodificador H264: Media Foundation (aceita o fluxo de qualquer codificador) e, se não abrir, OpenH264.
 pub struct H264Dec { be: DecBackend, buf: Vec<u8>, pub name: &'static str }
 impl H264Dec {
+    /// Decodificador do codec do fluxo recebido (H264 como sempre; VP8/VP9 pela libvpx).
+    pub fn new_codec(codec: crate::codec::Codec) -> Result<Self> {
+        match codec {
+            crate::codec::Codec::H264 => Self::new(),
+            #[cfg(feature = "vpx")]
+            c => Ok(H264Dec { be: DecBackend::Vpx(crate::vpx::VpxDec::new(c)?), buf: vec![], name: "libvpx" }),
+            #[cfg(not(feature = "vpx"))]
+            c => Err(anyhow!("{} indisponível nesta build", c.name())),
+        }
+    }
     pub fn new() -> Result<Self> {
         if std::env::var("BRIKS_DECODER").as_deref() != Ok("openh264") {
             match crate::mfenc::MfDec::new() { Ok(m) => return Ok(H264Dec { be: DecBackend::Mf(m), buf: vec![], name: "Media Foundation" }), Err(e) => eprintln!("decodificador Media Foundation indisponível ({e}); usando OpenH264") }
@@ -279,6 +301,8 @@ impl H264Dec {
                 m.decode(au, |w, h, y, uv, stride| { buf.resize(w * h * 4, 255); nv12_to_rgba(y, uv, stride, w, h, buf); dims = Some((w, h)); })?;
                 Ok(dims.map(|(w, h)| (w, h, &self.buf[..w * h * 4])))
             }
+            #[cfg(feature = "vpx")]
+            DecBackend::Vpx(d) => d.decode(au),
             DecBackend::Open(dec) => {
                 let d = dec.decode(au).map_err(|e| anyhow!("h264: {e}"))?;
                 let Some(d) = d else { return Ok(None) };

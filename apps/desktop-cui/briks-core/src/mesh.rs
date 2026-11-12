@@ -103,6 +103,9 @@ pub enum MeshCmd {
     SetProfile { status: String, presence: String },
     /// Silencia (ganho zero) um peer por peer_id ou impressão digital.
     MutePeer { key: String, muted: bool },
+    /// só testes: muda os codecs de vídeo que este nó anuncia decodificar (simula um peer sem VP8/VP9)
+    #[cfg(test)]
+    TestVcodecs(Vec<&'static str>),
     PeerVolume { key: String, gain: f32 },
     AudioCfg(crate::audio::AudioCfg),
     /// Envia texto para a identidade `to_fp` (impressão digital), por DM. Fica na outbox até haver DataChannel autenticado.
@@ -199,11 +202,13 @@ struct Peer {
     recv_slots: bool,      // já criei as vagas de recepção (áudio + vídeo) para a transmissão deste peer
     recv: [Arc<RecvState>; 2],   // recepção por slot
     recv_cam: Arc<RecvState>,   // vídeo da câmera DESTE peer (a transmissão de tela dele é `recv`)
+    vcodecs: Vec<String>,   // codecs de vídeo que este peer decodifica (anunciados no peer.state; sem anúncio = só h264)
+    caps_known: bool,       // já recebi o peer.state dele (antes disso não ligo VP8/VP9 a ele)
 }
 
 struct ActiveCam { gen: u64, sender: share::Sender, info: Option<Value> }
 
-struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP>, sender: share::Sender, info: Option<Value> }
+struct ActiveShare { audio: Option<crate::procaudio::ProcAudio>, has_audio: bool, gen: u64, track: Arc<webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP>, sender: share::Sender, info: Option<Value>, launch: (ShareCfg, Option<std::path::PathBuf>, Option<std::path::PathBuf>) }
 
 pub struct MeshCfg {
     pub namespace: String,
@@ -287,6 +292,7 @@ struct Actor {
     cam: Option<ActiveCam>,
     cam_gen: u64,
     cam_vout: Option<share::VideoOut>,
+    vcodecs: Vec<&'static str>,   // codecs de vídeo que este nó decodifica e anuncia no peer.state
     cam_net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT por espectador da CÂMERA: não mistura com a da transmissão de tela
     cam_idr: Arc<std::sync::atomic::AtomicBool>,
     cam_tx: mpsc::Sender<Value>,
@@ -305,7 +311,7 @@ impl Actor {
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -417,6 +423,7 @@ impl Actor {
                 Box::pin(async move {
                     // o RTCP recebido só passa pelos interceptadores (Sender Reports → LSR/DLSR dos nossos Receiver Reports, base do RTT
                     // do outro lado) se alguém o ler
+                    let pts = share::payload_codecs(&rx).await;   // payload type → codec negociado (o emissor pode trocar de codec no meio da transmissão)
                     tokio::spawn(async move { while rx.read_rtcp().await.is_ok() {} });
                     use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
                     if track.kind() == RTPCodecType::Video {
@@ -425,10 +432,10 @@ impl Actor {
                             if let Some(pc) = wk.upgrade() { tokio::spawn(async move { let _ = pc.write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })]).await; }); }
                         });
                         // a faixa da câmera tem id próprio: estado, arquivo de quadros e eventos separados da transmissão de tela
-                        if track.id() == share::CAMERA_TRACK_ID { tokio::spawn(share::run_remote_video_as("cam", id, track, recv_cam, sev, pli)); }
+                        if track.id() == share::CAMERA_TRACK_ID { tokio::spawn(share::run_remote_video_as("cam", id, track, recv_cam, sev, pli, pts)); }
                         else {
                             let slot = if track.id() == share::VIDEO_TRACK_ID_2 { 1 } else { 0 };   // 2ª tela do mesmo peer: faixa e recepção próprias
-                            tokio::spawn(share::run_remote_video(share::recv_key(&id, slot), track, recv[slot].clone(), sev, pli));
+                            tokio::spawn(share::run_remote_video(share::recv_key(&id, slot), track, recv[slot].clone(), sev, pli, pts));
                         }
                     } else if let Some(a) = audio {
                         let key = if track.id() == share::AUDIO_TRACK_ID { format!("{id}#screen") } else { id };
@@ -454,7 +461,7 @@ impl Actor {
         let recv_cam = Arc::new(RecvState::default());
         let pc = self.new_pc(peer_id, gen, recv.clone(), recv_cam.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: [None, None], recv_v2: false, csender: None, asender: false, reneg_pending: false, recv_slots: false, recv, recv_cam });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: [None, None], recv_v2: false, csender: None, asender: false, reneg_pending: false, recv_slots: false, recv, recv_cam, vcodecs: vec!["h264".into()], caps_known: false });
         Ok(())
     }
 
@@ -697,6 +704,8 @@ impl Actor {
                 let ids: Vec<String> = self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect();
                 for id in ids { self.send_state(&id).await; }
             }
+            #[cfg(test)]
+            MeshCmd::TestVcodecs(c) => { self.vcodecs = c; for id in self.authed_ids() { self.send_state(&id).await; } }
             MeshCmd::MutePeer { key, muted } => {
                 if let Some(a) = &self.audio {
                     let id = self.peers.iter().find(|(k, p)| *k == &key || p.fp.as_deref() == Some(key.as_str())).map(|(k, _)| k.clone()).unwrap_or(key);
@@ -754,25 +763,56 @@ impl Actor {
 
     fn authed_ids(&self) -> Vec<String> { self.peers.iter().filter(|(_, p)| p.sent_proof && p.proven).map(|(k, _)| k.clone()).collect() }
 
+    /// Peer autenticado decodifica o codec? (H264 todo mundo; VP8/VP9 só quem anunciou no peer.state)
+    fn peer_decodes(&self, id: &str, c: crate::codec::Codec) -> bool { c == crate::codec::Codec::H264 || self.peers.get(id).map(|p| p.vcodecs.iter().any(|x| x == c.name())).unwrap_or(false) }
+
     async fn share_start(&mut self, mut cfg: ShareCfg, preview: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>, slot: usize) {
         self.share_stop(slot).await;
         if slot == 1 { cfg.audio = crate::procaudio::AudioMode::None; }   // o áudio da transmissão é um só, no slot 0
         let vout = self.vtrack[slot].get_or_insert_with(|| share::VideoOut::new_slot(slot)).clone();
-        let track = vout.track.clone();
+        // Codec: o pedido, se este binário o tem e TODOS os peers o decodificam; senão H264 (padrão e reserva). A faixa troca de codec sem
+        // renegociar (`replace_track`); se algum peer recusar a troca, volta tudo para H264.
+        let mut want = if cfg.codec.available() && self.authed_ids().iter().all(|id| self.peer_decodes(id, cfg.codec)) { cfg.codec } else { crate::codec::Codec::H264 };
+        if let Some(track) = vout.set_codec(want) {
+            let mut failed = false;
+            for id in self.authed_ids() {
+                if let Some(snd) = self.peers.get(&id).and_then(|p| p.vsender[slot].clone()) {
+                    if let Err(e) = snd.replace_track(Some(track.clone() as Arc<dyn TrackLocal + Send + Sync>)).await { eprintln!("[codec] {id}: replace_track {}: {e}", want.name()); failed = true; break; }
+                }
+            }
+            if failed {
+                want = crate::codec::Codec::H264;
+                if let Some(back) = vout.set_codec(want) {
+                    for id in self.authed_ids() { if let Some(snd) = self.peers.get(&id).and_then(|p| p.vsender[slot].clone()) { let _ = snd.replace_track(Some(back.clone() as Arc<dyn TrackLocal + Send + Sync>)).await; } }
+                }
+            }
+        }
+        let track = vout.track();
         self.share_gen += 1;
         let gen = self.share_gen;
         self.share_gens[slot] = gen;
         let amode = cfg.audio.clone();
         let atrack = self.atrack.get_or_insert_with(crate::procaudio::new_audio_track).clone();
+        let launch = (cfg.clone(), preview.clone(), dump.clone());
         match share::start_sender(gen, self.idr[slot].clone(), self.net[slot].clone(), cfg, vout, self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {
                 let has_audio = amode != crate::procaudio::AudioMode::None;
                 let audio = if has_audio { Some(crate::procaudio::start(amode, atrack)) } else { None };
-                self.share[slot] = Some(ActiveShare { audio, has_audio, gen, track, sender, info: None });
+                self.share[slot] = Some(ActiveShare { audio, has_audio, gen, track, sender, info: None, launch });
             }
             Err(e) => { self.emit(MeshEvent::Share(json!({ "ev": "share.local", "slot": slot, "state": "off", "reason": e }))).await; return; }
         }
         for id in self.authed_ids() { self.attach_share(&id, slot).await; }
+    }
+
+    /// Algum espectador não decodifica o codec em uso: recomeça a transmissão em H264 (mesmo pedido, mesma origem).
+    async fn share_fallback_h264(&mut self, slot: usize) {
+        let Some(sh) = &self.share[slot] else { return };
+        let (mut cfg, preview, dump) = sh.launch.clone();
+        if cfg.codec == crate::codec::Codec::H264 && self.vtrack[slot].as_ref().map(|v| v.codec()) == Some(crate::codec::Codec::H264) { return; }
+        cfg.codec = crate::codec::Codec::H264;
+        eprintln!("[codec] espectador sem {}: voltando a H264", self.vtrack[slot].as_ref().map(|v| v.codec().name()).unwrap_or("?"));
+        self.share_start(cfg, preview, dump, slot).await;
     }
 
     /// Adiciona a faixa de vídeo ao peer (se ainda não tem), lê o RTCP (PLI/FIR) e renegocia.
@@ -837,7 +877,7 @@ impl Actor {
         let vout = self.cam_vout.get_or_insert_with(share::VideoOut::new_camera).clone();
         self.cam_gen += 1;
         let gen = self.cam_gen;
-        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, adaptive: true };
+        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, codec: Default::default(), adaptive: true };
         self.cam_idr.store(true, std::sync::atomic::Ordering::Relaxed);
         match share::start_sender(gen, self.cam_idr.clone(), self.cam_net.clone(), cfg, vout, self.cam_tx.clone(), preview, None) {
             Ok(sender) => { self.cam = Some(ActiveCam { gen, sender, info: None }); }
@@ -861,7 +901,7 @@ impl Actor {
             if let Some(info) = self.cam.as_ref().and_then(|c| c.info.clone()) { self.send_cam_state(id, &info).await; }
             return;
         }
-        match p.pc.add_track(vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>).await {
+        match p.pc.add_track(vout.track() as Arc<dyn TrackLocal + Send + Sync>).await {
             Ok(sender) => {
                 spawn_video_rtcp(sender.clone(), idr.clone(), self.cam_net.clone(), id.to_string(), Some(vout.nack_tx.clone()));
                 p.csender = Some(sender);
@@ -1143,7 +1183,7 @@ impl Actor {
 
     async fn send_state(&self, peer: &str) {
         let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).or(self.media).unwrap_or((true, false));
-        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id })).await;
+        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id, "vcodecs": self.vcodecs })).await;
     }
 
     /// Pede ao peer recém-autenticado as mensagens desta DM que eu ainda não tenho (informa os ids que já tenho).
@@ -1388,6 +1428,18 @@ impl Actor {
             }
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                // codecs de vídeo que o peer decodifica (sem o campo = versão antiga = só H264)
+                let caps: Vec<String> = v["vcodecs"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|x| ["h264", "vp8", "vp9"].contains(x)).map(String::from).collect()).filter(|a: &Vec<String>| !a.is_empty()).unwrap_or_else(|| vec!["h264".into()]);
+                let changed = self.peers.get(peer).map(|p| !p.caps_known || p.vcodecs != caps).unwrap_or(false);
+                if let Some(p) = self.peers.get_mut(peer) { p.vcodecs = caps; p.caps_known = true; }
+                if changed {
+                    for s in 0..2 {
+                        if self.share[s].is_none() { continue; }
+                        let c = self.vtrack[s].as_ref().map(|v| v.codec()).unwrap_or_default();
+                        if c == crate::codec::Codec::H264 { continue; }   // H264 já foi ligado em after_auth
+                        if self.peer_decodes(peer, c) { self.attach_share(peer, s).await; } else { self.share_fallback_h264(s).await; }
+                    }
+                }
                 // identidade do SFU anunciada por este peer (autenticado pela prova ECDSA): liga o peer da malha ao participante do SFU
                 if let Some(sid) = v["sfuId"].as_str().filter(|x| !x.is_empty() && x.len() <= 128) { self.emit(MeshEvent::Share(json!({ "ev": "sfu.link", "peer_id": peer, "identity": sid }))).await; }
                 self.emit(MeshEvent::PeerState { peer_id: peer.into(), microphone: v["microphone"].as_bool().unwrap_or(true), deafened: v["deafened"].as_bool().unwrap_or(false), status: v["status"].as_str().unwrap_or("").chars().take(64).collect(), presence: v["presence"].as_str().unwrap_or("").chars().take(64).collect() }).await;
@@ -1472,7 +1524,12 @@ impl Actor {
             self.emit(MeshEvent::Peer { peer_id: peer.into(), state: "autenticado".into() }).await;
             if let Some(fp) = fp { if !self.dm_off.contains(&fp) { self.flush_outbox(&fp).await; self.request_history(peer, &fp).await; } }
             self.send_state(peer).await;
-            for s in 0..2 { if self.share[s].is_some() { self.attach_share(peer, s).await; } }
+            for s in 0..2 {
+                if self.share[s].is_some() {
+                    let c = self.vtrack[s].as_ref().map(|v| v.codec()).unwrap_or_default();
+                    if c == crate::codec::Codec::H264 || self.peers.get(peer).map(|p| p.caps_known).unwrap_or(false) { self.attach_share(peer, s).await; }   // VP8/VP9: espera o peer.state dele
+                }
+            }
             if self.cam.is_some() { self.attach_cam(peer).await; }
         }
     }

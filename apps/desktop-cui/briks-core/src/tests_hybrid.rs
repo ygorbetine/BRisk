@@ -103,7 +103,7 @@ async fn hybrid_chat_presence_voice_share_and_kick() {
     wait(&mut b, 15, |e| matches!(e, MeshEvent::PeerState { peer_id, microphone: false, .. } if peer_id == PA).then_some(())).await.expect("B não soube do mudo");
 
     // tela: publicada pelo SFU, anunciada com o peer_id da malha
-    a.h.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.h.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     wait(&mut b, 25, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "on" && v["peer_id"] == PA).then_some(())).await.expect("B não soube da transmissão do A com o peer_id da malha");
     a.h.cmd.send(MeshCmd::ShareStop).await.unwrap();
 

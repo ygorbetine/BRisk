@@ -143,7 +143,7 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
     let cs = [&a, &b, &d];
     for c in cs { for o in cs { if c.ident != o.ident { assert!(c.wait(30, &format!("info:{}:{}", o.ident, o.fp)).await, "{} não autenticou {}", c.ident, o.ident); } } }
     // A transmite (fonte sintética), B assiste
-    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
     assert!(b.wait(25, r#""state":"on""#).await, "B não soube da transmissão");
     let dir = std::env::temp_dir().join(format!("briks-sfurec-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();

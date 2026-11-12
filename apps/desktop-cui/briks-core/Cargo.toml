@@ -32,6 +32,7 @@ bip39 = { version = "2", default-features = false, features = ["std", "portugues
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 livekit-protocol = "=0.8.2"
 prost = "0.14"
+env-libvpx-sys = { version = "5", optional = true }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -44,5 +45,9 @@ windows-core = "0.61"
 [dev-dependencies]
 socket2 = "0.5"
 hmac = "0.12"
+
+[features]
+# VP8/VP9 por software (libvpx pré-compilada por scripts/build-vpx.ps1 em vendor/vpx/libvpx.lib). Desligada: o app só fala H264.
+vpx = ["dep:env-libvpx-sys"]
 
 [workspace]

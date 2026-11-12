@@ -150,7 +150,7 @@ async fn sfu_screen_share_published_and_watched() {
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
     let (w, h) = (1280usize, 720usize);
     for round in 0..2 {
-        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+        a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
         if let Some(MeshEvent::Share(v)) = wait_ev(&mut a, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.local" && v["state"] == "on"), 20).await { eprintln!("SFU codificador: {} (hardware: {})", v["encoder"], v["hardware"]); }
         let on = wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "on"), 20).await.expect("B não soube da transmissão");
         if let MeshEvent::Share(v) = on { assert_eq!(v["label"], "Teste"); }
@@ -201,7 +201,7 @@ async fn sfu_one_person_shares_two_screens_at_once() {
     wait_ev(&mut b, |e| matches!(e, MeshEvent::PeerInfo { peer_id, .. } if peer_id == A), 15).await.expect("B não viu o A");
     let dir = std::env::temp_dir().join(format!("briks-sfu-duastelas-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
-    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 15, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false };
+    let cfg = |kind, label: &str, h| ShareCfg { kind, height: h, fps: 15, kbps: 0, label: label.into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false };
     a.cmd.send(MeshCmd::ShareStart { cfg: cfg(SourceKind::Test, "Tela 1", 720), preview: None, dump: None }).await.unwrap();
     a.cmd.send(MeshCmd::Share2Start { cfg: cfg(SourceKind::TestMotion, "Tela 2", 540), preview: None, dump: None }).await.unwrap();
     let (mut r0, mut r1) = (None, None);

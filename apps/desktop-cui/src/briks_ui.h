@@ -70,6 +70,7 @@ typedef struct {
     share_app_t apps[SH_MAX_APPS]; int napps;
     int res, fps, br_mode;                     /* índices: 720p/1080p/1440p/4K; 15/30/60; automático/alto/máximo/personalizado */
     float br_custom;                           /* Mbps (1..50) quando personalizado */
+    int codec;                                 /* codec do vídeo: 0 H.264 (padrão), 1 VP9, 2 VP8; o core cai para H.264 se algum participante não decodificar */
     int content;                               /* prioridade no aperto: 0 nitidez (cede FPS), 1 fluidez (cede resolução) */
     /* transmissão local */
     bool active, starting, audio_on, hardware;

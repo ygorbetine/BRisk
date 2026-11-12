@@ -230,6 +230,7 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
         sub.on_track(Box::new(move |track, rtp_rx, _tr| {
             let (audio, shared, etx, wk, sev, stats) = (audio.clone(), shared.clone(), etx.clone(), wk.clone(), sev.clone(), stats.clone());
             Box::pin(async move {
+                let pts = share::payload_codecs(&rtp_rx).await;
                 tokio::spawn(async move { while rtp_rx.read_rtcp().await.is_ok() {} });
                 stats.tracks_in.fetch_add(1, Ordering::Relaxed);
                 // o id da faixa é o sid; os metadados chegam por ParticipantUpdate (normalmente antes da offer)
@@ -259,8 +260,8 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                             }
                         });
                     }
-                    if is_cam { tokio::spawn(share::run_remote_video_as("cam", meta.identity.clone(), track, recv, sev, pli)); }
-                    else { tokio::spawn(share::run_remote_video(rkey, track, recv, sev, pli)); }
+                    if is_cam { tokio::spawn(share::run_remote_video_as("cam", meta.identity.clone(), track, recv, sev, pli, pts)); }
+                    else { tokio::spawn(share::run_remote_video(rkey, track, recv, sev, pli, pts)); }
                 } else if let Some(a) = audio {
                     let key = if meta.source == lk::TrackSource::ScreenShareAudio as i32 { format!("{}#screen", meta.identity) } else { meta.identity.clone() };
                     tokio::spawn(a.run_remote(key, track));
@@ -524,7 +525,7 @@ impl Actor {
                 if let (Some((label, h, has_audio)), Some(vout)) = (sh, self.vout[slot].clone()) {
                     self.republish_video = true;
                     let name = track_name(&label, slot);
-                    self.publish(share::video_cid(slot), vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
+                    self.publish(share::video_cid(slot), vout.track() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
                     if let (true, Some(at)) = (has_audio, self.atrack.clone()) {
                         self.publish(share::AUDIO_TRACK_ID, at as Arc<dyn TrackLocal + Send + Sync>, false, lk::TrackType::Audio, lk::TrackSource::ScreenShareAudio, "audio da tela", 0, 0).await;
                     }
@@ -532,7 +533,7 @@ impl Actor {
             }
             // câmera ligada: republica a faixa dela também
             if let (Some(_), Some(vout)) = (self.cam.as_ref(), self.cam_vout.clone()) {
-                self.publish(share::CAMERA_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await;
+                self.publish(share::CAMERA_TRACK_ID, vout.track() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await;
             }
             // meu estado (microfone/status) de novo para todos: quem voltou depois de mim pode ter perdido a última mudança
             if self.data.is_some() {
@@ -1107,6 +1108,8 @@ impl Actor {
                 self.dc_send_raw(pkt.encode_to_vec()).await;
             }
             MeshCmd::Close => {}
+            #[cfg(test)]
+            MeshCmd::TestVcodecs(_) => {}
         }
     }
 
@@ -1223,7 +1226,7 @@ impl Actor {
                 self.share[slot] = Some(ActiveShare { gen, sender, audio, info: None, label: label.clone(), h });
                 if first {
                     let name = track_name(&label, slot);
-                    self.publish(cid, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
+                    self.publish(cid, vout.track() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::ScreenShare, &name, h * 16 / 9, h).await;
                 } else { self.set_muted(cid, false).await; }
                 if has_audio {
                     if !self.published.contains_key(share::AUDIO_TRACK_ID) && !self.pending.contains_key(share::AUDIO_TRACK_ID) {
@@ -1256,7 +1259,7 @@ impl Actor {
         let gen = self.cam_gen;
         let first = !self.published.contains_key(share::CAMERA_TRACK_ID) && !self.pending.contains_key(share::CAMERA_TRACK_ID);
         let vout = self.cam_vout.get_or_insert_with(share::VideoOut::new_camera).clone();
-        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, adaptive: true };
+        let cfg = ShareCfg { kind: crate::capture::SourceKind::Camera(device), height: 360, fps: 30, kbps: 0, label: "Câmera".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Motion, codec: Default::default(), adaptive: true };
         // os eventos do emissor chegam como "share.*"; o encaminhador os renomeia para "cam.*" antes de irem ao laço
         let (ctx, mut crx) = mpsc::channel::<Value>(64);
         let sev = self.sev_tx.clone();
@@ -1265,7 +1268,7 @@ impl Actor {
         match share::start_sender(gen, self.cam_idr.clone(), self.cam_net.clone(), cfg, vout.clone(), ctx, preview, None) {
             Ok(sender) => {
                 self.cam = Some(ActiveCam { gen, sender, info: None });
-                if first { self.publish(share::CAMERA_TRACK_ID, vout.track.clone() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await; }
+                if first { self.publish(share::CAMERA_TRACK_ID, vout.track() as Arc<dyn TrackLocal + Send + Sync>, true, lk::TrackType::Video, lk::TrackSource::Camera, "câmera", 640, 360).await; }
                 else { self.set_muted(share::CAMERA_TRACK_ID, false).await; }
             }
             Err(e) => {

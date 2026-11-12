@@ -1158,13 +1158,12 @@ bool ui_share_stage(cui_ctx *ui, app_state_t *s, float W, float H, int layout) {
     const cui_rect sr = cui_get_rect(ui, cui_make_id(ui, "sstage")); const cui_vec2 mp = cui_mouse_pos(ui); const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
     bool here_empty = !s_modal_hint && pt_in(sr, mp);
     for (int i = 0; i < g_tiles && i < 16 && here_empty; i++) if (pt_in(g_trect[i], mp)) here_empty = false;
-    static bool had_press;
-    if (down && !was_down) { press_at = mp; pressed_empty = here_empty; had_press = true; }
-    if (cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) {
-        if (!had_press) { press_at = mp; pressed_empty = here_empty; }   /* roteiro: apertar e soltar no mesmo quadro */
+    /* bordas do botão calculadas em stage_inner (uma vez por quadro): alterna na SOLTURA, se apertou e soltou em área vazia quase no mesmo ponto */
+    if (g_tg_press) { press_at = mp; pressed_empty = here_empty; }
+    if (g_tg_release) {
         const float dx = mp.x - press_at.x, dy = mp.y - press_at.y;
         if (pressed_empty && here_empty && dx * dx + dy * dy <= 36.0f) { g_call.layout = g_call.layout == 1 ? 0 : 1; g_stage_toggles++; }
-        pressed_empty = false; had_press = false;
+        pressed_empty = false;
     }
     was_down = down;
     return true;

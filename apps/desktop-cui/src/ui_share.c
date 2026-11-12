@@ -244,7 +244,9 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
                 copy(q->remote2[i].label, sizeof q->remote2[i].label, json_str(j, "label", ""));
             } else if (!strcmp(st, "off")) { memset(&q->remote2[i], 0, sizeof q->remote2[i]); fv_close(&g_fv[FV2(i)]); memset(&g_zoom[FV2(i)], 0, sizeof g_zoom[0]); }
             else if (!strcmp(st, "watch")) copy(q->remote2[i].path, sizeof q->remote2[i].path, json_str(j, "path", ""));
-            else if (!strcmp(st, "frame")) { q->remote2[i].has_frame = true; q->remote2[i].w = jint(j, "w"); q->remote2[i].h = jint(j, "h"); }
+            else if (!strcmp(st, "frame")) { q->remote2[i].has_frame = true; q->remote2[i].stalled = false; q->remote2[i].w = jint(j, "w"); q->remote2[i].h = jint(j, "h"); }
+            else if (!strcmp(st, "stalled")) q->remote2[i].stalled = true;   /* 3 s sem pacote algum: tira a última imagem em vez de deixá-la parada */
+            else if (!strcmp(st, "resumed")) q->remote2[i].stalled = false;
         }
     } else if (!strcmp(ev, "share.local")) {
         if (!strcmp(json_str(j, "state", ""), "on")) {
@@ -281,10 +283,12 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             if (share_notice_wanted(q->remote[i].on, true, share_viewing(s))) { g_notice.slot = i; g_notice.until = -1; }
             q->remote[i].on = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps");
             q->remote[i].audio = jbool(j, "audio"); copy(q->remote[i].label, sizeof q->remote[i].label, json_str(j, "label", ""));
-        } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]);
+        } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].stalled = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]);
             memset(&g_zoom[i], 0, sizeof g_zoom[i]); if (g_notice.slot == i) g_notice.slot = -1; }
         else if (!strcmp(st, "watch")) copy(q->remote[i].path, sizeof q->remote[i].path, json_str(j, "path", ""));
-        else if (!strcmp(st, "frame")) { q->remote[i].has_frame = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); }
+        else if (!strcmp(st, "frame")) { q->remote[i].has_frame = true; q->remote[i].stalled = false; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); }
+        else if (!strcmp(st, "stalled")) q->remote[i].stalled = true;   /* 3 s sem pacote algum: tira a última imagem em vez de deixá-la parada */
+        else if (!strcmp(st, "resumed")) q->remote[i].stalled = false;
     } else return false;
     return true;
 }
@@ -681,6 +685,15 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
 /* ---------- palco do modo Transmissão ---------- */
 static int g_sfocus = -1;   /* transmissão fixada no Foco (chave de emit_tile); -1 = a primeira da lista */
 static bool s_modal_hint;   /* com um diálogo aberto por cima, o clique não vale para a miniatura */
+void share_peer_gone(app_state_t *s, int slot) {
+    if (slot < 0 || slot >= BRIKS_MAX_PEERS) return;
+    share_state_t *q = &s->sh;
+    memset(&q->remote[slot], 0, sizeof q->remote[slot]); memset(&q->remote2[slot], 0, sizeof q->remote2[slot]);
+    fv_close(&g_fv[slot]); fv_close(&g_fv[FV2(slot)]);
+    memset(&g_zoom[slot], 0, sizeof g_zoom[slot]); memset(&g_zoom[FV2(slot)], 0, sizeof g_zoom[0]);
+    if (g_notice.slot == slot) g_notice.slot = -1;
+    if (g_sfocus == slot || g_sfocus == FV2(slot)) g_sfocus = -1;
+}
 static cui_rect g_trect[16];   /* retângulos das transmissões do último quadro */
 static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
     int zoom_pct = 100; bool clicked = false;
@@ -769,6 +782,8 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "share_mode")) return s->call_mode;
     if (!strcmp(n, "share_tiles")) return g_tiles;
     if (!strcmp(n, "share_mine")) return s->sh.active;
+    if (!strcmp(n, "share_remote_on")) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) c += s->sh.remote[i].on + s->sh.remote2[i].on; return c; }   /* transmissões dos outros no ar */
+    if (!strcmp(n, "share_stalled")) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) c += s->sh.remote[i].stalled + s->sh.remote2[i].stalled; return c; }
     if (!strcmp(n, "share_muted")) return s->sh.audio_muted;
     if (!strcmp(n, "share_audio")) return s->sh.audio_on && !s->sh.audio_muted;   /* "Com áudio" aceso */
     if (!strcmp(n, "stage_toggles")) return g_stage_toggles;
@@ -803,20 +818,20 @@ static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
     const char *nm = s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Participante";
     if (two) {
         fview_t *v = &g_fv[key];
-        bool has2 = q->remote2[i].path[0] && q->remote2[i].watching && fv_update(ui, s, v, q->remote2[i].path);
+        bool has2 = q->remote2[i].path[0] && q->remote2[i].watching && !q->remote2[i].stalled && fv_update(ui, s, v, q->remote2[i].path);
         if (q->remote2[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote2[i].label); else snprintf(title, sizeof title, "%s · 2ª tela", nm);
         fmt_rate(q->remote2[i].kbps, r, sizeof r);
         snprintf(chip, sizeof chip, "%s · %d FPS · %s", res_name(q->remote2[i].h), q->remote2[i].fps, r);
-        return video_tile(ui, key, has2 ? v->tex : 0, v->w, v->h, title, chip, "Carregando a transmissão…", NULL, &g_zoom[key], compact);
+        return video_tile(ui, key, has2 ? v->tex : 0, v->w, v->h, title, chip, q->remote2[i].stalled ? "Sem sinal da transmissão…" : "Carregando a transmissão…", NULL, &g_zoom[key], compact);
     }
-    bool has = q->remote[i].path[0] && q->remote[i].watching && fv_update(ui, s, &g_fv[i], q->remote[i].path);
+    bool has = q->remote[i].path[0] && q->remote[i].watching && !q->remote[i].stalled && fv_update(ui, s, &g_fv[i], q->remote[i].path);
     if (q->remote[i].label[0]) snprintf(title, sizeof title, "%s · %s", nm, q->remote[i].label); else snprintf(title, sizeof title, "%s", nm);
     fmt_rate(q->remote[i].kbps, r, sizeof r);
     snprintf(chip, sizeof chip, "%s · %d FPS · %s%s", res_name(q->remote[i].h), q->remote[i].fps, r, q->remote[i].audio ? " · com áudio" : "");
     if (q->remote[i].poor) snprintf(chip, sizeof chip, "Conexão instável: a imagem pode ficar parada");
     if (!q->remote[i].vol_set) { q->remote[i].vol_set = true; q->remote[i].volume = 1.0f; }
     float before = q->remote[i].volume;
-    bool c = video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, q->remote[i].poor ? "Sua conexão não está dando conta desta transmissão" : "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL, &g_zoom[i], compact);
+    bool c = video_tile(ui, i, has ? g_fv[i].tex : 0, g_fv[i].w, g_fv[i].h, title, chip, q->remote[i].stalled ? "Sem sinal da transmissão…" : q->remote[i].poor ? "Sua conexão não está dando conta desta transmissão" : "Carregando a transmissão…", q->remote[i].audio ? &q->remote[i].volume : NULL, &g_zoom[i], compact);
     if (fabsf(before - q->remote[i].volume) > 0.01f) {
         char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
         snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, q->remote[i].volume);

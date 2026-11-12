@@ -212,7 +212,7 @@ static void set_peer(app_state_t *s, const char *id, const char *state) {
     for (int i = 0; i < n; i++) if (!strcmp(s->rtc_peers[i].id, id)) { slot = i; break; }
     if (slot < 0 && strcmp(state, "fechado")) for (int i = 0; i < n; i++) if (!s->rtc_peers[i].id[0]) { slot = i; break; }
     if (slot < 0) { over_set(s, id, state); return; }
-    if (!strcmp(state, "fechado")) { memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]); over_promote(s); }
+    if (!strcmp(state, "fechado")) { share_peer_gone(s, slot); memset(&s->rtc_peers[slot], 0, sizeof s->rtc_peers[slot]); over_promote(s); }   /* saiu: some o que ela transmitia */
     else { copy(s->rtc_peers[slot].id, sizeof s->rtc_peers[slot].id, id); copy(s->rtc_peers[slot].state, sizeof s->rtc_peers[slot].state, state); }
     s->rtc_peer_count = s->rtc_authed_count = 0;
     for (int i = 0; i < n; i++) if (s->rtc_peers[i].id[0]) { s->rtc_peer_count++; if (!strcmp(s->rtc_peers[i].state, "autenticado")) s->rtc_authed_count++; }

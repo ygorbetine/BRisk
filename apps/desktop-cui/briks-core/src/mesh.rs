@@ -251,6 +251,9 @@ struct Actor {
     dm_off: HashSet<String>,                   // fps cujo chat privado o usuário desconectou (a chamada segue)
     /// quem o usuário está assistindo (id do par → arquivo de quadros): sobrevive à recriação da conexão do par
     watch_intent: HashMap<(String, usize), std::path::PathBuf>,
+    /// 1.4.1: quem está transmitindo (tela por slot / câmera) segundo o par: quando o par SAI ou a conexão cai, a UI precisa do "off" (antes ficava a última imagem parada)
+    remote_live: HashSet<(String, usize)>,
+    cam_live: HashSet<String>,
     hist: crate::history::Store,               // DMs assinadas, enviadas e recebidas, por canal
     hist_reqs: HashMap<String, String>,        // peer -> requestId do pedido de histórico em andamento
     seen_msgs: HashSet<String>,
@@ -298,7 +301,7 @@ impl Actor {
         let validator = Validator::new(&room_hash, &cfg.local_peer);
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -360,6 +363,7 @@ impl Actor {
                 self.joined.remove(&p);
                 for n in &self.net { n.lock().unwrap().peers.remove(&p); }
                 if let Some(a) = &self.audio { a.remove_peer(&p); }
+                self.end_remote_streams(&p, true).await;
                 if let Some(peer) = self.peers.remove(&p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p, state: "fechado".into() }).await; }
             }
             RtEvent::Broadcast { event: _, payload } => {
@@ -966,7 +970,25 @@ impl Actor {
         self.emit(MeshEvent::Banned { fp: fp.to_string() }).await;
     }
 
+    /// A pessoa saiu (ou a conexão com ela caiu): o que ela transmitia (tela nos dois slots e câmera) acabou. Avisa a UI com "off" para
+    /// tirar o bloco e a última imagem (antes ficava a última imagem parada). `forget`: saiu de vez, esquece também o "continuar assistindo".
+    async fn end_remote_streams(&mut self, peer: &str, forget: bool) {
+        for slot in 0..2usize {
+            if self.remote_live.remove(&(peer.to_string(), slot)) {
+                if let Some(p) = self.peers.get(peer) { p.recv[slot].watching.store(false, std::sync::atomic::Ordering::Relaxed); }
+                self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": peer, "slot": slot, "state": "off", "reason": "saiu" }))).await;
+            }
+            if forget { self.watch_intent.remove(&(peer.to_string(), slot)); }
+        }
+        if self.cam_live.remove(peer) {
+            if let Some(p) = self.peers.get(peer) { p.recv_cam.watching.store(false, std::sync::atomic::Ordering::Relaxed); }
+            self.emit(MeshEvent::Share(json!({ "ev": "cam.remote", "peer_id": peer, "state": "off", "reason": "saiu" }))).await;
+        }
+        if forget { self.cam_watch.remove(peer); }
+    }
+
     async fn drop_peer(&mut self, id: &str) {
+        self.end_remote_streams(id, true).await;
         for n in &self.net { n.lock().unwrap().peers.remove(id); }
         if let Some(a) = &self.audio { a.remove_peer(id); }
         self.pending.retain(|_, (pe, _)| pe != id);
@@ -1188,6 +1210,7 @@ impl Actor {
                 // volta e os dois ainda na sala. Fecha, espera um pouco e refaz do zero (o lado iniciador oferece, o outro aceita a
                 // oferta na própria `on_signal`); a transmissão em curso é anexada de novo na reautenticação (`after_auth`).
                 if state == RTCPeerConnectionState::Failed {
+                    self.end_remote_streams(&peer, false).await;   // a conexão voltará (Reconnect) e a transmissão reaparece com "on"; até lá nada de imagem parada
                     for n in &self.net { n.lock().unwrap().peers.remove(&peer); }
                     if let Some(a) = &self.audio { a.remove_peer(&peer); }
                     if let Some(p) = self.peers.remove(&peer) { let _ = p.pc.close().await; }
@@ -1380,6 +1403,7 @@ impl Actor {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 use std::sync::atomic::Ordering::Relaxed;
                 let on = v["on"].as_bool().unwrap_or(false);
+                if on { self.cam_live.insert(peer.to_string()); } else { self.cam_live.remove(peer); }
                 let mut m = json!({ "ev": "cam.remote", "peer_id": peer, "state": if on { "on" } else { "off" } });
                 for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
                 if !on { self.cam_watch.remove(peer); if let Some(p) = self.peers.get(peer) { p.recv_cam.watching.store(false, Relaxed); } }
@@ -1401,6 +1425,7 @@ impl Actor {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
                 let on = v["on"].as_bool().unwrap_or(false);
                 let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
+                if on { self.remote_live.insert((peer.to_string(), slot)); } else { self.remote_live.remove(&(peer.to_string(), slot)); }
                 let mut m = json!({ "ev": "share.remote", "peer_id": peer, "slot": slot, "state": if on { "on" } else { "off" } });
                 for k in ["w", "h", "fps", "kbps"] { m[k] = json!(v[k].as_u64().unwrap_or(0)); }
                 m["label"] = json!(v["label"].as_str().unwrap_or("").chars().take(64).collect::<String>());

@@ -1,0 +1,22 @@
+# 1.4.1 (CHM-33): quando quem transmite SAI da chamada some o bloco e a ultima imagem (antes ficava parada); 3 s sem sinal tira a imagem e ao voltar ela reaparece
+waitms 1500
+expect share_remote_on 4
+expect share_tiles 4
+shot s0-todos
+coreev {"ev":"share.remote","peer_id":"demo-1","state":"stalled"}
+waitms 400
+expect share_stalled 1
+shot s1-sem-sinal
+coreev {"ev":"share.remote","peer_id":"demo-1","state":"resumed"}
+waitms 400
+expect share_stalled 0
+coreev {"ev":"peer","peer_id":"demo-1","state":"fechado"}
+waitms 600
+expect share_remote_on 3
+expect share_tiles 3
+shot s2-um-saiu
+coreev {"ev":"peer","peer_id":"demo-0","state":"fechado"}
+waitms 600
+expect share_remote_on 1
+expect share_tiles 1
+shot s3-outro-saiu

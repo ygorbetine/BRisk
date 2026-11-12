@@ -635,7 +635,10 @@ impl Actor {
     }
 
     async fn peer_gone(&mut self, identity: &str, sid: &str) {
-        self.known.remove(identity);
+        // 1.4.1: o que a pessoa transmitia (tela nos dois slots e câmera) acabou com ela: avisa a UI para tirar o bloco e a última imagem
+        if let Some(k) = self.known.remove(identity) {
+            for ev in gone_events(identity, &[k.share[0].is_some(), k.share[1].is_some()], k.cam.is_some()) { self.emit(MeshEvent::Share(ev)).await; }
+        }
         self.stale.remove(identity);
         { let mut sh = self.shared.lock().unwrap(); if !sid.is_empty() { sh.part_ident.remove(sid); } sh.tracks.retain(|_, t| t.identity != identity); sh.recv.remove(identity); sh.recv_cam.remove(identity); sh.recv.remove(&share::recv_key(identity, 1)); }
         if let Some(a) = &self.audio { a.remove_peer(identity); }
@@ -1415,5 +1418,26 @@ mod t {
     fn url_building() {
         assert_eq!(ws_url("ws://127.0.0.1:7880/", "T"), "ws://127.0.0.1:7880/rtc?access_token=T&protocol=15&auto_subscribe=0&sdk=rust&version=briks-0.1&adaptive_stream=0");
         assert!(ws_url("https://x.livekit.cloud", "T").starts_with("wss://x.livekit.cloud/rtc?"));
+    }
+}
+
+/// Eventos "off" para quando alguém sai: um por tela no ar (slots 0 e 1) e um para a câmera, nessa ordem.
+pub(crate) fn gone_events(identity: &str, share: &[bool; 2], cam: bool) -> Vec<Value> {
+    let mut v: Vec<Value> = (0..2usize).filter(|s| share[*s]).map(|s| json!({ "ev": "share.remote", "peer_id": identity, "slot": s, "state": "off", "reason": "saiu" })).collect();
+    if cam { v.push(json!({ "ev": "cam.remote", "peer_id": identity, "state": "off", "reason": "saiu" })); }
+    v
+}
+
+#[cfg(test)]
+mod gone_tests {
+    use super::*;
+    #[test]
+    fn leaving_ends_every_stream_the_person_had() {
+        let v = gone_events("ana", &[true, true], true);
+        assert_eq!(v.len(), 3);
+        assert!(v[0]["ev"] == "share.remote" && v[0]["slot"] == 0 && v[0]["state"] == "off");
+        assert!(v[1]["slot"] == 1 && v[2]["ev"] == "cam.remote" && v[2]["state"] == "off");
+        assert_eq!(gone_events("bia", &[false, true], false).len(), 1);
+        assert!(gone_events("cris", &[false, false], false).is_empty(), "quem não transmitia não gera evento");
     }
 }

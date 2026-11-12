@@ -161,6 +161,9 @@
       { "item": "AMI-31", "de": "w382", "para": "w324", "esperado": "muda", "min": 50 } ] },
     { "id": "paineis-estreitos", "demo": "group", "roteiro": "paineis-estreitos.txt", "checagens": [
       { "item": "AMI-32", "de": "n-membros", "para": "n-historico", "esperado": "muda", "min": 50 } ] },
+    { "id": "transmissao-saiu", "demo": "call", "roteiro": "transmissao-saiu.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEV_SHARE": "demo-many" }, "checagens": [
+      { "item": "CHM-33", "de": "s0-todos", "para": "s1-sem-sinal", "esperado": "muda", "min": 100 },
+      { "item": "CHM-33", "de": "s1-sem-sinal", "para": "s2-um-saiu", "esperado": "muda", "min": 100 } ] },
     { "id": "transmissao-vazio", "demo": "call", "roteiro": "transmissao-vazio.txt", "env": { "BRIKS_DEMO_PEERS": "3", "BRIKS_DEV_SHARE": "demo-many" }, "checagens": [
       { "item": "CHM-30", "de": "x0", "para": "x1", "esperado": "muda", "min": 100 },
       { "item": "CHM-30", "de": "x1", "para": "x2", "esperado": "muda", "min": 100 } ] },

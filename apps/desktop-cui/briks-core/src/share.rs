@@ -586,13 +586,16 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     let mut jb = JitterBuf::new();
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
+    let (mut last_pkt, mut stalled) = (Instant::now(), false);   // rede de segurança: sem pacote nenhum por 3 s, a UI tira a última imagem
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
         // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
         let pkt = match tokio::time::timeout(Duration::from_millis(50), track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
         let w = st.watching.load(Ordering::Relaxed);
-        if !w { was = false; continue; }
+        if !w { was = false; stalled = false; last_pkt = Instant::now(); continue; }
+        if pkt.is_some() { last_pkt = Instant::now(); if stalled { stalled = false; let (pid, slot) = split_key(&peer); let _ = ev.try_send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "resumed" })); } }
+        else if !stalled && last_pkt.elapsed() > STALL_AFTER { stalled = true; let (pid, slot) = split_key(&peer); let _ = ev.try_send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "stalled" })); }
         let ep = st.epoch.load(Ordering::Relaxed);
         if !was || ep != my_epoch {
             was = true; my_epoch = ep; jb = JitterBuf::new();
@@ -615,7 +618,13 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
             frames0 = f; win = Instant::now();
         }
     }
+    // a faixa terminou (a pessoa saiu ou a conexão fechou): sem este aviso a UI ficava com a última imagem parada
+    let (pid, slot) = split_key(&peer);
+    let _ = ev.send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "off", "reason": "faixa encerrada" })).await;
 }
+
+/// Sem nenhum pacote de vídeo por este tempo, quem assiste é avisado ("stalled") para tirar a última imagem; ao voltar, "resumed".
+pub const STALL_AFTER: Duration = Duration::from_secs(3);
 
 #[cfg(test)]
 mod jb_tests {

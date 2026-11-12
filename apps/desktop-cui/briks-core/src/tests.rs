@@ -1454,3 +1454,26 @@ fn app_icon_has_all_seven_sizes() {
     let png = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/logo/briks-logo-128.png"));
     assert_eq!(&png[1..4], b"PNG");
 }
+
+/// 1.4.1: quando quem transmite SAI da chamada, quem assiste recebe `share.remote off` (antes ficava a última imagem parada para sempre).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn remote_share_ends_when_the_sharer_leaves() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (ia, ib) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()));
+    let mut a = node(port, PA, "Ana", "saiu1", ia);
+    let mut b = node(port, PB, "Beto", "saiu1", ib);
+    assert!(authed(&mut a, 1, 20).await && authed(&mut b, 1, 20).await, "não autenticou");
+    let dir = std::env::temp_dir().join(format!("briks-saiu-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 20).await.expect("B não soube da transmissão");
+    b.cmd.send(MeshCmd::ShareWatch { key: PA.into(), on: true, path: dir.join("rx.bin") }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "frame", 25).await.expect("nenhum quadro chegou ao B");
+    // A some sem parar a transmissão antes (fechou o app / caiu da sala)
+    a.cmd.send(MeshCmd::Close).await.unwrap();
+    let off = wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "off", 15).await.expect("B ficou com a última imagem parada: não recebeu o fim da transmissão");
+    assert_eq!(off["peer_id"], PA);
+    let _ = b.cmd.send(MeshCmd::Close).await;
+}

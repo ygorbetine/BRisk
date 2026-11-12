@@ -80,11 +80,11 @@ typedef struct {
     char adapting[8], reason[12];           /* "" | "rede" | "cpu"; "perda" | "atraso" */
     char label[64], encoder[64], err[160], last_kind[12], last_id[24];
     /* transmissões dos outros (índice = slot em rtc_peers) */
-    struct { bool on, audio, watching, has_frame, poor; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[BRIKS_MAX_PEERS];
+    struct { bool on, audio, watching, has_frame, poor, stalled; int w, h, fps, kbps, low_secs; float volume; bool vol_set; char label[64], path[300]; } remote[BRIKS_MAX_PEERS];
     /* 2ª tela simultânea (segundo monitor), minha e dos outros: sem áudio próprio (o áudio da transmissão é o da 1ª) */
     bool pick_second;                          /* o seletor aberto vai iniciar a 2ª tela */
     struct { bool active, starting; int w, h, fps, kbps; char label[64]; } second;
-    struct { bool on, watching, has_frame; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
+    struct { bool on, watching, has_frame, stalled; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
 } share_state_t;
 
 typedef struct {
@@ -361,6 +361,7 @@ bool share_notice_active(cui_ctx *ui, app_state_t *s);       /* há aviso "X com
 void ui_share_notice_row(cui_ctx *ui, app_state_t *s);        /* a linha do aviso, com o botão Assistir */
 bool ui_share_stage(cui_ctx *ui, app_state_t *s, float W, float H, int layout);             /* palco do modo Transmissão; false = ninguém transmitindo */
 bool share_peer_live(const app_state_t *s, int slot);
+void share_peer_gone(app_state_t *s, int slot);   /* a pessoa saiu da chamada: some o que ela transmitia (tela nos dois slots) e a última imagem */
 /* ui_cam.c: câmera na chamada */
 bool cam_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos cam.* do core */
 void cam_tick(cui_ctx *ui, app_state_t *s);                   /* a cada quadro: lista câmeras, assiste só quem aparece, solta a câmera ao sair da sala */

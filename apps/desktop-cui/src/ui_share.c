@@ -21,6 +21,17 @@ static int jint(const jval *j, const char *k) { const jval *v = json_get(j, k); 
 static float jnum(const jval *j, const char *k) { const jval *v = json_get(j, k); return v && v->type == J_NUM ? (float)v->num : 0; }
 static bool jbool(const jval *j, const char *k) { const jval *v = json_get(j, k); return v && v->type == J_BOOL && v->b; }
 static void cmd(const char *json) { if (core_state() == CORE_READY) core_send(json); }
+float *share_remote_volume(app_state_t *s, int i) {
+    if (i < 0 || i >= BRIKS_MAX_PEERS) return NULL;
+    if (!s->sh.remote[i].vol_set) { s->sh.remote[i].vol_set = true; s->sh.remote[i].volume = 1.0f; }
+    return &s->sh.remote[i].volume;
+}
+void share_remote_volume_changed(app_state_t *s, int i) {
+    if (i < 0 || i >= BRIKS_MAX_PEERS) return;
+    char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
+    snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, s->sh.remote[i].volume);
+    core_state() == CORE_READY ? (void)core_send(line) : (void)0;
+}
 
 /* zoom de quem assiste, por transmissão (zerado = encaixada), e o aviso "X começou a transmitir · Assistir" */
 static share_aspect_t g_aspect[2 * (BRIKS_MAX_PEERS + 1)];   /* razão de aspecto suavizada de cada tile (mesmo índice de g_fv) */
@@ -482,9 +493,9 @@ bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w
     if (!g_thumb_req[slot]) { if (g_thumb_nreq >= 3) return false; g_thumb_req[slot] = true; g_thumb_nreq++; }
     const share_state_t *q = &s->sh;
     if (!(q->remote[slot].path[0] && q->remote[slot].watching && !q->remote[slot].stalled)) return false;
-    fview_t *v = &g_thumb[slot]; v->want = 96;
+    fview_t *v = &g_thumb[slot]; v->want = 40;   /* bem pequena: esticada ao bloco inteiro vira desfoque */
     const double now = cui_time(ui);
-    if (!v->tex || now - v->last >= 0.2) { if (!fv_update(ui, s, v, q->remote[slot].path)) return false; }
+    if (!v->tex || now - v->last >= 10.0) {   /* thumb estática: um quadro novo a cada 10 s */ if (!fv_update(ui, s, v, q->remote[slot].path)) return false; }
     if (!v->tex || v->w <= 0) return false;
     *tex = v->tex; *w = v->w; *h = v->h; return true;
 }
@@ -1063,6 +1074,7 @@ static cui_rect g_trect[16];   /* retângulos das transmissões do último quadr
 static bool g_tg_press, g_tg_release, g_tile_grid, g_tg_down; static cui_vec2 g_tg_at; static int g_tg_key = -1, g_tile_opens;   /* clique no bloco da Grade abre em Foco */
 static bool pt_in(cui_rect r, cui_vec2 p);
 static int g_eye = -1; static char g_eye_tip[220];   /* olho + número de quem assiste à minha tela neste bloco (-1 = oculto) */
+static app_state_t *g_vt_s;   /* estado do app para o menu do botão direito do bloco (volume da pessoa e da transmissão) */
 static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, const char *title, const char *chip, const char *wait, float *volume, cui_image_view *zv, bool compact) {
     int zoom_pct = 100; bool clicked = false;
     if (compact) { chip = NULL; volume = NULL; zv = NULL; }   /* miniatura da faixa do Foco: só a imagem e o nome; clicar traz para o destaque */
@@ -1130,6 +1142,32 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 18) {
                 cui_box(ui, .id = "volbar", .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                     briks_volume(ui, "vol", volume, 0.0f, 2.0f, 0.01f, NULL, false);   /* 1.4.4: ícone muta/desmuta, roda ajusta (volume_ctl.c) */
+                }
+            }
+        }
+        {   /* botão direito na transmissão de alguém: o mesmo menu do bloco da chamada, com volume/mudo da PESSOA e da TRANSMISSÃO, cada um no seu controle */
+            const int peer = (key >= 0 && key < BRIKS_MAX_PEERS) ? key : (key >= FV_N && key < FV_N + BRIKS_MAX_PEERS) ? key - FV_N : -1;
+            if (!compact && g_vt_s && peer >= 0 && g_vt_s->rtc_peers[peer].id[0]) {
+                app_state_t *as = g_vt_s; const cui_rect vr = cui_get_rect(ui, cui_make_id(ui, "vt")); const cui_vec2 mp = cui_mouse_pos(ui);
+                if (!s_modal_hint && !briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && vr.w > 0 && pt_in(vr, mp)) cui_popover_open(ui, "svmenu");
+                cui_popover(ui, "svmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
+                    cui_menu_label(ui, as->rtc_peers[peer].name[0] ? as->rtc_peers[peer].name : "Participante");
+                    cui_menu_label(ui, "Voz");
+                    if (!as->rtc_peers[peer].vol_set) { as->rtc_peers[peer].vol_set = true; as->rtc_peers[peer].volume = 100.0f; }
+                    cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
+                        bool mt = as->rtc_peers[peer].muted_by_me;
+                        const int ch = briks_volume(ui, "pvol", &as->rtc_peers[peer].volume, 0.0f, 200.0f, 1.0f, &mt, true);
+                        if (ch & VOLCTL_MUTE) rtc_mute_peer(as, peer, mt);
+                        if (ch & VOLCTL_VOL) rtc_set_peer_volume(as, peer, as->rtc_peers[peer].volume / 100.0f);
+                    }
+                    if (key < BRIKS_MAX_PEERS && as->sh.remote[peer].audio) {
+                        cui_menu_label(ui, "Transmissão");
+                        float *sv = share_remote_volume(as, peer);
+                        cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
+                            float pct = *sv * 100.0f;
+                            if (briks_volume(ui, "svol", &pct, 0.0f, 200.0f, 1.0f, NULL, true) & VOLCTL_VOL) { *sv = pct / 100.0f; share_remote_volume_changed(as, peer); }
+                        }
+                    }
                 }
             }
         }
@@ -1227,7 +1265,7 @@ int share_probe(const char *n, const app_state_t *s) {
 static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
     share_state_t *q = &s->sh;
     char path[300], title[200], chip[96], r[24];
-    g_eye = -1;
+    g_eye = -1; g_vt_s = s;
     if (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS)) {
         const int sl = key == BRIKS_MAX_PEERS ? 0 : 1;
         if (q->vknown[sl]) { g_eye = q->viewers[sl]; snprintf(g_eye_tip, sizeof g_eye_tip, "%s", g_eye ? q->vnames[sl] : "Ninguém assistindo agora"); }

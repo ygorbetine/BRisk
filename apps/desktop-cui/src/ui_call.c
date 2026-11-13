@@ -175,6 +175,15 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     g_av[gi].lvl = t->level; g_av[gi].d = d;
     cui_box(ui, .id = "tile", .width = CUI_PX(w), .height = CUI_PX(h), .radius = sm ? 16 : 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
+        /* quem transmite: thumb estática e desfocada da tela preenche o bloco todo (a imagem tem o PRÓPRIO raio: o recorte do pai é retangular) */
+        cui_texture th = 0; int tw = 0, thh = 0;
+        if (t->live && !t->me && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
+            const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
+            cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih)) {
+                cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);
+                cui_box(ui, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr, .bg = CUI_RGBA(0x1a0a2680)) {}
+            }
+        }
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad_bottom = lab_h) {
             if (t->vtex && t->vw > 0 && t->vh > 0) {   /* câmera ligada: o vídeo ocupa o bloco (inteiro, sem cortar), com folga para os cantos arredondados */
                 const float aw = fmaxf(w - 8.0f, 16.0f), ah = fmaxf(h - 8.0f - lab_h, 16.0f), sc = fminf(aw / (float)t->vw, ah / (float)t->vh);
@@ -184,18 +193,17 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 cui_push_id_int(ui, (int)(t->level * 8) + ((int)d << 4));   /* o canvas é reaproveitado por id: muda o id quando o nível ou o tamanho muda */
                 cui_canvas(ui, "av", CUI_FILL, CUI_FILL, paint_avatar, &g_av[gi], 0);
                 cui_pop_id(ui);
-                cui_texture th = 0; int tw = 0, thh = 0;
-                const bool has_th = t->live && !t->me && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh);
-                if (t->live && !t->me) {   /* quem transmite: thumb desfocada da tela como fundo do avatar, ícone de transmissão por cima e anel pulsante */
+                char in[4]; initials2(t->name, in);
+                if (t->ptex) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                    const float dp2 = d - 4.0f;   /* a foto tem o PRÓPRIO raio (disco perfeito) e fica dentro do anel */
+                    cui_image(ui, t->ptex, .width = CUI_PX(dp2), .height = CUI_PX(dp2), .radius = (int)(dp2 * 0.5f));
+                } else if (!(t->live && !t->me))   /* sem foto e transmitindo: só o ícone (as iniciais brigariam com ele) */
+                cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                    cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
+                }
+                if (t->live && !t->me) {   /* quem transmite: ícone de transmissão por cima da foto de perfil e anel pulsante */
                     const float pulse = 0.5f + 0.5f * sinf((float)cui_time(ui) * 3.2f), ringd = fminf(d + 10.0f, cv);
                     cui_request_wakeup(ui, 0.06f);
-                    if (has_th) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                        const float di = d - 2.0f;   /* a imagem tem o PRÓPRIO raio (o recorte do pai é retangular): disco perfeito; a tela esticada para o quadrado some no desfoque */
-                        cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(di), .height = CUI_PX(di), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                            cui_image(ui, th, .width = CUI_PX(di), .height = CUI_PX(di), .radius = (int)(di * 0.5f));
-                            cui_box(ui, .width = CUI_PX(di), .height = CUI_PX(di), .radius = (int)(di * 0.5f), .bg = CUI_RGBA(0x1a0a2678)) {}
-                        }
-                    }
                     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                         cui_box(ui, .width = CUI_PX(ringd), .height = CUI_PX(ringd), .radius = (int)(ringd * 0.5f), .border = 2, .border_color = B_A(B_C3, (unsigned char)(110 + 120 * pulse))) {}
                     }
@@ -204,14 +212,6 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad_right = off, .pad_top = off) {
                         cui_box(ui, .width = CUI_PX(dp), .height = CUI_PX(dp), .radius = (int)(dp * 0.5f), .bg = B_A(CUI_RGB(0xff4d6d), (unsigned char)(150 + 105 * pulse)), .border = 1, .border_color = CUI_RGBA(0x1a0a26cc)) {}
                     }
-                }
-                char in[4]; initials2(t->name, in);
-                if (t->ptex && !(t->live && !t->me)) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                    const float dp2 = d - 4.0f;   /* a foto tem o PRÓPRIO raio (disco perfeito) e fica dentro do anel */
-                    cui_image(ui, t->ptex, .width = CUI_PX(dp2), .height = CUI_PX(dp2), .radius = (int)(dp2 * 0.5f));
-                } else
-                if (!(t->live && !t->me)) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                    cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
                 }
             }
         }
@@ -246,12 +246,21 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
                     if (g_tile_s && t->slot >= 0 && t->slot < BRIKS_MAX_PEERS) {   /* CHM-36: volume por pessoa no próprio menu do bloco (lembrado entre chamadas) */
+                        if (t->live && g_tile_s->sh.remote[t->slot].audio) cui_menu_label(ui, "Voz");
                         float *vp = &g_tile_s->rtc_peers[t->slot].volume; if (!g_tile_s->rtc_peers[t->slot].vol_set) { g_tile_s->rtc_peers[t->slot].vol_set = true; *vp = 100.0f; }
                         cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
                             bool mt = g_tile_s->rtc_peers[t->slot].muted_by_me;
                             const int ch = briks_volume(ui, "tvol", vp, 0.0f, 200.0f, 1.0f, &mt, true);   /* 1.4.4: ícone muta/desmuta, roda ajusta */
                             if (ch & VOLCTL_MUTE) rtc_mute_peer(g_tile_s, t->slot, mt);
                             if (ch & VOLCTL_VOL) rtc_set_peer_volume(g_tile_s, t->slot, *vp / 100.0f);
+                        }
+                        if (t->live && g_tile_s->sh.remote[t->slot].audio) {   /* o som da TRANSMISSÃO tem controle próprio, separado da voz da pessoa */
+                            cui_menu_label(ui, "Transmissão");
+                            float *sv = share_remote_volume(g_tile_s, t->slot);
+                            cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
+                                float pct = *sv * 100.0f;
+                                if (briks_volume(ui, "svol", &pct, 0.0f, 200.0f, 1.0f, NULL, true) & VOLCTL_VOL) { *sv = pct / 100.0f; share_remote_volume_changed(g_tile_s, t->slot); }
+                            }
                         }
                     }
                     /* só o dono, só no servidor de chamadas: fecha (ou pede para reabrir) o microfone da pessoa para todos */

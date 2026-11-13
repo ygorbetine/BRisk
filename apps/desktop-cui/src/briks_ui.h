@@ -363,6 +363,8 @@ void rtc_set_peer_volume(app_state_t *s, int slot, float gain);   /* volume só 
 void ui_voice_panel(cui_ctx *ui, app_state_t *s);          /* ui_voice.c: conteúdo do painel Sala de voz */
 void rtc_kick_peer(app_state_t *s, int slot);               /* expulsa (só o dono): mensagem assinada pelo core */
 bool rtc_saved_mute(const char *fp);                       /* 'Silenciar para mim' lembrado para essa identidade (CHM-36) */
+float *share_remote_volume(app_state_t *s, int i);   /* volume do ÁUDIO da transmissão de quem está no slot i (0..2, 1 = normal; inicia em 1) */
+void share_remote_volume_changed(app_state_t *s, int i);   /* avisa o core depois de mudar o volume da transmissão */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted);   /* ganho zero só para essa pessoa */
 void rtc_join_p2p(app_state_t *s);                          /* reentra na mesma sala pedindo P2P de propósito (depois de o SFU falhar) */
 void rtc_room_mute(app_state_t *s, int slot, bool muted);   /* só o dono, só no SFU: fecha/reabre o microfone da pessoa para todos */

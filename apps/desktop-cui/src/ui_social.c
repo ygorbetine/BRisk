@@ -321,7 +321,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                         else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 22, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
                                 .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_USERS, 20, B_C3); }
                         cui_text(ui, "Nenhum amigo ainda", .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
-                        cui_text(ui, "Quem você adicionar aparece aqui.", .size = 12, .color = B_MUTED, .nowrap = true);
+                        cui_text(ui, "Quem você adicionar aparece aqui.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
                     }
                 } else cui_text(ui, "Você ainda não tem amigos.", .size = 12, .color = B_MUTED);
             }

@@ -174,12 +174,13 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     const float side = fminf(w, h - lab_h), d = fminf(fmaxf(side * (sm ? 0.62f : 0.40f), 22.0f), 128.0f), cv = fmaxf(fminf(d * 2.34f, side - 4.0f), d);
     g_av[gi].lvl = t->level; g_av[gi].d = d;
     cui_box(ui, .id = "tile", .width = CUI_PX(w), .height = CUI_PX(h), .radius = sm ? 16 : 20, .bg = B_A(B_PANEL, 0x80), .clip = true,
-            .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
+            .border = (speaking || t->live) ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : t->live ? CUI_RGBA(0xff4d6dd0) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
         /* quem transmite: thumb estática e desfocada da tela preenche o bloco todo (a imagem tem o PRÓPRIO raio: o recorte do pai é retangular) */
         cui_texture th = 0; int tw = 0, thh = 0;
         if (t->live && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
             const unsigned char *cells = NULL; int mcw = 0, mch = 0;
+            cui_request_wakeup(ui, 0.1f);   /* o fundo desfocado é ao vivo: 10 quadros/s */
             /* proporção da transmissão: parte da LARGURA do bloco (altura proporcional, centrada); se isso passar da altura do bloco, encolhe até caber (sem esticar e sem cortar, o que deixaria cantos quadrados vazando) */
             const float ar = (tw > 0 && thh > 0) ? (float)thh / (float)tw : ih / iw; float mw = iw, mh = floorf(iw * ar); if (mh > ih) { mh = ih; mw = floorf(ih / ar); }
             const int mr = (mw >= iw - 0.5f && mh >= ih - 0.5f) ? rr : 0;
@@ -206,18 +207,33 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                     cui_text(ui, in, .font = CUI_FONT_DISPLAY, .size = fmaxf(10.0f, d * 0.31f / cui_theme_get(ui)->font_scale), .color = CUI_RGB(0xffffff));   /* as iniciais acompanham o disco, não a escala do texto */
                 }
-                if (t->live && !t->me) {   /* quem transmite: ícone de transmissão por cima da foto de perfil e anel pulsante */
-                    const float pulse = 0.5f + 0.5f * sinf((float)cui_time(ui) * 3.2f), ringd = fminf(d + 10.0f, cv);
-                    cui_request_wakeup(ui, 0.06f);
-                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                        cui_box(ui, .width = CUI_PX(ringd), .height = CUI_PX(ringd), .radius = (int)(ringd * 0.5f), .border = 2, .border_color = B_A(B_C3, (unsigned char)(110 + 120 * pulse))) {}
+                if (t->live) {   /* quem transmite (inclusive eu): ondas vermelhas saindo da foto; nos outros, o ícone de transmissão por cima da foto */
+                    const float tn = (float)cui_time(ui), pulse = 0.5f + 0.5f * sinf(tn * 3.2f), r0 = fminf(d + 10.0f, cv);
+                    cui_request_wakeup(ui, 0.04f);
+                    for (int k = 0; k < 3; k++) {
+                        const float ph = fmodf(tn * 0.55f + (float)k / 3.0f, 1.0f), rd2 = r0 + (cv - r0) * ph;
+                        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                            cui_box(ui, .width = CUI_PX(rd2), .height = CUI_PX(rd2), .radius = (int)(rd2 * 0.5f), .border = 2, .border_color = CUI_RGBA(0xff4d6d00 | (unsigned)(200.0f * (1.0f - ph)))) {}
+                        }
                     }
-                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, fmaxf(12.0f, d * 0.34f), CUI_RGB(0xffffff)); }
+                    if (!t->me) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, fmaxf(12.0f, d * 0.34f), CUI_RGB(0xffffff)); }
                     const float dp = fmaxf(7.0f, d * 0.12f), off = (cv - d) * 0.5f + d * 0.06f;
+                    if (t->me) {   /* selo de monitor no canto da foto (a minha foto fica à vista) */
+                        const float bd = fmaxf(18.0f, d * 0.32f), bo = (cv - d) * 0.5f - bd * 0.1f;
+                        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad_right = bo, .pad_bottom = bo) {
+                            cui_box(ui, .width = CUI_PX(bd), .height = CUI_PX(bd), .radius = (int)(bd * 0.5f), .bg = CUI_RGB(0xff4d6d), .border = 2, .border_color = CUI_RGBA(0x1a0a26ff), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, bd * 0.52f, CUI_RGB(0xffffff)); }
+                        }
+                    } else
                     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad_right = off, .pad_top = off) {
                         cui_box(ui, .width = CUI_PX(dp), .height = CUI_PX(dp), .radius = (int)(dp * 0.5f), .bg = B_A(CUI_RGB(0xff4d6d), (unsigned char)(150 + 105 * pulse)), .border = 1, .border_color = CUI_RGBA(0x1a0a26cc)) {}
                     }
                 }
+            }
+        }
+        if (t->live) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = sm ? 8 : 14) {   /* AO VIVO no canto: indicativo de transmissão além da legenda */
+            cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = sm ? 8 : 11, .pad_y = sm ? 3 : 5, .radius = 14, .bg = CUI_RGB(0xff4d6d), .align = CUI_ALIGN_CENTER) {
+                cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = CUI_RGB(0xffffff)) {}
+                cui_text(ui, "AO VIVO", .size = sm ? 10 : 12, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
         }
         if (t->badge && !sm) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad = 14) {

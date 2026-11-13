@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.14", {
+        "Transmissão: quem transmite ganha borda vermelha, selo AO VIVO e ondas em volta da foto (também no seu bloco).",
+        "O fundo desfocado da transmissão agora é ao vivo, a 10 quadros por segundo (5 nos modos de desempenho).",
+        NULL } },
     { "1.5.13", {
         "Transmissão desfocada: a imagem não fica mais esticada, mantém a proporção da tela.",
         "Tijolos viraram peças de Lego de vários tamanhos, com as cores acompanhando a imagem da transmissão (também na sua tela).",

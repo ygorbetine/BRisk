@@ -187,6 +187,6 @@ Section "Uninstall"
     DeleteRegKey HKCU "${APP_KEY}"
     RMDir /r "$INSTDIR"
   ${Else}
-    MessageBox MB_OK|MB_ICONSTOP "Esta pasta nao foi criada por este instalador; nada foi removido."
+    MessageBox MB_OK|MB_ICONSTOP "Esta pasta nao foi criada por este instalador; nada foi removido." /SD IDOK   ; silencioso (atualizacao): nao espera clique
   ${EndIf}
 SectionEnd

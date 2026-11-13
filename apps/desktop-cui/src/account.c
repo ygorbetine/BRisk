@@ -229,11 +229,28 @@ void account_pick_photo(app_state_t *s) {
     of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&of)) return;   /* cancelou */
     if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)sizeof path, NULL, NULL)) return;
+    account_set_photo_path(s, path);
+}
+
+/* foto vinda do seletor ou de um arquivo solto na janela */
+void account_set_photo_path(app_state_t *s, const char *path) {
+    const bool local = !s->acct_user_id[0];
+    if (!local && core_state() != CORE_READY) return;
     if (local) { set_photo(s, path); cui_request_redraw(cui_app_ui(s->app)); return; }
     copy(s->profile_msg, sizeof s->profile_msg, "Enviando a foto…");
     char line[6400], esc[6200]; json_escape(path, esc, sizeof esc);
     snprintf(line, sizeof line, "{\"cmd\":\"account.photo\",\"path\":\"%s\"}", esc);
     core_send(line);
+}
+
+static uint64_t g_imgdrop_frame;
+bool briks_image_drop_active(cui_ctx *ui) { return g_imgdrop_frame && cui_frame_count(ui) <= g_imgdrop_frame + 2; }
+int briks_image_drop(cui_ctx *ui, const char *id, char *out, size_t cap) {
+    g_imgdrop_frame = cui_frame_count(ui);
+    int n = cui_dropzone(ui, id, .title = "Arraste uma imagem aqui", .description = "ou clique para escolher (PNG ou JPEG)", .icon = CUI_ICON_IMAGE,
+                         .accept = "png;jpg;jpeg", .compact = true, .width = CUI_FILL);
+    if (n > 0) { const char *p = cui_dropped_file(ui, 0); if (p && *p) { snprintf(out, cap, "%s", p); return 1; } }
+    return n < 0 ? -1 : 0;
 }
 
 void account_reset_photo(app_state_t *s) {

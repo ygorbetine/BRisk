@@ -271,17 +271,67 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
     return act;
 }
 
-/* brilho que atravessa o botão (modo Call com alguém transmitindo): faixa clara de bordas suaves, de um lado ao outro; o pai recorta nos cantos arredondados */
-static float g_sheen_phase = -1;   /* 0..1 durante a passada; < 0 = parado */
-static bool g_tab_sheen;           /* a próxima aba desenhada recebe o brilho */
-static void paint_sheen(cui_ctx *ui, cui_rect r, void *user) {
-    const float p = *(const float *)user; if (p < 0 || p > 1) return;
-    const float bw = r.w * 0.42f, cx = r.x - bw * 0.5f + (r.w + bw) * p;
-    for (int k = 0; k < 3; k++) {   /* três cápsulas concêntricas, cada vez mais estreitas e mais claras = borda suave, sem listras; recortadas aos limites do botão */
-        const float w = bw * (1.0f - 0.3f * (float)k), x0 = fmaxf(cx - w * 0.5f, r.x), x1 = fminf(cx + w * 0.5f, r.x + r.w);
-        if (x1 - x0 < 2.0f) continue;
-        cui_color c = CUI_RGB(0xffffff); c.a = 16;
-        cui_draw_rect(ui, (cui_rect){ x0, r.y, x1 - x0, r.h }, CUI_CORNERS(fminf(9.0f, (x1 - x0) * 0.5f)), c);
+/* Halo do botão Transmissão (alguém transmite e eu estou no modo Call): ondas violeta suaves que se abrem em volta do botão e somem, como um sinal "no ar".
+   Duas frentes defasadas, cada uma nasce do nada, abre até ~15 px e desaparece; por baixo, um brilho base bem leve que respira. Tudo é feito de anéis finos sobrepostos com opacidade em curva
+   gaussiana (sem degraus). Desenhado por um canvas de tela cheia no fim da chamada, no retângulo que o botão teve no quadro anterior (fora do recorte do botão, por isso aparece em volta). */
+static bool g_tab_sheen;                                 /* a próxima aba desenhada é a que recebe o halo (nome antigo: "sheen", usado pelos roteiros de teste) */
+static cui_rect g_halo_r; static float g_halo_p = -1;   /* retângulo do botão; 0..1 = fase do ciclo; < 0 = sem halo */
+#define HALO_PERIOD 2.4f                                 /* segundos por ciclo */
+static float smooth01(float x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3.0f - 2.0f * x); }
+static void halo_ring(cui_ctx *ui, float ex, float width, cui_color c) {   /* um anel fino a 'ex' px do botão */
+    if (c.a == 0) return;
+    cui_rect rr = { g_halo_r.x - ex, g_halo_r.y - ex, g_halo_r.w + 2.0f * ex, g_halo_r.h + 2.0f * ex };
+    cui_draw_rect_border(ui, rr, CUI_CORNERS(fmaxf(9.0f + ex, 2.0f)), (cui_color){ 0, 0, 0, 0 }, c, width);
+}
+static void paint_halo(cui_ctx *ui, cui_rect unused, void *user) {
+    (void)unused; (void)user; if (g_halo_p < 0 || g_halo_r.w <= 0) return;
+    const float p = g_halo_p, br = 0.5f - 0.5f * cosf(6.2831853f * p);   /* respiração 0..1..0 */
+    for (int w = 0; w < 2; w++) {
+        const float f = fmodf(p + 0.5f * (float)w, 1.0f), env = smooth01(f / 0.18f) * (1.0f - smooth01((f - 0.45f) / 0.55f));
+        const float ex = 1.0f + 15.0f * (1.0f - (1.0f - f) * (1.0f - f));
+        for (int k = -3; k <= 3; k++) { const float q = expf(-(float)(k * k) / 3.2f); halo_ring(ui, ex + (float)k * 0.6f, 1.2f, (cui_color){ 176, 140, 255, (uint8_t)(58.0f * env * q) }); }
+    }
+    for (int k = 0; k < 10; k++) halo_ring(ui, 0.5f + (float)k * 0.7f, 1.2f, (cui_color){ 167, 139, 250, (uint8_t)((6.0f + 8.0f * br) * expf(-(float)(k * k) / 40.0f)) });   /* brilho base, bem leve */
+}
+
+/* Teste (BRIKS_LIVE_STYLE=1): o botão "mostra que está transmitindo": manchas de cor (violeta, azul, verde-água) deslizam devagar por dentro do botão e o ícone vira um ponto "ao vivo"
+   que pulsa com três barras que sobem e descem. Só desenha dentro do botão (o pai recorta). */
+static double g_live_t; static int g_live_style = -1;
+static void paint_liveflow(cui_ctx *ui, cui_rect r, void *user) {
+    (void)user; const float t = (float)g_live_t;
+    /* corpo de vidro fosco: de cima (mais claro) para baixo (violeta fundo), translúcido */
+    cui_draw_rect_gradient(ui, r, CUI_CORNERS(9.0f), (cui_color){ 190, 170, 255, 40 }, (cui_color){ 70, 40, 170, 34 });
+    /* cor que se mexe por dentro do vidro, desfocada: violeta, azul e verde-água deslizando devagar */
+    static const cui_color COL[3] = { { 139, 92, 246, 0 }, { 96, 165, 250, 0 }, { 45, 212, 191, 0 } };
+    for (int b = 0; b < 3; b++) {
+        const float cx = r.x + r.w * (0.5f + 0.42f * sinf(t * (0.55f + 0.17f * (float)b) + 2.1f * (float)b)), bw = r.w * 0.55f;
+        for (int k = 0; k < 8; k++) {   /* mancha: cápsulas concêntricas, cada vez mais estreitas = miolo mais forte e borda que se dissolve */
+            const float w = bw * (1.0f - 0.11f * (float)k), x0 = fmaxf(cx - w * 0.5f, r.x), x1 = fminf(cx + w * 0.5f, r.x + r.w);
+            if (x1 - x0 < 3.0f) continue;
+            cui_color c = COL[b]; c.a = 11;
+            cui_draw_rect(ui, (cui_rect){ x0, r.y + 1.0f, x1 - x0, r.h - 2.0f }, CUI_CORNERS(fminf(8.0f, (x1 - x0) * 0.5f)), c);
+        }
+    }
+    /* luz de borda no topo: fio claro e brilhante, mais forte num ponto que vai e volta pelo botão, com luz que escorre para dentro */
+    const float hot = 0.5f + 0.42f * sinf(t * 0.8f);
+    const int N = 28;
+    for (int i = 0; i < N; i++) {
+        const float u = ((float)i + 0.5f) / (float)N, d = (u - hot) / 0.38f, g = 0.22f + 0.78f * expf(-d * d), ends = smooth01(fminf(u, 1.0f - u) / 0.12f);
+        const float x0 = r.x + 7.0f + (r.w - 14.0f) * ((float)i / (float)N), w = (r.w - 14.0f) / (float)N + 0.6f;
+        cui_draw_rect(ui, (cui_rect){ x0, r.y + 0.8f, w, 1.4f }, CUI_CORNERS(0.0f), (cui_color){ 226, 236, 255, (uint8_t)(190.0f * g * ends) });
+        cui_draw_rect_gradient(ui, (cui_rect){ x0, r.y + 2.2f, w, 7.0f }, CUI_CORNERS(0.0f), (cui_color){ 190, 200, 255, (uint8_t)(46.0f * g * ends) }, (cui_color){ 190, 200, 255, 0 });
+    }
+    /* canto inferior: brilho verde-água/azul como o da referência, mais fraco que o do topo */
+    cui_draw_rect_gradient(ui, (cui_rect){ r.x + r.w * 0.45f, r.y + r.h * 0.62f, r.w * 0.5f, r.h * 0.36f }, CUI_CORNERS(6.0f), (cui_color){ 96, 190, 230, 0 }, (cui_color){ 96, 190, 230, 46 });
+    cui_draw_rect_border(ui, r, CUI_CORNERS(9.0f), (cui_color){ 0, 0, 0, 0 }, (cui_color){ 235, 240, 255, 78 }, 1.0f);   /* aro de vidro */
+}
+static void paint_livebars(cui_ctx *ui, cui_rect r, void *user) {
+    (void)user; const float t = (float)g_live_t, cy = r.y + r.h * 0.5f, pulse = 0.5f - 0.5f * cosf(6.2831853f * t / 1.4f);
+    cui_draw_rect(ui, (cui_rect){ r.x + 1.0f, cy - 3.5f, 7.0f, 7.0f }, CUI_CORNERS(3.5f), (cui_color){ 255, 92, 122, (uint8_t)(160.0f + 95.0f * pulse) });   /* ponto "ao vivo" */
+    cui_draw_rect_border(ui, (cui_rect){ r.x - 1.0f - 2.0f * pulse, cy - 4.5f - 2.0f * pulse, 9.0f + 4.0f * pulse, 9.0f + 4.0f * pulse }, CUI_CORNERS(6.5f), (cui_color){ 0, 0, 0, 0 }, (cui_color){ 255, 92, 122, (uint8_t)(90.0f * (1.0f - pulse)) }, 1.2f);   /* anel que abre e some */
+    for (int k = 0; k < 3; k++) {   /* barras de sinal */
+        const float h = 4.0f + 8.0f * (0.5f + 0.5f * sinf(t * (3.1f + 0.9f * (float)k) + 1.7f * (float)k));
+        cui_draw_rect(ui, (cui_rect){ r.x + 11.0f + 4.0f * (float)k, cy - h * 0.5f, 2.4f, h }, CUI_CORNERS(1.2f), (cui_color){ 214, 190, 255, 235 });
     }
 }
 
@@ -291,18 +341,19 @@ static bool tab(cui_ctx *ui, int id, const char *icon, const char *label, bool a
     cui_push_id_int(ui, id);
     cui_box(ui, .id = "b", .dir = CUI_STACK, .height = CUI_PX(34), .radius = 9, .clip = true, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
         if (active) cui_canvas(ui, "tabbg", CUI_FILL, CUI_FILL, paint_grad, &rad, 0);
-        const bool sheen = g_tab_sheen && g_sheen_phase >= 0; g_tab_sheen = false;
+        const bool nudging = g_tab_sheen && g_live_style == 1 && !active; g_tab_sheen = false;
+        if (nudging) { cui_push_id_int(ui, 700 + (int)(cui_frame_count(ui) % 997)); cui_canvas(ui, "liveflow", CUI_FILL, CUI_FILL, paint_liveflow, NULL, 0); cui_pop_id(ui); }
         cui_box(ui, .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 11 : 16, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
             cui_color c = active ? CUI_RGB(0xffffff) : B_MUTED;
-            if (icon) cui_icon(ui, icon, 15, c);
+            if (icon && nudging) { cui_push_id_int(ui, 1700 + (int)(cui_frame_count(ui) % 997)); cui_canvas(ui, "livebars", CUI_PX(26), CUI_PX(16), paint_livebars, NULL, 0); cui_pop_id(ui); }
+            else if (icon) cui_icon(ui, icon, 15, c);
             if (!compact || !icon) cui_text(ui, label, .font = CUI_FONT_DISPLAY, .size = 15, .color = c, .nowrap = true);
             if (badge > 0) cui_box(ui, .min_width = 18, .height = CUI_PX(18), .pad_x = 5, .radius = 9, .bg = B_DANGER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
                 char b[8]; snprintf(b, sizeof b, badge > 9 ? "9+" : "%d", badge);
                 cui_text(ui, b, .size = 11, .color = CUI_RGB(0xffffff), .nowrap = true);
             }
         }
-        if (sheen) { cui_push_id_int(ui, 100 + (int)(g_sheen_phase * 24.0f)); cui_canvas(ui, "sheen", CUI_FILL, CUI_FILL, paint_sheen, &g_sheen_phase, 0); cui_pop_id(ui); }   /* o canvas é guardado por id: muda a cada passo da passada */
-    }
+            }
     if (compact && briks_hover(ui, "b")) briks_tip(label);
     bool hit = briks_clicked_r(ui, "b", 9.0f);
     cui_pop_id(ui);
@@ -654,7 +705,8 @@ static void control_bar(cui_ctx *ui, app_state_t *s, bool compact) {
             if (open_aud) cui_popover_open(ui, "audpop");
             audio_popover(ui, s);
         }
-        if (g_call.fullscreen && pill(ui, 7, CUI_ICON_MINIMIZE_2, NULL, 0, "Sair da tela cheia (Esc)")) call_set_fullscreen(s, false);
+        if (pill(ui, 8, CUI_ICON_HEART, NULL, 0, "Apoiar o Briks no Ko-fi")) briks_open_kofi();   /* só o coração, longe do Sair */
+        if (g_call.fullscreen && pill(ui, 7,CUI_ICON_MINIMIZE_2, NULL, 0, "Sair da tela cheia (Esc)")) call_set_fullscreen(s, false);
         if (pill(ui, 5, CUI_ICON_PHONE, compact ? NULL : "Sair", 2, "Sair da chamada")) { rtc_leave_room(s); s->screen = SCREEN_SOCIAL; }
     }
     if (own) g_cov_own--;
@@ -703,11 +755,14 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
                             /* ids 11..16: as pílulas da barra usam 1..7 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
-                            {   /* alguém transmite e eu estou no modo Call: um brilho passa pelo botão "Transmissão" a cada poucos segundos; para no modo Transmissão ou sem transmissão */
-                                const bool nudge = s->call_mode == 0 && share_any_live(s); static int fast = -1; if (fast < 0) { const char *dv = getenv("BRIKS_DEV_SHARE"); fast = dv && !strcmp(dv, "demo-sheen"); }   /* captura de teste: passa quase sempre */
-                                const double tn = cui_time(ui), per = fast ? 1.0 : 4.5, ph = fmod(tn, per);
-                                g_sheen_phase = nudge && ph < 0.9 ? (float)(ph / 0.9) : -1.0f; g_sheen_seen += g_sheen_phase >= 0; g_tab_sheen = nudge;
-                                if (nudge) cui_request_wakeup(ui, ph < 0.9 ? 0.03f : fminf((float)(per - ph), 0.5f));   /* redesenha só enquanto o brilho corre */
+                            {   /* alguém transmite e eu estou no modo Call: ondas suaves de halo em volta do botão "Transmissão"; param no modo Transmissão ou sem transmissão */
+                                const bool nudge = s->call_mode == 0 && share_any_live(s); static int fast = -1; if (fast < 0) { const char *dv = getenv("BRIKS_DEV_SHARE"); fast = dv && !strcmp(dv, "demo-sheen"); const char *ls = getenv("BRIKS_LIVE_STYLE"); g_live_style = ls && ls[0] == '1'; }
+                                const double tn = fast ? (double)cui_frame_count(ui) / 60.0 : cui_time(ui);   /* captura de teste: um quadro = 1/60 s, para o vídeo sair na velocidade certa */
+                                g_live_t = tn; g_tab_sheen = nudge; g_halo_p = nudge ? (float)fmod(tn, (double)HALO_PERIOD) / HALO_PERIOD : -1.0f; g_sheen_seen += nudge;
+                                if (nudge) {
+                                    cui_push_id_int(ui, 12); g_halo_r = cui_get_rect(ui, cui_make_id(ui, "b")); cui_pop_id(ui);
+                                    cui_request_wakeup(ui, 0.016f);   /* ~60 quadros por segundo só enquanto alguém transmite */
+                                }
                             }
                             if (tab(ui, 12, CUI_ICON_MONITOR, "Transmissão", s->call_mode == 1, compact, 0)) s->call_mode = 1;
                         }
@@ -782,6 +837,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .justify = CUI_JUSTIFY_END, .align = CUI_ALIGN_CENTER, .pad_bottom = 16) { control_bar(ui, s, bar_compact); }
         }
         call_banner(ui, s);
+        if (g_halo_p >= 0 && !fs) { cui_push_id_int(ui, 500 + (int)(g_halo_p * 300.0f)); cui_canvas(ui, "halo", CUI_FILL, CUI_FILL, paint_halo, NULL, 0); cui_pop_id(ui); }   /* por cima do cabeçalho: o halo desenha fora do botão, que recorta o que é dele */
     }
     ui_share_dialog(ui, s);
     /* confirmação rápida antes de expulsar */

@@ -1,0 +1,3 @@
+# brilho do botao Transmissao com alguem transmitindo (modo Call)
+waitms 60000
+expect sheen_frames 1

@@ -10,6 +10,7 @@
 #include "update.h"
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -43,6 +44,13 @@ void titlebar_action(int a) {
 
 /* Tela cheia (chamada): a janela toda é área do app. Sem faixa de arrastar, sem bordas de redimensionar e sem a barra desenhada;
    senão o topo e as bordas engoliam os cliques (ex.: "Sair da tela cheia" e a barra de controles flutuante). ui_call.c avisa aqui. */
+/* Página de apoio no Ko-fi (meta de doação do Briks). BRIKS_KOFI_URL só serve para teste. Abre no navegador padrão. */
+#define BRIKS_KOFI_URL "https://ko-fi.com/ygorbetine/goal?g=0"
+void briks_open_kofi(void) {
+    const char *u = getenv("BRIKS_KOFI_URL"); if (!u || strncmp(u, "https://", 8)) u = BRIKS_KOFI_URL;
+    if (getenv("BRIKS_HIDDEN") || getenv("BRIKS_SCRIPT")) return;   /* testes e capturas não abrem navegador */
+    ShellExecuteA(NULL, "open", u, NULL, NULL, SW_SHOWNORMAL);
+}
 static bool g_fullscreen;
 void titlebar_set_fullscreen(bool on) { g_fullscreen = on; }
 bool titlebar_fullscreen(void) { return g_fullscreen; }
@@ -55,7 +63,7 @@ int titlebar_hit(int cx, int cy, int w, int h, bool maximized, float sc) {
     if (t && l) return HTTOPLEFT; if (t && r) return HTTOPRIGHT; if (b && l) return HTBOTTOMLEFT; if (b && r) return HTBOTTOMRIGHT;
     if (l) return HTLEFT; if (r) return HTRIGHT; if (t) return HTTOP; if (b) return HTBOTTOM;
     if (cy < bar) {
-        const int nb = g_upd_visible ? 4 : 3;   /* a seta de atualização também é cliente, não arrasto */
+        const int nb = (g_upd_visible ? 4 : 3) + 1;   /* a seta de atualização e o coração do Ko-fi também são cliente, não arrasto */
         const int btns = (int)((nb * TB_BW + (nb - 1) * TB_GAP + TB_MARGIN) * sc + 0.5f);
         return cx >= w - btns ? HTCLIENT : HTCAPTION;
     }
@@ -136,6 +144,9 @@ void titlebar_draw(cui_ctx *ui, app_state_t *s) {
                 if (up == UPD_DOWNLOADING) cui_request_wakeup(ui, 0.5f);
                 if (hov && cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) { g_upd_clicks++; if (ready) update_undismiss(); }
             }
+            /* Apoiar no Ko-fi: abre a página no navegador (nunca dentro do app). */
+            if (tb_btn(ui, "tb-kofi", CUI_ICON_HEART, false)) briks_open_kofi();
+            if (tb_inside(ui, "tb-kofi")) briks_tip("Apoiar o Briks no Ko-fi");
             if (tb_btn(ui, "tb-min", CUI_ICON_MINUS, false)) titlebar_action(TBA_MIN);
             if (tb_btn(ui, "tb-max", max ? CUI_ICON_COPY : CUI_ICON_SQUARE, false)) titlebar_action(TBA_MAX);
             if (tb_btn(ui, "tb-close", CUI_ICON_X, true)) titlebar_action(TBA_CLOSE);

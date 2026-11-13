@@ -266,10 +266,10 @@ static void sw(cui_ctx *ui, const char *label, const char *hint, bool *v) {
 }
 static void seg(cui_ctx *ui, const char *id, const char *const *items, int n, int *v) { cui_segmented(ui, id, items, n, v, .full_width = true, .size = CUI_SIZE_SM); }
 
-static const char *TAB_NAMES[] = { "Voz e vídeo", "Rede", "Temas", "Armazenamento", "Sobreposição", "Atalhos", "Notificações", "Avisos", "Atualizações", "Sobre", "Desempenho", "Presença", "Painéis" };
+static const char *TAB_NAMES[] = { "Voz e vídeo", "Rede", "Temas", "Armazenamento", "Sobreposição", "Atalhos", "Notificações", "Avisos", "Atualizações", "Sobre", "Desempenho", "Presença", "Painéis", "Apoiar o Briks" };
 static const char *const TAB_ICONS[] = { CUI_ICON_MIC, CUI_ICON_GLOBE, CUI_ICON_SETTINGS, CUI_ICON_HISTORY, CUI_ICON_MONITOR, CUI_ICON_KEYBOARD, CUI_ICON_BELL, CUI_ICON_MESSAGE_SQUARE,
-    CUI_ICON_PLUS, CUI_ICON_USERS, CUI_ICON_SETTINGS, CUI_ICON_USER, CUI_ICON_SETTINGS };
-#define NTABS 13
+    CUI_ICON_PLUS, CUI_ICON_USERS, CUI_ICON_SETTINGS, CUI_ICON_USER, CUI_ICON_SETTINGS, CUI_ICON_HEART };
+#define NTABS 14
 
 /* Ctrl+mais / Ctrl+menos / Ctrl+0 (BAS-39): muda o tamanho do texto um degrau (0 normal .. 3 máximo); 0 volta ao padrão (grande). Grava junto com as demais configurações. */
 void settings_text_step(cui_ctx *ui, int delta) {
@@ -736,11 +736,18 @@ void settings_dialog(cui_ctx *ui, app_state_t *s) {
                         sub(ui, "Programas ignorados e status ficam em Perfil e conta.");
                     }
                     break;
-                default: /* Painéis */
+                case 12: /* Painéis */
                     SCARD(ui, "PAINÉIS") {
                         sub(ui, "Volta a disposição original: Servidores | Menu | Conversa.");
                         if (cui_button(ui, "Restaurar layout padrão", .variant = CUI_BUTTON_SECONDARY)) { dock_restore_default(); restored_at = (float)cui_time(ui); }
                         if ((float)cui_time(ui) - restored_at < 3.0f) cui_text(ui, "Layout restaurado.", .size = 12, .color = B_ONLINE);
+                    }
+                    break;
+                default: /* Apoiar o Briks */
+                    SCARD(ui, "APOIAR O BRIKS") {
+                        sub(ui, "O Briks é grátis e não tem anúncios. Se ele é útil para você, uma doação ajuda a pagar os servidores e a manter o desenvolvimento.");
+                        if (cui_button(ui, "Apoiar no Ko-fi", .variant = CUI_BUTTON_PRIMARY, .icon = CUI_ICON_HEART)) briks_open_kofi();
+                        sub(ui, "Abre a página do Ko-fi no seu navegador. Doar é opcional e não muda nada no app.");
                     }
                     break;
                 }

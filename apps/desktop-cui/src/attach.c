@@ -211,6 +211,7 @@ static bool core_ready_in_room(const app_state_t *s) { return core_state() == CO
  * Com sala: envia na hora (como o "Solte para enviar" do Electron). Sem sala: fica preparado no cartão, com o motivo, em vez de sumir. */
 static void take_drops(cui_ctx *ui, app_state_t *s) {
     int n = cui_dropped_file_count(ui); if (n <= 0) return;
+    if (briks_image_drop_active(ui)) return;   /* há uma faixa de foto na tela (perfil/grupo): ela decide o que fazer com o arquivo */
     bool ok = core_ready_in_room(s);
     int taken = 0;
     for (int i = 0; i < n; i++) {

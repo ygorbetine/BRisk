@@ -267,6 +267,10 @@ void account_respond_friend(app_state_t *s, const char *request_id, bool accept)
 void account_set_nick(app_state_t *s);
 void account_set_name(app_state_t *s);                      /* troca o nome de exibição por s->name_edit */
 void account_pick_photo(app_state_t *s);                    /* abre o seletor de arquivos do Windows e envia a foto escolhida */
+void account_set_photo_path(app_state_t *s, const char *path);   /* usa este arquivo como foto (do seletor ou solto na janela) */
+int briks_image_drop(cui_ctx *ui, const char *id, char *out, size_t cap);   /* faixa "solte uma imagem": 1 = solta (caminho em out), -1 = clicou (abrir seletor), 0 = nada */
+bool briks_image_drop_active(cui_ctx *ui);                  /* uma faixa dessas está na tela: os anexos do chat não pegam o arquivo solto */
+void briks_open_kofi(void);                                 /* abre a página de apoio (Ko-fi) no navegador */
 void account_reset_photo(app_state_t *s);                   /* volta para a foto da conta (Google/Discord) */
 void ui_account_editor(cui_ctx *ui, app_state_t *s);
 void account_logout_others(app_state_t *s);                 /* "Sair dos outros computadores" */

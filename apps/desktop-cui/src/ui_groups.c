@@ -60,6 +60,7 @@ cui_texture groups_image(app_state_t *s, const char *gid) {
     }
     return g_gimg[i].tex;
 }
+static void set_group_image_path(const char *gid, const char *path);
 static void pick_group_image(const char *gid) {
     wchar_t wpath[1024] = L""; char path[3072];
     OPENFILENAMEW of = { sizeof of };
@@ -70,6 +71,9 @@ static void pick_group_image(const char *gid) {
     of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&of)) return;
     if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)sizeof path, NULL, NULL)) return;
+    set_group_image_path(gid, path);
+}
+static void set_group_image_path(const char *gid, const char *path) {
     char line[6400], esc[6200], eg[80]; json_escape(path, esc, sizeof esc); json_escape(gid, eg, sizeof eg);
     snprintf(line, sizeof line, "{\"cmd\":\"group.image\",\"group_id\":\"%s\",\"path\":\"%s\"}", eg, esc);
     core_send(line);
@@ -780,6 +784,8 @@ void groups_dialogs(cui_ctx *ui, app_state_t *s) {
                     if (cui_button(ui, "Trocar imagem", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .icon = CUI_ICON_IMAGE)) pick_img = true;
                     if (groups_image(s, g->id) && cui_button(ui, "Remover", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) rst_img = true;
                 }
+                char dp[1024]; int d = briks_image_drop(ui, "grp-img-drop", dp, sizeof dp);
+                if (d > 0) set_group_image_path(g->id, dp); else if (d < 0) pick_img = true;
             }
         }
         cui_text(ui, "Nome do grupo", .size = 12.5f, .color = B_MUTED);

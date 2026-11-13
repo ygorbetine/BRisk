@@ -665,6 +665,8 @@ static void profile_dialog(cui_ctx *ui, app_state_t *s) {
                                 cui_text(ui, "Nome exibido", .size = 12, .color = B_MUTED);
                                 cui_input(ui, "pf-name", name_draft, sizeof name_draft, .placeholder = "Seu nome");
                                 if (cui_button(ui, "Escolher foto", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) account_pick_photo(s);   /* sem conta: a foto fica neste computador */
+                                char dp[1024]; int d = briks_image_drop(ui, "photo-drop-local", dp, sizeof dp);
+                                if (d > 0) account_set_photo_path(s, dp); else if (d < 0) account_pick_photo(s);
                             }
                         }
                         cui_row(ui, .gap = 8, .width = CUI_FILL, .justify = CUI_JUSTIFY_END) {

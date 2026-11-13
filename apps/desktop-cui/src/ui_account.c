@@ -24,6 +24,8 @@ void ui_account_editor(cui_ctx *ui, app_state_t *s) {
                     if (cui_button(ui, "Usar a foto da conta", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM)) account_reset_photo(s);
                 }
                 cui_text(ui, "PNG ou JPEG. A imagem é recortada em quadrado.", .size = 11, .color = B_MUTED);
+                char dp[1024]; int d = briks_image_drop(ui, "photo-drop", dp, sizeof dp);
+                if (d > 0) account_set_photo_path(s, dp); else if (d < 0) account_pick_photo(s);
             }
         }
         /* nome */

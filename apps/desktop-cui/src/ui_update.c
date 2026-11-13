@@ -69,6 +69,11 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.8", {
+        "Visual de tijolos: a barra de download da atualização é feita de tijolos que se enchem conforme o progresso.",
+        "Transmissão: a miniatura desfocada de quem transmite ganha um mosaico de parede de tijolos que guia o desfoque.",
+        "Amigos: o estado vazio da lista de amigos ganhou uma ilustração de tijolos.",
+        NULL } },
     { "1.5.7", {
         "Transmissão: o seletor de codec (H.264, VP9 ou VP8) agora vale também no servidor de chamadas (SFU); antes só funcionava no ponto a ponto. O codec de cada tela é definido na primeira transmissão da chamada.",
         "Atualização: o botão de download ao lado do minimizar abre uma janela que mostra o progresso do download e, quando termina, oferece Reiniciar e instalar.",

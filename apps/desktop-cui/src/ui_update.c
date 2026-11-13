@@ -69,6 +69,9 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.11", {
+        "Atualização: o instalador agora é baixado numa pasta local, com nome neutro e informações de versão completas, para o antivírus não bloquear.",
+        NULL } },
     { "1.5.10", {
         "Sons: os sons do grupo voltam a tocar quando você entra na chamada logo ao abrir o app (o dono da sala era descoberto antes dos grupos carregarem).",
         NULL } },

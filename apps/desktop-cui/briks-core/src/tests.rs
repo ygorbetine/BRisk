@@ -1099,6 +1099,33 @@ async fn sender_counts_its_viewers() {
     wait_share(&mut a, |v| v["ev"] == "share.viewers" && v["count"] == 0, 30).await.expect("parou: 0");
 }
 
+/// A contagem de espectadores é divulgada à sala: quem NÃO assiste (e quem assiste) também vê "quantos e quem" na tela do emissor.
+#[tokio::test(flavor = "multi_thread")]
+async fn everyone_sees_how_many_watch_a_share() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let port = crate::mock::start(0).await.unwrap();
+    let (pa, pb, pc) = ("aaaaaaaa-1111-4111-8111-0000000000e2", "bbbbbbbb-2222-4222-8222-0000000000e2", "cccccccc-3333-4333-8333-0000000000e2");
+    let dir = std::env::temp_dir().join(format!("briks-audience-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = node(port, pa, "Ana", "audience1", Arc::new(Identity::generate()));
+    let mut b = node(port, pb, "Beto", "audience1", Arc::new(Identity::generate()));
+    let mut c = node(port, pc, "Caio", "audience1", Arc::new(Identity::generate()));
+    assert!(authed(&mut a, 2, 40).await && authed(&mut b, 2, 40).await && authed(&mut c, 2, 40).await);
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 360, fps: 15, kbps: 800, label: "V".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: true }, preview: None, dump: None }).await.unwrap();
+    wait_share(&mut b, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("B vê no ar");
+    wait_share(&mut c, |v| v["ev"] == "share.remote" && v["state"] == "on", 30).await.expect("C vê no ar");
+    b.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
+    // C não assiste, mas vê o olhinho de Ana: 1 espectador, "Beto"
+    let v = wait_share(&mut c, |v| v["ev"] == "share.audience" && v["count"] == 1, 30).await.expect("C vê 1 espectador");
+    assert_eq!((v["peer_id"].as_str(), v["slot"].as_u64(), v["names"][0].as_str()), (Some(pa), Some(0), Some("Beto")));
+    c.cmd.send(MeshCmd::ShareWatch { key: pa.into(), on: true, path: dir.join("c.bin") }).await.unwrap();
+    let v = wait_share(&mut b, |v| v["ev"] == "share.audience" && v["count"] == 2, 30).await.expect("B vê 2 espectadores");
+    assert_eq!(v["names"].as_array().unwrap().len(), 2);
+    a.cmd.send(MeshCmd::ShareStop).await.unwrap();
+    wait_share(&mut c, |v| v["ev"] == "share.audience" && v["count"] == 0, 30).await.expect("parou: 0");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[ignore]
 async fn slow_viewer_does_not_drag_the_others() {

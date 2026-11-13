@@ -902,6 +902,7 @@ impl Actor {
         let mut m = json!({ "version": 2, "type": "share.state", "slot": slot, "on": true });
         for k in ["w", "h", "fps", "kbps", "label", "audio"] { if let Some(v) = info.get(k) { m[k] = v.clone(); } }
         self.dc_send(peer, m).await;
+        if !self.viewers[slot].is_empty() { self.dc_send(peer, self.audience_msg(slot)).await; }   // quem chega agora já vê o olhinho
     }
 
     // ------------------------------------------------------------------------------------------------------------------
@@ -1056,6 +1057,15 @@ impl Actor {
     async fn emit_viewers(&mut self, slot: usize) {
         let mut ids: Vec<String> = self.viewers[slot].iter().cloned().collect(); ids.sort();
         self.emit(MeshEvent::Share(json!({ "ev": "share.viewers", "slot": slot, "count": ids.len(), "peers": ids }))).await;
+        let m = self.audience_msg(slot);   // divulga à sala: todos veem o olhinho no meu bloco
+        for id in self.authed_ids() { self.dc_send(&id, m.clone()).await; }
+    }
+
+    /// Divulgação da audiência de uma das minhas telas (`share.audience`: quantos e até 3 nomes). Pares antigos ignoram o tipo desconhecido.
+    fn audience_msg(&self, slot: usize) -> Value {
+        let mut names: Vec<String> = self.viewers[slot].iter().filter_map(|i| self.peers.get(i).map(|p| p.name.chars().take(64).collect::<String>())).collect(); names.sort();
+        names.truncate(3);
+        json!({ "version": 2, "type": "share.audience", "slot": slot, "count": self.viewers[slot].len(), "names": names })
     }
 
     async fn end_remote_streams(&mut self, peer: &str, forget: bool) {
@@ -1540,6 +1550,13 @@ impl Actor {
                 let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
                 let changed = if v["on"].as_bool().unwrap_or(false) { self.viewers[slot].insert(peer.to_string()) } else { self.viewers[slot].remove(peer) };
                 if changed { self.emit_viewers(slot).await; }
+            }
+            "share.audience" => {   // o par divulga quantos assistem à tela dele (só de quem provou a identidade); dado inválido é ignorado
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
+                let Some(count) = v["count"].as_u64() else { return };
+                let names: Vec<String> = v["names"].as_array().map(|a| a.iter().filter_map(|n| n.as_str()).map(|n| n.chars().filter(|c| !c.is_control()).take(64).collect::<String>()).filter(|n| !n.is_empty()).take(3).collect()).unwrap_or_default();
+                self.emit(MeshEvent::Share(json!({ "ev": "share.audience", "peer_id": peer, "slot": slot, "count": count.min(9999), "names": names }))).await;
             }
             "share.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }

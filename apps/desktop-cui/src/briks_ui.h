@@ -89,6 +89,9 @@ typedef struct {
     struct { bool active, starting; int w, h, fps, kbps; char label[64], kind[12], id[24]; } second;
     int viewers[2]; bool vknown[2]; char vnames[2][200]; char vids[2][10][96]; int vidn[2];   /* quem assiste à MINHA tela (slot 0/1): só P2P e só depois do 1º aviso do core (sem dado = oculto) */
     struct { bool on, watching, has_frame, stalled; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
+    /* 1.5.8: olhinho dos OUTROS (índice = slot em rtc_peers, tela 0/1): quantos assistem à transmissão deles, divulgado por eles à sala
+       (share.audience). known = false: o par não divulgou (cliente antigo) e o olhinho fica oculto. */
+    struct { bool known; int count; char names[200]; } aud[BRIKS_MAX_PEERS][2];
 } share_state_t;
 
 typedef struct {
@@ -399,6 +402,8 @@ bool share_notice_active(cui_ctx *ui, app_state_t *s);       /* há aviso "X com
 void ui_share_notice_row(cui_ctx *ui, app_state_t *s);        /* a linha do aviso, com o botão Assistir */
 bool ui_share_stage(cui_ctx *ui, app_state_t *s, float W, float H, int layout);             /* palco do modo Transmissão; false = ninguém transmitindo */
 bool share_peer_live(const app_state_t *s, int slot);
+/* olhinho de quem transmite: true = há dado para a tela `sl` (0/1) da pessoa no slot; devolve a contagem e o tooltip com nomes */
+bool share_peer_eye(const app_state_t *s, int slot, int sl, int *count, char *tip, size_t cap);
 void share_peer_gone(app_state_t *s, int slot);   /* a pessoa saiu da chamada: some o que ela transmitia (tela nos dois slots) e a última imagem */
 /* ui_cam.c: câmera na chamada */
 bool cam_handle_event(app_state_t *s, const struct jval *j, const char *ev);   /* eventos cam.* do core */

@@ -69,6 +69,12 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.9", {
+        "Transmissão: a miniatura desfocada de tijolos também aparece no seu bloco \"Você\" enquanto você transmite.",
+        "Transmissão: o olhinho de espectadores agora aparece para todos na chamada, no ponto a ponto e no servidor (SFU).",
+        "Sons: o seletor de emojis do editor \"Adicionar som\" agora abre na frente do diálogo.",
+        "Sons: corrigido o armazenamento que podia nascer vazio ou temporário; sons ausentes mostram \"esse som não está neste aparelho\".",
+        NULL } },
     { "1.5.8", {
         "Visual de tijolos: a barra de download da atualização é feita de tijolos que se enchem conforme o progresso.",
         "Transmissão: a miniatura desfocada de quem transmite ganha um mosaico de parede de tijolos que guia o desfoque.",

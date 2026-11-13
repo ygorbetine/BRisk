@@ -294,7 +294,7 @@ static void paint_halo(cui_ctx *ui, cui_rect unused, void *user) {
     for (int k = 0; k < 10; k++) halo_ring(ui, 0.5f + (float)k * 0.7f, 1.2f, (cui_color){ 167, 139, 250, (uint8_t)((6.0f + 8.0f * br) * expf(-(float)(k * k) / 40.0f)) });   /* brilho base, bem leve */
 }
 
-/* Teste (BRIKS_LIVE_STYLE=1): o botão "mostra que está transmitindo": manchas de cor (violeta, azul, verde-água) deslizam devagar por dentro do botão e o ícone vira um ponto "ao vivo"
+/* O botão Transmissão "mostra que está transmitindo" (alguém transmite e estou no modo Call): manchas de cor (violeta, azul, verde-água) deslizam devagar por dentro do botão e o ícone vira um ponto "ao vivo"
    que pulsa com três barras que sobem e descem. Só desenha dentro do botão (o pai recorta). */
 static double g_live_t; static int g_live_style = -1;
 static void paint_liveflow(cui_ctx *ui, cui_rect r, void *user) {
@@ -756,7 +756,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                             /* ids 11..16: as pílulas da barra usam 1..7 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
                             {   /* alguém transmite e eu estou no modo Call: ondas suaves de halo em volta do botão "Transmissão"; param no modo Transmissão ou sem transmissão */
-                                const bool nudge = s->call_mode == 0 && share_any_live(s); static int fast = -1; if (fast < 0) { const char *dv = getenv("BRIKS_DEV_SHARE"); fast = dv && !strcmp(dv, "demo-sheen"); const char *ls = getenv("BRIKS_LIVE_STYLE"); g_live_style = ls && ls[0] == '1'; }
+                                const bool nudge = s->call_mode == 0 && share_any_live(s); static int fast = -1; if (fast < 0) { const char *dv = getenv("BRIKS_DEV_SHARE"); fast = dv && !strcmp(dv, "demo-sheen"); const char *ls = getenv("BRIKS_LIVE_STYLE"); g_live_style = !(ls && ls[0] == '0'); }   /* padrão: botão com cara de "transmitindo"; BRIKS_LIVE_STYLE=0 volta ao botão simples */
                                 const double tn = fast ? (double)cui_frame_count(ui) / 60.0 : cui_time(ui);   /* captura de teste: um quadro = 1/60 s, para o vídeo sair na velocidade certa */
                                 g_live_t = tn; g_tab_sheen = nudge; g_halo_p = nudge ? (float)fmod(tn, (double)HALO_PERIOD) / HALO_PERIOD : -1.0f; g_sheen_seen += nudge;
                                 if (nudge) {

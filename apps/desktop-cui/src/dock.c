@@ -331,6 +331,11 @@ void dock_render(cui_ctx *ui, app_state_t *s) {
                 lrect d = n->vertical ? (lrect){ r.x, a.y + a.h, r.w, LAYOUT_GAP } : (lrect){ a.x + a.w, r.y, LAYOUT_GAP, r.h };
                 bool ndiv = inside((lrect){ d.x - 3, d.y - 3, d.w + 6, d.h + 6 }, mp.x, mp.y);
                 bool hot = resizing == i || (resizing < 0 && ndiv) || demo_hover_div;
+                if (brick_on() && !hot) {   /* peças de ligação no vão entre os painéis (experimento tijolo) */
+                    cui_push_id_int(ui, 600 + i);
+                    cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = d.x, .pad_top = d.y) { brick_link(ui, i, d.w, d.h, n->vertical); }
+                    cui_pop_id(ui);
+                }
                 if (hot) {
                     cui_push_id_int(ui, 300 + i);
                     cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = d.x, .pad_top = d.y) {

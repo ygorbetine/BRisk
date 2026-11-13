@@ -28,13 +28,14 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
     if (!g_dlg) return;
     upd_phase_t ph = update_phase(); const upd_check_t ck = update_check_state();
     static int fake = -1; if (fake < 0) fake = getenv("BRIKS_DEV_UPDFAKE") != NULL;   /* captura/vídeo: simula um download subindo de 0 a 100% */
-    int fake_pct = 0; if (fake) { ph = UPD_DOWNLOADING; fake_pct = (int)(fmod(cui_time(ui) * 12.0, 100.0)); }
+    int fake_pct = 0; const bool fake_ready = fake && getenv("BRIKS_DEV_UPDFAKE")[0] == 'r';   /* BRIKS_DEV_UPDFAKE=ready simula "pronto para instalar" */
+    if (fake_ready) ph = UPD_READY; else if (fake) { ph = UPD_DOWNLOADING; { static unsigned fr; fake_pct = (int)((fr++ * 12u / 10u) % 100u); } }   /* por quadro (não por relógio): o vídeo sai suave */
     cui_vec2 vp = cui_viewport_size(ui);
     cui_dialog(ui, "Atualização do Briks", &g_dlg, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         char t[160];
         if (brick_on()) brick_studs_row(ui);
         if (ph == UPD_READY) {
-            snprintf(t, sizeof t, "O Briks %s já foi baixado e verificado. Reinicie para instalar (a chamada em andamento será encerrada).", update_version());
+            snprintf(t, sizeof t, "O Briks %s já foi baixado e verificado. Reinicie para instalar (a chamada em andamento será encerrada).", fake_ready ? "1.5.7" : update_version());
             cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
             cui_text(ui, "Se preferir, ele é instalado sozinho quando você fechar o Briks.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
             cui_dialog_footer(ui) {

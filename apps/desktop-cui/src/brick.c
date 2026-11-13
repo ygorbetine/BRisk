@@ -27,18 +27,20 @@ static void brick(cui_ctx *ui, cui_rect r, cui_color base, int n) {
 
 /* ---- 1. fileira de pinos no topo de um painel ---- */
 static void paint_row(cui_ctx *ui, cui_rect r, void *user) {
-    (void)user;
+    (void)user;   /* uma placa de montar: faixa baixa na cor do tema com os pinos em cima, ocupando a largura toda do conteúdo */
     const float step = 26.0f; const int n = (int)(r.w / step); const float x0 = r.x + (r.w - (float)n * step) * 0.5f;
-    for (int i = 0; i < n; i++) stud(ui, x0 + ((float)i + 0.5f) * step, r.y + r.h - 4.0f, 5.0f, B_C2);
+    cui_color plate = B_C2; plate.a = 150;
+    cui_draw_rect_border(ui, (cui_rect){ r.x, r.y + r.h - 7.0f, r.w, 7.0f }, CUI_CORNERS(3), plate, B_A(shade(B_C2, 1.3f), 170), 0.75f);
+    for (int i = 0; i < n; i++) stud(ui, x0 + ((float)i + 0.5f) * step, r.y + r.h - 8.5f, 5.0f, B_C2);
 }
-void brick_studs_row(cui_ctx *ui) { cui_canvas(ui, "bk-row", CUI_FILL, CUI_PX(12), paint_row, NULL, 0); }
+void brick_studs_row(cui_ctx *ui) { cui_canvas(ui, "bk-row", CUI_FILL, CUI_PX(18), paint_row, NULL, 0); }
 
 /* ---- 4. barra de progresso em tijolos: a parede sobe com a fração; o próximo tijolo cai e encaixa ---- */
 typedef struct { float frac; bool indef; } prog_t;
 static prog_t g_prog[4];
 static void paint_prog(cui_ctx *ui, cui_rect r, void *user) {
     const prog_t *p = (const prog_t *)user;
-    const int cols = (int)fmaxf(6.0f, floorf(r.w / 36.0f)); const float bw = r.w / (float)cols, bh = 15.0f, top = r.y + 8.0f;
+    const int cols = (int)fmaxf(4.0f, floorf(r.w / 72.0f)); const float bw = r.w / (float)cols, bh = 18.0f, top = r.y + 9.0f;   /* poucos tijolos e grandes: o download é rápido */
     const double t = cui_time(ui);
     const int rows = 2; const int total = cols * rows;
     const float f = p->indef ? fmodf((float)t * 0.35f, 1.0f) : p->frac;
@@ -48,10 +50,10 @@ static void paint_prog(cui_ctx *ui, cui_rect r, void *user) {
         const float off = row ? bw * 0.5f : 0.0f;
         cui_rect b = { r.x + (float)col * bw + off + 1.0f, top + (float)(rows - 1 - row) * (bh + 1.5f), bw - 2.0f, bh };
         if (row && col == cols - 1) continue;
-        if (k < done) brick(ui, b, row ? B_C3 : B_C2, 1);
+        if (k < done) brick(ui, b, row ? B_C3 : B_C2, 2);
         else if (k == done && !p->indef) {   /* o próximo cai: 0.45 s de queda por tijolo */
-            const float ph = fmodf((float)t * 1.6f, 1.0f), y = ph < 0.6f ? (ph / 0.6f - 1.0f) * 18.0f : 0.0f;
-            b.y += y; cui_color c = row ? B_C3 : B_C2; c.a = 210; brick(ui, b, c, 1);
+            const float ph = f * (float)total - (float)done, y = (1.0f - ph) * -(ph < 0.5f ? 18.0f : 18.0f * (1.0f - ph) * 2.0f) * 0.0f + (ph < 0.6f ? (ph / 0.6f - 1.0f) * 18.0f : 0.0f);   /* a queda acompanha o progresso: cada tijolo desce enquanto o percentual o alcança */
+            b.y += y; cui_color c = row ? B_C3 : B_C2; c.a = 210; brick(ui, b, c, 2);
         } else {
             cui_draw_rect_border(ui, b, CUI_CORNERS(3), CUI_RGBA(0xffffff0a), CUI_RGBA(0xffffff22), 0.5f);
         }
@@ -59,18 +61,8 @@ static void paint_prog(cui_ctx *ui, cui_rect r, void *user) {
 }
 void brick_progress(cui_ctx *ui, int idx, float frac, bool indef) {
     idx &= 3; g_prog[idx].frac = frac; g_prog[idx].indef = indef;
-    cui_canvas(ui, idx ? "bk-prog1" : "bk-prog0", CUI_FILL, CUI_PX(44), paint_prog, &g_prog[idx], 0);
+    cui_canvas(ui, idx ? "bk-prog1" : "bk-prog0", CUI_FILL, CUI_PX(50), paint_prog, &g_prog[idx], 0);
     cui_request_wakeup(ui, 0.04f);
-}
-
-/* ---- 3. anel de pinos em volta do avatar que fala (acendem com o volume) ---- */
-void brick_ring(cui_ctx *ui, cui_vec2 c, float radius, float k, float lvl) {
-    const int n = 14; const int lit = (int)ceilf(lvl * (float)n * 0.9f) < 2 ? 2 : (int)ceilf(lvl * (float)n * 0.9f);
-    for (int i = 0; i < n; i++) {
-        const float a = 6.2831853f * (float)i / (float)n - 1.5707963f;
-        const cui_color base = i < lit ? CUI_RGB(0x3fae6f) : CUI_RGB(0x3a2a55);
-        stud(ui, c.x + cosf(a) * radius, c.y + sinf(a) * radius, fmaxf(3.0f, 4.6f * k), base);
-    }
 }
 
 /* ---- 6. torre de tijolos ao lado do nome do grupo: uma peça por canal; peça amarela = mensagens novas ---- */
@@ -78,13 +70,16 @@ typedef struct { int n; bool unread; } tower_t;
 static tower_t g_tw[32];
 static void paint_tower(cui_ctx *ui, cui_rect r, void *user) {
     const tower_t *t = (const tower_t *)user; const int n = t->n > 4 ? 4 : t->n < 1 ? 1 : t->n;
-    const float bw = 22.0f, bh = 6.5f; const float x = r.x + r.w - bw - 2.0f; float y = r.y + r.h - 2.0f - bh;
-    for (int i = 0; i < n; i++) { brick(ui, (cui_rect){ x + (i & 1 ? 3.0f : 0.0f), y, bw, bh }, B_C2, i == n - 1 && !t->unread ? 2 : 0); y -= bh + 0.5f; }
-    if (t->unread) brick(ui, (cui_rect){ x + (n & 1 ? 3.0f : 0.0f), y, bw, bh }, CUI_RGB(0xe8c46a), 2);
+    const float bw = 22.0f, bh = 5.0f, gap = 0.6f; const float x = r.x + r.w - bw - 2.0f; float y = r.y + r.h - 2.0f - bh;
+    for (int i = 0; i < n; i++) { brick(ui, (cui_rect){ x + (i & 1 ? 3.0f : 0.0f), y, bw, bh }, B_C2, 0); y -= bh + gap; }
+    if (t->unread) {   /* a peça nova no topo pulsa: mensagens não lidas */
+        const float pulse = 0.6f + 0.4f * sinf((float)cui_time(ui) * 4.0f); cui_color am = CUI_RGB(0xe8c46a); am.a = (unsigned char)(255.0f * pulse);
+        brick(ui, (cui_rect){ x + (n & 1 ? 3.0f : 0.0f), y, bw, bh }, am, 0); cui_request_wakeup(ui, 0.06f);
+    }
 }
 void brick_tower(cui_ctx *ui, int idx, int channels, bool unread) {
     idx &= 31; g_tw[idx].n = channels; g_tw[idx].unread = unread;
-    cui_canvas(ui, "bk-tower", CUI_PX(30), CUI_PX(30), paint_tower, &g_tw[idx], 0);
+    cui_canvas(ui, "bk-tower", CUI_PX(28), CUI_PX(30), paint_tower, &g_tw[idx], 0);
 }
 
 /* ---- 8. estado vazio: tijolos soltos esperando montagem ---- */
@@ -96,27 +91,6 @@ static void paint_loose(cui_ctx *ui, cui_rect r, void *user) {
 }
 void brick_loose(cui_ctx *ui) { cui_canvas(ui, "bk-loose", CUI_PX(80), CUI_PX(52), paint_loose, NULL, 0); }
 
-/* ---- 5. entrada na chamada: pinos caem no topo do bloco (0.7 s) ---- */
-typedef struct { double t0; } join_t;
-static join_t g_join[16];
-static double g_last_seen[16];
-static void paint_join(cui_ctx *ui, cui_rect r, void *user) {
-    const join_t *j = (const join_t *)user; const float ph = (float)(cui_time(ui) - j->t0) / 0.7f; if (ph < 0 || ph > 1) return;
-    const int n = (int)fmaxf(3.0f, floorf(r.w / 44.0f)); const float step = r.w / (float)n;
-    for (int i = 0; i < n; i++) {
-        const float p = fminf(1.0f, fmaxf(0.0f, ph * 1.4f - (float)i * 0.08f)), y = p < 0.7f ? (p / 0.7f - 1.0f) * 40.0f : -sinf((p - 0.7f) / 0.3f * 3.1416f) * 3.0f;
-        cui_color c = B_C3; c.a = (unsigned char)(255.0f * (1.0f - fmaxf(0.0f, ph - 0.8f) * 5.0f));
-        stud(ui, r.x + step * ((float)i + 0.5f), r.y + 7.0f + y, 5.5f, c);
-    }
-}
-void brick_join(cui_ctx *ui, int slot) {   /* chamar a cada quadro em que o bloco aparece: detecta a entrada e toca a animação */
-    if (slot < 0 || slot > 15) return;
-    const double now = cui_time(ui);
-    if (now - g_last_seen[slot] > 0.6) g_join[slot].t0 = now;   /* sumiu por um tempo e voltou = entrou agora */
-    g_last_seen[slot] = now;
-    if (now - g_join[slot].t0 < 0.8) { cui_canvas(ui, "bk-join", CUI_FILL, CUI_FILL, paint_join, &g_join[slot], 0); cui_request_wakeup(ui, 0.03f); }
-}
-
 /* ---- 7. mosaico da thumb da transmissão: cada célula é uma peça 1x1 com a cor média do pedaço da tela ---- */
 typedef struct { const unsigned char *cells; int cw, ch, radius; } mos_t;
 static mos_t g_mos[BRIKS_MAX_PEERS];
@@ -126,17 +100,52 @@ static bool inside_round(float x, float y, cui_rect r, float rad) {   /* o ponto
     return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rad * rad;
 }
 static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
+    /* parede de tijolos: tijolos 2:1 em fileiras deslocadas meio tijolo (aparelho comum), junta escura entre eles; a cor de cada tijolo é a média da tela
+     * sob ele, com uma variação leve por tijolo (como lotes de queima diferentes) e um brilho fino na face de cima */
     const mos_t *m = (const mos_t *)user; if (!m->cells) return;
-    const float cw = r.w / (float)m->cw, chh = r.h / (float)m->ch, g = 1.0f;
-    for (int y = 0; y < m->ch; y++) for (int x = 0; x < m->cw; x++) {
-        cui_rect c = { r.x + (float)x * cw + g * 0.5f, r.y + (float)y * chh + g * 0.5f, cw - g, chh - g };
-        if (!inside_round(c.x, c.y, r, (float)m->radius) || !inside_round(c.x + c.w, c.y, r, (float)m->radius) || !inside_round(c.x, c.y + c.h, r, (float)m->radius) || !inside_round(c.x + c.w, c.y + c.h, r, (float)m->radius)) continue;   /* nada vaza pelos cantos redondos */
-        const unsigned char *p = m->cells + ((size_t)y * (size_t)m->cw + (size_t)x) * 4;
-        cui_draw_rect(ui, c, CUI_CORNERS(2), CUI_RGBA(((unsigned)(p[0] * 0.72f) << 24) | ((unsigned)(p[1] * 0.72f) << 16) | ((unsigned)(p[2] * 0.72f) << 8) | 0xff));
+    const int rows = 9; const float bh = r.h / (float)rows, bw = bh * 2.2f; const int cols = (int)ceilf(r.w / bw) + 1;
+    cui_draw_rect(ui, r, CUI_CORNERS((float)m->radius), CUI_RGBA(0x120818ff));   /* a junta (argamassa) aparece entre os tijolos */
+    for (int y = 0; y < rows; y++) {
+        const float off = (y & 1) ? -bw * 0.5f : 0.0f;
+        for (int x = 0; x < cols; x++) {
+            cui_rect c = { r.x + off + (float)x * bw + 1.0f, r.y + (float)y * bh + 1.0f, bw - 2.0f, bh - 2.0f };
+            if (c.x < r.x) { c.w -= r.x - c.x; c.x = r.x; }
+            if (c.x + c.w > r.x + r.w) c.w = r.x + r.w - c.x;
+            if (c.w < 6.0f) continue;
+            if (!inside_round(c.x, c.y, r, (float)m->radius) || !inside_round(c.x + c.w, c.y, r, (float)m->radius) || !inside_round(c.x, c.y + c.h, r, (float)m->radius) || !inside_round(c.x + c.w, c.y + c.h, r, (float)m->radius)) continue;   /* nada vaza pelos cantos redondos */
+            const int sx = (int)(((c.x - r.x + c.w * 0.5f) / r.w) * (float)m->cw), sy = (int)(((c.y - r.y + c.h * 0.5f) / r.h) * (float)m->ch);
+            const unsigned char *p = m->cells + ((size_t)(sy < 0 ? 0 : sy >= m->ch ? m->ch - 1 : sy) * (size_t)m->cw + (size_t)(sx < 0 ? 0 : sx >= m->cw ? m->cw - 1 : sx)) * 4;
+            const unsigned h = (unsigned)(x * 73856093u) ^ (unsigned)(y * 19349663u); const float v = 0.82f + (float)(h % 21u) / 100.0f;   /* 0.82..1.02 */
+            cui_color base; base.r = (unsigned char)fminf(255.0f, 40.0f + p[0] * 0.55f * v); base.g = (unsigned char)fminf(255.0f, 28.0f + p[1] * 0.5f * v); base.b = (unsigned char)fminf(255.0f, 46.0f + p[2] * 0.6f * v); base.a = 255;
+            cui_draw_rect(ui, c, CUI_CORNERS(2), base);
+            cui_draw_rect(ui, (cui_rect){ c.x + 1.0f, c.y, c.w - 2.0f, 1.5f }, CUI_CORNERS(1), shade(base, 1.3f));
+        }
     }
 }
 void brick_mosaic(cui_ctx *ui, int slot, const unsigned char *cells, int cw, int ch, float w, float h, int radius) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS) return;
     g_mos[slot] = (mos_t){ cells, cw, ch, radius };
     cui_canvas(ui, "bk-mos", CUI_PX(w), CUI_PX(h), paint_mos, &g_mos[slot], 0);
+}
+
+/* ---- 2. encaixe entre painéis: peças de ligação cruzam o vão entre dois painéis vizinhos (o vão tem LAYOUT_GAP px); os painéis não mudam de forma ---- */
+typedef struct { bool horiz; } link_t;   /* horiz = o vão é uma faixa horizontal (painéis um sobre o outro) */
+static link_t g_link[64];
+static void paint_link(cui_ctx *ui, cui_rect r, void *user) {
+    const link_t *l = (const link_t *)user; const float len = l->horiz ? r.w : r.h, mid = l->horiz ? r.y + r.h * 0.5f : r.x + r.w * 0.5f;
+    if (len < 110.0f) return;
+    const int n = (int)((len - 80.0f) / 110.0f) + 1; const float step = (len - 80.0f) / (float)n;
+    for (int i = 0; i < n; i++) {
+        const float p = 40.0f + step * ((float)i + 0.5f);   /* longe dos cantos arredondados */
+        const float cx = l->horiz ? r.x + p : mid, cy = l->horiz ? mid : r.y + p;
+        const cui_color base = B_C2;
+        cui_rect plate = l->horiz ? (cui_rect){ cx - 13.0f, cy - (r.h * 0.5f + 3.0f), 26.0f, r.h + 6.0f } : (cui_rect){ cx - (r.w * 0.5f + 3.0f), cy - 13.0f, r.w + 6.0f, 26.0f };
+        cui_color f = base; f.a = 120;
+        cui_draw_rect_border(ui, plate, CUI_CORNERS(4), f, B_A(shade(base, 1.3f), 150), 0.75f);
+        stud(ui, cx - (l->horiz ? 0.0f : 0.0f), cy, 3.2f, base);
+    }
+}
+void brick_link(cui_ctx *ui, int idx, float w, float h, bool horiz) {
+    idx &= 63; g_link[idx].horiz = horiz;
+    cui_canvas(ui, "bk-link", CUI_PX(w), CUI_PX(h), paint_link, &g_link[idx], 0);
 }

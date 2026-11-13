@@ -33,7 +33,6 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
     cui_vec2 vp = cui_viewport_size(ui);
     cui_dialog(ui, "Atualização do Briks", &g_dlg, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         char t[160];
-        if (brick_on()) brick_studs_row(ui);
         if (ph == UPD_READY) {
             snprintf(t, sizeof t, "O Briks %s já foi baixado e verificado. Reinicie para instalar (a chamada em andamento será encerrada).", fake_ready ? "1.5.7" : update_version());
             cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);

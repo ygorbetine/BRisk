@@ -20,6 +20,14 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.2", {
+        "Atualização: ao clicar em Verificar, o download começa na hora (antes só começava no ciclo de 4 horas) e uma barra animada aparece até a barra de progresso começar a encher.",
+        "Painel de sons: o editor de novo som ganhou botão de play junto da onda, toca só o trecho entre as barras (que você arrasta), para ao clicar de novo e muda o volume em tempo real.",
+        NULL } },
+    { "1.5.1", {
+        "Transmissão: o olhinho mostra quem está assistindo, com nomes, no servidor e no ponto a ponto; quadros e kbps reais para quem assiste; o PC não suspende enquanto você assiste.",
+        "Sobreposição: 30 fps e selo Ao vivo com tamanho fixo e alinhado.",
+        NULL } },
     { "1.4.4", {
         "Chamadas: o servidor de chamadas (SFU) do Briks vem configurado no instalador; no modo Automático o app usa o servidor quando ele existe e cai para ponto a ponto quando não.",
         "Transmissão: se o codificador de vídeo falhar, a transmissão se recupera sozinha (com aviso discreto) em vez de cair; o aviso de PC sem conta só aparece com sinal real de máquina lenta.",
@@ -73,6 +81,14 @@ static void card_begin(cui_ctx *ui, const char *title) {
     cui_text(ui, title, .font = CUI_FONT_MEDIUM, .size = 13, .color = B_C3);
 }
 
+static void paint_indef(cui_ctx *ui, cui_rect r, void *user) {
+    (void)user;
+    cui_draw_rect(ui, r, CUI_CORNERS(r.h * 0.5f), CUI_RGBA(0xffffff22));
+    float seg = r.w * 0.3f, t = (float)(GetTickCount64() % 1400) / 1400.0f;
+    float x = r.x - seg + t * (r.w + seg), x0 = x < r.x ? r.x : x, x1 = x + seg > r.x + r.w ? r.x + r.w : x + seg;
+    if (x1 > x0) cui_draw_rect(ui, (cui_rect){ x0, r.y, x1 - x0, r.h }, CUI_CORNERS(r.h * 0.5f), CUI_RGB(0xa78bfa));
+}
+
 void update_settings_cards(cui_ctx *ui, app_state_t *s) {
     card_begin(ui, "ATUALIZAÇÕES");
     cui_textf(ui, "Versão %s", update_current_version());
@@ -81,11 +97,14 @@ void update_settings_cards(cui_ctx *ui, app_state_t *s) {
         char t[120]; snprintf(t, sizeof t, "Briks %s pronto para instalar. Ele é instalado ao fechar o Briks.", update_version());
         cui_text(ui, t, .size = 12, .color = B_ONLINE, .width = CUI_FILL);
         if (cui_button(ui, "Reiniciar e instalar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) { if (update_install_now()) cui_app_quit(s->app); }
-    } else if (ph == UPD_DOWNLOADING) {
-        char t[120]; snprintf(t, sizeof t, "Baixando a versão %s: %d%%", update_version(), update_percent());
+    } else if (ph == UPD_DOWNLOADING || (ph == UPD_CHECKING && ck == UCHK_NEWER)) {
+        char t[120];
+        if (ph == UPD_DOWNLOADING && update_percent() > 0) snprintf(t, sizeof t, "Baixando a versão %s: %d%%", update_version(), update_percent());
+        else snprintf(t, sizeof t, "Nova versão %s: preparando o download…", ph == UPD_DOWNLOADING ? update_version() : update_check_version());
         cui_text(ui, t, .size = 12, .color = B_MUTED, .width = CUI_FILL);
-        cui_progress(ui, (float)update_percent() / 100.0f);
-        cui_request_wakeup(ui, 0.3f);
+        if (ph == UPD_DOWNLOADING && update_percent() > 0) cui_progress(ui, (float)update_percent() / 100.0f);
+        else cui_canvas(ui, "upd-indef", CUI_FILL, CUI_PX(6), paint_indef, NULL, 0);   /* barra infinita até chegar o 1º byte */
+        cui_request_wakeup(ui, ph == UPD_DOWNLOADING && update_percent() > 0 ? 0.3f : 0.03f);
     } else {
         cui_row(ui, .gap = 8, .align = CUI_ALIGN_CENTER, .width = CUI_FILL, .wrap = true) {
             if (cui_button(ui, ck == UCHK_RUNNING ? "Verificando…" : "Verificar atualização agora", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM, .loading = ck == UCHK_RUNNING)) update_check_now();

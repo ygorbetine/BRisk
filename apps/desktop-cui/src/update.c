@@ -200,6 +200,7 @@ static void check_once(void) {
 }
 
 /* ---- "Verificar agora": só lê o feed (nada é baixado aqui) ---- */
+static HANDLE g_wake;
 static volatile LONG g_chk = UCHK_NONE;
 static char g_chk_ver[48], g_chk_err[160];
 upd_check_t update_check_state(void) { return (upd_check_t)g_chk; }
@@ -216,6 +217,7 @@ static unsigned __stdcall check_now_thread(void *unused) {
     if (update_version_compare(ver, update_current_version()) <= 0) { InterlockedExchange(&g_chk, UCHK_LATEST); return 0; }
     snprintf(g_chk_ver, sizeof g_chk_ver, "%s", ver);
     InterlockedExchange(&g_chk, UCHK_NEWER);
+    if (g_started && g_wake) SetEvent(g_wake);   /* causa da demora: o download só começava no próximo ciclo de 4h; agora começa na hora */
     return 0;
 }
 void update_check_now(void) {
@@ -256,17 +258,18 @@ bool update_auto_on(void) { return update_enabled(); }
 static unsigned __stdcall update_thread(void *unused) {
     (void)unused;
     const char *w = getenv("BRIKS_UPDATE_DELAY_MS");
-    Sleep(w ? (DWORD)atoi(w) : 5000);
+    WaitForSingleObject(g_wake, w ? (DWORD)atoi(w) : 5000);
     for (;;) {
         check_once();
         if (g_phase == UPD_READY) return 0;
-        Sleep(CHECK_INTERVAL_MS);
+        WaitForSingleObject(g_wake, CHECK_INTERVAL_MS);   /* acorda antes se "Verificar agora" achar versão nova */
     }
 }
 
 void update_start(void) {
     { const char *d = getenv("BRIKS_UPDATE_DEMO"); if (d && d[0]) { snprintf(g_version, sizeof g_version, "%s", d); InterlockedExchange(&g_phase, UPD_READY); return; } }   /* so para capturas: mostra o aviso sem baixar nada */
     if (InterlockedExchange(&g_started, 1) || !update_enabled()) return;
+    g_wake = CreateEventA(NULL, FALSE, FALSE, NULL);
     HANDLE t = (HANDLE)_beginthreadex(NULL, 0, update_thread, NULL, 0, NULL);
     if (t) CloseHandle(t);
 }

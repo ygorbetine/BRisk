@@ -48,7 +48,7 @@ if(EXISTS "${BRIKS_CORE_EXE}")
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BRIKS_CORE_EXE}" $<TARGET_FILE_DIR:briks_cui>/briks-core.exe)
 endif()
 
-set(BRIKS_VERSION "1.5.1" CACHE STRING "Versao do app (usada pelo atualizador; o instalador recebe a sua em scripts/build-installer.ps1)")
+set(BRIKS_VERSION "1.5.2" CACHE STRING "Versao do app (usada pelo atualizador; o instalador recebe a sua em scripts/build-installer.ps1)")
 option(BRIKS_UPDATE_DEFAULT_ON "Atualizacao automatica ligada por padrao no app instalado (build do instalador)" OFF)
 target_compile_definitions(briks_cui PRIVATE BRIKS_APP_VERSION="${BRIKS_VERSION}")
 if(BRIKS_UPDATE_DEFAULT_ON)

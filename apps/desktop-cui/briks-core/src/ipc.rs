@@ -226,7 +226,7 @@ async fn out(w: &mut tokio::net::tcp::OwnedWriteHalf, v: Value) -> Result<()> {
 
 /// Nível do protocolo UI<->core. A UI (BRIKS_CORE_PROTO_MIN em core.h) avisa quando o core em execução é mais antigo que o programa
 /// (core órfão ou briks-core.exe de outra versão ao lado do app). Suba junto com a UI quando um comando/evento novo passar a ser exigido.
-pub const CORE_PROTO: u32 = 2;
+pub const CORE_PROTO: u32 = 3;   // 3: painel de sons (sound.*)
 
 async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::accounts::service::Runtime>) -> Result<()> {
     s.set_nodelay(true).ok();
@@ -560,6 +560,30 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         };
                         out(&mut wr, ev).await?;
                     }
+                    // painel de sons: armazenamento local, importação e preferências (rede: sound.play/sound.fetch)
+                    "sound.play" | "sound.fetch" => {
+                        let h = v["hash"].as_str().filter(|h| crate::sons::valid_hash(h)).map(String::from);
+                        match (h, &mesh_cmd) {
+                            (Some(hash), Some(c)) => { let _ = c.send(if v["cmd"] == "sound.play" { MeshCmd::SoundPlay { hash } } else { MeshCmd::SoundFetch { hash } }).await; }
+                            (Some(hash), None) if v["cmd"] == "sound.play" => out(&mut wr, json!({ "ev": "sound.denied", "hash": hash, "message": "entre numa chamada para disparar sons" })).await?,
+                            _ => {}
+                        }
+                    }
+                    "sound.roster" => {
+                        // membros do grupo da chamada: só eles podem disparar sons (lista vazia/ausente = sem restrição)
+                        let st = crate::sons::shared_for(&cfg.data_dir);
+                        let set: std::collections::BTreeSet<String> = v["fps"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|f| !f.is_empty() && f.len() <= 100).take(200).map(String::from).collect()).unwrap_or_default();
+                        st.lock().unwrap().roster = if set.is_empty() { None } else { Some(set) };
+                    }
+                    c if c.starts_with("sound.") && matches!(c, "sound.list" | "sound.check" | "sound.import" | "sound.update" | "sound.fav" | "sound.remove" | "sound.prefs" | "sound.path" | "sound.catalog" | "sound.ogg") => {
+                        let store = crate::sons::shared_for(&cfg.data_dir);
+                        let my_fp = identity.as_ref().map(|i| i.fingerprint()).unwrap_or_default();
+                        for ev in crate::sons::handle(&store, &v, &my_fp) {
+                            // catálogo novo: pede já os arquivos que faltam a quem estiver na chamada (fila de baixa prioridade, 3 por vez)
+                            if let (Some(c), Some(miss)) = (&mesh_cmd, ev["missing"].as_array()) { for h in miss.iter().filter_map(|h| h.as_str()) { let _ = c.send(MeshCmd::SoundFetch { hash: h.to_string() }).await; } }
+                            out(&mut wr, ev).await?;
+                        }
+                    }
                     "group.code" => {
                         let ev = match serde_json::from_value::<crate::group_sync::Snapshot>(v["snapshot"].clone()) {
                             Ok(s) if crate::group_sync::check_structure(&s).is_ok() => json!({ "ev": "group.result", "op": "code", "ok": true, "group_id": s.group_id, "code": crate::group_sync::to_code(&s) }),
@@ -836,6 +860,10 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
             e = async { match mesh_ev.as_mut() { Some(r) => r.recv().await, None => std::future::pending().await } } => {
                 match e {
                     Some(MeshEvent::Peer { peer_id, state }) => out(&mut wr, json!({ "ev": "peer", "peer_id": peer_id, "state": state })).await?,
+                    Some(MeshEvent::Sound(j)) => {
+                        // Ensurdecido não toca som: o disparo recebido some aqui (o arquivo continua sendo baixado e guardado)
+                        if !(deafened && j["ev"] == "sound.play") { out(&mut wr, j).await? }
+                    }
                     Some(MeshEvent::File(j)) => { let mut j = j; j["ev"] = "file".into(); out(&mut wr, j).await? }
                     Some(MeshEvent::Ack { id, from_fp }) => out(&mut wr, json!({ "ev": "chat.ack", "id": id, "from_fp": from_fp })).await?,
                     Some(MeshEvent::DmLink { fp, on }) => out(&mut wr, json!({ "ev": "chat.link", "fp": fp, "on": on })).await?,

@@ -463,7 +463,7 @@ async fn group_snapshots_travel_between_authenticated_peers_and_forgeries_are_dr
     let mk = |by: &Identity, name: &str| {
         let mut s = Snapshot { v: 1, group_id: "g1".into(), name: name.into(), owner_fp: ia.fingerprint(), version: 1, ts: 1,
             members: vec![mem(&ia, "Ana", true), mem(&ib, "Beto", true)],
-            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], signer_fp: String::new(), signature: String::new() };
+            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], sounds: vec![], signer_fp: String::new(), signature: String::new() };
         crate::group_sync::sign(by, &mut s).unwrap();
         s
     };

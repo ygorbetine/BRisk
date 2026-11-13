@@ -42,6 +42,8 @@ mod sfudata;
 mod sfufiles;
 mod sfu_cfg;
 mod roomchat;
+mod sons;
+mod sonsnet;
 mod share;
 mod signaling;
 
@@ -120,3 +122,5 @@ mod tests_sfuapps;
 mod tests_sfu;
 #[cfg(test)]
 mod tests_dm;
+#[cfg(test)]
+mod tests_sons;

@@ -52,6 +52,21 @@ pub struct Channel {
     pub kind: String,
 }
 
+/// Entrada do catálogo de sons do grupo (painel de sons). Nomes curtos no JSON para caber no pacote de dados do SFU (15 KB) com o resto do snapshot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SoundEntry {
+    #[serde(rename = "h")] pub hash: String,
+    #[serde(rename = "n")] pub name: String,
+    #[serde(rename = "e", default)] pub emoji: String,
+    #[serde(rename = "s")] pub size: u64,
+    #[serde(rename = "d")] pub dur_ms: u32,
+    /// quem adicionou: os 12 primeiros caracteres da impressão digital (para o dono achar e punir abuso)
+    #[serde(rename = "b", default)] pub by: String,
+}
+
+/// Teto do snapshot serializado quando há sons: precisa caber no pacote de dados do SFU (15 000 bytes) com folga.
+pub const MAX_SNAPSHOT_WITH_SOUNDS: usize = 14_000;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub v: u32,
@@ -62,6 +77,10 @@ pub struct Snapshot {
     pub ts: u64,
     pub members: Vec<Member>,
     pub channels: Vec<Channel>,
+    /// catálogo de sons (só dono/administradores publicam: a assinatura do snapshot é a permissão). Vazio = fora do JSON, então grupos sem sons
+    /// continuam com a mesma assinatura de antes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sounds: Vec<SoundEntry>,
     pub signer_fp: String,
     #[serde(default)]
     pub signature: String,
@@ -138,6 +157,32 @@ pub fn check_structure(s: &Snapshot) -> Result<()> {
     }
     if !s.channels.iter().any(|c| c.kind == "text") { return Err(anyhow!("o grupo precisa de ao menos um canal de texto")); }
     if !s.members.iter().any(|m| m.fp == s.signer_fp && m.admin) { return Err(anyhow!("o signatário não é dono nem administrador")); }
+    check_sounds(s)?;
+    Ok(())
+}
+
+/// Catálogo de sons: no máximo 50, hash SHA-256 minúsculo e único, nome/emoji limpos, tamanho e duração dentro dos limites, e o snapshot
+/// inteiro cabendo no canal de dados. Quem aceitar o snapshot só o faz depois disto E da assinatura de dono/administrador.
+pub fn check_sounds(s: &Snapshot) -> Result<()> {
+    if s.sounds.is_empty() { return Ok(()); }
+    if s.sounds.len() > crate::sons::MAX_PER_GROUP { return Err(anyhow!("catálogo de sons grande demais (máximo {})", crate::sons::MAX_PER_GROUP)); }
+    let mut seen = BTreeSet::new();
+    for e in &s.sounds {
+        if !crate::sons::valid_hash(&e.hash) || !seen.insert(e.hash.clone()) { return Err(anyhow!("som inválido ou repetido no catálogo")); }
+        if crate::sons::clean_name(&e.name).as_deref() != Some(e.name.as_str()) { return Err(anyhow!("nome de som inválido")); }
+        if e.emoji.len() > crate::sons::MAX_EMOJI_BYTES || e.emoji.chars().any(|c| c.is_control()) { return Err(anyhow!("emoji de som inválido")); }
+        if e.size == 0 || e.size > crate::sons::MAX_BYTES || e.dur_ms == 0 || e.dur_ms > crate::sons::MAX_MS + crate::sons::MP3_PAD_MS { return Err(anyhow!("som fora dos limites (15 s, 512 KB)")); }
+        if e.by.chars().count() > 12 || e.by.chars().any(|c| c.is_control()) { return Err(anyhow!("autor de som inválido")); }
+    }
+    if serde_json::to_string(s).map(|t| t.len()).unwrap_or(usize::MAX) > MAX_SNAPSHOT_WITH_SOUNDS { return Err(anyhow!("o catálogo de sons deixa o grupo grande demais para o canal de dados: apague alguns sons")); }
+    Ok(())
+}
+
+/// Só a assinatura (para o catálogo que a UI já guardava como confiado): estrutura + assinatura do signatário listado.
+pub fn verify_signature(s: &Snapshot) -> Result<()> {
+    check_structure(s)?;
+    let signer = s.members.iter().find(|m| m.fp == s.signer_fp).and_then(|m| m.jwk.clone()).ok_or_else(|| anyhow!("assinatura sem chave"))?;
+    if !verify(&signer, &canonical(s), &s.signature) { return Err(anyhow!("assinatura inválida")); }
     Ok(())
 }
 
@@ -193,7 +238,7 @@ mod tests {
     fn base(owner: &Identity, members: Vec<Member>) -> Snapshot {
         Snapshot { v: 1, group_id: "g1".into(), name: "Amigos".into(), owner_fp: owner.fingerprint(), version: 1, ts: 1, members,
             channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }, Channel { id: "c2".into(), name: "Sala".into(), kind: "voice".into() }],
-            signer_fp: String::new(), signature: String::new() }
+            sounds: vec![], signer_fp: String::new(), signature: String::new() }
     }
     fn signed(by: &Identity, mut s: Snapshot) -> Snapshot { sign(by, &mut s).unwrap(); s }
 
@@ -313,5 +358,56 @@ mod tests {
         // remoção de membro: quem some recebe Removed
         let mut v3 = v2.clone(); v3.version = 3; v3.members.retain(|m| m.fp != me);
         assert_eq!(accept(Some(&v2), &signed(&w.owner, v3), &me).unwrap(), Decision::Removed);
+    }
+
+    fn entry(i: u32) -> SoundEntry { SoundEntry { hash: crate::sons::sha256_hex(format!("som{i}").as_bytes()), name: format!("Som {i}"), emoji: "📯".into(), size: 20_000 + i as u64, dur_ms: 1500, by: "abcdefghijkl".into() } }
+
+    #[test]
+    fn sound_catalog_is_signed_by_admins_and_old_groups_keep_their_signature() {
+        let w = world();
+        let plain = signed(&w.owner, base(&w.owner, vec![mem(&w.owner, "Ana", true), mem(&w.adm, "Adi", true), mem(&w.bia, "Bia", false)]));
+        assert!(!serde_json::to_string(&plain).unwrap().contains("\"sounds\""), "sem sons o JSON é o de antes (mesma assinatura)");
+        // dono publica um catálogo: vira nova versão assinada e os outros aceitam
+        let mut v2 = plain.clone(); v2.version = 2; v2.sounds = vec![entry(1), entry(2)];
+        let v2 = signed(&w.owner, v2);
+        assert_eq!(accept(Some(&plain), &v2, &w.bia.fingerprint()).unwrap(), Decision::Update);
+        let back: Snapshot = serde_json::from_str(&serde_json::to_string(&v2).unwrap()).unwrap();
+        assert_eq!(back.sounds.len(), 2); assert!(verify_signature(&back).is_ok());
+        // administrador (não dono) também publica
+        let mut v3 = v2.clone(); v3.version = 3; v3.sounds.push(entry(3));
+        let v3 = signed(&w.adm, v3);
+        assert_eq!(accept(Some(&v2), &v3, &w.bia.fingerprint()).unwrap(), Decision::Update);
+        // membro comum não consegue assinar nem forjar: assina com a própria chave e diz que é admin
+        let mut forged = v3.clone(); forged.version = 4; forged.sounds.push(entry(4));
+        assert!(sign(&w.bia, &mut forged).is_err(), "membro comum não assina");
+        forged.signer_fp = w.bia.fingerprint(); forged.signature = w.bia.sign(&canonical(&forged));
+        assert!(accept(Some(&v3), &forged, &w.cai.fingerprint()).is_err(), "assinatura de quem não é admin");
+        // entrada enfiada depois da assinatura invalida tudo
+        let mut tampered = v3.clone(); tampered.version = 4; tampered.sounds.push(entry(9));
+        assert!(accept(Some(&v3), &tampered, &w.bia.fingerprint()).is_err());
+        assert!(verify_signature(&tampered).is_err());
+    }
+
+    #[test]
+    fn sound_catalog_limits_are_enforced() {
+        let w = world();
+        let mk = |sounds: Vec<SoundEntry>| { let mut s = base(&w.owner, vec![mem(&w.owner, "Ana", true)]); s.sounds = sounds; s.signer_fp = w.owner.fingerprint(); s };
+        assert!(check_structure(&mk((0..50).map(entry).collect())).is_ok(), "50 sons cabem");
+        assert!(check_structure(&mk((0..51).map(entry).collect())).unwrap_err().to_string().contains("máximo 50"));
+        let mut dup = vec![entry(1), entry(1)]; assert!(check_structure(&mk(dup.clone())).is_err(), "repetido"); dup.pop();
+        let mut e = entry(1); e.hash = "ABC".into(); assert!(check_structure(&mk(vec![e])).is_err(), "hash inválido");
+        let mut e = entry(1); e.dur_ms = 15200; assert!(check_structure(&mk(vec![e])).is_err(), "longo");
+        let mut e = entry(1); e.size = 512 * 1024 + 1; assert!(check_structure(&mk(vec![e])).is_err(), "grande");
+        let mut e = entry(1); e.name = "  ".into(); assert!(check_structure(&mk(vec![e])).is_err(), "sem nome");
+        let mut e = entry(1); e.emoji = "x".repeat(40); assert!(check_structure(&mk(vec![e])).is_err(), "emoji");
+        // 48 membros (2 administradores) + 50 sons ainda cabem no pacote do SFU
+        let ids: Vec<Identity> = (0..46).map(|_| Identity::generate()).collect();
+        let mut ms = vec![mem(&w.owner, "Ana Maria da Silva", true), mem(&w.adm, "Administrador Beto", true)];
+        for (i, m) in ids.iter().enumerate() { ms.push(mem(m, &format!("Pessoa numero {i}"), false)); }
+        let mut big = base(&w.owner, ms); big.sounds = (0..50).map(entry).collect(); big.signer_fp = w.owner.fingerprint();
+        let n = serde_json::to_string(&big).unwrap().len();
+        assert!(n < MAX_SNAPSHOT_WITH_SOUNDS + 3000, "tamanho {n}");
+        assert_eq!(check_structure(&big).is_ok(), n <= MAX_SNAPSHOT_WITH_SOUNDS);
+        println!("snapshot de 48 membros + 50 sons: {n} bytes");
     }
 }

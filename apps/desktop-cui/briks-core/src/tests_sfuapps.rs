@@ -72,7 +72,7 @@ async fn sfu_typing_group_history_volume_and_files_over_the_data_layer() {
     let mk = |by: &Identity, name: &str| {
         let mut s = Snapshot { v: 1, group_id: "g1".into(), name: name.into(), owner_fp: a.fp.clone(), version: 1, ts: 1,
             members: vec![mem(&a.id, "Ana", true), mem(&b.id, "Beto", true)],
-            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], signer_fp: String::new(), signature: String::new() };
+            channels: vec![Channel { id: "c1".into(), name: "geral".into(), kind: "text".into() }], sounds: vec![], signer_fp: String::new(), signature: String::new() };
         crate::group_sync::sign(by, &mut s).unwrap();
         s
     };

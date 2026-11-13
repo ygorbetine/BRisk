@@ -1,0 +1,64 @@
+# 1.5 (SON-01..06): painel de sons na chamada. Sem rede nem som: itens locais de mentira (sons seed), eventos do core injetados (coreev) e checagem dos estados.
+waitms 800
+sons seed
+expect sons_count 6
+expect sons_panel 0
+snap k0
+mclick 1082 787
+waitms 600
+expect sons_panel 1
+snap k1
+# botao direito seleciona (opcoes do som) e a barra de opcoes aparece sem mexer no tamanho do painel
+sons sel 0
+waitms 500
+snap k2
+# fora de chamada o clique em um som nao toca (a nota explica); `expect sons_started 0` garante que nada foi disparado
+expect sons_started 0
+# um som que chega pela rede toca neste aparelho (evento do core), e ensurdecido nao toca
+coreev {"ev":"sound.play","hash":"0000000000000000000000000000000000000000000000000000000000000001","from_fp":"fp-x","name":"Buzina","self":false}
+waitms 300
+# o core responde com o caminho do arquivo (sound.path) e a reproducao comeca
+coreev {"ev":"sound.path","hash":"0000000000000000000000000000000000000000000000000000000000000001","path":"nao-existe.wav"}
+waitms 300
+expect sons_started 1
+# preferencias vindas do core
+coreev {"ev":"sound.list","items":[],"prefs":{"volume":40,"all_muted":true,"cooldown_ms":5000,"muted":[]}}
+waitms 300
+expect sons_volume 40
+expect sons_all_muted 1
+expect sons_cooldown 5000
+expect sons_count 0
+snap k3
+# arquivo que falta e esta baixando
+coreev {"ev":"sound.list","items":[{"hash":"00000000000000000000000000000000000000000000000000000000000000aa","name":"Remoto","emoji":"","scope":"me","by":"x","size":1000,"dur_ms":900,"fmt":"wav","have":false}],"prefs":{"volume":40,"all_muted":false,"cooldown_ms":3000,"muted":[]}}
+coreev {"ev":"sound.fetching","hash":"00000000000000000000000000000000000000000000000000000000000000aa"}
+waitms 300
+expect sons_missing 1
+expect sons_fetching 1
+snap k4
+coreev {"ev":"sound.got","hash":"00000000000000000000000000000000000000000000000000000000000000aa"}
+waitms 200
+expect sons_fetching 0
+# mini editor: carrega um audio de 16,5 s, o recorte padrao fica em 15 s (maximo), a janela de recorte e o volume mudam o que sai
+sons add {ASSETS}/som-teste.wav
+waitms 600
+expect sons_add_dialog 1
+expect sons_ed_loaded 1
+expect sons_ed_dur_ms 16500
+expect sons_ed_clip_ms 15000
+snap k5
+sons trim 2000 6000
+sons vol 60
+waitms 300
+expect sons_ed_clip_ms 4000
+snap k6
+sons ack
+waitms 300
+# OGG: o core decodifica (Vorbis embutido) e devolve um WAV temporario; o editor abre esse WAV e mostra o nome do arquivo OGG
+sons add C:/nao-existe/som.ogg
+waitms 300
+expect sons_ed_loaded 0
+sons oggdone {ASSETS}/som-teste.wav
+waitms 400
+expect sons_ed_loaded 1
+expect sons_ed_dur_ms 16500

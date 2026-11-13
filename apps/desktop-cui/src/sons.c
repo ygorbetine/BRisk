@@ -734,7 +734,10 @@ static void pump(app_state_t *s) {
     }
     if (g_vol_dirty && GetTickCount64() - g_vol_at > 250) { g_vol_dirty = false; send_prefs(NULL); }
     if (!s->in_room) { if (g_roster_room[0]) { g_roster_room[0] = 0; g_room_gid[0] = 0; core_send("{\"cmd\":\"sound.roster\",\"fps\":[]}"); sons_stop_all(); } return; }
-    if (strcmp(g_roster_room, s->room_name)) {   /* sala nova: quem pode disparar aqui = membros do grupo dono da sala (vazio = sem restrição) */
+    /* assinatura da lista de grupos/canais/membros: se a chamada começou antes dos grupos carregarem, o dono da sala é descoberto assim que eles chegam */
+    unsigned gsig = (unsigned)s->group_count * 1000003u; for (int i = 0; i < s->group_count; i++) gsig = gsig * 31u + (unsigned)s->groups[i].nch * 131u + (unsigned)s->groups[i].nm;
+    static unsigned g_gsig; const bool regroup = gsig != g_gsig && !g_room_gid[0]; g_gsig = gsig;
+    if (strcmp(g_roster_room, s->room_name) || regroup) {   /* sala nova (ou grupos que chegaram depois): quem pode disparar aqui = membros do grupo dono da sala (vazio = sem restrição) */
         snprintf(g_roster_room, sizeof g_roster_room, "%s", s->room_name);
         char *fps = groups_room_roster(s, s->room_name, g_room_gid, sizeof g_room_gid);
         if (!fps) g_room_gid[0] = 0;

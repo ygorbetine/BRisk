@@ -98,7 +98,7 @@ static void quality_chip(const share_state_t *q, char *out, size_t cap) {
 }
 
 /* ---------- quadro compartilhado -> textura ---------- */
-typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; int want; unsigned char *ds; size_t dscap; int sw, sh, kused, blur; unsigned char cells[24 * 14 * 4]; int ccw, cch; } fview_t;   /* want: largura (px) em que a imagem aparece; ds: quadro reduzido; sw/sh: tamanho do quadro de origem */
+typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; int want; unsigned char *ds; size_t dscap; int sw, sh, kused, blur; unsigned char cells[40 * 23 * 4]; int ccw, cch; } fview_t;   /* want: largura (px) em que a imagem aparece; ds: quadro reduzido; sw/sh: tamanho do quadro de origem */
 #define FV_N (BRIKS_MAX_PEERS + 1)
 #define FV2(i) (FV_N + (i))   /* a 2ª tela de cada um fica na segunda metade */
 static fview_t g_fv[2 * FV_N];   /* 0..MAX-1 = slots de rtc_peers; MAX = prévia local; depois o mesmo para a 2ª tela */
@@ -186,12 +186,12 @@ static bool fv_update(cui_ctx *ui, app_state_t *s, fview_t *v, const char *path)
         if (v->dscap < need) { free(v->ds); v->ds = (unsigned char *)malloc(need); v->dscap = v->ds ? need : 0; }
         if (v->ds) { if (pix != v->ds) memcpy(v->ds, pix, need); pix = v->ds; blur_rgba(v->ds, ow, oh, 3, 3); }
     }
-    if (v->blur) {   /* mosaico: cor media de cada celula 24x14 (a thumb ja esta pequena) */
-        v->ccw = 24; v->cch = 14;
-        for (int cy = 0; cy < 14; cy++) for (int cx = 0; cx < 24; cx++) {
-            const int x0 = cx * ow / 24, x1 = (cx + 1) * ow / 24, y0 = cy * oh / 14, y1 = (cy + 1) * oh / 14; unsigned sum[3] = { 0, 0, 0 }, cnt = 0;
+    if (v->blur) {   /* mosaico: cor media de cada celula 40x23 (a thumb ja esta pequena) */
+        v->ccw = 40; v->cch = 23;
+        for (int cy = 0; cy < 23; cy++) for (int cx = 0; cx < 40; cx++) {
+            const int x0 = cx * ow / 40, x1 = (cx + 1) * ow / 40, y0 = cy * oh / 23, y1 = (cy + 1) * oh / 23; unsigned sum[3] = { 0, 0, 0 }, cnt = 0;
             for (int y = y0; y < (y1 > y0 ? y1 : y0 + 1) && y < oh; y++) for (int x = x0; x < (x1 > x0 ? x1 : x0 + 1) && x < ow; x++) { const unsigned char *q = pix + ((size_t)y * (size_t)ow + (size_t)x) * 4; sum[0] += q[0]; sum[1] += q[1]; sum[2] += q[2]; cnt++; }
-            unsigned char *d = v->cells + ((size_t)cy * 24 + (size_t)cx) * 4; if (!cnt) cnt = 1; d[0] = (unsigned char)(sum[0] / cnt); d[1] = (unsigned char)(sum[1] / cnt); d[2] = (unsigned char)(sum[2] / cnt); d[3] = 255;
+            unsigned char *d = v->cells + ((size_t)cy * 40 + (size_t)cx) * 4; if (!cnt) cnt = 1; d[0] = (unsigned char)(sum[0] / cnt); d[1] = (unsigned char)(sum[1] / cnt); d[2] = (unsigned char)(sum[2] / cnt); d[3] = 255;
         }
     }
     if (v->tex && ow == v->w && oh == v->h && gl) {
@@ -456,6 +456,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
 static void demo_frame(char *path, size_t cap, const char *name, int W, int H, int tint) {
     const char *tmp = getenv("TEMP");
     snprintf(path, cap, "%s\\briks-demo-%s-%lu.bin", tmp ? tmp : ".", name, (unsigned long)GetCurrentProcessId());
+    { const char *own = getenv("BRIKS_DEMO_FRAME"); if (own && own[0] && CopyFileA(own, path, FALSE)) return; }   /* captura de teste: quadro real (arquivo BKFR) no lugar da grade sintética */
     FILE *f = fopen(path, "wb"); if (!f) return;
     unsigned char hd[64] = { 'B', 'K', 'F', 'R' }; unsigned long long n = 1;
     memcpy(hd + 8, &W, 4); memcpy(hd + 12, &H, 4); memcpy(hd + 16, &n, 8); fwrite(hd, 1, 64, f);

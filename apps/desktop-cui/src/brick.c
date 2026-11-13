@@ -99,27 +99,45 @@ static bool inside_round(float x, float y, cui_rect r, float rad) {   /* o ponto
     const float cx = x < r.x + rad ? r.x + rad : x > r.x + r.w - rad ? r.x + r.w - rad : x, cy = y < r.y + rad ? r.y + rad : y > r.y + r.h - rad ? r.y + r.h - rad : y;
     return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rad * rad;
 }
+static unsigned hash2(unsigned a, unsigned b) { unsigned h = a * 73856093u ^ b * 19349663u; h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15; return h; }
 static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
-    /* parede de tijolos: tijolos 2:1 em fileiras deslocadas meio tijolo (aparelho comum), junta escura entre eles; a cor de cada tijolo é a média da tela
-     * sob ele, com uma variação leve por tijolo (como lotes de queima diferentes) e um brilho fino na face de cima */
+    /* Lego visto de cima: peças de 1x1 a 2x4 encaixadas sem lacunas, pinos redondos; a cor de cada peça é a média da versão pixelada (cells) da tela sob ela */
     const mos_t *m = (const mos_t *)user; if (!m->cells) return;
-    int rows = (int)(r.h / 24.0f + 0.5f); if (rows < 5) rows = 5; const float bh = r.h / (float)rows, bw = bh * 2.2f; const int cols = (int)ceilf(r.w / bw) + 1;
-    for (int y = 0; y < rows; y++) {
-        const float off = (y & 1) ? -bw * 0.5f : 0.0f;
-        for (int x = 0; x < cols; x++) {
-            cui_rect c = { r.x + off + (float)x * bw + 1.0f, r.y + (float)y * bh + 1.0f, bw - 2.0f, bh - 2.0f };
-            if (c.x < r.x) { c.w -= r.x - c.x; c.x = r.x; }
-            if (c.x + c.w > r.x + r.w) c.w = r.x + r.w - c.x;
-            if (c.w < 6.0f) continue;
-            if (!inside_round(c.x, c.y, r, (float)m->radius) || !inside_round(c.x + c.w, c.y, r, (float)m->radius) || !inside_round(c.x, c.y + c.h, r, (float)m->radius) || !inside_round(c.x + c.w, c.y + c.h, r, (float)m->radius)) continue;   /* nada vaza pelos cantos redondos */
-            const int sx = (int)(((c.x - r.x + c.w * 0.5f) / r.w) * (float)m->cw), sy = (int)(((c.y - r.y + c.h * 0.5f) / r.h) * (float)m->ch);
-            const unsigned char *p = m->cells + ((size_t)(sy < 0 ? 0 : sy >= m->ch ? m->ch - 1 : sy) * (size_t)m->cw + (size_t)(sx < 0 ? 0 : sx >= m->cw ? m->cw - 1 : sx)) * 4;
-            const unsigned h = (unsigned)(x * 73856093u) ^ (unsigned)(y * 19349663u); const float v = 0.82f + (float)(h % 21u) / 100.0f;   /* 0.82..1.02 */
-            cui_color base; base.r = (unsigned char)fminf(255.0f, 40.0f + p[0] * 0.55f * v); base.g = (unsigned char)fminf(255.0f, 28.0f + p[1] * 0.5f * v); base.b = (unsigned char)fminf(255.0f, 46.0f + p[2] * 0.6f * v); base.a = 255;
-            /* por cima da imagem desfocada: cada tijolo so tinge levemente a regiao dele e a junta escurece; o desfoque continua sendo a imagem congelada */
-            cui_color fill = base; fill.a = 46; cui_color edge = shade(base, 0.45f); edge.a = 120;
-            cui_draw_rect_border(ui, c, CUI_CORNERS(2), fill, edge, 1.0f);
-            cui_color hi = shade(base, 1.5f); hi.a = 70; cui_draw_rect(ui, (cui_rect){ c.x + 1.0f, c.y + 1.0f, c.w - 2.0f, 1.2f }, CUI_CORNERS(1), hi);
+    float u = r.w / 34.0f; if (u < 14.0f) u = 14.0f; if (u > 30.0f) u = 30.0f;
+    int cols = (int)ceilf(r.w / u), rows = (int)ceilf(r.h / u); if (cols > 96) cols = 96; if (rows > 64) rows = 64;
+    static unsigned char used[64][96]; memset(used, 0, sizeof used);
+    static const int SZ[][2] = { {2,1},{2,1},{1,1},{2,2},{2,2},{3,1},{4,1},{2,3},{1,2},{3,2},{4,2} }; const int NS = (int)(sizeof SZ / sizeof SZ[0]);
+    for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) {
+        if (used[y][x]) continue;
+        int w = 1, h = 1; const unsigned h0 = hash2((unsigned)x, (unsigned)y);
+        for (int k = 0; k < NS; k++) {
+            const int *s2 = SZ[(h0 + (unsigned)k) % (unsigned)NS]; bool ok = x + s2[0] <= cols && y + s2[1] <= rows;
+            for (int j = 0; ok && j < s2[1]; j++) for (int i = 0; i < s2[0]; i++) if (used[y + j][x + i]) { ok = false; break; }
+            if (ok) { w = s2[0]; h = s2[1]; break; }
+        }
+        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) used[y + j][x + i] = 1;
+        cui_rect c = { r.x + (float)x * u, r.y + (float)y * u, (float)w * u, (float)h * u };
+        if (c.x + c.w > r.x + r.w) c.w = r.x + r.w - c.x;
+        if (c.y + c.h > r.y + r.h) c.h = r.y + r.h - c.y;
+        if (c.w < u * 0.6f || c.h < u * 0.6f) continue;
+        if (!inside_round(c.x, c.y, r, (float)m->radius) || !inside_round(c.x + c.w, c.y, r, (float)m->radius) || !inside_round(c.x, c.y + c.h, r, (float)m->radius) || !inside_round(c.x + c.w, c.y + c.h, r, (float)m->radius)) continue;   /* nada vaza pelos cantos redondos */
+        /* média das células cobertas pela peça */
+        const int sx0 = (int)((c.x - r.x) / r.w * (float)m->cw), sx1 = (int)((c.x + c.w - r.x) / r.w * (float)m->cw), sy0 = (int)((c.y - r.y) / r.h * (float)m->ch), sy1 = (int)((c.y + c.h - r.y) / r.h * (float)m->ch);
+        unsigned sum[3] = { 0, 0, 0 }, cnt = 0;
+        for (int yy = sy0; yy <= (sy1 > sy0 ? sy1 - 1 : sy0); yy++) for (int xx = sx0; xx <= (sx1 > sx0 ? sx1 - 1 : sx0); xx++) {
+            const int cx = xx < 0 ? 0 : xx >= m->cw ? m->cw - 1 : xx, cy = yy < 0 ? 0 : yy >= m->ch ? m->ch - 1 : yy; const unsigned char *p = m->cells + ((size_t)cy * (size_t)m->cw + (size_t)cx) * 4;
+            sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; cnt++;
+        }
+        if (!cnt) cnt = 1;
+        cui_color base; base.r = (unsigned char)fminf(255.0f, 24.0f + (float)(sum[0] / cnt) * 1.25f); base.g = (unsigned char)fminf(255.0f, 20.0f + (float)(sum[1] / cnt) * 1.2f); base.b = (unsigned char)fminf(255.0f, 30.0f + (float)(sum[2] / cnt) * 1.3f); base.a = 215;
+        cui_color edge = shade(base, 0.55f); edge.a = 230;
+        cui_draw_rect_border(ui, c, CUI_CORNERS(2), base, edge, 1.0f);
+        const float sr = u * 0.31f;
+        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) {
+            const float cx = c.x + ((float)i + 0.5f) * u, cy = c.y + ((float)j + 0.5f) * u; if (cx + sr > c.x + c.w || cy + sr > c.y + c.h) continue;
+            cui_color sh = shade(base, 0.6f); sh.a = 200; cui_draw_rect(ui, (cui_rect){ cx - sr + 1.5f, cy - sr + 2.0f, sr * 2, sr * 2 }, CUI_CORNERS(sr), sh);
+            cui_color top = shade(base, 1.1f); top.a = 235; cui_draw_rect_border(ui, (cui_rect){ cx - sr, cy - sr, sr * 2, sr * 2 }, CUI_CORNERS(sr), top, shade(base, 0.72f), 1.0f);
+            cui_color hi = shade(base, 1.45f); hi.a = 170; cui_draw_rect(ui, (cui_rect){ cx - sr * 0.55f, cy - sr * 0.65f, sr * 0.7f, sr * 0.55f }, CUI_CORNERS(sr * 0.3f), hi);
         }
     }
 }

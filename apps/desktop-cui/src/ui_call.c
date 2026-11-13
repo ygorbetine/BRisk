@@ -180,9 +180,12 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
         if (t->live && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
             const unsigned char *cells = NULL; int mcw = 0, mch = 0;
-            cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih)) {
-                cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);   /* imagem congelada, desfocada */
-                if (brick_on() && share_thumb_cells(t->slot, &cells, &mcw, &mch)) brick_mosaic(ui, t->slot, cells, mcw, mch, iw, ih, rr);   /* a parede de tijolos guia o desfoque, por cima */
+            /* proporção da transmissão: parte da LARGURA do bloco (altura proporcional, centrada); se isso passar da altura do bloco, encolhe até caber (sem esticar e sem cortar, o que deixaria cantos quadrados vazando) */
+            const float ar = (tw > 0 && thh > 0) ? (float)thh / (float)tw : ih / iw; float mw = iw, mh = floorf(iw * ar); if (mh > ih) { mh = ih; mw = floorf(ih / ar); }
+            const int mr = (mw >= iw - 0.5f && mh >= ih - 0.5f) ? rr : 0;
+            cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                cui_image(ui, th, .width = CUI_PX(mw), .height = CUI_PX(mh), .radius = mr);   /* imagem congelada, desfocada, sem esticar */
+                if (brick_on() && share_thumb_cells(t->slot, &cells, &mcw, &mch)) brick_mosaic(ui, t->slot, cells, mcw, mch, mw, mh, mr);   /* a parede de tijolos cobre a mesma área da imagem */
                 cui_box(ui, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr, .bg = CUI_RGBA(0x1a0a2680)) {}
             }
         }

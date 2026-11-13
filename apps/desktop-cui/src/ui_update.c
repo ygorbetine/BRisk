@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.13", {
+        "Transmissão desfocada: a imagem não fica mais esticada, mantém a proporção da tela.",
+        "Tijolos viraram peças de Lego de vários tamanhos, com as cores acompanhando a imagem da transmissão (também na sua tela).",
+        NULL } },
     { "1.5.12", {
         "Chamada: novo botão de configurações no cabeçalho da chamada.",
         "Tijolos da transmissão menores, e agora também aparecem na sua própria tela.",

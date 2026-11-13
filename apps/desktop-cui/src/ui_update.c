@@ -20,6 +20,11 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.6", {
+        "Transmissão: a miniatura de quem transmite, no modo Call, agora fica realmente desfocada (antes aparecia nítida).",
+        "Transmissão: o som de uma transmissão só sai quando você está na aba Transmissão; na miniatura, na thumb e no overlay ela fica muda.",
+        "Amigos online: quem fecha o Briks some da lista na hora, e a lista de amigos online é atualizada a cada 15 segundos.",
+        NULL } },
     { "1.5.5", {
         "Transmissão: corrigido o caso em que a transmissão de um amigo só aparecia depois de ele parar e retomar. Quando o aviso de que ele transmite chega antes de o Briks terminar de registrá-lo na chamada, o aviso agora fica guardado e vale assim que ele aparece.",
         NULL } },

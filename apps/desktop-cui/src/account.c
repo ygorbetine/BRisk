@@ -448,7 +448,10 @@ void account_presence_tick(app_state_t *s) {
     if (core_state() != CORE_READY || !s->acct_user_id[0] || s->acct_demo) { last = 0; who[0] = 0; return; }
     const ULONGLONG now = GetTickCount64();
     const bool changed = strcmp(who, s->acct_user_id) != 0 || inv_sent != s->invisible;
+    static ULONGLONG last_list;   /* só a lista de amigos (sem batimento): a cada 15 s, para "ficou online/offline" aparecer logo e não só no próximo batimento */
+    if (!changed && s->pres_remote && last && now - last < 60000 && now - last_list >= 15000) { last_list = now; core_send("{\"cmd\":\"presence.friends\"}"); return; }
     if (!changed && last && now - last < 60000) return;
+    last_list = now;
     if (!changed && !s->pres_remote && last && now - last < 300000) return;   /* servidor sem a 0007: só tenta de novo a cada 5 min */
     last = now; inv_sent = s->invisible; copy(who, sizeof who, s->acct_user_id);
     char line[96]; snprintf(line, sizeof line, "{\"cmd\":\"presence.beat\",\"invisible\":%s}", s->invisible ? "true" : "false");

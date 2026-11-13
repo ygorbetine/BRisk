@@ -238,6 +238,7 @@ int main(void) {
     briks_glass_shutdown();
     sys_before_destroy(&state);   /* grava a janela e tira o ícone da bandeja */
     cui_app_destroy(app);
+    if (state.acct_user_id[0] && !state.acct_demo && core_state() == CORE_READY) { core_send("{\"cmd\":\"presence.clear\"}"); Sleep(700); }   /* fechou o app: some da lista dos amigos já, em vez de esperar os 2 min do batimento */
     sons_shutdown();
     core_stop();
     bk_stop();

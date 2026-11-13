@@ -26,12 +26,7 @@ float *share_remote_volume(app_state_t *s, int i) {
     if (!s->sh.remote[i].vol_set) { s->sh.remote[i].vol_set = true; s->sh.remote[i].volume = 1.0f; }
     return &s->sh.remote[i].volume;
 }
-void share_remote_volume_changed(app_state_t *s, int i) {
-    if (i < 0 || i >= BRIKS_MAX_PEERS) return;
-    char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
-    snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, s->sh.remote[i].volume);
-    core_state() == CORE_READY ? (void)core_send(line) : (void)0;
-}
+void share_remote_volume_changed(app_state_t *s, int i) { (void)s; (void)i; }   /* o share_tick envia o ganho certo (zero fora da aba Transmissão) */
 
 /* zoom de quem assiste, por transmissão (zerado = encaixada), e o aviso "X começou a transmitir · Assistir" */
 static share_aspect_t g_aspect[2 * (BRIKS_MAX_PEERS + 1)];   /* razão de aspecto suavizada de cada tile (mesmo índice de g_fv) */
@@ -103,7 +98,7 @@ static void quality_chip(const share_state_t *q, char *out, size_t cap) {
 }
 
 /* ---------- quadro compartilhado -> textura ---------- */
-typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; int want; unsigned char *ds; size_t dscap; int sw, sh, kused; } fview_t;   /* want: largura (px) em que a imagem aparece; ds: quadro reduzido; sw/sh: tamanho do quadro de origem */
+typedef struct { char path[300]; HANDLE file, map; const unsigned char *p; unsigned long long n; cui_texture tex; int w, h; double last; int want; unsigned char *ds; size_t dscap; int sw, sh, kused, blur; } fview_t;   /* want: largura (px) em que a imagem aparece; ds: quadro reduzido; sw/sh: tamanho do quadro de origem */
 #define FV_N (BRIKS_MAX_PEERS + 1)
 #define FV2(i) (FV_N + (i))   /* a 2ª tela de cada um fica na segunda metade */
 static fview_t g_fv[2 * FV_N];   /* 0..MAX-1 = slots de rtc_peers; MAX = prévia local; depois o mesmo para a 2ª tela */
@@ -123,8 +118,40 @@ static void fv_close(fview_t *v) {
 }
 
 /* Abre (se preciso) e sobe o quadro mais novo. Devolve true se há textura para mostrar. */
+/* desfoque de caixa (separável, bordas repetidas) no quadro minúsculo da thumb: a imagem esticada ao bloco inteiro vira só cor e luz, sem formas legíveis */
+static void blur_rgba(unsigned char *p, int w, int h, int r, int passes) {
+    if (r < 1 || w < 2 || h < 2) return;
+    const int m = w > h ? w : h; unsigned char *tmp = (unsigned char *)malloc((size_t)m * 4); if (!tmp) return;
+    for (int ps = 0; ps < passes; ps++) {
+        for (int y = 0; y < h; y++) {   /* horizontal */
+            unsigned char *row = p + (size_t)y * w * 4;
+            for (int c = 0; c < 4; c++) {
+                int sum = 0; for (int k = -r; k <= r; k++) { int x = k < 0 ? 0 : k >= w ? w - 1 : k; sum += row[x * 4 + c]; }
+                for (int x = 0; x < w; x++) {
+                    tmp[x * 4 + c] = (unsigned char)(sum / (2 * r + 1));
+                    int a = x + r + 1; a = a >= w ? w - 1 : a; int b = x - r; b = b < 0 ? 0 : b;
+                    sum += row[a * 4 + c] - row[b * 4 + c];
+                }
+            }
+            memcpy(row, tmp, (size_t)w * 4);
+        }
+        for (int x = 0; x < w; x++) {   /* vertical */
+            for (int c = 0; c < 4; c++) {
+                int sum = 0; for (int k = -r; k <= r; k++) { int y = k < 0 ? 0 : k >= h ? h - 1 : k; sum += p[((size_t)y * w + x) * 4 + c]; }
+                for (int y = 0; y < h; y++) {
+                    tmp[y * 4 + c] = (unsigned char)(sum / (2 * r + 1));
+                    int a = y + r + 1; a = a >= h ? h - 1 : a; int b = y - r; b = b < 0 ? 0 : b;
+                    sum += p[((size_t)a * w + x) * 4 + c] - p[((size_t)b * w + x) * 4 + c];
+                }
+            }
+            for (int y = 0; y < h; y++) memcpy(p + ((size_t)y * w + x) * 4, tmp + y * 4, 4);
+        }
+    }
+    free(tmp);
+}
+
 static bool fv_update(cui_ctx *ui, app_state_t *s, fview_t *v, const char *path) {
-    if (strcmp(v->path, path)) { fv_close(v); copy(v->path, sizeof v->path, path); }
+    if (strcmp(v->path, path)) { const int kw = v->want, kb = v->blur; fv_close(v); v->want = kw; v->blur = kb; copy(v->path, sizeof v->path, path); }   /* o fechamento zera tudo: guarda a largura pedida e o desfoque */
     if (!v->p) {
         v->file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
         if (v->file == INVALID_HANDLE_VALUE) { v->file = NULL; return false; }
@@ -154,6 +181,11 @@ static bool fv_update(cui_ctx *ui, app_state_t *s, fview_t *v, const char *path)
         if (gi >= 0 && gi < 2 * FV_N && g_zoom[gi].zoom > 0) { const float f = (float)v->w / (float)ow; g_zoom[gi].zoom *= f; g_zoom[gi].cx /= f; g_zoom[gi].cy /= f; }
     }
     v->kused = k;
+    if (v->blur && (size_t)ow * (size_t)oh <= 256u * 256u) {   /* thumb do bloco: desfoca de verdade (a cópia vai para o buffer próprio: o arquivo mapeado é só leitura) */
+        const size_t need = (size_t)ow * (size_t)oh * 4;
+        if (v->dscap < need) { free(v->ds); v->ds = (unsigned char *)malloc(need); v->dscap = v->ds ? need : 0; }
+        if (v->ds) { if (pix != v->ds) memcpy(v->ds, pix, need); pix = v->ds; blur_rgba(v->ds, ow, oh, 3, 3); }
+    }
     if (v->tex && ow == v->w && oh == v->h && gl) {
         cui_renderer_iface r = cui_gl_iface(gl);
         r.texture_update(r.user, v->tex, 0, 0, ow, oh, pix, ow * 4);
@@ -515,7 +547,7 @@ bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w
     if (!g_thumb_req[slot]) { if (g_thumb_nreq >= 3) return false; g_thumb_req[slot] = true; g_thumb_nreq++; }
     const share_state_t *q = &s->sh;
     if (!(q->remote[slot].path[0] && q->remote[slot].watching && !q->remote[slot].stalled)) return false;
-    fview_t *v = &g_thumb[slot]; v->want = 40;   /* bem pequena: esticada ao bloco inteiro vira desfoque */
+    fview_t *v = &g_thumb[slot]; v->want = 40; v->blur = 1;   /* bem pequena: esticada ao bloco inteiro vira desfoque */
     const double now = cui_time(ui);
     if (!v->tex || now - v->last >= 10.0) {   /* thumb estática: um quadro novo a cada 10 s */ if (!fv_update(ui, s, v, q->remote[slot].path)) return false; }
     if (!v->tex || v->w <= 0) return false;
@@ -571,6 +603,19 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
             cmd(line);
             q->remote[i].watching = want;
             if (!want) { q->remote[i].has_frame = false; fv_close(&g_fv[i]); }
+        }
+        /* o SOM de uma transmissão só sai na aba Transmissão: a miniatura, o overlay e a thumb do bloco decodificam a imagem, mas ficam mudos */
+        {
+            static float sent[BRIKS_MAX_PEERS]; static double sent_at[BRIKS_MAX_PEERS]; static bool known[BRIKS_MAX_PEERS];
+            if (q->remote[i].watching && q->remote[i].audio) {
+                const float vol = q->remote[i].vol_set ? q->remote[i].volume : 1.0f, tgt = viewing ? vol : 0.0f;
+                const double now_s = (double)GetTickCount64() / 1000.0;
+                if (!known[i] || fabsf(tgt - sent[i]) > 0.004f || now_s - sent_at[i] > 2.0) {
+                    char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
+                    snprintf(line, sizeof line, "{\"cmd\":\"share.volume\",\"peer\":\"%s\",\"volume\":%.2f}", id, tgt);
+                    cmd(line); sent[i] = tgt; sent_at[i] = now_s; known[i] = true;
+                }
+            } else known[i] = false;
         }
     }
     /* capturas sem core (BRIKS_DEMO_PEERS): BRIKS_DEV_SHARE=demo-remote faz o 1º participante "começar a transmitir" (aviso);

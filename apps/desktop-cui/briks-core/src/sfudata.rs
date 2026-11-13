@@ -205,8 +205,23 @@ impl Layer {
         self.peers.remove(ident);
         self.rate.remove(ident);
         let mut out = vec![];
-        for slot in 0..2usize { if self.viewers[slot].remove(ident) { out.push(self.viewers_ev(slot)); } }   // quem saiu deixa de contar
+        for slot in 0..2usize { if self.viewers[slot].remove(ident) { out.extend(self.viewers_outs(slot)); } }   // quem saiu deixa de contar
         out
+    }
+
+    /// Contagem mudou: avisa a minha UI e divulga à sala (`share.audience`: quantos e quem, até 3 nomes) para todos verem o olhinho.
+    fn viewers_outs(&self, slot: usize) -> Vec<Out> {
+        let mut out = vec![self.viewers_ev(slot)];
+        let to: Vec<String> = self.peers.keys().cloned().collect();
+        if !to.is_empty() { out.push(Out::Send { to, msg: self.audience_msg(slot) }); }
+        out
+    }
+
+    /// Mensagem de divulgação da audiência de uma das minhas telas. Pares antigos ignoram o tipo desconhecido (sem dado = sem olhinho).
+    fn audience_msg(&self, slot: usize) -> Value {
+        let mut names: Vec<String> = self.viewers[slot].iter().filter_map(|i| self.peers.get(i).map(|p| short(&p.name, 64))).collect(); names.sort();
+        names.truncate(3);
+        json!({ "v": 1, "t": "share.audience", "slot": slot, "count": self.viewers[slot].len(), "names": names })
     }
 
     fn viewers_ev(&self, slot: usize) -> Out {
@@ -224,7 +239,7 @@ impl Layer {
     pub fn clear_viewers(&mut self, slot: usize) -> Vec<Out> {
         if slot > 1 || self.viewers[slot].is_empty() { return vec![]; }
         self.viewers[slot].clear();
-        vec![self.viewers_ev(slot)]
+        self.viewers_outs(slot)
     }
 
     /// Chamado a cada ~2 s: reenvia hello a quem ainda não respondeu, reenvia chat sem ack e promove os que nunca fizeram hello.
@@ -357,7 +372,13 @@ impl Layer {
             "share.viewing" => {   // um participante começou/parou de assistir à minha tela (só de quem fez hello)
                 let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
                 let changed = if v["on"].as_bool().unwrap_or(false) { self.viewers[slot].insert(from.to_string()) } else { self.viewers[slot].remove(from) };
-                if changed { vec![self.viewers_ev(slot)] } else { vec![] }
+                if changed { self.viewers_outs(slot) } else { vec![] }
+            }
+            "share.audience" => {   // um participante divulga quantos assistem à tela dele (só de quem fez hello); dado inválido é ignorado
+                let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
+                let Some(count) = v["count"].as_u64() else { return vec![] };
+                let names: Vec<String> = v["names"].as_array().map(|a| a.iter().filter_map(|n| n.as_str()).map(|n| short(&n.chars().filter(|c| !c.is_control()).collect::<String>(), 64)).filter(|n| !n.is_empty()).take(3).collect()).unwrap_or_default();
+                vec![Out::Ev(MeshEvent::Share(json!({ "ev": "share.audience", "peer_id": from, "slot": slot, "count": count.min(9999), "names": names })))]
             }
             "sound.play" | "sound.want" | "sound.data" | "sound.none" => {
                 let o = self.sons.on_msg(&crate::sonsnet::PeerRef { key: from, fp: &fp, jwk: &jwk }, t, &v, now_ms() as u64);
@@ -441,6 +462,7 @@ impl Layer {
         if v["ack"] != true { out.extend(self.greet(from)); }
         out.extend(self.flush(&fp));
         out.extend(self.request_history(from, &fp));
+        for slot in 0..2usize { if !self.viewers[slot].is_empty() { out.push(Out::Send { to: vec![from.to_string()], msg: self.audience_msg(slot) }); } }   // quem chega agora já vê o olhinho
         out
     }
 
@@ -618,6 +640,38 @@ mod t {
         // desconhecido (sem hello) não conta nem recebe aviso
         assert!(a.viewing_out("idz", 0, true).is_empty());
         assert!(viewers(&a.on_packet("idz", &bytes(&m2))).is_none());
+    }
+
+    #[test]
+    fn audience_is_broadcast_to_the_room_and_old_peers_stay_hidden() {
+        let (mut a, mut b) = pair();
+        let mut c = layer("Cris", "idc", None, 3);
+        let hc = c.hello(); a.on_packet("idc", &bytes(&hc)); c.on_packet("ida", &bytes(&a.hello()));
+        // B assiste: A divulga a todos os autenticados (B e C) a contagem e o nome
+        let msgs = sends(&b.viewing_out("ida", 0, true));
+        let outs = a.on_packet("idb", &bytes(&msgs[0]));
+        let aud: Vec<(Vec<String>, Value)> = outs.iter().filter_map(|o| match o { Out::Send { to, msg } if msg["t"] == "share.audience" => Some((to.clone(), msg.clone())), _ => None }).collect();
+        assert_eq!(aud.len(), 1);
+        let mut to = aud[0].0.clone(); to.sort();
+        assert_eq!(to, vec!["idb".to_string(), "idc".to_string()]);
+        assert_eq!((aud[0].1["count"].as_u64(), aud[0].1["slot"].as_u64(), aud[0].1["names"][0].as_str()), (Some(1), Some(0), Some("Beto")));
+        // C (que não assiste) recebe e mostra; autor = quem mandou (identidade carimbada)
+        let ev = |o: &[Out]| o.iter().filter_map(|x| match x { Out::Ev(MeshEvent::Share(v)) if v["ev"] == "share.audience" => Some(v.clone()), _ => None }).last();
+        let got = ev(&c.on_packet("ida", &bytes(&aud[0].1))).expect("C vê o olhinho");
+        assert_eq!((got["peer_id"].as_str(), got["count"].as_u64(), got["names"][0].as_str()), (Some("ida"), Some(1), Some("Beto")));
+        // quem chega depois (D) já recebe a audiência atual no hello
+        let mut d = layer("Dani", "idd", None, 4);
+        let outs = a.on_packet("idd", &bytes(&d.hello()));
+        assert!(outs.iter().any(|o| matches!(o, Out::Send { to, msg } if to == &vec!["idd".to_string()] && msg["t"] == "share.audience" && msg["count"] == 1)));
+        let _ = d.on_packet("ida", &bytes(&a.hello()));
+        // lixo / sem hello / contagem ausente: ignorado sem erro
+        assert!(ev(&c.on_packet("ida", &bytes(&json!({ "v": 1, "t": "share.audience", "slot": 0 })))).is_none());
+        assert!(ev(&c.on_packet("idz", &bytes(&aud[0].1))).is_none());
+        let huge = ev(&c.on_packet("ida", &bytes(&json!({ "v": 1, "t": "share.audience", "slot": 7, "count": 99999999u64, "names": ["a", "b", "c", "d", 5] })))).unwrap();
+        assert_eq!((huge["slot"].as_u64(), huge["count"].as_u64(), huge["names"].as_array().unwrap().len()), (Some(1), Some(9999), 3));
+        // parar de transmitir divulga 0 à sala
+        let cl = a.clear_viewers(0);
+        assert!(cl.iter().any(|o| matches!(o, Out::Send { msg, .. } if msg["t"] == "share.audience" && msg["count"] == 0)));
     }
 
     #[test]

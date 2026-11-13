@@ -222,3 +222,46 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
     drop(srv);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Primeiro evento `Share` do log de `c` (guardado como JSON) que satisfaz `pred`; espera ate `secs` segundos.
+async fn wait_share_json(c: &C, secs: u64, pred: impl Fn(&serde_json::Value) -> bool) -> Option<serde_json::Value> {
+    let end = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < end {
+        let hit = c.log.lock().unwrap().iter().filter(|s| s.starts_with('{')).filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok()).find(|v| pred(v));
+        if hit.is_some() { return hit; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    None
+}
+
+/// A contagem de espectadores chega a TODOS pela camada de dados do SFU: D nao assiste, mas ve o olhinho de A (1 -> 2 -> 0 ao parar).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_everyone_sees_how_many_watch_a_share() {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    let Some(_srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN nao definido"); return };
+    std::env::set_var("BRIKS_ENCODER", "openh264");
+    std::env::set_var("BRIKS_DECODER", "openh264");
+    let room = format!("aud-{}", uuid::Uuid::new_v4().simple());
+    let a = client(&room, A, "Ana", 1000, 3600).await;
+    let b = client(&room, B, "Beto", 1001, 3600).await;
+    let d = client(&room, D, "Duda", 1002, 3600).await;
+    let cs = [&a, &b, &d];
+    for c in cs { for o in cs { if c.ident != o.ident { assert!(c.wait(30, &format!("info:{}:{}", o.ident, o.fp)).await, "{} nao autenticou {}", c.ident, o.ident); } } }
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::TestMotion, height: 360, fps: 15, kbps: 0, label: "V".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false }, preview: None, dump: None }).await.unwrap();
+    assert!(b.wait(25, r#""state":"on""#).await && d.wait(25, r#""state":"on""#).await, "B e D nao souberam da transmissao");
+    let dir = std::env::temp_dir().join(format!("briks-sfuaud-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    b.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: dir.join("b.bin") }).await.unwrap();
+    assert!(wait_share_json(&a, 20, |v| v["ev"] == "share.viewers" && v["count"] == 1).await.is_some(), "A nao contou o B");
+    // D nao assiste, mas sabe: 1 espectador, "Beto"
+    let v = wait_share_json(&d, 20, |v| v["ev"] == "share.audience" && v["count"] == 1).await.expect("D nao viu o olhinho do A");
+    assert_eq!((v["peer_id"].as_str(), v["slot"].as_u64(), v["names"][0].as_str()), (Some(A), Some(0), Some("Beto")));
+    d.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: dir.join("d.bin") }).await.unwrap();
+    let v = wait_share_json(&b, 20, |v| v["ev"] == "share.audience" && v["count"] == 2).await.expect("B nao viu 2 espectadores");
+    assert_eq!(v["names"].as_array().unwrap().len(), 2);
+    a.cmd.send(MeshCmd::ShareStop).await.unwrap();
+    assert!(wait_share_json(&d, 20, |v| v["ev"] == "share.audience" && v["count"] == 0).await.is_some(), "parou: 0");
+    for c in cs { let _ = c.cmd.send(MeshCmd::Close).await; }
+    let _ = std::fs::remove_dir_all(&dir);
+}

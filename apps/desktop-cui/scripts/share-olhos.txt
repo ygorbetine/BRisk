@@ -1,0 +1,16 @@
+# Olhinho dos OUTROS: cada pessoa que transmite divulga a contagem; todos veem no bloco (aba Transmissao) e no rotulo (aba Call).
+# 1a pessoa: tela 1 com 4 e tela 2 com 1; 2a pessoa: zero; 3a pessoa: sem dado (cliente antigo) = oculto
+waitms 1500
+expect share_mode 1
+expect paud00 4
+expect paud01 1
+expect paud10 0
+expect paud20 -1
+shot olhos-1-transmissao
+at 520 330
+waitms 700
+shot olhos-2-transmissao-tooltip
+click 563 74
+waitms 700
+expect share_mode 0
+shot olhos-3-call

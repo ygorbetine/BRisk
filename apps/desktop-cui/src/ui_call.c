@@ -237,11 +237,20 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 else if (sm) snprintf(lab, sizeof lab, "%.22s", t->name);
                 else snprintf(lab, sizeof lab, "%s%s", t->name, t->by_me ? " (silenciado por você)" : "");
                 cui_text(ui, lab, .size = ts, .nowrap = true);
-                if (t->me && t->live && !sm && g_tile_s && g_tile_s->sh.vknown[0]) {   /* olhinho: quantos assistem a minha transmissão (como na aba Transmissão) */
-                    cui_box(ui, .id = "eyec", .dir = CUI_ROW, .gap = 4, .pad_left = 8, .pad_right = 6, .pad_y = 2, .radius = 10, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER) {
-                        cui_icon(ui, CUI_ICON_EYE, 13, B_C3); cui_textf(ui, "%d", g_tile_s->sh.viewers[0]);
+                if (t->live && !sm && g_tile_s) {   /* olhinho: quantos assistem à transmissão (a minha: do core; a dos outros: o que eles divulgaram à sala; sem dado = oculto) */
+                    int c0 = 0, c1 = 0; char tip0[200] = "", tip1[200] = ""; bool k0 = false, k1 = false;
+                    if (t->me) { k0 = g_tile_s->sh.vknown[0]; c0 = g_tile_s->sh.viewers[0]; snprintf(tip0, sizeof tip0, "%s", c0 ? g_tile_s->sh.vnames[0] : "Ninguém assistindo agora");
+                                 k1 = g_tile_s->sh.second.active && g_tile_s->sh.vknown[1]; c1 = g_tile_s->sh.viewers[1]; snprintf(tip1, sizeof tip1, "%s", c1 ? g_tile_s->sh.vnames[1] : "Ninguém assistindo agora"); }
+                    else { k0 = share_peer_eye(g_tile_s, t->slot, 0, &c0, tip0, sizeof tip0); k1 = share_peer_eye(g_tile_s, t->slot, 1, &c1, tip1, sizeof tip1); }
+                    if (k0 || k1) {
+                        char num[24], tip[420];
+                        if (k0 && k1) { snprintf(num, sizeof num, "%d · %d", c0, c1); snprintf(tip, sizeof tip, "Tela 1: %s\nTela 2: %s", tip0, tip1); }
+                        else { snprintf(num, sizeof num, "%d", k0 ? c0 : c1); snprintf(tip, sizeof tip, "%s", k0 ? tip0 : tip1); }
+                        cui_box(ui, .id = "eyec", .dir = CUI_ROW, .gap = 4, .pad_left = 8, .pad_right = 6, .pad_y = 2, .radius = 10, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER) {
+                            cui_icon(ui, CUI_ICON_EYE, 13, B_C3); cui_text(ui, num, .size = 14, .nowrap = true);
+                        }
+                        if (briks_hover(ui, "eyec")) briks_tip(tip);
                     }
-                    if (briks_hover(ui, "eyec")) briks_tip(g_tile_s->sh.viewers[0] ? g_tile_s->sh.vnames[0] : "Ninguém assistindo agora");
                 }
             }
             cui_card_end(ui);

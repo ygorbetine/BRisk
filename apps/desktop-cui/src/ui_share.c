@@ -288,6 +288,15 @@ void share_reset(app_state_t *s) {
 
 bool share_peer_live(const app_state_t *s, int slot) { return slot >= 0 && slot < BRIKS_MAX_PEERS && s->sh.remote[slot].on; }
 
+bool share_peer_eye(const app_state_t *s, int slot, int sl, int *count, char *tip, size_t cap) {
+    if (slot < 0 || slot >= BRIKS_MAX_PEERS || sl < 0 || sl > 1) return false;
+    const bool live = sl == 0 ? s->sh.remote[slot].on : s->sh.remote2[slot].on;
+    if (!live || !s->sh.aud[slot][sl].known) return false;   /* sem transmissão ou sem dado (cliente antigo): oculto */
+    if (count) *count = s->sh.aud[slot][sl].count;
+    if (tip) snprintf(tip, cap, "%s", s->sh.aud[slot][sl].count > 0 && s->sh.aud[slot][sl].names[0] ? s->sh.aud[slot][sl].names : s->sh.aud[slot][sl].count > 0 ? "Pessoas assistindo" : "Ninguém assistindo agora");
+    return true;
+}
+
 static int slot_of(const app_state_t *s, const char *peer) {
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, peer)) return i;
     return -1;
@@ -360,6 +369,15 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             size_t l = strlen(q->vnames[sl]); snprintf(q->vnames[sl] + l, sizeof q->vnames[sl] - l, "%s%s", shown ? ", " : "", nm); shown++;
         }
         if (np > shown) { size_t l = strlen(q->vnames[sl]); snprintf(q->vnames[sl] + l, sizeof q->vnames[sl] - l, " e mais %d", np - shown); }
+    } else if (!strcmp(ev, "share.audience")) {   /* core: {peer_id, slot, count, names:[até 3]}: a pessoa divulga quantos assistem à tela dela */
+        const int i = slot_of(s, json_str(j, "peer_id", "")), sl = jint(j, "slot") == 1 ? 1 : 0; if (i < 0) return true;
+        q->aud[i][sl].known = true; q->aud[i][sl].count = jint(j, "count"); if (q->aud[i][sl].count < 0) q->aud[i][sl].count = 0; q->aud[i][sl].names[0] = 0;
+        const jval *nl = json_get(j, "names"); const int nn = json_len(nl); int shown = 0;
+        for (int k = 0; k < nn && shown < 3; k++) {
+            const jval *e = json_at(nl, k); if (!e || e->type != J_STR || !e->str || !e->str[0]) continue;
+            size_t l = strlen(q->aud[i][sl].names); snprintf(q->aud[i][sl].names + l, sizeof q->aud[i][sl].names - l, "%s%s", shown ? ", " : "", e->str); shown++;
+        }
+        if (q->aud[i][sl].count > shown && shown) { size_t l = strlen(q->aud[i][sl].names); snprintf(q->aud[i][sl].names + l, sizeof q->aud[i][sl].names - l, " e mais %d", q->aud[i][sl].count - shown); }
     } else if (jint(j, "slot") == 1 && (!strcmp(ev, "share.local") || !strcmp(ev, "share.stats") || !strcmp(ev, "share.hint") || !strcmp(ev, "share.rxstats") || !strcmp(ev, "share.remote"))) {
         /* 2ª tela (segundo monitor): estado próprio, mais enxuto que o da 1ª */
         if (!strcmp(ev, "share.local")) {
@@ -374,7 +392,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
                 if (share_notice_wanted(q->remote2[i].on || q->remote[i].on, true, share_viewing(s))) { g_notice.slot = i; g_notice.until = -1; }
                 q->remote2[i].on = true; q->remote2[i].w = jint(j, "w"); q->remote2[i].h = jint(j, "h"); q->remote2[i].fps = jint(j, "fps"); q->remote2[i].kbps = jint(j, "kbps");
                 copy(q->remote2[i].label, sizeof q->remote2[i].label, json_str(j, "label", ""));
-            } else if (!strcmp(st, "off")) { memset(&q->remote2[i], 0, sizeof q->remote2[i]); fv_close(&g_fv[FV2(i)]); memset(&g_zoom[FV2(i)], 0, sizeof g_zoom[0]); }
+            } else if (!strcmp(st, "off")) { memset(&q->remote2[i], 0, sizeof q->remote2[i]); memset(&q->aud[i][1], 0, sizeof q->aud[i][1]); fv_close(&g_fv[FV2(i)]); memset(&g_zoom[FV2(i)], 0, sizeof g_zoom[0]); }
             else if (!strcmp(st, "watch")) copy(q->remote2[i].path, sizeof q->remote2[i].path, json_str(j, "path", ""));
             else if (!strcmp(st, "frame")) { q->remote2[i].has_frame = true; q->remote2[i].stalled = false; q->remote2[i].w = jint(j, "w"); q->remote2[i].h = jint(j, "h"); }
             else if (!strcmp(st, "stalled")) q->remote2[i].stalled = true;   /* 3 s sem pacote algum: tira a última imagem em vez de deixá-la parada */
@@ -424,7 +442,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             q->remote[i].on = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h");
             if (!was_on) { q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps"); }
             q->remote[i].audio = jbool(j, "audio"); copy(q->remote[i].label, sizeof q->remote[i].label, json_str(j, "label", ""));
-        } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].stalled = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]);
+        } else if (!strcmp(st, "off")) { memset(&q->aud[i][0], 0, sizeof q->aud[i][0]); q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].stalled = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]);
             memset(&g_zoom[i], 0, sizeof g_zoom[i]); if (g_notice.slot == i) g_notice.slot = -1; }
         else if (!strcmp(st, "watch")) copy(q->remote[i].path, sizeof q->remote[i].path, json_str(j, "path", ""));
         else if (!strcmp(st, "frame")) { q->remote[i].has_frame = true; q->remote[i].stalled = false; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); }
@@ -643,6 +661,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     { static int demo; const char *dd = getenv("BRIKS_DEV_SHARE");
       if (!demo && dd && !strncmp(dd, "demo-", 5) && s->rtc_peers[0].id[0]) {
         demo = 1;
+        const bool eyes = !strcmp(dd, "demo-eyes"); if (eyes) dd = "demo-many";   /* demo-many + olhinho dos OUTROS (share.audience): 1ª pessoa com 2 telas contadas, 2ª com zero, 3ª sem dado (oculto) */
         const bool aud = !strcmp(dd, "demo-audio"); if (aud) dd = "demo-many";   /* demo-many com áudio na 1ª transmissão (barra de volume no bloco) */
         if (!strcmp(dd, "demo-zoom") || !strcmp(dd, "demo-two") || !strcmp(dd, "demo-many")) { s->screen = SCREEN_CALL; s->call_mode = 1; s->call_view = 0; }
         if (!strcmp(dd, "demo-self") || !strcmp(dd, "demo-eye")) {   /* MINHA transmissão no ar com prévia local (teste do aviso de qualidade reduzida): quadro sintético no arquivo da prévia */
@@ -678,6 +697,13 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
                 char nm[16]; snprintf(nm, sizeof nm, "tela-p%d", k);
                 demo_frame(q->remote[k].path, sizeof q->remote[k].path, nm, 1280, 720, k == 1 ? 2 : 1);
             }
+        }
+        if (eyes) {
+            static const char *ev[] = {
+                "{\"ev\":\"share.audience\",\"peer_id\":\"demo-0\",\"slot\":0,\"count\":4,\"names\":[\"Ana\",\"Beto\",\"Caio\"]}",
+                "{\"ev\":\"share.audience\",\"peer_id\":\"demo-0\",\"slot\":1,\"count\":1,\"names\":[\"Duda\"]}",
+                "{\"ev\":\"share.audience\",\"peer_id\":\"demo-1\",\"slot\":0,\"count\":0,\"names\":[]}" };
+            for (int k = 0; k < 3; k++) { jval *je = json_parse(ev[k]); if (je) { share_handle_event(s, je, "share.audience"); json_free(je); } }
         }
       }
     }
@@ -1158,7 +1184,7 @@ static bool s_modal_hint;   /* com um diálogo aberto por cima, o clique não va
 void share_peer_gone(app_state_t *s, int slot) {
     if (slot < 0 || slot >= BRIKS_MAX_PEERS) return;
     share_state_t *q = &s->sh;
-    memset(&q->remote[slot], 0, sizeof q->remote[slot]); memset(&q->remote2[slot], 0, sizeof q->remote2[slot]);
+    memset(&q->remote[slot], 0, sizeof q->remote[slot]); memset(&q->remote2[slot], 0, sizeof q->remote2[slot]); memset(q->aud[slot], 0, sizeof q->aud[slot]);
     fv_close(&g_fv[slot]); fv_close(&g_fv[FV2(slot)]); fv_close(&g_thumb[slot]);
     memset(&g_zoom[slot], 0, sizeof g_zoom[slot]); memset(&g_zoom[FV2(slot)], 0, sizeof g_zoom[0]);
     if (g_notice.slot == slot) g_notice.slot = -1;
@@ -1208,7 +1234,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 8 : 12, .pad_y = compact ? 4 : 8, .align = CUI_ALIGN_CENTER });
             if (!compact) cui_icon(ui, CUI_ICON_MONITOR, 14, B_C3);
             cui_text(ui, title, .size = compact ? 11 : 14, .nowrap = true);
-            if (g_eye >= 0 && !compact && (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS))) {
+            if (g_eye >= 0 && !compact) {
                 cui_box(ui, .id = "eyec", .dir = CUI_ROW, .gap = 4, .pad_left = 8, .pad_right = 6, .pad_y = 2, .radius = 10, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER) {
                     cui_icon(ui, CUI_ICON_EYE, 13, B_C3); cui_textf(ui, "%d", g_eye);
                 }
@@ -1348,6 +1374,7 @@ int share_probe(const char *n, const app_state_t *s) {
     if (!strcmp(n, "dlg_open")) return s->sh.dialog_open ? 1 : 0;
     if (!strcmp(n, "eye0")) return s->sh.vknown[0] ? s->sh.viewers[0] : -1;   /* -1 = sem dado (oculto) */
     if (!strcmp(n, "eye1")) return s->sh.vknown[1] ? s->sh.viewers[1] : -1;
+    if (!strncmp(n, "paud", 4) && n[4] >= '0' && n[4] <= '9' && (n[5] == '0' || n[5] == '1') && !n[6]) { int c = -1; return share_peer_eye(s, n[4] - '0', n[5] - '0', &c, NULL, 0) ? c : -1; }   /* paudPS: olhinho que o participante P divulgou para a tela S (-1 = oculto) */
     if (!strcmp(n, "share_vol0")) return (int)(s->sh.remote[0].volume * 100.0f + 0.5f);
     if (!strcmp(n, "stage_layout")) return g_call.layout;          /* blocos de vídeo no palco */
     if (!strcmp(n, "share_focus")) return g_sfocus;          /* chave da transmissão em destaque no Foco (-1 = a primeira) */
@@ -1364,6 +1391,9 @@ static bool emit_tile(cui_ctx *ui, app_state_t *s, int key, bool compact) {
     if (key == BRIKS_MAX_PEERS || key == FV2(BRIKS_MAX_PEERS)) {
         const int sl = key == BRIKS_MAX_PEERS ? 0 : 1;
         if (q->vknown[sl]) { g_eye = q->viewers[sl]; snprintf(g_eye_tip, sizeof g_eye_tip, "%s", g_eye ? q->vnames[sl] : "Ninguém assistindo agora"); }
+    } else {   /* transmissão de outra pessoa: o olhinho vem do que ela divulgou à sala (sem divulgação = oculto) */
+        const int pi = key >= FV_N ? key - FV_N : key; int cnt = 0;
+        if (share_peer_eye(s, pi, key >= FV_N ? 1 : 0, &cnt, g_eye_tip, sizeof g_eye_tip)) g_eye = cnt;
     }
     if (key == BRIKS_MAX_PEERS) {
         preview_path(path, sizeof path);

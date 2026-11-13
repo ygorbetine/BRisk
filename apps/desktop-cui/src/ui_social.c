@@ -801,14 +801,21 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     profile_dialog(ui, s);
     friends_dialogs(ui, s);
     groups_dialogs(ui, s);
-    cui_dialog(ui, "Trocar @nick", &s->nick_open) {
-        cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
+    cui_dialog(ui, s->nick_first ? "Escolha seu @" : "Trocar @nick", &s->nick_open) {
+        if (s->nick_first) {
+            char cur[96]; snprintf(cur, sizeof cur, "Por enquanto você é @%s. É assim que seus amigos vão te encontrar e te convidar.", s->acct_nick);
+            cui_text(ui, cur, .color = B_MUTED);
+            cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Esta primeira escolha é livre; depois, só dá para trocar de novo em 30 dias.", .color = B_MUTED, .size = 13);
+        } else
+            cui_text(ui, "De 3 a 20 caracteres: letras minúsculas, números e _. Depois de escolher, só dá para trocar de novo em 30 dias.", .color = B_MUTED);
         int nr = cui_input(ui, "nick-edit", s->nick_edit, sizeof s->nick_edit, .placeholder = "seu_nick", .autofocus = true);
         if (s->nick_msg[0]) cui_text(ui, s->nick_msg, .color = B_MUTED, .size = 13);
         cui_dialog_footer(ui) {
+            if (s->nick_first && cui_button(ui, "Depois")) { s->nick_open = false; s->nick_first = false; }
             if (cui_button(ui, "Salvar", .variant = CUI_BUTTON_PRIMARY) || (nr & CUI_SUBMITTED)) account_set_nick(s);
         }
     }
+    if (!s->nick_open) s->nick_first = false;
     bubbles_draw(ui);
     call_banner(ui, s);   /* "pediu para você transmitir" também com a chamada minimizada */
     groups_overlay(ui, s);

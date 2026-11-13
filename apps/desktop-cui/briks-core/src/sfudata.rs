@@ -391,11 +391,10 @@ impl Layer {
         if fp == self.fp { return vec![]; }   // eco da minha própria identidade vindo de outro participante
         self.peers.insert(from.to_string(), Peer { fp: fp.clone(), jwk, name: name.to_string(), joined_at: joined, last_state: 0 });
         self.present.entry(from.to_string()).or_insert_with(|| Present { name: name.to_string(), since: Instant::now(), tries: 0, fallback: false });
-        let mut out = vec![
-            Out::Ev(MeshEvent::PeerInfo { peer_id: from.into(), fp: fp.clone(), name: name.to_string() }),
-        ];
+        // a UI só guarda o nome de quem já está na grade: o participante entra primeiro, o nome vem logo depois
+        let mut out = vec![Out::Ev(MeshEvent::Peer { peer_id: from.into(), state: "autenticado".into() })];
+        out.push(Out::Ev(MeshEvent::PeerInfo { peer_id: from.into(), fp: fp.clone(), name: name.to_string() }));
         out.extend(self.owner_ev());
-        out.push(Out::Ev(MeshEvent::Peer { peer_id: from.into(), state: "autenticado".into() }));
         if v["ack"] != true { out.extend(self.greet(from)); }
         out.extend(self.flush(&fp));
         out.extend(self.request_history(from, &fp));

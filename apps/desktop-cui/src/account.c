@@ -367,6 +367,14 @@ void account_bridge_done(app_state_t *s, bool ok) {
 static bool jbool(const jval *j, const char *k) { const jval *v = json_get(j, k); return v && v->type == J_BOOL && v->b; }
 static int jint(const jval *j, const char *k) { const jval *v = json_get(j, k); return v && v->type == J_NUM ? (int)v->num : 0; }
 
+/* @ provisório criado pelo servidor no primeiro acesso: letras/números/_ + "_" + 5 dígitos (migração 0003) */
+static bool nick_is_provisional(const char *n) {
+    const size_t len = strlen(n);
+    if (len < 9 || n[len - 6] != '_') return false;
+    for (size_t i = len - 5; i < len; i++) if (n[i] < '0' || n[i] > '9') return false;
+    return true;
+}
+
 static void on_state(app_state_t *s, const jval *j) {
     const char *st = json_str(j, "state", "");
     s->acct_configured = jbool(j, "configured"); s->acct_mock = jbool(j, "mock");
@@ -396,7 +404,7 @@ static void on_state(app_state_t *s, const jval *j) {
         core_send("{\"cmd\":\"local.credentials\"}");
     } else {   /* signed_out */
         const bool was_busy = s->acct_state == ACCT_BUSY;
-        s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE;
+        s->acct_state = ACCT_OUT; s->acct_bridge = BRIDGE_NONE; s->nick_asked = s->nick_first = false;
         s->acct_user_id[0] = s->acct_nick[0] = s->user_nick[0] = 0; set_photo(s, NULL); fph_clear(cui_app_ui(s->app));
         copy(s->acct_error, sizeof s->acct_error, strcmp(json_str(j, "error_code", ""), "cancelled") ? msg : "");
         if (s->acct_error[0]) { char nt[120]; snprintf(nt, sizeof nt, "Conta: %s", s->acct_error); settings_notice(nt); }   /* CFG-26: erro de conta também na aba Avisos */
@@ -495,7 +503,12 @@ bool account_handle_event(app_state_t *s, const char *line) {
         if (s->acct_nick[0]) { copy(s->user_nick, sizeof s->user_nick, s->acct_nick); if (!s->acct_demo) login_hint_save(s->acct_nick, s->user_email); }   /* dica de login por @nick (AUT-11) */
         if (json_str(j, "display_name", "")[0]) copy(s->user_name, sizeof s->user_name, json_str(j, "display_name", ""));   /* vale o nome do perfil (pode ter sido trocado) */
         if (json_str(j, "message", "")[0]) copy(s->profile_msg, sizeof s->profile_msg, json_str(j, "message", ""));
-        if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; }
+        if (jbool(j, "changed")) { copy(s->nick_msg, sizeof s->nick_msg, "@nick alterado."); s->nick_edit[0] = 0; if (s->nick_first) { s->nick_first = false; s->nick_open = false; } }
+        else if (!s->nick_asked && !s->acct_demo && !s->nick_open && nick_is_provisional(s->acct_nick)) {
+            /* conta nova: o servidor deu um @ provisório (nome_12345); pergunta uma vez qual a pessoa quer */
+            s->nick_asked = true; s->nick_first = true; s->nick_open = true; s->nick_msg[0] = 0;
+            s->nick_edit[0] = 0;
+        }
     } else if (!strcmp(ev, "account.avatar")) {
         if (s->acct_state == ACCT_IN) set_photo(s, json_str(j, "path", ""));
     } else if (!strcmp(ev, "backup.state")) {
@@ -611,6 +624,9 @@ void account_tick(app_state_t *s) {
         }
     }
     if (s->acct_demo) { static bool my_done; const char *mp = getenv("BRIKS_DEV_PHOTO"); if (!my_done && mp && mp[0]) { my_done = true; set_photo(s, mp); } }   /* captura: BRIKS_DEV_PHOTO põe essa imagem como a MINHA foto (sem conta) */
+    if (s->acct_demo && getenv("BRIKS_DEV_NICK_FIRST") && !s->nick_asked && s->screen != SCREEN_AUTH) {   /* captura: abre a telinha do @ como numa conta nova */
+        s->nick_asked = s->nick_first = s->nick_open = true; copy(s->acct_nick, sizeof s->acct_nick, "ygor_48213"); s->nick_edit[0] = 0; s->nick_msg[0] = 0;
+    }
     if (s->acct_demo) {   /* captura: BRIKS_DEV_FPHOTO=caminho põe essa imagem como foto do primeiro amigo (nada baixado) */
         static bool fp_done; static ULONGLONG t0; const char *fp = getenv("BRIKS_DEV_FPHOTO"), *dl = getenv("BRIKS_DEV_FPHOTO_DELAY");   /* _DELAY: ms até a foto chegar (teste antes/depois) */
         if (!t0) t0 = GetTickCount64();

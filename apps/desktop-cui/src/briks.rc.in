@@ -1,0 +1,31 @@
+#include <winver.h>
+1 ICON "@BRIKS_ICON_PATH@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @BRIKS_VER_COMMA@
+ PRODUCTVERSION @BRIKS_VER_COMMA@
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041604b0"
+        BEGIN
+            VALUE "CompanyName", "Briks"
+            VALUE "FileDescription", "Briks - chamadas de voz e transmissao de tela"
+            VALUE "FileVersion", "@BRIKS_VERSION@"
+            VALUE "InternalName", "briks_cui"
+            VALUE "LegalCopyright", "Copyright (c) 2026 Briks"
+            VALUE "OriginalFilename", "briks_cui.exe"
+            VALUE "ProductName", "Briks"
+            VALUE "ProductVersion", "@BRIKS_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0416, 1200
+    END
+END

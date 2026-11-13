@@ -153,8 +153,8 @@ static bool file_sha512_b64(const char *path, char *out, size_t cap) {
 static bool updates_dir(char *out, size_t cap) {
     const char *o = getenv("BRIKS_UPDATE_DIR");   /* testes: pasta isolada */
     if (o && o[0]) { snprintf(out, cap, "%s", o); CreateDirectoryA(out, NULL); return true; }
-    char appdata[MAX_PATH];
-    if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) != S_OK) return false;
+    char appdata[MAX_PATH];   /* pasta LOCAL (não a de roaming): instalador baixado e executado do perfil itinerante é padrão típico de trojan downloader para a heurística do antivírus */
+    if (SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, appdata) != S_OK) return false;
     snprintf(out, cap, "%s\\Briks-CUI", appdata); CreateDirectoryA(out, NULL);
     snprintf(out, cap, "%s\\Briks-CUI\\updates", appdata); CreateDirectoryA(out, NULL);
     return true;
@@ -184,7 +184,7 @@ static void check_once(void) {
     char dir[MAX_PATH], part[MAX_PATH], fin[MAX_PATH];
     if (!updates_dir(dir, sizeof dir)) { set_err("Pasta de atualizações indisponível."); return; }
     const char *base = strrchr(rel, '/'); base = base ? base + 1 : rel;
-    snprintf(fin, sizeof fin, "%s\\%s", dir, base); snprintf(part, sizeof part, "%s.part", fin);
+    snprintf(fin, sizeof fin, "%s\\%s", dir, base); snprintf(part, sizeof part, "%s\\download-%lu.tmp", dir, (unsigned long)GetCurrentProcessId());   /* nome neutro (sem .exe) até o SHA-512 conferir */
     InterlockedExchange(&g_percent, 0); InterlockedExchange(&g_phase, UPD_DOWNLOADING);
     FILE *fp = fopen(part, "wb"); if (!fp) { set_err("Não foi possível gravar o instalador."); return; }
     long long n = http_get(url, NULL, 0, fp, MAX_INSTALLER_BYTES, true);

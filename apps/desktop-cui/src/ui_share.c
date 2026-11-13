@@ -253,6 +253,28 @@ static int slot_of(const app_state_t *s, const char *peer) {
     return -1;
 }
 
+/* Aviso "transmissão ligada" de alguém que a lista da chamada ainda não conhece (no servidor de chamadas o aviso da tela pode chegar antes do
+ * "entrou"/hello da pessoa): antes era descartado e a transmissão só aparecia quando o amigo parava e retomava. Agora fica guardado e é aplicado
+ * assim que a pessoa aparece (share_pending_tick); um "desligou" apaga o guardado. */
+typedef struct { char peer[96], label[64]; int slot, w, h, fps, kbps; bool audio, used; double at; } pend_share_t;
+static pend_share_t g_pshare[12];
+static void pshare_note(const jval *j) {
+    const char *peer = json_str(j, "peer_id", ""), *st = json_str(j, "state", ""); const int sl = jint(j, "slot") == 1 ? 1 : 0;
+    if (!peer[0]) return;
+    pend_share_t *free_slot = NULL, *same = NULL, *oldest = &g_pshare[0];
+    for (int k = 0; k < 12; k++) {
+        pend_share_t *e = &g_pshare[k];
+        if (e->used && e->slot == sl && !strcmp(e->peer, peer)) same = e;
+        if (!e->used && !free_slot) free_slot = e;
+        if (e->used && (!oldest->used || e->at < oldest->at)) oldest = e;
+    }
+    if (!strcmp(st, "off")) { if (same) same->used = false; return; }
+    if (strcmp(st, "on")) return;
+    pend_share_t *e = same ? same : free_slot ? free_slot : oldest;
+    memset(e, 0, sizeof *e); e->used = true; e->slot = sl; e->w = jint(j, "w"); e->h = jint(j, "h"); e->fps = jint(j, "fps"); e->kbps = jint(j, "kbps"); e->audio = jbool(j, "audio"); e->at = (double)GetTickCount64() / 1000.0;
+    copy(e->peer, sizeof e->peer, peer); copy(e->label, sizeof e->label, json_str(j, "label", ""));
+}
+
 /* ---------- eventos do core ---------- */
 static void fill_sources(share_state_t *q, int t, const jval *arr) {
     char keep[24] = ""; if (q->sel[t] >= 0 && q->sel[t] < q->nsrc[t]) copy(keep, sizeof keep, q->src[t][q->sel[t]].id);
@@ -306,7 +328,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             else { const char *why = json_str(j, "reason", ""); if (why[0]) copy(q->err, sizeof q->err, why); memset(&q->second, 0, sizeof q->second); q->vknown[1] = false; q->viewers[1] = 0; fv_close(&g_fv[FV2(BRIKS_MAX_PEERS)]); }
         } else if (!strcmp(ev, "share.stats")) { q->second.kbps = jint(j, "kbps"); if (jint(j, "h")) q->second.h = jint(j, "h"); }
         else if (!strcmp(ev, "share.remote")) {
-            int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) return false;
+            int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) { pshare_note(j); return false; }
             const char *st = json_str(j, "state", "");
             if (!strcmp(st, "on")) {
                 if (share_notice_wanted(q->remote2[i].on || q->remote[i].on, true, share_viewing(s))) { g_notice.slot = i; g_notice.until = -1; }
@@ -354,7 +376,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
         if (jint(j, "fps") < 3) { if (q->remote[i].low_secs < 99) q->remote[i].low_secs++; } else q->remote[i].low_secs = 0;
         q->remote[i].poor = q->remote[i].low_secs >= 4;
     } else if (!strcmp(ev, "share.remote")) {
-        int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) return false;
+        int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0) { pshare_note(j); return false; }
         const char *st = json_str(j, "state", "");
         if (!strcmp(st, "on")) {
             if (share_notice_wanted(q->remote[i].on, true, share_viewing(s))) { g_notice.slot = i; g_notice.until = -1; }
@@ -505,6 +527,15 @@ int share_thumb_probe(void) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i+
 bool overlay_live_wanted(int slot, bool second);   /* overlay_host.c */
 void share_tick(cui_ctx *ui, app_state_t *s) {
     share_state_t *q = &s->sh;
+    for (int k = 0; k < 12; k++) {   /* avisos de transmissão guardados de gente que ainda não estava na lista: aplica quando ela aparece (ou descarta após 2 min) */
+        pend_share_t *e = &g_pshare[k]; if (!e->used) continue;
+        if ((double)GetTickCount64() / 1000.0 - e->at > 120.0) { e->used = false; continue; }
+        if (slot_of(s, e->peer) < 0) continue;
+        char pj[96 * 2], lj[64 * 2], js[512]; json_escape(e->peer, pj, sizeof pj); json_escape(e->label, lj, sizeof lj);
+        snprintf(js, sizeof js, "{\"ev\":\"share.remote\",\"peer_id\":\"%s\",\"slot\":%d,\"state\":\"on\",\"w\":%d,\"h\":%d,\"fps\":%d,\"kbps\":%d,\"label\":\"%s\",\"audio\":%s}", pj, e->slot, e->w, e->h, e->fps, e->kbps, lj, e->audio ? "true" : "false");
+        e->used = false;
+        jval *jj = json_parse(js); if (jj) { share_handle_event(s, jj, "share.remote"); json_free(jj); }
+    }
     for (int i = 0; i < g_ntrash; i++) cui_image_destroy(ui, g_trash[i]);
     g_ntrash = 0;
     if (!q->fps && !q->res && !q->br_custom) { q->res = 1; q->fps = FPS_DEFAULT; q->br_custom = 8; }

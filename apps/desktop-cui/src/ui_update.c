@@ -20,6 +20,9 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.5", {
+        "Transmissão: corrigido o caso em que a transmissão de um amigo só aparecia depois de ele parar e retomar. Quando o aviso de que ele transmite chega antes de o Briks terminar de registrá-lo na chamada, o aviso agora fica guardado e vale assim que ele aparece.",
+        NULL } },
     { "1.5.4", {
         "Chamada: quem transmite aparece com uma miniatura estática e desfocada da tela preenchendo o bloco, com a foto de perfil no centro e o ícone de transmissão na frente.",
         "Volume e mudo separados: um controle para a voz da pessoa e outro para o som da transmissão, no menu do botão direito do bloco da chamada.",

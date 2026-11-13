@@ -295,7 +295,6 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                           .bg = briks_hover(ui, "gh") ? CUI_RGBA(0xffffff0c) : CUI_RGBA(0x00000000)) {
                       cui_box(ui, .id = "av") { cui_avatar_ex(ui, g.name, &(cui_avatar_opts){ .size = 30, .image = groups_image(s, s->groups[i].id) }); }
                       cui_text(ui, g.name, .nowrap = true, .width = CUI_FILL, .font = CUI_FONT_DISPLAY, .size = 14, .color = act ? B_TEXT : B_MUTED);
-                      if (brick_on()) { bool un = false; for (int c = 0; c < s->groups[i].nch && !un; c++) if (!s->groups[i].ch[c].voice && notify_unread_for(s->groups[i].ch[c].id) > 0) un = true; brick_tower(ui, i, s->groups[i].nch, un); }   /* torre: uma peca por canal; amarela = nao lidas */
                       cui_box(ui, .id = "gc", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
                               .bg = briks_hover(ui, "gc") ? CUI_RGBA(0xffffff20) : CUI_RGBA(0x00000000)) { cui_icon(ui, coll ? CUI_ICON_CHEVRON_RIGHT : CUI_ICON_CHEVRON_DOWN, 15, B_MUTED); }
                       if (briks_hover(ui, "gc")) briks_tip(!act ? "Abrir o grupo" : coll ? "Expandir o grupo" : "Recolher o grupo");

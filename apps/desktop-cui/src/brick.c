@@ -104,7 +104,6 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
      * sob ele, com uma variação leve por tijolo (como lotes de queima diferentes) e um brilho fino na face de cima */
     const mos_t *m = (const mos_t *)user; if (!m->cells) return;
     const int rows = 9; const float bh = r.h / (float)rows, bw = bh * 2.2f; const int cols = (int)ceilf(r.w / bw) + 1;
-    cui_draw_rect(ui, r, CUI_CORNERS((float)m->radius), CUI_RGBA(0x120818ff));   /* a junta (argamassa) aparece entre os tijolos */
     for (int y = 0; y < rows; y++) {
         const float off = (y & 1) ? -bw * 0.5f : 0.0f;
         for (int x = 0; x < cols; x++) {
@@ -117,8 +116,10 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
             const unsigned char *p = m->cells + ((size_t)(sy < 0 ? 0 : sy >= m->ch ? m->ch - 1 : sy) * (size_t)m->cw + (size_t)(sx < 0 ? 0 : sx >= m->cw ? m->cw - 1 : sx)) * 4;
             const unsigned h = (unsigned)(x * 73856093u) ^ (unsigned)(y * 19349663u); const float v = 0.82f + (float)(h % 21u) / 100.0f;   /* 0.82..1.02 */
             cui_color base; base.r = (unsigned char)fminf(255.0f, 40.0f + p[0] * 0.55f * v); base.g = (unsigned char)fminf(255.0f, 28.0f + p[1] * 0.5f * v); base.b = (unsigned char)fminf(255.0f, 46.0f + p[2] * 0.6f * v); base.a = 255;
-            cui_draw_rect(ui, c, CUI_CORNERS(2), base);
-            cui_draw_rect(ui, (cui_rect){ c.x + 1.0f, c.y, c.w - 2.0f, 1.5f }, CUI_CORNERS(1), shade(base, 1.3f));
+            /* por cima da imagem desfocada: cada tijolo so tinge levemente a regiao dele e a junta escurece; o desfoque continua sendo a imagem congelada */
+            cui_color fill = base; fill.a = 46; cui_color edge = shade(base, 0.45f); edge.a = 120;
+            cui_draw_rect_border(ui, c, CUI_CORNERS(2), fill, edge, 1.0f);
+            cui_color hi = shade(base, 1.5f); hi.a = 70; cui_draw_rect(ui, (cui_rect){ c.x + 1.0f, c.y + 1.0f, c.w - 2.0f, 1.2f }, CUI_CORNERS(1), hi);
         }
     }
 }

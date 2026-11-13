@@ -181,8 +181,8 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
             const unsigned char *cells = NULL; int mcw = 0, mch = 0;
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih)) {
-                if (brick_on() && share_thumb_cells(t->slot, &cells, &mcw, &mch)) brick_mosaic(ui, t->slot, cells, mcw, mch, iw, ih, rr);   /* mosaico de pecas 1x1 no lugar do desfoque */
-                else cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);
+                cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);   /* imagem congelada, desfocada */
+                if (brick_on() && share_thumb_cells(t->slot, &cells, &mcw, &mch)) brick_mosaic(ui, t->slot, cells, mcw, mch, iw, ih, rr);   /* a parede de tijolos guia o desfoque, por cima */
                 cui_box(ui, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr, .bg = CUI_RGBA(0x1a0a2680)) {}
             }
         }

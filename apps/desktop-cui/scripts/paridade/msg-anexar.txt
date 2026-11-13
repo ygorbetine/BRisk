@@ -1,4 +1,4 @@
-# Mensagens (demo msgs): anexar desabilitado nao muda nada
+# Mensagens (demo msgs): sem destino possivel, o clipe abre o aviso visivel "Nao foi possivel enviar" (1.5)
 snap a0
 tap 545 753
 snap a1

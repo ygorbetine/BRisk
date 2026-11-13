@@ -8,6 +8,8 @@
 
 /* eventos do core: "file", "link.preview", "chat.typing", "chat.ack"; true se mudou algo visível */
 bool attach_event(app_state_t *s, const char *ev, const jval *j);
+int  attach_queued_fp(int n, char *out, size_t cap);                    /* n-ésimo amigo (fp) com anexo na fila local; 0 se não há */
+bool attach_error_open(void);                                       /* o diálogo "Não foi possível enviar" está aberto (roteiro) */
 void attach_pick(app_state_t *s);                                  /* abre o seletor de arquivo e oferece aos peers da sala */
 void attach_strip(cui_ctx *ui, app_state_t *s);                    /* faixa de transferências acima do campo de texto */
 void attach_overlay(cui_ctx *ui, app_state_t *s);                  /* fim do quadro: confirmação de "abrir arquivo recebido" */

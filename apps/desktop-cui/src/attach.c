@@ -40,9 +40,9 @@ static cui_texture thumb_tex(cui_ctx *ui, thumb_t *t) {
 }
 
 /* ---------- transferências ---------- */
-#define NXF 8
-typedef enum { XF_OFFER, XF_RUN, XF_DONE, XF_CANCELLED, XF_FAILED, XF_WAIT, XF_PAUSED } xf_state;   /* OFFER: oferta recebida (Baixar/Recusar); WAIT: aguardando o aceite do outro lado */
-typedef struct { bool used; char id[48]; char name[104]; double size, done; xf_state st; bool mine; char path[MAX_PATH]; char err[120]; thumb_t th; } xf_t;
+#define NXF 24   /* a fila local de anexos da DM guarda até 20 */
+typedef enum { XF_OFFER, XF_RUN, XF_DONE, XF_CANCELLED, XF_FAILED, XF_WAIT, XF_PAUSED, XF_QUEUED } xf_state;   /* OFFER: oferta recebida (Baixar/Recusar); WAIT: aguardando o aceite do outro lado; QUEUED: na fila deste PC, segue quando o amigo ficar online */
+typedef struct { bool used; char id[48]; char name[104]; double size, done; xf_state st; bool mine; char path[MAX_PATH]; char err[120]; char fp[72]; thumb_t th; } xf_t;
 static xf_t g_xf[NXF];
 static char g_open_path[MAX_PATH]; static bool g_open_dlg, g_gal_dlg, g_demo_tl;
 static void tl_add(const app_state_t *s, const char *xid, const xf_t *x);
@@ -52,7 +52,7 @@ static xf_t *xf_find(const char *id, bool create) {
     if (!create) return NULL;
     int pick = -1;
     for (int i = 0; i < NXF; i++) if (!g_xf[i].used) { pick = i; break; }
-    if (pick < 0) for (int i = 0; i < NXF; i++) if (g_xf[i].st != XF_RUN && g_xf[i].st != XF_OFFER && g_xf[i].st != XF_WAIT && g_xf[i].st != XF_PAUSED) { pick = i; break; }
+    if (pick < 0) for (int i = 0; i < NXF; i++) if (g_xf[i].st != XF_RUN && g_xf[i].st != XF_OFFER && g_xf[i].st != XF_WAIT && g_xf[i].st != XF_PAUSED && g_xf[i].st != XF_QUEUED) { pick = i; break; }
     if (pick < 0) return NULL;
     free(g_xf[pick].th.rgba); memset(&g_xf[pick], 0, sizeof g_xf[pick]); g_xf[pick].used = true; snprintf(g_xf[pick].id, sizeof g_xf[pick].id, "%s", id);
     return &g_xf[pick];
@@ -102,16 +102,58 @@ void attach_inflight_done(app_state_t *s, bool ok) {
     g_inflight[0] = 0;
 }
 
+/* ---------- aviso bem visível (substitui o texto fácil de perder) ---------- */
+static char g_err_title[80], g_err_msg[420]; static bool g_err_dlg;
+static void att_err(const char *title, const char *name, const char *why) {
+    snprintf(g_err_title, sizeof g_err_title, "%s", title);
+    if (name && name[0]) snprintf(g_err_msg, sizeof g_err_msg, "%.100s\n\n%s", name, why); else snprintf(g_err_msg, sizeof g_err_msg, "%s", why);
+    g_err_dlg = true; settings_notice(g_err_msg);
+}
+bool attach_error_open(void) { return g_err_dlg; }   /* roteiro de teste */
+
+/* tipo do anexo pelo nome: 1 imagem, 2 vídeo, 3 áudio, 0 documento/outros */
+static int file_kind(const char *name) {
+    const char *dot = strrchr(name, '.'); if (!dot) return 0;
+    static const char *I[] = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic", ".tif", ".tiff", NULL };
+    static const char *V[] = { ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv", NULL };
+    static const char *A[] = { ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma", NULL };
+    for (int i = 0; I[i]; i++) if (!_stricmp(dot, I[i])) return 1;
+    for (int i = 0; V[i]; i++) if (!_stricmp(dot, V[i])) return 2;
+    for (int i = 0; A[i]; i++) if (!_stricmp(dot, A[i])) return 3;
+    return 0;
+}
+static const char *kind_icon(const char *name) { int k = file_kind(name); return k == 1 ? CUI_ICON_IMAGE : k == 2 ? CUI_ICON_VIDEO : k == 3 ? CUI_ICON_MUSIC : CUI_ICON_PAPERCLIP; }
+static const char *kind_label(const char *name) { int k = file_kind(name); return k == 1 ? "Foto" : k == 2 ? "Vídeo" : k == 3 ? "Áudio" : "Arquivo"; }
+static const person_t *friend_of_fp(const app_state_t *s, const char *fp) {
+    if (!fp || !fp[0]) return NULL;
+    for (int i = 0; i < s->friend_count; i++) if (s->friends[i].fp[0] && !strcmp(s->friends[i].fp, fp)) return &s->friends[i];
+    return NULL;
+}
+/* fps de amigos com anexo esperando na fila (o chat.c reabre o canal direto quando o amigo está online) */
+int attach_queued_fp(int n, char *out, size_t cap) {
+    int k = 0;
+    for (int i = 0; i < NXF; i++) if (g_xf[i].used && g_xf[i].st == XF_QUEUED && g_xf[i].fp[0]) { if (k++ == n) { snprintf(out, cap, "%s", g_xf[i].fp); return 1; } }
+    return 0;
+}
+
 /* ---------- eventos do core ---------- */
 bool attach_event(app_state_t *s, const char *ev, const jval *j) {
     if (!strcmp(ev, "file")) {
         const char *kind = json_str(j, "kind", ""), *id = json_str(j, "id", "");
-        if (!id[0]) { snprintf(s->notice, sizeof s->notice, "Anexo: %s", json_str(j, "error", "falhou")); settings_notice(s->notice); return true; }
-        xf_t *x = xf_find(id, !strcmp(kind, "offer") || !strcmp(kind, "failed")); if (!x) return false;
+        if (!strcmp(kind, "rejected")) { att_err("Não foi possível enviar", json_str(j, "name", ""), json_str(j, "error", "O arquivo não pôde ser enviado.")); return true; }
+        if (!id[0]) { att_err("Não foi possível enviar", json_str(j, "name", ""), json_str(j, "error", "O envio falhou.")); return true; }
+        if (!strcmp(kind, "queued")) {   /* entrou (ou voltou) para a fila deste PC; "replaces" = o cartão da tentativa que caiu */
+            const char *rep_id = json_str(j, "replaces", "");
+            if (rep_id[0]) { xf_t *o = xf_find(rep_id, false); if (o) { free(o->th.rgba); memset(o, 0, sizeof *o); } }
+        }
+        if (!strcmp(kind, "offer") && json_str(j, "qid", "")[0]) { xf_t *q = xf_find(json_str(j, "qid", ""), false); if (q) snprintf(q->id, sizeof q->id, "%s", id); }   /* a oferta da fila ganhou o id do transporte */
+        xf_t *x = xf_find(id, !strcmp(kind, "offer") || !strcmp(kind, "failed") || !strcmp(kind, "queued")); if (!x) return false;
+        if (json_str(j, "peer_fp", "")[0]) snprintf(x->fp, sizeof x->fp, "%s", json_str(j, "peer_fp", ""));
         const jval *mn = json_get(j, "mine"); if (mn && mn->type == J_BOOL) x->mine = mn->b;
         if (json_str(j, "name", "")[0]) snprintf(x->name, sizeof x->name, "%s", json_str(j, "name", ""));
         if (json_get(j, "size")) x->size = json_num(j, "size", x->size);
-        if (!strcmp(kind, "offer")) { x->st = x->mine ? XF_WAIT : XF_OFFER; if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", "")); }
+        if (!strcmp(kind, "queued")) { x->st = XF_QUEUED; x->mine = true; if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", "")); }
+        else if (!strcmp(kind, "offer")) { x->st = x->mine ? XF_WAIT : XF_OFFER; if (json_str(j, "path", "")[0]) snprintf(x->path, sizeof x->path, "%s", json_str(j, "path", "")); }
         else if (!strcmp(kind, "accepted") || !strcmp(kind, "resumed")) x->st = XF_RUN;
         else if (!strcmp(kind, "paused")) x->st = XF_PAUSED;
         else if (!strcmp(kind, "progress")) { x->done = json_num(j, "done", x->done); if (x->st != XF_PAUSED) x->st = XF_RUN; }
@@ -122,7 +164,7 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
             tl_add(s, id, x);
         } else if (!strcmp(kind, "cancelled")) x->st = XF_CANCELLED;
         else if (!strcmp(kind, "failed")) { x->st = XF_FAILED; snprintf(x->err, sizeof x->err, "%s", json_str(j, "error", "falhou"));
-            { char nt[120]; snprintf(nt, sizeof nt, "Arquivo%s%s: %s", x->name[0] ? " " : "", x->name, x->err); settings_notice(nt); } }
+            { char nt[200]; snprintf(nt, sizeof nt, "%s%s%s: %s", x->mine ? "Não consegui enviar" : "Falhou ao receber", x->name[0] ? " " : "", x->name, x->err); settings_notice(nt); } }
         return true;
     }
     if (!strcmp(ev, "link.preview")) {
@@ -161,29 +203,58 @@ bool attach_event(app_state_t *s, const char *ev, const jval *j) {
 
 /* ---------- enviar anexo ---------- */
 #define MAX_SEND_BATCH 10   /* arquivos por seleção/soltura; o resto é ignorado com aviso */
-static void send_path(app_state_t *s, const char *path) {
-    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 48]; (void)s;
-    json_escape(path, esc, sizeof esc);
-    snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc);
-    core_send(line);
+enum { TGT_NONE, TGT_ROOM, TGT_DM };
+/* Para onde vai um anexo escolhido agora:
+ *  - amigo aberto, e ele está na minha chamada: TGT_ROOM só para ele (malha da sala);
+ *  - amigo aberto, fora da chamada: TGT_DM (fila local do core + canal direto, sem servidor; o arquivo segue quando ele ficar online);
+ *  - grupo ou sem conversa: TGT_ROOM para quem está na sala de voz;
+ *  - senão TGT_NONE, com o motivo em `why` (mostrado num diálogo, não num texto pequeno). */
+static int target_for(const app_state_t *s, char *tfp, size_t cap, char *why, size_t wcap) {
+    tfp[0] = 0; why[0] = 0;
+    if (core_state() != CORE_READY) { snprintf(why, wcap, "O módulo de chamadas do Briks ainda não terminou de iniciar. Tente de novo em instantes."); return TGT_NONE; }
+    if (s->active_friend >= 0 && s->active_friend < s->friend_count) {
+        const person_t *f = &s->friends[s->active_friend];
+        if (!f->fp[0]) { snprintf(why, wcap, "%s ainda não tem identidade neste Briks (precisa abrir o app com a conta uma vez). Peça para entrar e tente de novo; nada foi enviado.", f->name); return TGT_NONE; }
+        snprintf(tfp, cap, "%s", f->fp);
+        if (chat_in_call_with(s, f->fp)) return TGT_ROOM;
+        if (!s->acct_user_id[0] || s->acct_demo) { snprintf(why, wcap, "Entre na sua conta do Briks para enviar anexos a um amigo pela conversa direta."); tfp[0] = 0; return TGT_NONE; }
+        return TGT_DM;
+    }
+    if (s->in_room) return TGT_ROOM;
+    snprintf(why, wcap, s->active_group >= 0 ? "Anexos de um grupo vão para quem está na sala de voz. Entre numa sala do grupo para enviar." : "Abra a conversa com um amigo para enviar o anexo, ou entre numa sala de voz.");
+    return TGT_NONE;
 }
-static bool can_send(app_state_t *s) {
-    if (core_state() != CORE_READY || !s->in_room) { snprintf(s->notice, sizeof s->notice, "Entre numa sala de voz para enviar anexos aos participantes."); return false; }
-    return true;
+static void send_to(app_state_t *s, const char *path, int tgt, const char *fp) {
+    char esc[2 * MAX_PATH + 8], line[2 * MAX_PATH + 160]; json_escape(path, esc, sizeof esc);
+    if (tgt == TGT_DM) {
+        snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"dm\":true,\"to_fp\":\"%s\",\"path\":\"%s\"}", fp, esc);
+        core_send(line);
+        chat_dm_open_fp(s, fp);   /* toca na caixa do amigo; o core oferece o arquivo quando o canal autenticar */
+        const person_t *f = friend_of_fp(s, fp);
+        if (f && !friends_online(s, f)) snprintf(s->notice, sizeof s->notice, "%s está offline: o anexo espera na fila deste computador e segue quando ele ficar online.", f->name);
+    } else if (fp && fp[0]) { snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"to_fp\":\"%s\",\"path\":\"%s\"}", fp, esc); core_send(line); }
+    else { snprintf(line, sizeof line, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc); core_send(line); }
+}
+/* envia um arquivo para a conversa aberta; sem destino possível, explica por quê (diálogo) */
+static bool send_current(app_state_t *s, const char *path) {
+    char fp[72], why[300]; int t = target_for(s, fp, sizeof fp, why, sizeof why);
+    if (t == TGT_NONE) { att_err("Não foi possível enviar", "", why); return false; }
+    send_to(s, path, t, fp); return true;
 }
 /* seletor nativo com seleção múltipla (o Electron aceitava vários arquivos de uma vez) */
 void attach_pick(app_state_t *s) {
-    if (!can_send(s)) return;
+    { char fp[72], why[300]; if (target_for(s, fp, sizeof fp, why, sizeof why) == TGT_NONE) { att_err("Não foi possível enviar", "", why); return; } }
     static char buf[32768]; buf[0] = 0;
     OPENFILENAMEA o; memset(&o, 0, sizeof o);
     o.lStructSize = sizeof o; o.hwndOwner = GetActiveWindow(); o.lpstrFile = buf; o.nMaxFile = sizeof buf;
-    o.lpstrTitle = "Enviar arquivos"; o.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    o.lpstrTitle = "Enviar arquivos"; o.lpstrFilter = "Todos os arquivos\0*.*\0Fotos\0*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp\0Vídeos\0*.mp4;*.mov;*.mkv;*.webm;*.avi\0Áudios\0*.mp3;*.wav;*.m4a;*.ogg;*.flac\0Documentos\0*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.zip\0\0";
+    o.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameA(&o)) return;
     const char *dir = buf, *p = buf + strlen(buf) + 1; int n = 0;
-    if (!*p) { send_path(s, dir); return; }                        /* um arquivo só: buf já é o caminho completo */
+    if (!*p) { send_current(s, dir); return; }                        /* um arquivo só: buf já é o caminho completo */
     for (; *p; p += strlen(p) + 1) {
         if (n++ >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Enviei os primeiros %d arquivos; envie o resto em outra seleção.", MAX_SEND_BATCH); break; }
-        char full[MAX_PATH]; snprintf(full, sizeof full, "%s/%s", dir, p); send_path(s, full);
+        char full[MAX_PATH]; snprintf(full, sizeof full, "%s/%s", dir, p); if (!send_current(s, full)) break;
     }
 }
 /* ---------- anexos preparados: arquivo solto sem sala, imagem colada (BAS-23, BAS-24) ---------- */
@@ -205,20 +276,19 @@ static pend_t *pend_new(const char *path) {
     }
     return NULL;
 }
-static bool core_ready_in_room(const app_state_t *s) { return core_state() == CORE_READY && s->in_room; }
 
 /* arquivos soltos na janela (WM_DROPFILES → cui_dropped_file); pastas são ignoradas.
  * Com sala: envia na hora (como o "Solte para enviar" do Electron). Sem sala: fica preparado no cartão, com o motivo, em vez de sumir. */
 static void take_drops(cui_ctx *ui, app_state_t *s) {
     int n = cui_dropped_file_count(ui); if (n <= 0) return;
     if (briks_image_drop_active(ui)) return;   /* há uma faixa de foto na tela (perfil/grupo): ela decide o que fazer com o arquivo */
-    bool ok = core_ready_in_room(s);
+    char tfp[72], why[300]; bool ok = target_for(s, tfp, sizeof tfp, why, sizeof why) != TGT_NONE;
     int taken = 0;
     for (int i = 0; i < n; i++) {
         const char *p = cui_dropped_file(ui, i); if (!p || !*p) continue;
         DWORD at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (taken >= MAX_SEND_BATCH) { snprintf(s->notice, sizeof s->notice, "Peguei os primeiros %d arquivos; solte o resto de novo.", MAX_SEND_BATCH); break; }
-        if (ok) send_path(s, p); else pend_new(p);
+        if (ok) send_current(s, p); else pend_new(p);
         taken++;
     }
 }
@@ -299,20 +369,24 @@ static void pend_cards(cui_ctx *ui, app_state_t *s) {
     for (int i = 0; i < NPEND; i++) {
         pend_t *x = &g_pend[i]; if (!x->used) continue;
         cui_push_id_int(ui, 8900 + i);
-        char a[24], line[200]; bool ok = core_ready_in_room(s);
+        char a[24], line[200], tfp[72], why[300]; int tg = target_for(s, tfp, sizeof tfp, why, sizeof why); bool ok = tg != TGT_NONE;
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_A(B_C3, 0x66), .align = CUI_ALIGN_CENTER, .clip = true) {
             if (x->tex) {
                 float k = 44.0f / (float)(x->w > x->h ? x->w : x->h);
                 cui_image(ui, x->tex, .width = CUI_PX((float)x->w * k + 0.5f), .height = CUI_PX((float)x->h * k + 0.5f), .radius = 8);
-            } else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = B_A(B_C1, 0x33), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 20, B_C3); }
+            } else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = B_A(B_C1, 0x33), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, kind_icon(x->name), 20, B_C3); }
             cui_box(ui, .width = CUI_FILL, .gap = 3) {
                 cui_text(ui, x->name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
                 if (x->w) snprintf(line, sizeof line, "%s · %d×%d · %s", x->pasted ? "Imagem colada" : "Imagem", x->w, x->h, fmt_size(x->size, a, sizeof a));
-                else snprintf(line, sizeof line, "Arquivo preparado · %s", fmt_size(x->size, a, sizeof a));
+                else snprintf(line, sizeof line, "%s preparado · %s", kind_label(x->name), fmt_size(x->size, a, sizeof a));
                 cui_text(ui, line, .size = 11, .color = B_MUTED);
-                cui_text(ui, ok ? "Pronto: toque em Enviar para mandar aos participantes da sala." : "Entre numa sala de voz para enviar aos participantes.", .size = 11, .color = ok ? B_MUTED : CUI_RGB(0xf5c542));
+                { char msg[360]; const person_t *pf = friend_of_fp(s, tfp);
+                  if (!ok) snprintf(msg, sizeof msg, "%s", why);
+                  else if (tg == TGT_DM) snprintf(msg, sizeof msg, "Pronto: toque em Enviar para mandar a %s%s.", pf ? pf->name : "seu amigo", pf && !friends_online(s, pf) ? " (offline: fica na fila e segue quando ele voltar)" : "");
+                  else snprintf(msg, sizeof msg, "Pronto: toque em Enviar para mandar %s.", pf ? pf->name : "aos participantes da sala");
+                  cui_text(ui, msg, .size = 11, .color = ok ? B_MUTED : CUI_RGB(0xf5c542)); }
             }
-            if (cui_button(ui, "Enviar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .disabled = !ok)) { send_path(s, x->path); pend_free(ui, x); }
+            if (cui_button(ui, "Enviar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM, .disabled = !ok)) { if (send_current(s, x->path)) pend_free(ui, x); }
             if (cui_icon_button(ui, CUI_ICON_X, .size = CUI_SIZE_SM, .tooltip = "Descartar")) pend_free(ui, x);
         }
         cui_pop_id(ui);
@@ -327,7 +401,9 @@ void attach_dropzone(cui_ctx *ui, cui_rect r) {
                 .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             cui_box(ui, .width = CUI_PX(64), .height = CUI_PX(64), .radius = 32, .bg = B_A(B_C1, 0x55), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 28, B_TEXT); }
             cui_text(ui, "Solte para enviar", .font = CUI_FONT_DISPLAY, .size = 20, .color = B_TEXT);
-            cui_text(ui, "Os arquivos vão para quem está na sala de voz.", .size = 13, .color = B_MUTED);
+            { const char *dz = "Os arquivos vão para quem está na sala de voz.";
+              if (g_ps && g_ps->active_friend >= 0 && g_ps->active_friend < g_ps->friend_count) dz = "Foto, vídeo, áudio ou documento: vai para esta conversa.";
+              cui_text(ui, dz, .size = 13, .color = B_MUTED); }
         }
     }
 }
@@ -390,7 +466,8 @@ static void tl_add(const app_state_t *s, const char *xid, const xf_t *x) {
     int slot = -1; for (int i = 0; i < NTL; i++) if (!g_tl[i].used) { slot = i; break; }
     if (slot < 0) { memmove(&g_tl[0], &g_tl[1], sizeof g_tl[0] * (NTL - 1)); slot = NTL - 1; }   /* cheio: descarta o mais antigo */
     tl_t *t = &g_tl[slot]; memset(t, 0, sizeof *t); t->used = true;
-    snprintf(t->xid, sizeof t->xid, "%s", xid); snprintf(t->conv, sizeof t->conv, "%s", tl_conv(s));
+    snprintf(t->xid, sizeof t->xid, "%s", xid);
+    { const person_t *pf = friend_of_fp(s, x->fp); snprintf(t->conv, sizeof t->conv, "%s", pf ? pf->id : tl_conv(s)); }   /* a conversa de quem enviou/recebeu, mesmo que outra esteja aberta */
     SYSTEMTIME u; GetSystemTime(&u);
     snprintf(t->when, sizeof t->when, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", u.wYear, u.wMonth, u.wDay, u.wHour, u.wMinute, u.wSecond, u.wMilliseconds);
     snprintf(t->name, sizeof t->name, "%s", x->name[0] ? x->name : "arquivo"); tl_clean(t->name);
@@ -440,7 +517,7 @@ void attach_timeline(cui_ctx *ui, app_state_t *s, int *cur, const char *until) {
                     .border_color = t->mine ? CUI_RGBA(0xffffff26) : B_GLASS_BORDER, .align = pvw ? CUI_ALIGN_START : CUI_ALIGN_CENTER) {
                 if (pvw) pv_draw(ui, pvw, 300, 220);
                 cui_box(ui, .dir = CUI_ROW, .gap = 10, .align = CUI_ALIGN_CENTER, .width = pvw ? CUI_FILL : CUI_FIT) {
-                cui_box(ui, .width = CUI_PX(40), .height = CUI_PX(40), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 18, B_C3); }
+                cui_box(ui, .width = CUI_PX(40), .height = CUI_PX(40), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, kind_icon(t->name), 18, B_C3); }
                 cui_box(ui, .gap = 2, .max_width = 250) {
                     cui_text(ui, t->name, .font = CUI_FONT_MEDIUM, .size = 13, .nowrap = true);
                     char l[80]; snprintf(l, sizeof l, "%s · %s", t->mine ? "Enviado" : "Recebido", fmt_size(t->size, a, sizeof a));
@@ -475,11 +552,13 @@ void attach_strip(cui_ctx *ui, app_state_t *s) {
             cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .pad = 8, .gap = 10, .radius = 14, .bg = B_GLASS_CARD, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .clip = true) {
                 cui_texture tx = x->th.tex || x->th.rgba ? thumb_tex(ui, &x->th) : 0;
                 if (tx) cui_image(ui, tx, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10);
-                else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_PAPERCLIP, 20, B_C3); }
+                else cui_box(ui, .width = CUI_PX(44), .height = CUI_PX(44), .radius = 10, .bg = CUI_RGBA(0x8b5cf633), .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, x->st == XF_QUEUED ? CUI_ICON_CLOCK : kind_icon(x->name), 20, B_C3); }
                 cui_box(ui, .width = CUI_FILL, .gap = 3) {
                     cui_text(ui, x->name[0] ? x->name : "arquivo", .font = CUI_FONT_MEDIUM, .size = 13);
-                    if (x->st == XF_OFFER) cui_textf(ui, "%s quer enviar · %s · nada foi baixado", "Alguém da sala", fmt_size(x->size, a, sizeof a));
-                    else if (x->st == XF_WAIT) cui_textf(ui, "Aguardando o aceite · %s", fmt_size(x->size, a, sizeof a));
+                    const person_t *xp = friend_of_fp(s, x->fp);
+                    if (x->st == XF_OFFER) cui_textf(ui, "%s quer enviar %s · %s · nada foi baixado", xp ? xp->name : "Alguém da sala", file_kind(x->name) == 1 ? "uma foto" : file_kind(x->name) == 2 ? "um vídeo" : file_kind(x->name) == 3 ? "um áudio" : "um arquivo", fmt_size(x->size, a, sizeof a));
+                    else if (x->st == XF_QUEUED) cui_textf(ui, "Na fila · %s · fica neste computador e segue quando %s ficar online", fmt_size(x->size, a, sizeof a), xp ? xp->name : "a pessoa");
+                    else if (x->st == XF_WAIT) cui_textf(ui, "Aguardando %s aceitar · %s", xp ? xp->name : "o aceite", fmt_size(x->size, a, sizeof a));
                     else if (x->st == XF_RUN || x->st == XF_PAUSED) {
                         float f = x->size > 0 ? (float)(x->done / x->size) : 0;
                         snprintf(line, sizeof line, "%s %s de %s%s", x->mine ? "Enviando" : "Recebendo", fmt_size(x->done, a, sizeof a), fmt_size(x->size, b, sizeof b), x->st == XF_PAUSED ? " · pausado" : "");
@@ -494,15 +573,17 @@ void attach_strip(cui_ctx *ui, app_state_t *s) {
                 if (x->st == XF_OFFER) {
                     if (cui_button(ui, "Baixar", .variant = CUI_BUTTON_PRIMARY, .size = CUI_SIZE_SM)) { char l[160]; snprintf(l, sizeof l, "{\"cmd\":\"file.accept\",\"id\":\"%s\"}", x->id); core_send(l); x->st = XF_RUN; }
                     if (cui_button(ui, "Recusar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { xf_cancel(x); x->st = XF_CANCELLED; }
-                } else if (x->st == XF_RUN || x->st == XF_PAUSED || x->st == XF_WAIT) {
-                    if (x->st != XF_WAIT && cui_button(ui, x->st == XF_PAUSED ? "Retomar" : "Pausar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
+                } else if (x->st == XF_RUN || x->st == XF_PAUSED || x->st == XF_WAIT || x->st == XF_QUEUED) {
+                    if (x->st != XF_WAIT && x->st != XF_QUEUED && cui_button(ui, x->st == XF_PAUSED ? "Retomar" : "Pausar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
                         char l[160]; snprintf(l, sizeof l, "{\"cmd\":\"file.pause\",\"id\":\"%s\",\"paused\":%s}", x->id, x->st == XF_PAUSED ? "false" : "true"); core_send(l);
                         x->st = x->st == XF_PAUSED ? XF_RUN : XF_PAUSED;
                     }
                     if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { xf_cancel(x); x->st = XF_CANCELLED; }
                 } else {
                     if (x->st == XF_FAILED && x->mine && x->path[0] && cui_button(ui, "Tentar de novo", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) {
-                        char esc[2 * MAX_PATH + 8], l[2 * MAX_PATH + 48]; json_escape(x->path, esc, sizeof esc); snprintf(l, sizeof l, "{\"cmd\":\"file.send\",\"path\":\"%s\"}", esc); core_send(l);
+                        char fpb[72], why[300]; int tg = target_for(s, fpb, sizeof fpb, why, sizeof why);
+                        if (x->fp[0] && friend_of_fp(s, x->fp)) { tg = chat_in_call_with(s, x->fp) ? TGT_ROOM : (s->acct_user_id[0] && !s->acct_demo ? TGT_DM : TGT_NONE); snprintf(fpb, sizeof fpb, "%s", x->fp); if (tg == TGT_NONE) snprintf(why, sizeof why, "Entre na sua conta do Briks para enviar anexos a um amigo."); }   /* refaz pelo mesmo caminho (amigo) */
+                        if (tg == TGT_NONE) att_err("Não foi possível enviar", x->name, why); else send_to(s, x->path, tg, fpb);
                         free(x->th.rgba); if (x->th.tex) cui_image_destroy(ui, x->th.tex); memset(x, 0, sizeof *x);
                     }
                     if (x->st == XF_DONE && !x->mine) {
@@ -539,6 +620,10 @@ void attach_overlay(cui_ctx *ui, app_state_t *s) {
                 cui_pop_id(ui);
             }
         }
+    }
+    cui_dialog(ui, g_err_title[0] ? g_err_title : "Não foi possível enviar", &g_err_dlg, .width = dw) {
+        cui_box(ui, .width = CUI_FILL, .pad = 10, .radius = 12, .bg = CUI_RGBA(0xef444422), .border = 1, .border_color = CUI_RGBA(0xef444466)) { cui_text(ui, g_err_msg, .size = 13); }
+        cui_dialog_footer(ui) { if (cui_button(ui, "Entendi", .variant = CUI_BUTTON_PRIMARY)) g_err_dlg = false; }
     }
     cui_dialog(ui, "Abrir arquivo recebido?", &g_open_dlg, .width = dw) {
         bool risky = risky_ext(g_open_path);
@@ -809,6 +894,12 @@ int attach_probe(const char *n) {
         for (int i = g_ps->msg_count - 1, k = 0; i >= 0; i--) if (g_ps->msgs[i].mine && k++ == atoi(n + 10)) return attach_state(g_ps->msgs[i].id);
         return 0;
     }
+    if (!strncmp(n, "xf_", 3)) {   /* xf_queued | xf_offer | xf_wait | xf_run | xf_done | xf_failed | xf_cancelled: cartões de transferência nesse estado */
+        static const struct { const char *k; int st; } M[] = { { "queued", XF_QUEUED }, { "offer", XF_OFFER }, { "wait", XF_WAIT }, { "run", XF_RUN }, { "done", XF_DONE }, { "failed", XF_FAILED }, { "cancelled", XF_CANCELLED } };
+        for (int m = 0; m < 7; m++) if (!strcmp(n + 3, M[m].k)) { int k = 0; for (int i = 0; i < NXF; i++) k += g_xf[i].used && g_xf[i].st == M[m].st; return k; }
+        return -1;
+    }
+    if (!strcmp(n, "err_dlg")) return g_err_dlg;
     if (!strcmp(n, "pv_count")) return attach_preview_count();   /* 1.4.2: imagens com pré-visualização carregada */
     if (!strcmp(n, "pal_len")) return (int)strlen(g_pal_q);
     return -1;

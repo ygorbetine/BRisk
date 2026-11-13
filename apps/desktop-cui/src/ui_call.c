@@ -868,6 +868,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
         sons_dialogs(ui, s);
     }
     ui_share_dialog(ui, s);
+    msgui_overlay(ui, s);   /* o seletor de emojis (e menus de mensagem) desenha aqui tambem: sem isto o botao de emoji do editor de sons, na chamada, nunca mostrava o painel */
     /* confirmação rápida antes de expulsar */
     if (s->kick_open) {
         const char *who = (s->kick_slot >= 0 && s->kick_slot < BRIKS_MAX_PEERS && s->rtc_peers[s->kick_slot].name[0]) ? s->rtc_peers[s->kick_slot].name : "esta pessoa";

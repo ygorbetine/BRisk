@@ -142,7 +142,8 @@ void titlebar_draw(cui_ctx *ui, app_state_t *s) {
                     cui_icon(ui, CUI_ICON_DOWNLOAD, 15, ready ? B_ONLINE : B_MUTED);
                 }
                 if (up == UPD_DOWNLOADING) cui_request_wakeup(ui, 0.5f);
-                if (hov && cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) { g_upd_clicks++; if (ready) update_undismiss(); }
+                if (hov && cui_mouse_clicked(ui, CUI_MOUSE_LEFT)) { g_upd_clicks++; update_dialog_open(); }   /* abre o diálogo (progresso ou "Reiniciar e instalar") */
+                if (hov) briks_tip(ready ? "Atualização pronta: clique para instalar" : "Baixando atualização: clique para ver");
             }
             /* Apoiar no Ko-fi: abre a página no navegador (nunca dentro do app). */
             if (tb_btn(ui, "tb-kofi", CUI_ICON_HEART, false)) briks_open_kofi();

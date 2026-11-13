@@ -14,6 +14,7 @@ const char *update_error(void);
 const char *update_current_version(void);
 void update_dismiss(void);               /* "Depois": não avisa de novo nesta sessão (a instalação ao fechar continua) */
 bool update_dismissed(void);
+void update_dialog_open(void);           /* o botão de download da barra de título abre o diálogo (baixando / pronto para instalar) */
 void update_undismiss(void);             /* a seta da barra de título reabre o aviso "pronto para instalar" */
 bool update_install_now(void);           /* inicia o instalador (silencioso, reabre o app); o chamador fecha o app em seguida */
 void update_install_on_exit(void);       /* ao fechar: se há atualização pronta e verificada, instala em silêncio sem reabrir */

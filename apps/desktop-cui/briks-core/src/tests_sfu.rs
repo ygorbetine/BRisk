@@ -185,6 +185,47 @@ async fn sfu_screen_share_published_and_watched() {
     b.cmd.send(MeshCmd::Close).await.unwrap();
 }
 
+/// 1.5.7: o codec escolhido (VP9 / VP8) vale no SFU: A publica a tela com o codec e B recebe quadros decodificados; o codec anunciado ao
+/// servidor e o recebido por B são o mesmo (antes a transmissão saía sempre em H264).
+#[cfg(feature = "vpx")]
+async fn sfu_share_with_codec(codec: crate::codec::Codec) {
+    use crate::capture::SourceKind;
+    use crate::share::ShareCfg;
+    use crate::video::FrameSource;
+    let Some(srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    std::env::set_var("BRIKS_ENCODER", "openh264");
+    std::env::set_var("BRIKS_DECODER", "openh264");
+    let room = format!("room:{}", uuid::Uuid::new_v4().simple());
+    let (mut a, _au_a) = client(srv.port, &room, A, false).await;
+    let (mut b, _au_b) = client(srv.port, &room, B, false).await;
+    wait_ev(&mut b, |e| matches!(e, MeshEvent::PeerInfo { peer_id, .. } if peer_id == A), 15).await.expect("B não viu o A");
+    let dir = std::env::temp_dir().join(format!("briks-sfu-codec-{}-{}", codec.name(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+    a.cmd.send(MeshCmd::ShareStart { cfg: ShareCfg { kind: SourceKind::Test, height: 720, fps: 30, kbps: 0, label: "Teste".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec, adaptive: false }, preview: None, dump: None }).await.unwrap();
+    let on = wait_ev(&mut a, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.local" && v["state"] == "on"), 20).await.expect("A não começou");
+    if let MeshEvent::Share(v) = on { assert_eq!(v["codec"], codec.name(), "o emissor não usou o codec pedido no SFU"); }
+    wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "on"), 20).await.expect("B não soube da transmissão");
+    let rpath = dir.join("recebido.bin");
+    b.cmd.send(MeshCmd::ShareWatch { key: A.into(), on: true, path: rpath.clone() }).await.unwrap();
+    wait_ev(&mut b, |e| matches!(e, MeshEvent::Share(v) if v["ev"] == "share.remote" && v["state"] == "frame"), 25).await.expect("nenhum quadro chegou ao B");
+    let src = FrameSource::open(&rpath).unwrap();
+    let (mut last_n, mut got) = (0u64, 0u32);
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(4) {
+        if let Some((_, _, n, _)) = src.read() { if n != last_n { last_n = n; got += 1; } }
+        tokio::time::sleep(Duration::from_millis(8)).await;
+    }
+    assert!(got >= 12, "poucos quadros {}: {got}", codec.name());
+    a.cmd.send(MeshCmd::Close).await.unwrap();
+    b.cmd.send(MeshCmd::Close).await.unwrap();
+}
+#[cfg(feature = "vpx")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_screen_share_in_vp9() { sfu_share_with_codec(crate::codec::Codec::Vp9).await }
+#[cfg(feature = "vpx")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_screen_share_in_vp8() { sfu_share_with_codec(crate::codec::Codec::Vp8).await }
+
 /// Dois monitores ao mesmo tempo pelo SFU: A publica DUAS faixas de tela (fontes sintéticas, codificador de software) e B assiste às
 /// duas, cada uma no seu arquivo. Parar a 2ª não derruba a 1ª.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

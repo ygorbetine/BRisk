@@ -2,7 +2,9 @@
  * Também: Configurações > Atualizações com "Verificar atualização agora" (ATU-04) e "Novidades da versão em uso" (CFG-29). */
 #include "briks_ui.h"
 #include "update.h"
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void update_banner(cui_ctx *ui, app_state_t *s) {
@@ -18,8 +20,56 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
     }
 }
 
+static void paint_indef(cui_ctx *ui, cui_rect r, void *user);
+static bool g_dlg;
+void update_dialog_open(void) { g_dlg = true; }
+void update_dialog(cui_ctx *ui, app_state_t *s) {
+    { static int dev = -1; if (dev < 0) dev = getenv("BRIKS_DEV_UPDDLG") != NULL; if (dev == 1) { dev = 2; g_dlg = true; } }   /* captura: abre o diálogo sozinho */
+    if (!g_dlg) return;
+    const upd_phase_t ph = update_phase(); const upd_check_t ck = update_check_state();
+    cui_vec2 vp = cui_viewport_size(ui);
+    cui_dialog(ui, "Atualização do Briks", &g_dlg, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
+        char t[160];
+        if (ph == UPD_READY) {
+            snprintf(t, sizeof t, "O Briks %s já foi baixado e verificado. Reinicie para instalar (a chamada em andamento será encerrada).", update_version());
+            cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
+            cui_text(ui, "Se preferir, ele é instalado sozinho quando você fechar o Briks.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
+            cui_dialog_footer(ui) {
+                if (cui_button(ui, "Depois", .variant = CUI_BUTTON_SECONDARY)) g_dlg = false;
+                if (cui_button(ui, "Reiniciar e instalar", .variant = CUI_BUTTON_PRIMARY)) { if (update_install_now()) cui_app_quit(s->app); }
+            }
+        } else if (ph == UPD_DOWNLOADING || (ph == UPD_CHECKING && ck == UCHK_NEWER)) {
+            const bool pct = ph == UPD_DOWNLOADING && update_percent() > 0;
+            if (pct) snprintf(t, sizeof t, "Baixando o Briks %s: %d%%", update_version(), update_percent());
+            else snprintf(t, sizeof t, "Nova versão %s: preparando o download…", ph == UPD_DOWNLOADING ? update_version() : update_check_version());
+            cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
+            if (pct) cui_progress(ui, (float)update_percent() / 100.0f);
+            else cui_canvas(ui, "upd-dlg-indef", CUI_FILL, CUI_PX(6), paint_indef, NULL, 0);
+            cui_text(ui, "Quando terminar, o botão pede para reiniciar e instalar. Você pode continuar usando o Briks.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
+            cui_request_wakeup(ui, pct ? 0.3f : 0.03f);
+            cui_dialog_footer(ui) { if (cui_button(ui, "Fechar", .variant = CUI_BUTTON_SECONDARY)) g_dlg = false; }
+        } else {
+            if (ck == UCHK_NEWER) snprintf(t, sizeof t, "Nova versão %s disponível. %s", update_check_version(), update_auto_on() ? "O download começa em segundo plano." : "A atualização automática está desligada nesta cópia: instale pela página do Briks.");
+            else if (ck == UCHK_RUNNING) snprintf(t, sizeof t, "Verificando…");
+            else if (ck == UCHK_LATEST) snprintf(t, sizeof t, "Você está na última versão (%s).", update_current_version());
+            else snprintf(t, sizeof t, "%s", ph == UPD_ERROR ? "Não foi possível baixar agora; o Briks tenta de novo mais tarde." : "Nenhuma atualização pendente.");
+            cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
+            if (ck == UCHK_RUNNING) cui_request_wakeup(ui, 0.2f);
+            cui_dialog_footer(ui) {
+                if (cui_button(ui, "Fechar", .variant = CUI_BUTTON_SECONDARY)) g_dlg = false;
+                if (cui_button(ui, ck == UCHK_RUNNING ? "Verificando…" : "Verificar agora", .variant = CUI_BUTTON_PRIMARY, .loading = ck == UCHK_RUNNING)) update_check_now();
+            }
+        }
+    }
+}
+
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.7", {
+        "Transmissão: o seletor de codec (H.264, VP9 ou VP8) agora vale também no servidor de chamadas (SFU); antes só funcionava no ponto a ponto. O codec de cada tela é definido na primeira transmissão da chamada.",
+        "Atualização: o botão de download ao lado do minimizar abre uma janela que mostra o progresso do download e, quando termina, oferece Reiniciar e instalar.",
+        "Grupos: a seta ao lado do nome do grupo agora também abre o grupo na primeira vez (antes só o clique no nome abria).",
+        NULL } },
     { "1.5.6", {
         "Transmissão: a miniatura de quem transmite, no modo Call, agora fica realmente desfocada (antes aparecia nítida).",
         "Transmissão: o som de uma transmissão só sai quando você está na aba Transmissão; na miniatura, na thumb e no overlay ela fica muda.",

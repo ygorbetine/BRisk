@@ -153,6 +153,7 @@ static void frame(cui_ctx *ui) {
         }
     }
     migrate_dialog(ui, &state);
+    update_dialog(ui, &state);
     fw_dialog(ui, &state);   /* primeira chamada: liberar o Briks no Firewall (nunca bloqueia a chamada) */
     briks_theme_editor(ui);   /* Ctrl+Shift+T com BRIKS_DEV=1 */
 }

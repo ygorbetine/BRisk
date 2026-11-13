@@ -135,7 +135,7 @@ enum Internal {
 
 struct Down { since: std::time::Instant, attempt: u32, next: tokio::time::Instant, token_fresh: bool, announced: bool, reason: String, token_at: Option<std::time::Instant> }
 
-struct Pending { track: Arc<dyn TrackLocal + Send + Sync>, video: bool }
+struct Pending { track: Arc<dyn TrackLocal + Send + Sync>, video: bool, codec: crate::codec::Codec }
 
 struct Published { sid: String, sender: Arc<RTCRtpSender> }
 
@@ -158,6 +158,11 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
         m.register_codec(RTCRtpCodecParameters { capability: RTCRtpCodecCapability { mime_type: MIME_TYPE_OPUS.into(), clock_rate: 48_000, channels: 2, sdp_fmtp_line: "minptime=10;useinbandfec=1".into(), rtcp_feedback: vec![] }, payload_type: 111, ..Default::default() }, RTPCodecType::Audio)?;
         let fb = vec![RTCPFeedback { typ: "goog-remb".into(), parameter: "".into() }, RTCPFeedback { typ: "ccm".into(), parameter: "fir".into() }, RTCPFeedback { typ: "nack".into(), parameter: "".into() }, RTCPFeedback { typ: "nack".into(), parameter: "pli".into() }, RTCPFeedback { typ: "transport-cc".into(), parameter: "".into() }];
         m.register_codec(RTCRtpCodecParameters { capability: RTCRtpCodecCapability { mime_type: "video/H264".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: share::H264_FMTP.into(), rtcp_feedback: fb }, payload_type: 102, ..Default::default() }, RTPCodecType::Video)?;
+        // VP9/VP8 (libvpx): só entram na offer quando este binário sabe codificar. Cada faixa de tela restringe a m-line ao SEU codec com
+        // `set_codec_preferences` (ver `on_track_published`); sem isso a offer listaria todos e o servidor registraria a faixa com o errado.
+        let fb2 = vec![RTCPFeedback { typ: "goog-remb".into(), parameter: "".into() }, RTCPFeedback { typ: "ccm".into(), parameter: "fir".into() }, RTCPFeedback { typ: "nack".into(), parameter: "".into() }, RTCPFeedback { typ: "nack".into(), parameter: "pli".into() }, RTCPFeedback { typ: "transport-cc".into(), parameter: "".into() }];
+        if crate::codec::Codec::Vp9.available() { m.register_codec(RTCRtpCodecParameters { capability: RTCRtpCodecCapability { mime_type: "video/VP9".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: share::video_fmtp(crate::codec::Codec::Vp9).into(), rtcp_feedback: fb2.clone() }, payload_type: 98, ..Default::default() }, RTPCodecType::Video)?; }
+        if crate::codec::Codec::Vp8.available() { m.register_codec(RTCRtpCodecParameters { capability: RTCRtpCodecCapability { mime_type: "video/VP8".into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: "".into(), rtcp_feedback: fb2 }, payload_type: 96, ..Default::default() }, RTPCodecType::Video)?; }
     } else {
         m.register_default_codecs()?;
     }
@@ -715,8 +720,9 @@ impl Actor {
     }
 
     async fn publish(&mut self, cid: &str, track: Arc<dyn TrackLocal + Send + Sync>, video: bool, ttype: lk::TrackType, source: lk::TrackSource, name: &str, w: u32, h: u32) {
-        self.pending.insert(cid.to_string(), Pending { track, video });
-        let req = lk::AddTrackRequest { cid: cid.into(), name: name.into(), r#type: ttype as i32, width: w, height: h, source: source as i32, simulcast_codecs: if ttype == lk::TrackType::Video { vec![lk::SimulcastCodec { codec: "h264".into(), cid: cid.into(), ..Default::default() }] } else { vec![] }, stereo: ttype == lk::TrackType::Audio && source == lk::TrackSource::ScreenShareAudio, disable_dtx: false, ..Default::default() };
+        let codec = if !video { crate::codec::Codec::H264 } else if cid == share::CAMERA_TRACK_ID { crate::codec::Codec::H264 } else { self.vout[if cid == share::VIDEO_TRACK_ID_2 { 1 } else { 0 }].as_ref().map(|v| v.codec()).unwrap_or_default() };
+        self.pending.insert(cid.to_string(), Pending { track, video, codec });
+        let req = lk::AddTrackRequest { cid: cid.into(), name: name.into(), r#type: ttype as i32, width: w, height: h, source: source as i32, simulcast_codecs: if ttype == lk::TrackType::Video { vec![lk::SimulcastCodec { codec: codec.name().into(), cid: cid.into(), ..Default::default() }] } else { vec![] }, stereo: ttype == lk::TrackType::Audio && source == lk::TrackSource::ScreenShareAudio, disable_dtx: false, ..Default::default() };
         self.send(rq::Message::AddTrack(req)).await;
     }
 
@@ -758,6 +764,16 @@ impl Actor {
         let pc = match self.ensure_publisher().await { Ok(p) => p, Err(e) => { self.emit(MeshEvent::Error(format!("publisher: {e}"))).await; return; } };
         match pc.add_track(p.track.clone()).await {
             Ok(sender) => {
+                if p.video {   // a m-line desta faixa só oferece o codec dela (H264, VP9 ou VP8)
+                    for t in pc.get_transceivers().await {
+                        if Arc::ptr_eq(&t.sender().await, &sender) {
+                            let cap = webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability { mime_type: p.codec.mime().into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: share::video_fmtp(p.codec).into(), rtcp_feedback: vec![] };
+                            let pt = match p.codec { crate::codec::Codec::H264 => 102, crate::codec::Codec::Vp9 => 98, crate::codec::Codec::Vp8 => 96 };
+                            if let Err(e) = t.set_codec_preferences(vec![webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters { capability: cap, payload_type: pt, ..Default::default() }]).await { self.emit(MeshEvent::Error(format!("codec da faixa {}: {e}", r.cid))).await; }
+                            break;
+                        }
+                    }
+                }
                 if p.video && r.cid == share::CAMERA_TRACK_ID {
                     self.cam_idr.store(true, Ordering::Relaxed);
                     let nack = self.cam_vout.as_ref().map(|v| (v.nack_tx.clone(), v.rtx_gap_ms.clone(), v.rtx_twice.clone()));
@@ -1255,6 +1271,8 @@ impl Actor {
         let cid = share::video_cid(slot);
         let first = !self.published.contains_key(cid) && !self.pending.contains_key(cid);
         let vout = self.vout[slot].get_or_insert_with(|| share::VideoOut::new_slot(slot)).clone();
+        // o codec de cada tela é decidido na 1ª publicação da chamada (a faixa fica publicada entre uma transmissão e outra); depois dela, segue o mesmo
+        if first { let want = if cfg.codec.available() { cfg.codec } else { crate::codec::Codec::H264 }; let _ = vout.set_codec(want); }
         let (amode, label, h) = (cfg.audio.clone(), cfg.label.clone(), cfg.height as u32);
         match share::start_sender(gen, self.idr[slot].clone(), self.net[slot].clone(), cfg, vout.clone(), self.sev_tx.clone(), preview, dump) {
             Ok(sender) => {

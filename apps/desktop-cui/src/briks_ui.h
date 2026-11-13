@@ -214,6 +214,7 @@ void migrate_pump(app_state_t *s);
 void migrate_dialog(cui_ctx *ui, app_state_t *s);
 /* ui_update.c: aviso "pronto para instalar" (update.c baixa e verifica em segundo plano) */
 void update_banner(cui_ctx *ui, app_state_t *s);
+void update_dialog(cui_ctx *ui, app_state_t *s);   /* ui_update.c: diálogo aberto pelo botão de download da barra de título */
 
 /* app.c: máquina de estados das chamadas ao backend */
 void app_submit_auth(app_state_t *s);

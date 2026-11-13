@@ -297,10 +297,10 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
                       cui_text(ui, g.name, .nowrap = true, .width = CUI_FILL, .font = CUI_FONT_DISPLAY, .size = 14, .color = act ? B_TEXT : B_MUTED);
                       cui_box(ui, .id = "gc", .width = CUI_PX(24), .height = CUI_PX(24), .radius = 8, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER,
                               .bg = briks_hover(ui, "gc") ? CUI_RGBA(0xffffff20) : CUI_RGBA(0x00000000)) { cui_icon(ui, coll ? CUI_ICON_CHEVRON_RIGHT : CUI_ICON_CHEVRON_DOWN, 15, B_MUTED); }
-                      if (briks_hover(ui, "gc")) briks_tip(coll ? "Expandir o grupo" : "Recolher o grupo");
+                      if (briks_hover(ui, "gc")) briks_tip(!act ? "Abrir o grupo" : coll ? "Expandir o grupo" : "Recolher o grupo");
                   }
                   g_last_row = cui_get_rect(ui, cui_make_id(ui, "gh"));
-                  if (briks_clicked_r(ui, "gc", 8.0f)) groups_collapse_set(s->groups[i].id, !coll);
+                  if (briks_clicked_r(ui, "gc", 8.0f)) { if (!act) { app_open_group(s, i); groups_collapse_set(s->groups[i].id, false); } else groups_collapse_set(s->groups[i].id, !coll); }   /* seta num grupo ainda fechado: abre e expande (como o clique no nome); no ativo: recolhe/expande */
                   else if (briks_clicked(ui, "gh")) { app_open_group(s, i); if (coll) groups_collapse_set(s->groups[i].id, false); }
                   cui_pop_id(ui);
                 }

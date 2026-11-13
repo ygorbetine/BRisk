@@ -705,6 +705,34 @@ mod tests {
     }
 
     #[test]
+    fn clicked_sound_resolves_to_a_playable_file_and_play_emits_self_event() {
+        // caminho do clique: importar -> sound.path devolve o arquivo no formato certo -> Net::play dispara o evento "self" que a UI toca
+        let d = tmpdir("click");
+        let st = Arc::new(Mutex::new(Store::open(&d)));
+        let id = crate::identity::Identity::generate();
+        let it = st.lock().unwrap().import_bytes(&wav(1200, 0.4), "buzina", "", "me", "").unwrap();
+        let ev = handle(&st, &json!({ "cmd": "sound.path", "hash": it.hash }), "fp");
+        let p = ev[0]["path"].as_str().expect("sound.path precisa devolver o caminho do arquivo");
+        assert!(p.ends_with(".wav") && std::path::Path::new(p).is_file(), "{p}");
+        assert_eq!(std::fs::read(p).unwrap().len() as u64, it.size);
+        let mut net = crate::sonsnet::Net::new(&id.fingerprint(), "sala-x", st.clone());
+        let outs = net.play(&id, &it.hash, now_ms()).expect("tocar um som que esta no aparelho");
+        assert!(outs.iter().any(|o| matches!(o, crate::sonsnet::NetOut::Ev(e) if e["ev"] == "sound.play" && e["self"] == true && e["hash"] == it.hash.as_str())), "quem clica tem que receber o evento para tocar");
+        assert!(outs.iter().any(|o| matches!(o, crate::sonsnet::NetOut::Send { kind: "sound.play", .. })), "e os outros recebem o disparo");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn store_opened_at_core_start_is_the_one_calls_use() {
+        // o armazenamento do processo tem de ser o da pasta de dados mesmo que a chamada peça `shared()` antes de qualquer comando sound.*
+        let d = tmpdir("shared");
+        let a = shared_for(&d);
+        let b = store_for("qualquer");
+        assert!(Arc::ptr_eq(&a, &b), "a camada da chamada precisa enxergar o mesmo armazenamento que a UI usa");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn prefs_clamp_and_mute_per_person() {
         let d = tmpdir("pref");
         let mut s = Store::open(&d);

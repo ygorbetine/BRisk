@@ -274,6 +274,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     let mut kicked_rooms: std::collections::HashSet<String> = Default::default();   // salas de onde fui expulso nesta sessão do core
     let mut cur_room = String::new();
     let (mut mic_muted, mut deafened) = (false, false);
+    let _ = crate::sons::shared_for(&cfg.data_dir);   // abre o armazenamento de sons da pasta de dados ANTES de qualquer sala: a camada da chamada (SFU/P2P) pega o armazenamento do processo ao nascer, e se ele nascesse antes viraria um temporario vazio (sons sumiam / "esse som nao esta neste aparelho")
     let mut profile: (String, String) = (String::new(), String::new());   // status e presença locais, reenviados ao entrar numa sala
     // SFU puro: sala no LiveKit e URL da função de expulsão; impressão digital -> identidade no SFU; sou o dono?
     let mut sfu_room: Option<(String, Option<String>)> = None;

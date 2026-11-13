@@ -529,11 +529,15 @@ static void paint_tile(int k, const frame_t *f) {
     } else {
         /* selo "Ao vivo" e nome (pílulas): só fora da edição; na edição o nome está na alça */
     }
-    const int bm = (int)(6 * sc + 0.5f), bh = (int)(20 * sc + 0.5f) < 18 ? 18 : (int)(20 * sc + 0.5f), bw = (int)(66 * sc + 0.5f) < 62 ? 62 : (int)(66 * sc + 0.5f);
+    /* selo "Ao vivo", nome e fontes têm tamanho fixo: o zoom da miniatura só muda a imagem, nunca o texto nem o ícone */
+    const int bm = 6, bh = 20;
+    HFONT sf = bar_font(12, FW_SEMIBOLD), nf = bar_font(12, FW_MEDIUM);
+    SetBkMode(mem, TRANSPARENT); HGDIOBJ osf = SelectObject(mem, sf);
+    RECT mw = { 0, 0, 0, 0 }; DrawTextW(mem, L"Ao vivo", -1, &mw, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+    const int bw = bh / 2 + 6 + mw.right + 12;   /* ponto + texto medido + folga: o selo acompanha o texto, sem sobra nem corte */
     RECT badge = { bm, ty + bm, bm + bw, ty + bm + bh };
     if (on) { px_rr(px, w, wh, badge, bh / 2.0f, RGB(0xdc, 0x26, 0x26), 0.95f, 0); RECT bdot = { badge.left + bh / 2 - 3, badge.top + bh / 2 - 3, badge.left + bh / 2 + 3, badge.top + bh / 2 + 3 }; px_rr(px, w, wh, bdot, 3, RGB(255, 255, 255), 1.0f, 0); }
-    HFONT sf = bar_font(bh - 8 < 11 ? 11 : bh - 8, FW_SEMIBOLD), nf = bar_font(12 * sc < 12 ? 12 : (int)(12 * sc), FW_MEDIUM);
-    SetBkMode(mem, TRANSPARENT); HGDIOBJ osf = SelectObject(mem, nf);
+    SelectObject(mem, nf);
     RECT np = { 0, 0, 0, 0 };
     if (!edit) {
         RECT mr = { 0, 0, 0, 0 }; DrawTextW(mem, sp->name, -1, &mr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
@@ -542,7 +546,7 @@ static void paint_tile(int k, const frame_t *f) {
     }
     GdiFlush();
     if (!edit) { SetTextColor(mem, RGB(255, 255, 255)); RECT nt = { np.left + 8, np.top, np.right - 8, np.bottom }; DrawTextW(mem, sp->name, -1, &nt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS); }
-    if (on) { SelectObject(mem, sf); SetTextColor(mem, RGB(255, 255, 255)); RECT bt = { badge.left + bh / 2 + 6, badge.top, badge.right - 4, badge.bottom }; DrawTextW(mem, L"Ao vivo", -1, &bt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX); SelectObject(mem, nf); }
+    if (on) { SelectObject(mem, sf); SetTextColor(mem, RGB(255, 255, 255)); RECT bt = { badge.left + bh / 2 + 6, badge.top, badge.right, badge.bottom }; DrawTextW(mem, L"Ao vivo", -1, &bt, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX); SelectObject(mem, nf); }
     if (edit) {
         SetTextColor(mem, RGB(255, 255, 255));
         const int right = on ? (t->bpct.right ? t->bpct.left : t->bminus.left) : t->bclose.left;
@@ -574,12 +578,12 @@ static void paint_tile(int k, const frame_t *f) {
     if (!g_noshow) { if (!IsWindowVisible(t->wnd)) ShowWindow(t->wnd, SW_SHOWNOACTIVATE); SetWindowPos(t->wnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
     SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(NULL, screen);
 }
-/* o timer de 250 ms só existe com alguma miniatura LIGADA na tela (nada roda para as ocultas) */
+/* o timer de 33 ms (~30 quadros/s) só existe com alguma miniatura LIGADA na tela (nada roda para as ocultas) */
 static void paint_tiles(const frame_t *f) {
     lv_open(f->lmap);
     int any = 0;
     for (int k = 0; k < NT; k++) { paint_tile(k, f); if (T[k].shown && k < f->ntile && f->t[k].on && g_lvp) any = 1; }
-    if (any && hwnd) SetTimer(hwnd, 1, 250, NULL); else if (hwnd) KillTimer(hwnd, 1);
+    if (any && hwnd) SetTimer(hwnd, 1, 33, NULL); else if (hwnd) KillTimer(hwnd, 1);
 }
 static void tiles_poll(void) { for (int k = 0; k < NT; k++) if (T[k].shown && k < cur.ntile && cur.t[k].on && lv_poll(k)) paint_tile(k, &cur); }
 
@@ -705,7 +709,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEMOVE: drag_move(); return 0;
     case WM_LBUTTONUP: case WM_CAPTURECHANGED: drag_end(); return 0;
     case WM_DISPLAYCHANGE: paint(&cur); return 0;
-    case WM_TIMER: if (w == 1 && g_tdrag < 0) tiles_poll(); return 0;   /* ~4 quadros/s por miniatura; o timer só existe com miniatura ligada na tela */
+    case WM_TIMER: if (w == 1 && g_tdrag < 0) tiles_poll(); return 0;   /* ~30 quadros/s por miniatura; o timer só existe com miniatura ligada na tela */
     case WM_MOUSEWHEEL: wheel_step((short)HIWORD(w) > 0 ? 1 : -1); return 0;
     case WM_FRAME: { frame_t nw; EnterCriticalSection(&cs); nw = ready; LeaveCriticalSection(&cs); adopt_frame(&nw); if (!g_dragging) paint(&cur); return 0; }
     case WM_DESTROY: PostQuitMessage(0); return 0;

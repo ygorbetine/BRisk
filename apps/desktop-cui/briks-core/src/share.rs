@@ -800,6 +800,7 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut last_pkt, mut stalled) = (Instant::now(), false);   // rede de segurança: sem pacote nenhum por 3 s, a UI tira a última imagem
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
+    let mut rx_bytes = 0u64;   // bytes de vídeo recebidos na janela de 1 s (vira o "kbps" que quem assiste vê)
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
         // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
@@ -820,6 +821,7 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
             if let Some(c) = pts.iter().find(|(pt, _)| *pt == p.header.payload_type).map(|(_, c)| *c) {
                 if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); let _ = dtx.try_send(None); ask(&mut last_pli, &mut plis, Duration::ZERO); }
             }
+            rx_bytes += p.payload.len() as u64;
             jb.push(p);
         }
         let (aus, want) = jb.pop(Instant::now());
@@ -831,9 +833,9 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
             let (pid, slot) = split_key(&peer);
-            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": f.saturating_sub(frames0), "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": f.saturating_sub(frames0), "kbps": (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
-            frames0 = f; win = Instant::now();
+            frames0 = f; win = Instant::now(); rx_bytes = 0;
         }
     }
     // a faixa terminou (a pessoa saiu ou a conexão fechou): sem este aviso a UI ficava com a última imagem parada

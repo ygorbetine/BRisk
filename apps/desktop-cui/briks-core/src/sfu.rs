@@ -675,7 +675,8 @@ impl Actor {
         if let Some(a) = &self.audio { a.remove_peer(identity); }
         let gone_fp = self.data.as_ref().and_then(|l| l.peer_key(identity)).map(|k| k.0);
         if let (Some(f), Some(fp)) = (self.files.as_mut(), gone_fp) { f.peer_gone(identity, &fp, "a pessoa saiu da chamada").await; }
-        if let Some(l) = self.data.as_mut() { l.left(identity); }
+        let left_outs = self.data.as_mut().map(|l| l.left(identity)).unwrap_or_default();
+        self.apply(left_outs).await;
         self.emit(MeshEvent::Peer { peer_id: identity.to_string(), state: "fechado".into() }).await;
         if self.owner_marks.remove(identity).is_some() { self.sync_owner().await; }
     }
@@ -1235,6 +1236,8 @@ impl Actor {
         let todo: Vec<(String, String)> = sids.into_iter().filter(|(_, s)| if on { self.subscribed.insert(s.clone()) } else { self.subscribed.remove(s) }).collect();
         self.subscribe(todo, on).await;
         self.emit(MeshEvent::Share(json!({ "ev": "share.remote", "peer_id": key, "slot": slot, "state": if on { "watch" } else { "unwatch" }, "path": path.to_string_lossy() }))).await;
+        let view_outs = self.data.as_ref().map(|l| l.viewing_out(key, slot, on)).unwrap_or_default();   // o emissor conta quem assiste (como na malha P2P)
+        self.apply(view_outs).await;
     }
 
     /// A faixa de vídeo (e a de áudio da tela) é publicada uma vez e reaproveitada: parar = silenciar a faixa no servidor, retomar = reabrir.
@@ -1280,6 +1283,8 @@ impl Actor {
         if let Some(a) = &sh.audio { a.stop(); }
         self.set_muted(share::video_cid(slot), true).await;
         if slot == 0 { self.set_muted(share::AUDIO_TRACK_ID, true).await; }
+        let clr = self.data.as_mut().map(|l| l.clear_viewers(slot)).unwrap_or_default();   // parou: ninguém assiste mais
+        self.apply(clr).await;
     }
 
     // ------------------------------------------------------------------------------------------------------------------

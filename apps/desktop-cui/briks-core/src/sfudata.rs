@@ -83,6 +83,8 @@ pub struct Layer {
     hist: crate::history::Store,
     hist_reqs: HashMap<String, String>,
     seen_groups: HashSet<String>,
+    /// quem assiste à MINHA tela (por slot), pelo aviso `share.viewing` de cada espectador; nunca inclui a mim mesmo
+    viewers: [HashSet<String>; 2],
 }
 
 /// Parte uma lista de mensagens em lotes que cabem num pacote de dados do LiveKit (o lote de 40 KB da malha não cabe).
@@ -116,7 +118,7 @@ impl Layer {
         Layer { cfg, me: sfu_id, fp, peers: HashMap::new(), present: HashMap::new(), banned: HashSet::new(), muted_idents: HashMap::new(), outbox: HashMap::new(), dm_off: HashSet::new(),
             seen_msgs: HashSet::new(), sons, seen_events: HashSet::new(), ev_last_ts: 0, profile: (String::new(), String::new()), media: (true, false), state_ts: 0,
             rate: HashMap::new(), owner_sent: None, server_owner: None, tick_n: 0, resend: vec![],
-            hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new() }
+            hist: crate::history::Store::open(crate::mesh::hist_dir()), hist_reqs: HashMap::new(), seen_groups: HashSet::new(), viewers: [HashSet::new(), HashSet::new()] }
     }
 
     pub fn set_media(&mut self, m: (bool, bool)) { self.media = m; }
@@ -198,10 +200,31 @@ impl Layer {
     }
 
     /// O SFU anunciou a saída de um participante.
-    pub fn left(&mut self, ident: &str) {
+    pub fn left(&mut self, ident: &str) -> Vec<Out> {
         self.present.remove(ident);
         self.peers.remove(ident);
         self.rate.remove(ident);
+        let mut out = vec![];
+        for slot in 0..2usize { if self.viewers[slot].remove(ident) { out.push(self.viewers_ev(slot)); } }   // quem saiu deixa de contar
+        out
+    }
+
+    fn viewers_ev(&self, slot: usize) -> Out {
+        let mut ids: Vec<String> = self.viewers[slot].iter().cloned().collect(); ids.sort();
+        Out::Ev(MeshEvent::Share(json!({ "ev": "share.viewers", "slot": slot, "count": ids.len(), "peers": ids })))
+    }
+
+    /// Eu comecei/parei de assistir à tela de `to` (identidade no SFU): avisa a pessoa, que conta quem assiste.
+    pub fn viewing_out(&self, to: &str, slot: usize, on: bool) -> Vec<Out> {
+        if !self.peers.contains_key(to) { return vec![]; }
+        vec![Out::Send { to: vec![to.to_string()], msg: json!({ "v": 1, "t": "share.viewing", "slot": slot, "on": on }) }]
+    }
+
+    /// Parei de transmitir (ou a transmissão caiu): ninguém assiste mais.
+    pub fn clear_viewers(&mut self, slot: usize) -> Vec<Out> {
+        if slot > 1 || self.viewers[slot].is_empty() { return vec![]; }
+        self.viewers[slot].clear();
+        vec![self.viewers_ev(slot)]
     }
 
     /// Chamado a cada ~2 s: reenvia hello a quem ainda não respondeu, reenvia chat sem ack e promove os que nunca fizeram hello.
@@ -330,6 +353,11 @@ impl Layer {
                 } else if crate::roomchat::take_asked(&self.me, from, now) {
                     vec![Out::Ev(MeshEvent::StreamReply { peer_id: from.into(), name, accepted: v["accepted"].as_bool().unwrap_or(false) })]
                 } else { vec![] }
+            }
+            "share.viewing" => {   // um participante começou/parou de assistir à minha tela (só de quem fez hello)
+                let slot = v["slot"].as_u64().unwrap_or(0).min(1) as usize;
+                let changed = if v["on"].as_bool().unwrap_or(false) { self.viewers[slot].insert(from.to_string()) } else { self.viewers[slot].remove(from) };
+                if changed { vec![self.viewers_ev(slot)] } else { vec![] }
             }
             "sound.play" | "sound.want" | "sound.data" | "sound.none" => {
                 let o = self.sons.on_msg(&crate::sonsnet::PeerRef { key: from, fp: &fp, jwk: &jwk }, t, &v, now_ms() as u64);
@@ -567,6 +595,32 @@ mod t {
     }
 
     #[test]
+    fn sender_counts_and_names_its_viewers_over_the_data_layer() {
+        let (mut a, mut b) = pair();
+        let (mut c, _) = (layer("Cris", "idc", None, 3), 0);
+        let hc = c.hello(); a.on_packet("idc", &bytes(&hc)); c.on_packet("ida", &bytes(&a.hello()));
+        let viewers = |o: &[Out]| o.iter().filter_map(|x| match x { Out::Ev(MeshEvent::Share(v)) if v["ev"] == "share.viewers" => Some(v.clone()), _ => None }).last();
+        // B passa a assistir a tela da A: avisa a A, que conta 1 e sabe quem é
+        let msgs = sends(&b.viewing_out("ida", 0, true));
+        assert_eq!(msgs.len(), 1);
+        let v = viewers(&a.on_packet("idb", &bytes(&msgs[0]))).expect("a contagem mudou");
+        assert_eq!((v["count"].as_u64(), v["slot"].as_u64(), v["peers"][0].as_str()), (Some(1), Some(0), Some("idb")));
+        // repetir o mesmo aviso não muda nada; C também assiste (2); a 2ª tela é separada
+        assert!(viewers(&a.on_packet("idb", &bytes(&msgs[0]))).is_none());
+        let m2 = json!({ "v": 1, "t": "share.viewing", "slot": 0, "on": true });
+        assert_eq!(viewers(&a.on_packet("idc", &bytes(&m2))).unwrap()["count"], 2);
+        assert_eq!(viewers(&a.on_packet("idc", &bytes(&json!({ "v": 1, "t": "share.viewing", "slot": 1, "on": true })))).unwrap()["count"], 1);
+        // quem sai da sala deixa de contar; parar de transmitir zera
+        let lo = a.left("idc");   // saiu das duas telas: um aviso por tela
+        assert_eq!(lo.iter().filter(|x| matches!(x, Out::Ev(MeshEvent::Share(v)) if v["ev"] == "share.viewers")).count(), 2);
+        assert_eq!(viewers(&lo).unwrap()["count"], 0);
+        let cl = a.clear_viewers(0); assert_eq!(viewers(&cl).unwrap()["count"], 0);
+        // desconhecido (sem hello) não conta nem recebe aviso
+        assert!(a.viewing_out("idz", 0, true).is_empty());
+        assert!(viewers(&a.on_packet("idz", &bytes(&m2))).is_none());
+    }
+
+    #[test]
     fn hello_binds_signed_identity_to_the_stamped_sender() {
         let (mut a, mut b) = (layer("Ana", "ida", None, 1), layer("Beto", "idb", None, 2));
         let hb = b.hello();
@@ -764,7 +818,7 @@ mod t {
         assert!(b.on_packet("ida", &bytes(&forged)).iter().all(|x| !matches!(x, Out::Leave)), "a mais antiga expulsou sem ser a dona");
         assert!(b.on_packet("idc", &bytes(&kick)).iter().any(|x| matches!(x, Out::Leave)), "a dona marcada não conseguiu expulsar");
         // a marcada sai de vez e o servidor não aponta mais ninguém: volta o mais antigo
-        a.left("idc");
+        let _ = a.left("idc");
         let o = a.set_server_owner(None);
         assert!(matches!(&o[0], Out::Ev(MeshEvent::Owner { me: true, .. })));
         assert_eq!(a.owner(), a.fp);

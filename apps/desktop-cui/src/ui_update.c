@@ -69,6 +69,12 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.12", {
+        "Chamada: novo botão de configurações no cabeçalho da chamada.",
+        "Tijolos da transmissão menores, e agora também aparecem na sua própria tela.",
+        "Rede: as quedas de conexão com o servidor de chamadas passam a ser registradas em rede.log, para descobrirmos a causa.",
+        "Desinstalador: não trava mais a atualização com um aviso.",
+        NULL } },
     { "1.5.11", {
         "Atualização: o instalador agora é baixado numa pasta local, com nome neutro e informações de versão completas, para o antivírus não bloquear.",
         NULL } },

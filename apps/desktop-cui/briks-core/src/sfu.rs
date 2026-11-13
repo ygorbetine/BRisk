@@ -582,11 +582,13 @@ impl Actor {
     /// A sessão caiu (WebSocket fechado, servidor mudo ou mídia falhou): entra no estado "fora do ar"; o laço tenta voltar.
     fn lost(&mut self, reason: &str) {
         if self.down.is_some() || self.leave { return; }
+        crate::netlog::write(&format!("sfu queda: {reason}"));
         self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string(), token_at: None });
     }
 
     /// Fim definitivo que NÃO é expulsão (a sala não fica bloqueada nesta sessão): a UI mostra o erro e o usuário pode entrar de novo.
     async fn terminal(&mut self, msg: &str) {
+        crate::netlog::write(&format!("sfu fim: {msg}"));
         self.emit(MeshEvent::Error(msg.to_string())).await;
         self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "lost", "message": msg }))).await;
         self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "erro", "message": msg }))).await;
@@ -664,6 +666,7 @@ impl Actor {
         self.down = None;
         self.last_rx = std::time::Instant::now();
         self.stats.reconnects.fetch_add(1, Ordering::Relaxed);
+        crate::netlog::write(&format!("sfu voltou: tentativa {attempt}, fora por {} ms", since.elapsed().as_millis()));
         self.handle_join(join, true).await;
         self.emit(MeshEvent::Share(json!({ "ev": "signaling.status", "state": "conectado", "message": "" }))).await;
         self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": "reconnected", "attempt": attempt, "down_ms": since.elapsed().as_millis() as u64 }))).await;

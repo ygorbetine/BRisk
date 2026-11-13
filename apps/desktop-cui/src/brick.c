@@ -93,7 +93,7 @@ void brick_loose(cui_ctx *ui) { cui_canvas(ui, "bk-loose", CUI_PX(80), CUI_PX(52
 
 /* ---- 7. mosaico da thumb da transmissão: cada célula é uma peça 1x1 com a cor média do pedaço da tela ---- */
 typedef struct { const unsigned char *cells; int cw, ch, radius; } mos_t;
-static mos_t g_mos[BRIKS_MAX_PEERS];
+static mos_t g_mos[BRIKS_MAX_PEERS + 2];   /* +1: o tile 'Você' usa o slot BRIKS_MAX_PEERS+1 */
 static bool inside_round(float x, float y, cui_rect r, float rad) {   /* o ponto cai dentro do retângulo arredondado? */
     if (x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h) return false;
     const float cx = x < r.x + rad ? r.x + rad : x > r.x + r.w - rad ? r.x + r.w - rad : x, cy = y < r.y + rad ? r.y + rad : y > r.y + r.h - rad ? r.y + r.h - rad : y;
@@ -103,7 +103,7 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
     /* parede de tijolos: tijolos 2:1 em fileiras deslocadas meio tijolo (aparelho comum), junta escura entre eles; a cor de cada tijolo é a média da tela
      * sob ele, com uma variação leve por tijolo (como lotes de queima diferentes) e um brilho fino na face de cima */
     const mos_t *m = (const mos_t *)user; if (!m->cells) return;
-    const int rows = 9; const float bh = r.h / (float)rows, bw = bh * 2.2f; const int cols = (int)ceilf(r.w / bw) + 1;
+    int rows = (int)(r.h / 24.0f + 0.5f); if (rows < 5) rows = 5; const float bh = r.h / (float)rows, bw = bh * 2.2f; const int cols = (int)ceilf(r.w / bw) + 1;
     for (int y = 0; y < rows; y++) {
         const float off = (y & 1) ? -bw * 0.5f : 0.0f;
         for (int x = 0; x < cols; x++) {
@@ -124,7 +124,7 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
     }
 }
 void brick_mosaic(cui_ctx *ui, int slot, const unsigned char *cells, int cw, int ch, float w, float h, int radius) {
-    if (slot < 0 || slot >= BRIKS_MAX_PEERS) return;
+    if (slot < 0 || slot > BRIKS_MAX_PEERS + 1) return;
     g_mos[slot] = (mos_t){ cells, cw, ch, radius };
     cui_canvas(ui, "bk-mos", CUI_PX(w), CUI_PX(h), paint_mos, &g_mos[slot], 0);
 }

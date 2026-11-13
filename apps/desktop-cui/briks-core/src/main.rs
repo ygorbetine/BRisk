@@ -33,6 +33,7 @@ mod ipc;
 mod mesh;
 mod mfenc;
 mod mock;
+mod netlog;
 mod netmode;
 mod phoenix;
 mod procaudio;

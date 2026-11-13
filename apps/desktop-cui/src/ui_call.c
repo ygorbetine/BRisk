@@ -788,6 +788,10 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                     }
                     cui_row(ui, .gap = tiny ? 5 : 10, .align = CUI_ALIGN_CENTER) {
                         net_chip(ui, s, compact);
+                        cui_box(ui, .id = "callcfg", .dir = CUI_ROW, .width = CUI_PX(38), .height = CUI_PX(38), .radius = 12, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER,
+                                .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_SETTINGS, 16, B_TEXT); }
+                        if (briks_hover(ui, "callcfg")) briks_tip("Configurações");
+                        if (briks_clicked(ui, "callcfg")) s->settings_open = true;
                         cui_box(ui, .dir = CUI_ROW, .gap = 4, .pad = 4, .radius = 13, .bg = B_GLASS, .border = 1, .border_color = B_GLASS_BORDER) {
                             /* ids 11..16: as pílulas da barra usam 1..7 com o mesmo nome de caixa; ids iguais faziam um clique valer nos dois lugares */
                             if (tab(ui, 11, CUI_ICON_PHONE, "Call", s->call_mode == 0, compact, 0)) s->call_mode = 0;
@@ -877,6 +881,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
         sons_dialogs(ui, s);
     }
     ui_share_dialog(ui, s);
+    settings_dialog(ui, s);   /* botão de engrenagem do cabeçalho da chamada */
     msgui_overlay(ui, s);   /* o seletor de emojis (e menus de mensagem) desenha aqui tambem: sem isto o botao de emoji do editor de sons, na chamada, nunca mostrava o painel */
     /* confirmação rápida antes de expulsar */
     if (s->kick_open) {

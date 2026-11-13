@@ -831,7 +831,7 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
                             stage_side_people(ui, s, H);
                         }
                     } else
-                    if (!ui_share_stage(ui, s, W, H, g_call.layout)) {
+                    if (!streams || !ui_share_stage(ui, s, W, H, g_call.layout)) {   /* sem transmissão nem cria o palco: a caixa vazia (a única) ocupa a área toda, em vez de dividir com um palco invisível */
                         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = B_A(B_PANEL, 0x80), .border = 1, .border_color = B_A(B_C1, 0x55), .clip = true) {
                             empty_state(ui, CUI_ICON_MONITOR, "Ninguém transmitindo", "Quando alguém compartilhar a tela, ela aparece aqui. Para pedir, clique com o botão direito em alguém na aba Call.");
                         }

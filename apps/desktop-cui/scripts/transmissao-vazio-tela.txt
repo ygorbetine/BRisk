@@ -1,0 +1,4 @@
+waitms 1200
+click 687 74
+waitms 600
+shot vazio

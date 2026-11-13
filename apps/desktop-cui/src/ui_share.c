@@ -550,7 +550,16 @@ bool share_mini(cui_ctx *ui, app_state_t *s, float w) {
  * Quadro minúsculo (~96 px de largura, reduzido por média de blocos e esticado com filtro bilinear = desfoque barato), pedido só para os primeiros
  * 3 avatares por quadro. Pede o decodificador ao core igual à miniatura da lateral; sobe poucos quadros por segundo. */
 static fview_t g_thumb[BRIKS_MAX_PEERS]; static bool g_thumb_req[BRIKS_MAX_PEERS], g_thumb_prev[BRIKS_MAX_PEERS]; static int g_thumb_nreq;
+static fview_t g_thumb_me; static bool g_thumb_me_req, g_thumb_me_prev;   /* thumb da PROPRIA transmissao (prévia local), no bloco "Você" */
 bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h) {
+    if (slot == BRIKS_MAX_PEERS + 1) {   /* SLOT_ME */
+        if (!s->sh.active) return false;
+        g_thumb_me_req = true; fview_t *v = &g_thumb_me; v->want = 40; v->blur = 1;
+        char path[300]; preview_path(path, sizeof path); const double now = cui_time(ui);
+        if (!v->tex || now - v->last >= 10.0) { if (!fv_update(ui, s, v, path)) return false; }
+        if (!v->tex || v->w <= 0) return false;
+        *tex = v->tex; *w = v->w; *h = v->h; return true;
+    }
     if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].id[0] || !s->sh.remote[slot].on) return false;
     if (!g_thumb_req[slot]) { if (g_thumb_nreq >= 3) return false; g_thumb_req[slot] = true; g_thumb_nreq++; }
     const share_state_t *q = &s->sh;
@@ -562,7 +571,7 @@ bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w
     *tex = v->tex; *w = v->w; *h = v->h; return true;
 }
 bool share_any_live(const app_state_t *s) { for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && (s->sh.remote[i].on || s->sh.remote2[i].on)) return true; return false; }
-bool share_thumb_cells(int slot, const unsigned char **cells, int *cw, int *ch) { if (slot < 0 || slot >= BRIKS_MAX_PEERS || !g_thumb[slot].ccw) return false; *cells = g_thumb[slot].cells; *cw = g_thumb[slot].ccw; *ch = g_thumb[slot].cch; return true; }
+bool share_thumb_cells(int slot, const unsigned char **cells, int *cw, int *ch) { if (slot == BRIKS_MAX_PEERS + 1) { if (!g_thumb_me.ccw) return false; *cells = g_thumb_me.cells; *cw = g_thumb_me.ccw; *ch = g_thumb_me.cch; return true; } if (slot < 0 || slot >= BRIKS_MAX_PEERS || !g_thumb[slot].ccw) return false; *cells = g_thumb[slot].cells; *cw = g_thumb[slot].ccw; *ch = g_thumb[slot].cch; return true; }
 int share_thumb_probe(void) { int c = 0; for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (g_thumb[i].tex) c++; return c; }
 
 bool overlay_live_wanted(int slot, bool second);   /* overlay_host.c */
@@ -590,6 +599,7 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     }
     mini_update_sel(s);
     memcpy(g_thumb_prev, g_thumb_req, sizeof g_thumb_prev); memset(g_thumb_req, 0, sizeof g_thumb_req); g_thumb_nreq = 0;
+    g_thumb_me_prev = g_thumb_me_req; g_thumb_me_req = false; if (!g_thumb_me_prev && g_thumb_me.p) fv_close(&g_thumb_me);
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
         if (!g_thumb_prev[i] && g_thumb[i].p) fv_close(&g_thumb[i]);   /* ninguém pediu a thumb deste no último quadro: solta arquivo e textura */
         if (!s->rtc_peers[i].id[0]) {

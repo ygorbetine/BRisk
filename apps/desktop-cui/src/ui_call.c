@@ -177,7 +177,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             .border = speaking ? 2 : 1, .border_color = speaking ? CUI_RGBA(0x57d28bcc) : B_A(B_C1, 0x55), .dir = CUI_STACK) {
         /* quem transmite: thumb estática e desfocada da tela preenche o bloco todo (a imagem tem o PRÓPRIO raio: o recorte do pai é retangular) */
         cui_texture th = 0; int tw = 0, thh = 0;
-        if (t->live && !t->me && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
+        if (t->live && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
             const unsigned char *cells = NULL; int mcw = 0, mch = 0;
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih)) {
@@ -237,6 +237,12 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 else if (sm) snprintf(lab, sizeof lab, "%.22s", t->name);
                 else snprintf(lab, sizeof lab, "%s%s", t->name, t->by_me ? " (silenciado por você)" : "");
                 cui_text(ui, lab, .size = ts, .nowrap = true);
+                if (t->me && t->live && !sm && g_tile_s && g_tile_s->sh.vknown[0]) {   /* olhinho: quantos assistem a minha transmissão (como na aba Transmissão) */
+                    cui_box(ui, .id = "eyec", .dir = CUI_ROW, .gap = 4, .pad_left = 8, .pad_right = 6, .pad_y = 2, .radius = 10, .bg = CUI_RGBA(0xffffff12), .align = CUI_ALIGN_CENTER) {
+                        cui_icon(ui, CUI_ICON_EYE, 13, B_C3); cui_textf(ui, "%d", g_tile_s->sh.viewers[0]);
+                    }
+                    if (briks_hover(ui, "eyec")) briks_tip(g_tile_s->sh.viewers[0] ? g_tile_s->sh.vnames[0] : "Ninguém assistindo agora");
+                }
             }
             cui_card_end(ui);
             const cui_rect lr = cui_get_rect(ui, cui_make_id(ui, "lab")), tr = cui_get_rect(ui, cui_make_id(ui, "tile"));

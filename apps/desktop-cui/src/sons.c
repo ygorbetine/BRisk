@@ -37,6 +37,9 @@ static int g_sel = -1;                 /* som selecionado (botão direito): barr
 static bool g_people;
 static struct { char gid[56], hash[72]; } g_rm[48]; static int g_nrm;   /* removidos aqui e ainda no snapshot confiado */
 static volatile LONG g_started, g_active, g_gen;
+static volatile LONG g_pv_gen, g_pv_on, g_pv_pos_ms = -1;   /* prévia do editor: geração (parar), tocando, posição em ms */
+static volatile float g_pv_vol = 1.0f;
+static bool g_editmode;   /* painel em modo Editar: clicar num som seleciona em vez de tocar */
 static unsigned long long g_vol_at; static bool g_vol_dirty;
 
 static void say(const char *fmt, const char *a) { snprintf(g_note, sizeof g_note, fmt, a ? a : ""); g_note_t = (double)GetTickCount64() / 1000.0; }
@@ -194,7 +197,7 @@ static void play_hash(const char *hash, bool preview) {
 }
 
 void sons_stop_all(void) { InterlockedIncrement(&g_gen); }
-void sons_shutdown(void) { InterlockedIncrement(&g_gen); for (int i = 0; i < 100 && g_active > 0; i++) Sleep(10); }
+void sons_shutdown(void) { InterlockedIncrement(&g_gen); InterlockedIncrement(&g_pv_gen); for (int i = 0; i < 100 && (g_active > 0 || g_pv_on); i++) Sleep(10); }
 bool sons_panel_open(void) { return g_open_panel; }
 
 /* ------------------------------------------------------------------ envio de preferências */
@@ -519,7 +522,7 @@ static void field_row(cui_ctx *ui, const char *name_id, char *name, size_t cap, 
     }
 }
 
-typedef struct { float bars[NBARS]; float a, b; } wf_t;   /* a, b: início e fim do recorte (0..1) */
+typedef struct { float bars[NBARS]; float a, b, play; } wf_t;   /* a, b: início e fim do recorte (0..1); play: posição da prévia (0..1, <0 = parada) */
 static void paint_wf(cui_ctx *ui, cui_rect r, void *user) {
     const wf_t *w = (const wf_t *)user;
     cui_draw_rect(ui, r, CUI_CORNERS(10), CUI_RGBA(0x00000050));
@@ -532,17 +535,66 @@ static void paint_wf(cui_ctx *ui, cui_rect r, void *user) {
     const float xa = r.x + 8.0f + w->a * (r.w - 16.0f), xb = r.x + 8.0f + w->b * (r.w - 16.0f);
     cui_draw_rect(ui, (cui_rect){ xa - 1.0f, r.y + 6.0f, 2.0f, r.h - 12.0f }, CUI_CORNERS(1), CUI_RGB(0xffffff));
     cui_draw_rect(ui, (cui_rect){ xb - 1.0f, r.y + 6.0f, 2.0f, r.h - 12.0f }, CUI_CORNERS(1), CUI_RGB(0xffffff));
+    cui_draw_rect(ui, (cui_rect){ xa - 5.0f, r.y + 2.0f, 10.0f, 6.0f }, CUI_CORNERS(3), CUI_RGB(0xffffff));   /* pegadores: arraste para mover início e fim */
+    cui_draw_rect(ui, (cui_rect){ xb - 5.0f, r.y + r.h - 8.0f, 10.0f, 6.0f }, CUI_CORNERS(3), CUI_RGB(0xffffff));
+    if (w->play >= 0.0f && w->play <= 1.0f) cui_draw_rect(ui, (cui_rect){ r.x + 8.0f + w->play * (r.w - 16.0f) - 1.0f, r.y + 4.0f, 2.0f, r.h - 8.0f }, CUI_CORNERS(1), CUI_RGB(0x57d28b));
 }
 
-static void preview_selection(void) {
+/* Prévia do editor: toca só o trecho entre as barras (do início ao fim), uma por vez (clicar de novo para), e o volume vale em tempo real:
+   o áudio sai em pedaços de 30 ms e cada pedaço é multiplicado pelo volume do editor no momento em que é escrito. */
+typedef struct { short *buf; size_t frames; int rate, ch; float base; LONG gen; } pv_t;
+#define PV_NB 3
+static unsigned __stdcall pv_thread(void *arg) {
+    pv_t *p = arg; CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    WAVEFORMATEX wf = { WAVE_FORMAT_PCM, (WORD)p->ch, (DWORD)p->rate, (DWORD)(p->rate * p->ch * 2), (WORD)(p->ch * 2), 16, 0 };
+    HWAVEOUT ho = NULL;
+    if (waveOutOpen(&ho, out_device(), &wf, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
+        const size_t chunk = (size_t)p->rate * 30 / 1000 > 0 ? (size_t)p->rate * 30 / 1000 : 1;
+        short *bufs[PV_NB]; WAVEHDR hd[PV_NB]; bool used[PV_NB] = { false, false, false };
+        for (int k = 0; k < PV_NB; k++) { bufs[k] = malloc(chunk * (size_t)p->ch * sizeof(short)); memset(&hd[k], 0, sizeof hd[k]); }
+        size_t at = 0, queued = 0; int k = 0;
+        while (p->gen == g_pv_gen && (at < p->frames || queued > 0)) {
+            if (at < p->frames && queued < PV_NB) {
+                if (used[k]) { waveOutUnprepareHeader(ho, &hd[k], sizeof hd[k]); used[k] = false; }
+                const size_t n = p->frames - at < chunk ? p->frames - at : chunk; const float g = p->base * g_pv_vol;
+                for (size_t i = 0; i < n * (size_t)p->ch; i++) { float v = p->buf[at * (size_t)p->ch + i] * g; bufs[k][i] = (short)(v > 32767.f ? 32767 : v < -32768.f ? -32768 : v); }
+                memset(&hd[k], 0, sizeof hd[k]); hd[k].lpData = (LPSTR)bufs[k]; hd[k].dwBufferLength = (DWORD)(n * (size_t)p->ch * sizeof(short));
+                if (waveOutPrepareHeader(ho, &hd[k], sizeof hd[k]) != MMSYSERR_NOERROR) break;
+                used[k] = true; waveOutWrite(ho, &hd[k], sizeof hd[k]); at += n; k = (k + 1) % PV_NB;
+            } else Sleep(5);
+            queued = 0; for (int j = 0; j < PV_NB; j++) if (used[j] && !(hd[j].dwFlags & WHDR_DONE)) queued++;
+            MMTIME mt; mt.wType = TIME_SAMPLES;
+            if (waveOutGetPosition(ho, &mt, sizeof mt) == MMSYSERR_NOERROR && mt.wType == TIME_SAMPLES) InterlockedExchange(&g_pv_pos_ms, (LONG)((double)mt.u.sample * 1000.0 / p->rate));
+        }
+        waveOutReset(ho);
+        for (int j = 0; j < PV_NB; j++) { if (used[j]) waveOutUnprepareHeader(ho, &hd[j], sizeof hd[j]); free(bufs[j]); }
+        waveOutClose(ho);
+    }
+    InterlockedExchange(&g_pv_pos_ms, -1);
+    free(p->buf); free(p); InterlockedExchange(&g_pv_on, 0);
+    CoUninitialize();
+    return 0;
+}
+static void preview_stop(void) { InterlockedIncrement(&g_pv_gen); }
+static void preview_toggle(void) {
+    if (g_pv_on) { preview_stop(); return; }   /* tocando: clicar de novo para (nunca um por cima do outro) */
     size_t fr = 0; short *sel = render_sel(&fr); if (!sel) return;
     InterlockedIncrement(&g_started);
-    if (g_active >= 4) { free(sel); return; }
-    job_t *jb = calloc(1, sizeof *jb); if (!jb) { free(sel); return; }
-    jb->buf = sel; jb->bns = fr * (size_t)g_add.ch; jb->brate = g_add.rate; jb->bch = g_add.ch; jb->vol = g_add.vol / 100.0f; jb->gen = g_gen;
-    InterlockedIncrement(&g_active);
-    uintptr_t th = _beginthreadex(NULL, 0, play_thread, jb, 0, NULL);
-    if (!th) { InterlockedDecrement(&g_active); free(sel); free(jb); } else CloseHandle((HANDLE)th);
+    pv_t *p = calloc(1, sizeof *p); if (!p) { free(sel); return; }
+    p->buf = sel; p->frames = fr; p->rate = g_add.rate; p->ch = g_add.ch; p->gen = g_pv_gen;
+    p->base = sons_peak_gain(sel, fr * (size_t)g_add.ch, 1.0f); g_pv_vol = g_add.vol / 100.0f;
+    InterlockedExchange(&g_pv_pos_ms, 0); InterlockedExchange(&g_pv_on, 1);
+    uintptr_t th = _beginthreadex(NULL, 0, pv_thread, p, 0, NULL);
+    if (!th) { InterlockedExchange(&g_pv_on, 0); free(sel); free(p); } else CloseHandle((HANDLE)th);
+}
+
+/* regras do recorte (mínimo 0,2 s, máximo 15 s, dentro do arquivo); moved: 1 = mexeu no início, 2 = no fim */
+static void apply_clip(float st, float en, int moved) {
+    if (moved == 1) { if (en - st < MIN_CLIP_MS) en = st + MIN_CLIP_MS; if (en - st > MAX_CLIP_MS) en = st + MAX_CLIP_MS; }
+    else if (moved == 2) { if (en - st < MIN_CLIP_MS) st = en - MIN_CLIP_MS; if (en - st > MAX_CLIP_MS) st = en - MAX_CLIP_MS; }
+    if (st < 0) { st = 0; if (en < MIN_CLIP_MS) en = MIN_CLIP_MS; }
+    if (en > g_add.dur_ms) { en = g_add.dur_ms; if (st > en - MIN_CLIP_MS && en >= MIN_CLIP_MS) st = en - MIN_CLIP_MS; }
+    g_add.start_ms = st; g_add.end_ms = en;
 }
 
 static void editor_dialog(cui_ctx *ui, app_state_t *s) {
@@ -557,7 +609,31 @@ static void editor_dialog(cui_ctx *ui, app_state_t *s) {
         }
         char d1[24], d2[24], line[200];
         wf_t w; memcpy(w.bars, g_add.bars, sizeof w.bars); w.a = g_add.start_ms / g_add.dur_ms; w.b = g_add.end_ms / g_add.dur_ms;
-        cui_canvas(ui, "sn-wave", CUI_FILL, CUI_PX(76), paint_wf, &w, sizeof w);
+        w.play = g_pv_on && g_pv_pos_ms >= 0 ? (g_add.start_ms + (float)g_pv_pos_ms) / g_add.dur_ms : -1.0f;
+        if (g_pv_on) cui_request_wakeup(ui, 0.016f);
+        cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
+            cui_box(ui, .id = "sn-play", .width = CUI_PX(44), .height = CUI_PX(44), .radius = 22, .bg = g_pv_on ? CUI_RGB(0x7c5cff) : CUI_RGBA(0xffffff1a), .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                cui_icon(ui, g_pv_on ? CUI_ICON_PAUSE : CUI_ICON_PLAY, 18, B_TEXT);
+            }
+            if (briks_hover(ui, "sn-play")) briks_tip(g_pv_on ? "Parar" : "Ouvir o trecho (do início ao fim)");
+            if (briks_clicked_r(ui, "sn-play", 22.0f)) preview_toggle();
+            cui_canvas(ui, "sn-wave", CUI_FILL, CUI_PX(76), paint_wf, &w, sizeof w);
+        }
+        {   /* arrastar as barras brancas da onda muda o início e o fim (a mais perto do ponteiro) */
+            static int drag; static bool was_down;
+            const cui_rect wr = cui_get_rect(ui, cui_make_id(ui, "sn-wave")); const cui_vec2 m = cui_mouse_pos(ui); const bool down = cui_mouse_down(ui, CUI_MOUSE_LEFT);
+            if (!down) drag = 0;
+            else if (!was_down && wr.w > 20 && m.x >= wr.x && m.x < wr.x + wr.w && m.y >= wr.y && m.y < wr.y + wr.h) {
+                const float xa = wr.x + 8.0f + w.a * (wr.w - 16.0f), xb = wr.x + 8.0f + w.b * (wr.w - 16.0f);
+                drag = fabsf(m.x - xa) <= fabsf(m.x - xb) ? 1 : 2;
+            }
+            was_down = down;
+            if (drag && wr.w > 20) {
+                float f = (m.x - (wr.x + 8.0f)) / (wr.w - 16.0f); if (f < 0) f = 0; if (f > 1) f = 1;
+                const float tms = f * g_add.dur_ms;
+                if (drag == 1) apply_clip(tms, g_add.end_ms, 1); else apply_clip(g_add.start_ms, tms, 2);
+            }
+        }
         snprintf(line, sizeof line, "Trecho de %s (arquivo com %s). Máximo de 15 s.", sons_fmt_dur((unsigned)(g_add.end_ms - g_add.start_ms + 0.5f), d1, sizeof d1), sons_fmt_dur((unsigned)(g_add.dur_ms + 0.5f), d2, sizeof d2));
         cui_text(ui, line, .size = 12.5f, .color = B_MUTED);
         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
@@ -571,14 +647,10 @@ static void editor_dialog(cui_ctx *ui, app_state_t *s) {
             const float a0 = a, b0 = bnd;
             cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Início", .size = 13, .width = CUI_PX(52)); cui_slider(ui, "##sn-ini", &a, 0.0f, top, .width = CUI_FILL); cui_text(ui, sons_fmt_dur((unsigned)(a * 1000.0f + 0.5f), d1, sizeof d1), .size = 12, .color = B_MUTED, .width = CUI_PX(48)); }
             cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Fim", .size = 13, .width = CUI_PX(52)); cui_slider(ui, "##sn-fim", &bnd, 0.0f, top, .width = CUI_FILL); cui_text(ui, sons_fmt_dur((unsigned)(bnd * 1000.0f + 0.5f), d2, sizeof d2), .size = 12, .color = B_MUTED, .width = CUI_PX(48)); }
-            float st = a * 1000.0f, en = bnd * 1000.0f;
-            if (fabsf(a - a0) > 1e-4f) { if (en - st < MIN_CLIP_MS) en = st + MIN_CLIP_MS; if (en - st > MAX_CLIP_MS) en = st + MAX_CLIP_MS; }
-            else if (fabsf(bnd - b0) > 1e-4f) { if (en - st < MIN_CLIP_MS) st = en - MIN_CLIP_MS; if (en - st > MAX_CLIP_MS) st = en - MAX_CLIP_MS; }
-            if (st < 0) { st = 0; if (en < MIN_CLIP_MS) en = MIN_CLIP_MS; }
-            if (en > g_add.dur_ms) { en = g_add.dur_ms; if (st > en - MIN_CLIP_MS && en >= MIN_CLIP_MS) st = en - MIN_CLIP_MS; }
-            g_add.start_ms = st; g_add.end_ms = en;
+            if (fabsf(a - a0) > 1e-4f) apply_clip(a * 1000.0f, bnd * 1000.0f, 1);
+            else if (fabsf(bnd - b0) > 1e-4f) apply_clip(a * 1000.0f, bnd * 1000.0f, 2);
         }
-        cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume", .size = 13, .width = CUI_PX(52)); briks_volume(ui, "sn-evol", &g_add.vol, 0.0f, 100.0f, 1.0f, NULL, false); char p[12]; snprintf(p, sizeof p, "%d%%", (int)(g_add.vol + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED, .width = CUI_PX(48)); }
+        cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume", .size = 13, .width = CUI_PX(52)); briks_volume(ui, "sn-evol", &g_add.vol, 0.0f, 100.0f, 1.0f, NULL, false); g_pv_vol = g_add.vol / 100.0f; char p[12]; snprintf(p, sizeof p, "%d%%", (int)(g_add.vol + 0.5f)); cui_text(ui, p, .size = 12, .color = B_MUTED, .width = CUI_PX(48)); }
         int idx[32]; int na = admin_groups(s, idx, 32);
         cui_text(ui, "Onde fica", .size = 12.5f, .color = B_MUTED);
         cui_scroll(ui, .id = "sn-dest", .width = CUI_FILL, .height = CUI_PX(na > 1 ? 76 : 40 + na * 38), .pad = 2) {
@@ -594,7 +666,6 @@ static void editor_dialog(cui_ctx *ui, app_state_t *s) {
         cui_checkbox(ui, "Tenho direito de usar este som (só adicione o que pode usar)", &g_add.ack);
         if (g_add.err[0]) cui_text(ui, g_add.err, .size = 12.5f, .color = CUI_RGB(0xfca5a5));
         cui_dialog_footer(ui) {
-            if (cui_button(ui, "Testar", .variant = CUI_BUTTON_SECONDARY)) preview_selection();
             if (cui_button(ui, "Cancelar", .variant = CUI_BUTTON_SECONDARY)) g_add.open = false;
             char nm[48]; const bool okname = sons_clean_name(g_add.name, nm, sizeof nm);
             if (cui_button(ui, "Adicionar", .variant = CUI_BUTTON_PRIMARY, .disabled = !g_add.ack || !okname)) {
@@ -615,7 +686,7 @@ static void editor_dialog(cui_ctx *ui, app_state_t *s) {
 
 void sons_dialogs(cui_ctx *ui, app_state_t *s) {
     if (g_add.open) editor_dialog(ui, s);
-    else if (g_add.pcm) ed_free();   /* fechou o editor: solta o áudio decodificado */
+    else { if (g_pv_on) preview_stop(); if (g_add.pcm) ed_free(); }   /* fechou o editor: para a prévia e solta o áudio decodificado */
     if (g_ren.open) {
         cui_dialog(ui, "Renomear som", &g_ren.open, .width = 400) {
             field_row(ui, "rn-name", g_ren.name, sizeof g_ren.name, g_ren.emoji, "rn-emo");
@@ -703,7 +774,7 @@ static void section(cui_ctx *ui, app_state_t *s, int sec, const char *title, con
         for (int k = 0; k < n; k++) {
             const int i = ids[k]; const bool us = usable_here(&g_s[i]);
             int r = chip(ui, i, us, g_sel == i);
-            if (r == 2) g_sel = i;
+            if (r == 2 || (r == 1 && g_editmode)) g_sel = i;   /* botão direito, ou clique no modo Editar: só seleciona (renomear, apagar, favoritar) */
             else if (r == 1) {
                 if (!g_s[i].have) say("%s", "O arquivo ainda não chegou");
                 else if (!s->in_room) say("%s", "Entre numa chamada para tocar para todos");
@@ -733,6 +804,7 @@ void sons_popover(cui_ctx *ui, app_state_t *s) {
         g_open_panel = true;
         cui_row(ui, .gap = 8, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Sons", .font = CUI_FONT_DISPLAY, .size = 16, .width = CUI_FILL);
+            if (cui_button(ui, g_editmode ? "Concluir" : "Editar", .variant = g_editmode ? CUI_BUTTON_PRIMARY : CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) { g_editmode = !g_editmode; if (!g_editmode) g_sel = -1; }
             if (cui_button(ui, "Adicionar", .variant = CUI_BUTTON_SECONDARY, .size = CUI_SIZE_SM)) pick_file();
         }
         cui_search(ui, "sn-q", g_search, sizeof g_search, .placeholder = "Buscar som", .width = CUI_FILL);
@@ -766,7 +838,7 @@ void sons_popover(cui_ctx *ui, app_state_t *s) {
         }
         }
         if (note_live()) cui_text(ui, g_note, .size = 12.5f, .color = CUI_RGB(0x7be8a8));
-        else cui_text(ui, "Clique para tocar para todos · botão direito para opções", .size = 12, .color = g_th.ph);
+        else cui_text(ui, g_editmode ? "Escolha um som para renomear, apagar ou favoritar" : "Clique para tocar para todos · Editar para renomear e apagar", .size = 12, .color = g_th.ph);
         cui_separator(ui);
         float vol = (float)g_pr.volume;
         cui_row(ui, .gap = 10, .width = CUI_FILL, .align = CUI_ALIGN_CENTER) { cui_text(ui, "Volume dos sons", .size = 13, .width = CUI_FILL); char p[12]; snprintf(p, sizeof p, "%d%%", g_pr.volume); cui_text(ui, p, .size = 12, .color = B_MUTED); }
@@ -814,6 +886,8 @@ void sons_script(app_state_t *s, const char *cmd, const char *arg) {
     else if (!strcmp(cmd, "ack")) g_add.ack = true;
     else if (!strcmp(cmd, "sel")) g_sel = arg ? atoi(arg) : -1;
     else if (!strcmp(cmd, "stop")) sons_stop_all();
+    else if (!strcmp(cmd, "pv")) { if (g_add.loaded) preview_toggle(); }   /* sons pv: liga/desliga a prévia do editor (o mesmo do botão play) */
+    else if (!strcmp(cmd, "edit")) g_editmode = arg && atoi(arg);
 }
 
 int sons_probe(const char *n) {
@@ -824,6 +898,10 @@ int sons_probe(const char *n) {
     if (!strcmp(n, "sons_add_dialog")) return g_add.open;
     if (!strcmp(n, "sons_ed_loaded")) return g_add.loaded;
     if (!strcmp(n, "sons_ed_dur_ms")) return (int)(g_add.dur_ms + 0.5f);
+    if (!strcmp(n, "sons_pv_on")) return g_pv_on ? 1 : 0;
+    if (!strcmp(n, "sons_ed_start_ms")) return (int)(g_add.start_ms + 0.5f);
+    if (!strcmp(n, "sons_ed_end_ms")) return (int)(g_add.end_ms + 0.5f);
+    if (!strcmp(n, "sons_editmode")) return g_editmode;
     if (!strcmp(n, "sons_ed_clip_ms")) return (int)(g_add.end_ms - g_add.start_ms + 0.5f);
     if (!strcmp(n, "sons_volume")) return g_pr.volume;
     if (!strcmp(n, "sons_all_muted")) return g_pr.all_muted;

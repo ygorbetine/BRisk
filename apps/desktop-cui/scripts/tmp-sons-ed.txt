@@ -1,0 +1,5 @@
+waitms 1000
+sons seed
+sons add A:/BRiskCall/Risk-P2P/.claude/worktrees/cui-144/apps/desktop-cui/scripts/paridade/ativos/som-teste.wav
+waitms 800
+shot ed0

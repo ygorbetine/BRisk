@@ -1,0 +1,8 @@
+waitms 1000
+sons seed
+click 687 74
+waitms 500
+click 1051 787
+waitms 700
+shot tr-sons
+expect sons_panel 1

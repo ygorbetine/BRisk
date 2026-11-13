@@ -347,7 +347,9 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
         const char *st = json_str(j, "state", "");
         if (!strcmp(st, "on")) {
             if (share_notice_wanted(q->remote[i].on, true, share_viewing(s))) { g_notice.slot = i; g_notice.until = -1; }
-            q->remote[i].on = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h"); q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps");
+            const bool was_on = q->remote[i].on;   /* reaviso (o áudio chegou depois do vídeo no servidor): mantém os números medidos */
+            q->remote[i].on = true; q->remote[i].w = jint(j, "w"); q->remote[i].h = jint(j, "h");
+            if (!was_on) { q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps"); }
             q->remote[i].audio = jbool(j, "audio"); copy(q->remote[i].label, sizeof q->remote[i].label, json_str(j, "label", ""));
         } else if (!strcmp(st, "off")) { q->remote[i].on = false; q->remote[i].watching = false; q->remote[i].has_frame = false; q->remote[i].poor = false; q->remote[i].stalled = false; q->remote[i].low_secs = 0; fv_close(&g_fv[i]);
             memset(&g_zoom[i], 0, sizeof g_zoom[i]); if (g_notice.slot == i) g_notice.slot = -1; }

@@ -32,6 +32,7 @@ void rtc_join_room(app_state_t *s, const char *room) {
     copy(s->room_name, sizeof s->room_name, room);
     s->rtc_want_room = true;
     s->in_room = true;
+    s->mic_on = g_sys.mic_on; s->deaf = g_sys.deaf;   /* entra como o usuário deixou da última vez */
     fw_maybe_prompt();   /* primeira chamada: pergunta (sem bloquear) se pode liberar o Briks no Firewall */
     copy(s->rtc_state, sizeof s->rtc_state, "conectando");
     s->rtc_msg[0] = 0;
@@ -104,7 +105,7 @@ void rtc_mic_test(app_state_t *s, bool on) {
     send_cmd("mic.test", on ? "\"on\":true" : "\"on\":false");
     (void)s;
 }
-void rtc_set_mic(app_state_t *s, bool on) { if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
+void rtc_set_mic(app_state_t *s, bool on) { if (g_sys.mic_on != on) { g_sys.mic_on = on; sys_cfg_save(); } if (!on) s->me_level = 0; if (core_state() == CORE_READY) send_cmd("mic.set", on ? "\"on\":true" : "\"on\":false"); }
 static void pv_remember_mute(const char *fp, bool muted);
 /* silenciar uma pessoa = ganho zero só para ela (por peer_id); lembrado por identidade entre chamadas */
 void rtc_mute_peer(app_state_t *s, int slot, bool muted) {
@@ -186,7 +187,7 @@ void rtc_set_peer_volume(app_state_t *s, int slot, float gain) {
     snprintf(extra, sizeof extra, "\"peer\":\"%s\",\"volume\":%.2f", id, gain);
     if (core_state() == CORE_READY) send_cmd("peer.volume", extra);
 }
-void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
+void rtc_set_deaf(app_state_t *s, bool on) { (void)s; if (g_sys.deaf != on) { g_sys.deaf = on; sys_cfg_save(); } if (core_state() == CORE_READY) send_cmd("deafen.set", on ? "\"on\":true" : "\"on\":false"); }
 
 /* Quem não coube na grade (mais de BRIKS_MAX_PEERS remotos): só os ids, para o "+N" contar certo quando entram e saem. */
 /* Guarda também nome, impressão digital e estado: quando abre vaga na grade, o primeiro da fila sobe já completo. */
@@ -522,6 +523,8 @@ void rtc_pump(app_state_t *s) {
             json_escape(s->room_name, rm, sizeof rm);
             { int cm = settings_call_mode(); snprintf(extra, sizeof extra, "\"namespace\":\"room\",\"room\":\"%s\",\"net\":\"%s\",\"pref\":%d", rm, (cm == 1 || s->force_p2p) ? "p2p" : cm == 2 ? "sfu" : "auto", settings_net_pref()); }
             send_cmd("room.join", extra);
+            if (!g_sys.mic_on) send_cmd("mic.set", "\"on\":false");
+            if (g_sys.deaf) send_cmd("deafen.set", "\"on\":true");
             s->rtc_want_room = false;
         }
     }

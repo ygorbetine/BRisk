@@ -12,6 +12,7 @@ typedef struct {
     bool nt_msg;           /* aviso de nova mensagem */
     bool sounds;           /* sons de aviso e da chamada */
     int sound_vol;         /* 0..100 */
+    bool mic_on, deaf;     /* estado do microfone e do ensurdecer, lembrado entre chamadas e sessões */
     bool tray_hint_shown;  /* já avisou "continua na bandeja" */
     int win_x, win_y, win_w, win_h; bool win_max; bool win_valid;   /* última janela (retângulo externo normal) */
 } sys_cfg_t;

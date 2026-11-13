@@ -151,12 +151,15 @@ static unsigned __stdcall play_thread(void *arg) {
     job_t *jb = arg; short *pcm = NULL; size_t ns = 0; int rate = 0, ch = 0;
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
     bool got; if (jb->buf) { pcm = jb->buf; ns = jb->bns; rate = jb->brate; ch = jb->bch; jb->buf = NULL; got = true; } else got = decode(jb->path, &pcm, &ns, &rate, &ch, 16);
+    if (getenv("BRIKS_SONS_LOG")) fprintf(stderr, "[sons] decode=%d ns=%zu rate=%d ch=%d gen_ok=%d dev=%u\n", got, ns, rate, ch, jb->gen == g_gen, out_device());
     if (got && jb->gen == g_gen) {
         const float g = sons_peak_gain(pcm, ns, jb->vol);   /* limita o pico a -3 dBFS (mp3/ogg) e aplica o volume do painel */
         for (size_t i = 0; i < ns; i++) { float v = pcm[i] * g; pcm[i] = (short)(v > 32767.f ? 32767 : v < -32768.f ? -32768 : v); }
         WAVEFORMATEX wf = { WAVE_FORMAT_PCM, (WORD)ch, (DWORD)rate, (DWORD)(rate * ch * 2), (WORD)(ch * 2), 16, 0 };
         HWAVEOUT ho = NULL;
-        if (waveOutOpen(&ho, out_device(), &wf, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
+        MMRESULT mr = waveOutOpen(&ho, out_device(), &wf, 0, 0, CALLBACK_NULL);
+        if (getenv("BRIKS_SONS_LOG")) fprintf(stderr, "[sons] waveOutOpen=%u\n", (unsigned)mr);
+        if (mr == MMSYSERR_NOERROR) {
             WAVEHDR h; memset(&h, 0, sizeof h); h.lpData = (LPSTR)pcm; h.dwBufferLength = (DWORD)(ns * sizeof(short));
             if (waveOutPrepareHeader(ho, &h, sizeof h) == MMSYSERR_NOERROR) {
                 waveOutWrite(ho, &h, sizeof h);
@@ -271,6 +274,7 @@ static const char *peer_name(const app_state_t *s, const char *fp) {
     return "Alguém";
 }
 
+static char g_click_hash[72]; static unsigned long long g_click_at;   /* som clicado esperando o eco do core (sound.play/denied) */
 static void add_done(app_state_t *s, const jval *j);
 static void check_done(const jval *j);
 static void ogg_done(const jval *j);
@@ -293,13 +297,14 @@ void sons_core_event(app_state_t *s, const jval *j, const char *ev) {
     } else if (!strcmp(ev, "sound.play")) {
         const char *h = json_str(j, "hash", ""), *fp = json_str(j, "from_fp", "");
         const jval *sf = json_get(j, "self"); const bool me = sf && sf->type == J_BOOL && sf->b;
+        if (me) g_click_hash[0] = 0;
         if (s->deaf) return;   /* ensurdecido não ouve som (o core já descarta, aqui é a segunda trava) */
         play_hash(h, false);
         if (!me) { char b[160]; snprintf(b, sizeof b, "%s tocou %s", peer_name(s, fp), json_str(j, "name", "um som")); snprintf(g_note, sizeof g_note, "%s", b); g_note_t = (double)GetTickCount64() / 1000.0; }
     } else if (!strcmp(ev, "sound.fetching")) fetch_set(json_str(j, "hash", ""), true);
     else if (!strcmp(ev, "sound.got")) fetch_set(json_str(j, "hash", ""), false);
     else if (!strcmp(ev, "sound.fail")) { fetch_set(json_str(j, "hash", ""), false); say("Não consegui baixar um som: %s", json_str(j, "message", "falhou")); }
-    else if (!strcmp(ev, "sound.denied")) say("%s", json_str(j, "message", "Som barrado"));
+    else if (!strcmp(ev, "sound.denied")) { g_click_hash[0] = 0; say("%s", json_str(j, "message", "Som barrado")); }
     else if (!strcmp(ev, "sound.drop")) { const char *r = json_str(j, "reason", ""); if (!strcmp(r, "silenciado") || !strcmp(r, "intervalo")) return; say("Som descartado: %s", r); }
 }
 
@@ -723,6 +728,10 @@ void sons_dialogs(cui_ctx *ui, app_state_t *s) {
 
 /* ------------------------------------------------------------------ painel */
 static void pump(app_state_t *s) {
+    if (g_click_hash[0] && GetTickCount64() - g_click_at > 1500) {   /* o core não respondeu: toca só aqui e avisa (diagnóstico) */
+        char h[72]; snprintf(h, sizeof h, "%s", g_click_hash); g_click_hash[0] = 0;
+        say("%s", "O serviço de chamadas não respondeu ao som: tocando só neste aparelho"); if (!s->deaf) play_hash(h, false);
+    }
     if (g_vol_dirty && GetTickCount64() - g_vol_at > 250) { g_vol_dirty = false; send_prefs(NULL); }
     if (!s->in_room) { if (g_roster_room[0]) { g_roster_room[0] = 0; g_room_gid[0] = 0; core_send("{\"cmd\":\"sound.roster\",\"fps\":[]}"); sons_stop_all(); } return; }
     if (strcmp(g_roster_room, s->room_name)) {   /* sala nova: quem pode disparar aqui = membros do grupo dono da sala (vazio = sem restrição) */
@@ -780,7 +789,7 @@ static void section(cui_ctx *ui, app_state_t *s, int sec, const char *title, con
                 else if (!s->in_room) say("%s", "Entre numa chamada para tocar para todos");
                 else if (!us) { char b[160]; snprintf(b, sizeof b, "Este som é do grupo %s: só toca na chamada dele", group_name(s, g_s[i].scope + 2)); say("%s", b); }
                 else if (s->deaf) say("%s", "Você está ensurdecido: ninguém ouve sons assim");
-                else { char l[200]; snprintf(l, sizeof l, "{\"cmd\":\"sound.play\",\"hash\":\"%s\"}", g_s[i].hash); core_send(l); g_sel = i; }
+                else { char l[200]; snprintf(l, sizeof l, "{\"cmd\":\"sound.play\",\"hash\":\"%s\"}", g_s[i].hash); core_send(l); g_sel = i; snprintf(g_click_hash, sizeof g_click_hash, "%s", g_s[i].hash); g_click_at = GetTickCount64(); }
             }
         }
     }

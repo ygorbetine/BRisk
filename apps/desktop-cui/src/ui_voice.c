@@ -1,6 +1,7 @@
 /* Painel "Sala de voz" completo: participantes com indicador de fala, mudo/ensurdecido, status, silenciar e volume por pessoa,
  * expulsar (só o dono) e os controles de voz de quem está na sala. Tudo em vidro, cantos arredondados. */
 #include "call.h"
+#include "sysint.h"
 #include "volume_ctl.h"
 #include <math.h>
 #include <stdio.h>
@@ -82,7 +83,7 @@ void ui_voice_panel(cui_ctx *ui, app_state_t *s) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10, .pad = 16) {
             cui_text(ui, "Sala geral", .font = CUI_FONT_DISPLAY, .size = 18);
             cui_text(ui, st, .size = 12, .color = B_MUTED);
-            if (cui_button(ui, "Entrar na sala", .variant = CUI_BUTTON_PRIMARY)) { s->screen = SCREEN_CALL; s->mic_on = true; rtc_join_room(s, "voz-geral"); }
+            if (cui_button(ui, "Entrar na sala", .variant = CUI_BUTTON_PRIMARY)) { s->screen = SCREEN_CALL; s->mic_on = g_sys.mic_on; rtc_join_room(s, "voz-geral"); }
         }
         return;
     }

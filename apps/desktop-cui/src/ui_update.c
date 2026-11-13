@@ -20,6 +20,11 @@ void update_banner(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.3", {
+        "Configurações lembradas: o microfone e o ensurdecer entram na próxima chamada (e na próxima abertura do Briks) como você os deixou.",
+        "Transmissão no servidor de chamadas: a barra de volume da transmissão do amigo volta a aparecer mesmo quando o áudio da tela chega depois do vídeo.",
+        "Painel de sons: se o serviço de chamadas não responder ao clique em até 1,5 s, o Briks avisa e toca o som neste aparelho em vez de ficar mudo.",
+        NULL } },
     { "1.5.2", {
         "Atualização: ao clicar em Verificar, o download começa na hora (antes só começava no ciclo de 4 horas) e uma barra animada aparece até a barra de progresso começar a encher.",
         "Painel de sons: o editor de novo som ganhou botão de play junto da onda, toca só o trecho entre as barras (que você arrasta), para ao clicar de novo e muda o volume em tempo real.",

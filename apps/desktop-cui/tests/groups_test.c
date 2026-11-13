@@ -6,6 +6,8 @@ briks_theme_t g_th; int g_perf;
 int briks_input_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *o) { return cui_input_ex(ui, id, buf, cap, o); }   /* o app real (msgui.c) acrescenta o menu de clique direito */
 static char sent[8192]; static char sent_path[160]; static int sent_n;
 void app_begin(app_state_t *s, op_t op, const char *m, const char *p, const char *b) { (void)s; (void)op; (void)m; snprintf(sent_path, sizeof sent_path, "%s", p); snprintf(sent, sizeof sent, "%s", b); sent_n++; }
+#include "../src/sysint.h"
+sys_cfg_t g_sys = { .mic_on = true };   /* winstate.c: estado lembrado do microfone */
 void rtc_join_room(app_state_t *s, const char *r) { (void)s; (void)r; }
 int notify_unread_for(const char *chan) { (void)chan; return 0; }
 void ginvite_expect(const char *u, const char *g) { (void)u; (void)g; }   /* ginvite.c: convite pela DM (o teste de grupos não envia DM) */

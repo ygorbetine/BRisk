@@ -2,6 +2,7 @@
  * Fica só neste computador, em call_history.json na pasta de dados do app. A mesma lista serve o painel central (no lugar da
  * conversa, com trilho e menu à vista), o painel "Histórico" do dock e a tela inteira (janela sem painel de conversa). */
 #include "call.h"
+#include "sysint.h"
 #include "layout.h"
 #include <math.h>
 #include <stdio.h>
@@ -121,7 +122,7 @@ static void when_text(long long t, char *out, size_t cap) {
 
 static void call_again(app_state_t *s, const call_rec_t *r) {
     if (s->in_room && strcmp(s->room_name, r->room)) rtc_leave_room(s);
-    s->screen = SCREEN_CALL; s->mic_on = true; h_open = false;
+    s->screen = SCREEN_CALL; s->mic_on = g_sys.mic_on; h_open = false;
     if (!s->in_room) rtc_join_room(s, r->room[0] ? r->room : "voz-geral");
 }
 

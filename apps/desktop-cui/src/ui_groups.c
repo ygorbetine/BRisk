@@ -3,6 +3,7 @@
  * Para não estragar nada, o save relê o JSON guardado (raw), troca SÓ nome, canais, membros, administradores e versões, e devolve o resto como veio.
  * Limite honesto: aqui as mudanças valem neste computador; a entrega assinada aos outros membros é do módulo P2P de grupos (briks-core). */
 #include "briks_ui.h"
+#include "sysint.h"
 #include "backend.h"
 #include "json.h"
 #include <stdio.h>
@@ -456,7 +457,7 @@ static void select_channel(app_state_t *s, int gi, int ci) {
     group_t *g = &s->groups[gi]; if (ci < 0 || ci >= g->nch) return;
     if (g->ch[ci].voice) {   /* canal de voz: entra na sala dele (mesmo caminho da "Sala geral") */
         char room[96]; snprintf(room, sizeof room, "g-%s", g->ch[ci].room);
-        s->screen = SCREEN_CALL; s->mic_on = true; if (!s->in_room) rtc_join_room(s, room);
+        s->screen = SCREEN_CALL; s->mic_on = g_sys.mic_on; if (!s->in_room) rtc_join_room(s, room);
         return;
     }
     g->active_ch = ci; snprintf(g->channel, sizeof g->channel, "%s", g->ch[ci].id); snprintf(s->gchan_id, sizeof s->gchan_id, "%s", g->ch[ci].id);

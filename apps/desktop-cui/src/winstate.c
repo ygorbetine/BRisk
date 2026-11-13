@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-sys_cfg_t g_sys = { .close_to_tray = true, .nt_msg = true, .sounds = true, .sound_vol = 70 };
+sys_cfg_t g_sys = { .close_to_tray = true, .nt_msg = true, .sounds = true, .sound_vol = 70, .mic_on = true };
 
 #define WM_TRAY (WM_APP + 0x41)
 #define SYS_TIMER 7701
@@ -36,7 +36,7 @@ static bool cfg_path(char *out, size_t cap) {
 }
 static const struct { const char *k; char t; void *p; } CF[] = {
     { "close_to_tray", 'b', &g_sys.close_to_tray }, { "autostart", 'b', &g_sys.autostart }, { "nt_msg", 'b', &g_sys.nt_msg }, { "sounds", 'b', &g_sys.sounds },
-    { "sound_vol", 'i', &g_sys.sound_vol }, { "tray_hint", 'b', &g_sys.tray_hint_shown }, { "win_x", 'i', &g_sys.win_x }, { "win_y", 'i', &g_sys.win_y },
+    { "sound_vol", 'i', &g_sys.sound_vol }, { "mic_on", 'b', &g_sys.mic_on }, { "deaf", 'b', &g_sys.deaf }, { "tray_hint", 'b', &g_sys.tray_hint_shown }, { "win_x", 'i', &g_sys.win_x }, { "win_y", 'i', &g_sys.win_y },
     { "win_w", 'i', &g_sys.win_w }, { "win_h", 'i', &g_sys.win_h }, { "win_max", 'b', &g_sys.win_max }, { "win_valid", 'b', &g_sys.win_valid },
 };
 static void cfg_load(void) {

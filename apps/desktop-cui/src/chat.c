@@ -1,6 +1,7 @@
 /* Marco 2: mensagens e grupos P2P locais, gravados pelas rotas /p2p/* do backend local.
  * As mensagens ficam só neste computador até o briks-core (marco 3) entregá-las pelo DataChannel. */
 #include "briks_ui.h"
+#include "sysint.h"
 #include "backend.h"
 #include "core.h"
 #include "json.h"
@@ -413,7 +414,7 @@ void app_demo(app_state_t *s, const char *mode) {
     snprintf(s->rp_ignore[0], sizeof s->rp_ignore[0], "spotify"); snprintf(s->rp_ignore[1], sizeof s->rp_ignore[1], "discord"); s->rp_ignore_n = 2;
     if (!strcmp(mode, "login")) { s->screen = SCREEN_AUTH; return; }
     if (!strcmp(mode, "call") || !strcmp(mode, "call-chat") || !strcmp(mode, "call-broadcast")) {
-        s->screen = SCREEN_CALL; s->mic_on = true;
+        s->screen = SCREEN_CALL; s->mic_on = g_sys.mic_on;
         add_msg(s, "m1", "Marina Costa", "Oi! Você entra na sala às 21h?", "2026-11-09T23:41:00.000Z", false);
         add_msg(s, "m2", "Ygor", "Entro sim, só terminar o jantar.", "2026-11-09T23:42:00.000Z", true);
         if (!strcmp(mode, "call-chat")) { s->call_view = 1; for (int i = 0; i < s->msg_count; i++) call_chat_add(s->msgs[i].id, s->msgs[i].author, s->msgs[i].content, 1794267660000LL + i * 60000LL, s->msgs[i].mine); }   /* chat da sala de exemplo */

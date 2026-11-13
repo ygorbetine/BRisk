@@ -254,7 +254,7 @@ static void navigation(cui_ctx *ui, app_state_t *s) {
             if (nav_item(ui, CUI_ICON_HISTORY, "Histórico de chamadas", history_is_open())) history_open(s);   /* abre no painel central (ui_history.c) */
             section_title(ui, "SALAS DE VOZ");
             /* Sala de teste: a chamada real chega com o briks-core (marco 3). */
-            if (nav_item(ui, CUI_ICON_VOLUME_2, "Sala geral", false)) { s->screen = SCREEN_CALL; s->mic_on = true; if (!s->in_room) rtc_join_room(s, "voz-geral"); }
+            if (nav_item(ui, CUI_ICON_VOLUME_2, "Sala geral", false)) { s->screen = SCREEN_CALL; s->mic_on = g_sys.mic_on; if (!s->in_room) rtc_join_room(s, "voz-geral"); }
             if (s->pending_count) {
                 char t[48]; snprintf(t, sizeof t, "PEDIDOS — %d", s->pending_count);
                 section_title(ui, t);

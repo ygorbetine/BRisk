@@ -510,7 +510,7 @@ struct Actor {
 }
 
 #[derive(Default, Clone)]
-struct KnownPeer { sid: String, mic: Option<bool>, share: [Option<(String, u32, u32)>; 2], cam: Option<(u32, u32)>, name: String }
+struct KnownPeer { sid: String, mic: Option<bool>, share: [Option<(String, u32, u32)>; 2], cam: Option<(u32, u32)>, name: String, saudio: bool }
 
 impl Actor {
     async fn emit(&self, e: MeshEvent) {
@@ -954,8 +954,11 @@ impl Actor {
                 let scr = p.tracks.iter().find(|t| t.source == lk::TrackSource::ScreenShare as i32 && !t.muted && share::slot_of_name(&t.name) == slot);
                 let now = scr.map(|t| (share::strip_slot_name(&t.name).to_string(), t.width, t.height));
                 // dentro do prazo pós-reconexão, "sem tela" pode ser só "ainda não republicou": espera (expire_stale decide)
-                if now != k.share[slot] && !(now.is_none() && self.stale.contains_key(&p.identity)) {
+                // o áudio da tela pode chegar DEPOIS do vídeo: sem reanunciar, o app nunca soube que há áudio (sem barra de volume)
+                let audio_changed = slot == 0 && now.is_some() && now == k.share[slot] && has_audio != k.saudio;
+                if (now != k.share[slot] || audio_changed) && !(now.is_none() && self.stale.contains_key(&p.identity)) {
                     k.share[slot] = now.clone();
+                    if slot == 0 { k.saudio = has_audio; }
                     if now.is_none() { let r = self.shared.lock().unwrap().recv.get(&share::recv_key(&p.identity, slot)).cloned(); if let Some(r) = r { r.watching.store(false, Ordering::Relaxed); } }
                     let ev = match &now {
                         Some((label, w, h)) => json!({ "ev": "share.remote", "peer_id": p.identity, "slot": slot, "state": "on", "w": w, "h": h, "fps": 0, "kbps": 0, "label": label, "audio": has_audio && slot == 0 }),

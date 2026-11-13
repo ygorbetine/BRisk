@@ -214,6 +214,16 @@ void migrate_pump(app_state_t *s);
 void migrate_dialog(cui_ctx *ui, app_state_t *s);
 /* ui_update.c: aviso "pronto para instalar" (update.c baixa e verifica em segundo plano) */
 void update_banner(cui_ctx *ui, app_state_t *s);
+/* brick.c — experimento "tijolo": detalhes de peças de montar POR CIMA da identidade atual (vidro, roxo do tema, cantos arredondados); nada substitui o visual existente */
+void brick_studs_row(cui_ctx *ui);
+void brick_progress(cui_ctx *ui, int idx, float frac, bool indef);
+void brick_ring(cui_ctx *ui, cui_vec2 c, float radius, float k, float lvl);
+void brick_tower(cui_ctx *ui, int idx, int channels, bool unread);
+void brick_loose(cui_ctx *ui);
+void brick_join(cui_ctx *ui, int slot);
+void brick_mosaic(cui_ctx *ui, int slot, const unsigned char *cells, int cw, int ch, float w, float h, int radius);
+bool brick_on(void);   /* BRIKS_BRICKS=0 desliga todos os detalhes */
+bool share_thumb_cells(int slot, const unsigned char **cells, int *cw, int *ch);   /* ui_share.c: células do mosaico da thumb */
 void update_dialog(cui_ctx *ui, app_state_t *s);   /* ui_update.c: diálogo aberto pelo botão de download da barra de título */
 
 /* app.c: máquina de estados das chamadas ao backend */

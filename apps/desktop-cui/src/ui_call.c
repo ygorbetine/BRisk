@@ -150,7 +150,8 @@ static void paint_avatar(cui_ctx *ui, cui_rect r, void *user) {
             cui_color ring = CUI_RGB(0x57d28b); ring.a = (unsigned char)(150 + 100 * lvl);
             float rg = fminf(rmin + gap, rmax - 4);
             cui_draw_rect_border(ui, (cui_rect){ c.x - rg - 3, c.y - rg - 3, (rg + 3) * 2, (rg + 3) * 2 }, CUI_CORNERS(rg + 3), CUI_RGBA(0x00000000), glow, 6);
-            cui_draw_rect_border(ui, (cui_rect){ c.x - rg, c.y - rg, rg * 2, rg * 2 }, CUI_CORNERS(rg), CUI_RGBA(0x00000000), ring, 2.5f);
+            cui_draw_rect_border(ui, (cui_rect){ c.x - rg, c.y - rg, rg * 2, rg * 2 }, CUI_CORNERS(rg), CUI_RGBA(0x00000000), ring, brick_on() ? 1.0f : 2.5f);   /* o anel fino continua; os pinos acendem por cima */
+            if (brick_on()) brick_ring(ui, c, rg, k, lvl);
         }
     }
     cui_color sh = CUI_RGBA(0x00000066);
@@ -179,11 +180,14 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
         cui_texture th = 0; int tw = 0, thh = 0;
         if (t->live && !t->me && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
+            const unsigned char *cells = NULL; int mcw = 0, mch = 0;
             cui_box(ui, .dir = CUI_STACK, .width = CUI_PX(iw), .height = CUI_PX(ih)) {
-                cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);
+                if (brick_on() && share_thumb_cells(t->slot, &cells, &mcw, &mch)) brick_mosaic(ui, t->slot, cells, mcw, mch, iw, ih, rr);   /* mosaico de pecas 1x1 no lugar do desfoque */
+                else cui_image(ui, th, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr);
                 cui_box(ui, .width = CUI_PX(iw), .height = CUI_PX(ih), .radius = rr, .bg = CUI_RGBA(0x1a0a2680)) {}
             }
         }
+        if (brick_on() && !t->me) brick_join(ui, t->slot);   /* pinos caem no topo quando a pessoa entra */
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .pad_bottom = lab_h) {
             if (t->vtex && t->vw > 0 && t->vh > 0) {   /* câmera ligada: o vídeo ocupa o bloco (inteiro, sem cortar), com folga para os cantos arredondados */
                 const float aw = fmaxf(w - 8.0f, 16.0f), ah = fmaxf(h - 8.0f - lab_h, 16.0f), sc = fminf(aw / (float)t->vw, ah / (float)t->vh);

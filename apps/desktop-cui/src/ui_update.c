@@ -26,10 +26,13 @@ void update_dialog_open(void) { g_dlg = true; }
 void update_dialog(cui_ctx *ui, app_state_t *s) {
     { static int dev = -1; if (dev < 0) dev = getenv("BRIKS_DEV_UPDDLG") != NULL; if (dev == 1) { dev = 2; g_dlg = true; } }   /* captura: abre o diálogo sozinho */
     if (!g_dlg) return;
-    const upd_phase_t ph = update_phase(); const upd_check_t ck = update_check_state();
+    upd_phase_t ph = update_phase(); const upd_check_t ck = update_check_state();
+    static int fake = -1; if (fake < 0) fake = getenv("BRIKS_DEV_UPDFAKE") != NULL;   /* captura/vídeo: simula um download subindo de 0 a 100% */
+    int fake_pct = 0; if (fake) { ph = UPD_DOWNLOADING; fake_pct = (int)(fmod(cui_time(ui) * 12.0, 100.0)); }
     cui_vec2 vp = cui_viewport_size(ui);
     cui_dialog(ui, "Atualização do Briks", &g_dlg, .width = fminf(420.0f, fmaxf(vp.x - 48.0f, 260.0f))) {
         char t[160];
+        if (brick_on()) brick_studs_row(ui);
         if (ph == UPD_READY) {
             snprintf(t, sizeof t, "O Briks %s já foi baixado e verificado. Reinicie para instalar (a chamada em andamento será encerrada).", update_version());
             cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
@@ -39,11 +42,12 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
                 if (cui_button(ui, "Reiniciar e instalar", .variant = CUI_BUTTON_PRIMARY)) { if (update_install_now()) cui_app_quit(s->app); }
             }
         } else if (ph == UPD_DOWNLOADING || (ph == UPD_CHECKING && ck == UCHK_NEWER)) {
-            const bool pct = ph == UPD_DOWNLOADING && update_percent() > 0;
-            if (pct) snprintf(t, sizeof t, "Baixando o Briks %s: %d%%", update_version(), update_percent());
+            const int pc = fake ? fake_pct : update_percent(); const bool pct = ph == UPD_DOWNLOADING && pc > 0;
+            if (pct) snprintf(t, sizeof t, "Baixando o Briks %s: %d%%", fake ? "1.5.7" : update_version(), pc);
             else snprintf(t, sizeof t, "Nova versão %s: preparando o download…", ph == UPD_DOWNLOADING ? update_version() : update_check_version());
             cui_text(ui, t, .size = 13, .color = B_TEXT, .width = CUI_FILL);
-            if (pct) cui_progress(ui, (float)update_percent() / 100.0f);
+            if (brick_on()) brick_progress(ui, 0, pct ? (float)pc / 100.0f : 0.0f, !pct);
+            else if (pct) cui_progress(ui, (float)pc / 100.0f);
             else cui_canvas(ui, "upd-dlg-indef", CUI_FILL, CUI_PX(6), paint_indef, NULL, 0);
             cui_text(ui, "Quando terminar, o botão pede para reiniciar e instalar. Você pode continuar usando o Briks.", .size = 12, .color = B_MUTED, .width = CUI_FILL);
             cui_request_wakeup(ui, pct ? 0.3f : 0.03f);
@@ -170,7 +174,8 @@ void update_settings_cards(cui_ctx *ui, app_state_t *s) {
         if (ph == UPD_DOWNLOADING && update_percent() > 0) snprintf(t, sizeof t, "Baixando a versão %s: %d%%", update_version(), update_percent());
         else snprintf(t, sizeof t, "Nova versão %s: preparando o download…", ph == UPD_DOWNLOADING ? update_version() : update_check_version());
         cui_text(ui, t, .size = 12, .color = B_MUTED, .width = CUI_FILL);
-        if (ph == UPD_DOWNLOADING && update_percent() > 0) cui_progress(ui, (float)update_percent() / 100.0f);
+        if (brick_on()) brick_progress(ui, 1, ph == UPD_DOWNLOADING && update_percent() > 0 ? (float)update_percent() / 100.0f : 0.0f, !(ph == UPD_DOWNLOADING && update_percent() > 0));
+        else if (ph == UPD_DOWNLOADING && update_percent() > 0) cui_progress(ui, (float)update_percent() / 100.0f);
         else cui_canvas(ui, "upd-indef", CUI_FILL, CUI_PX(6), paint_indef, NULL, 0);   /* barra infinita até chegar o 1º byte */
         cui_request_wakeup(ui, ph == UPD_DOWNLOADING && update_percent() > 0 ? 0.3f : 0.03f);
     } else {

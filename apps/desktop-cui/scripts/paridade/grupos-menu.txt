@@ -15,9 +15,9 @@ waitms 500
 mtap 492 660
 snap gn1
 expect grp_gren_open 1
-mtap 647 349
+mtap 647 380
 type X
-mtap 808 653
+mtap 808 684
 snap gn2
 expect grp_gren_open 0
 expect grp_namelen 15

@@ -2,11 +2,11 @@
 waitms 1500
 expect deaf_on 0
 snap e0
-mclick 341 787
+mclick 257 787
 waitms 400
 expect deaf_on 1
 snap e1
-mat 341 787
+mat 257 787
 waitms 1200
 shot e-tip
 mat 1010 681
@@ -21,6 +21,6 @@ mclick 937 681
 waitms 300
 expect share_vol_0 105
 snap e2
-mclick 341 787
+mclick 257 787
 waitms 400
 expect deaf_on 0

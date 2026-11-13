@@ -180,7 +180,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
         if (t->live && g_tile_s && share_thumb(ui, g_tile_s, t->slot, &th, &tw, &thh)) {
             const float iw = fmaxf(w - 2.0f, 8.0f), ih = fmaxf(h - 2.0f, 8.0f); const int rr = sm ? 15 : 19;
             const unsigned char *cells = NULL; int mcw = 0, mch = 0;
-            cui_request_wakeup(ui, 0.1f);   /* o fundo desfocado é ao vivo: 10 quadros/s */
+            if (g_perf < PERF_MIN) cui_request_wakeup(ui, g_perf == PERF_SIMPLE ? 0.25f : 0.125f);   /* o fundo desfocado é ao vivo: 8 quadros/s (4 no Simplificado; estático no Mínimo) */
             /* proporção da transmissão: parte da LARGURA do bloco (altura proporcional, centrada); se isso passar da altura do bloco, encolhe até caber (sem esticar e sem cortar, o que deixaria cantos quadrados vazando) */
             const float ar = (tw > 0 && thh > 0) ? (float)thh / (float)tw : ih / iw; float mw = iw, mh = floorf(iw * ar); if (mh > ih) { mh = ih; mw = floorf(ih / ar); }
             const int mr = (mw >= iw - 0.5f && mh >= ih - 0.5f) ? rr : 0;
@@ -209,11 +209,11 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 }
                 if (t->live) {   /* quem transmite (inclusive eu): ondas vermelhas saindo da foto; nos outros, o ícone de transmissão por cima da foto */
                     const float tn = (float)cui_time(ui), pulse = 0.5f + 0.5f * sinf(tn * 3.2f), r0 = fminf(d + 10.0f, cv);
-                    cui_request_wakeup(ui, 0.04f);
-                    for (int k = 0; k < 3; k++) {
-                        const float ph = fmodf(tn * 0.55f + (float)k / 3.0f, 1.0f), rd2 = r0 + (cv - r0) * ph;
+                    if (g_perf == PERF_NORMAL) cui_request_wakeup(ui, 0.066f);   /* ondas a ~15 quadros/s; nos modos de desempenho ficam paradas */
+                    for (int k = 0; k < (g_perf == PERF_NORMAL ? 3 : 1); k++) {   /* Simplificado/Mínimo: um anel só, parado */
+                        const float ph = g_perf == PERF_NORMAL ? fmodf(tn * 0.55f + (float)k / 3.0f, 1.0f) : 0.12f, rd2 = r0 + (cv - r0) * ph; const unsigned wa = (unsigned)(200.0f * (1.0f - ph)); if (wa < 10u) continue;   /* quase transparente: não desenha (com alpha 0 a borda caía na cor escura padrão do tema = o anel preto) */
                         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
-                            cui_box(ui, .width = CUI_PX(rd2), .height = CUI_PX(rd2), .radius = (int)(rd2 * 0.5f), .border = 2, .border_color = CUI_RGBA(0xff4d6d00 | (unsigned)(200.0f * (1.0f - ph)))) {}
+                            cui_box(ui, .width = CUI_PX(rd2), .height = CUI_PX(rd2), .radius = (int)(rd2 * 0.5f), .border = 2, .border_color = CUI_RGBA(0xff4d6d00 | wa)) {}
                         }
                     }
                     if (!t->me) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, CUI_ICON_MONITOR, fmaxf(12.0f, d * 0.34f), CUI_RGB(0xffffff)); }

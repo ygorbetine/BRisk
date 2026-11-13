@@ -69,6 +69,11 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.15", {
+        "Transmissão: o fundo desfocado atualiza a 8 quadros/s (4 no modo Simplificado, estático no Mínimo); as ondas rodam a 15 quadros/s e só no modo Normal.",
+        "Corrigido um anel preto que aparecia em volta das ondas.",
+        "Modos de desempenho: o Lego da transmissão usa menos desenhos por peça.",
+        NULL } },
     { "1.5.14", {
         "Transmissão: quem transmite ganha borda vermelha, selo AO VIVO e ondas em volta da foto (também no seu bloco).",
         "O fundo desfocado da transmissão agora é ao vivo, a 10 quadros por segundo (5 nos modos de desempenho).",

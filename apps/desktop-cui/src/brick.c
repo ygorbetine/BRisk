@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <windows.h>
 /* Experimento "tijolo" (branch experimento/cui-tijolo): alusão a peças de montar nos painéis do Briks.
  * Tudo aqui é desenho 2D barato (retângulos e círculos do CUI); nada de textura. Cada função tem uma referência em docs/plans/tijolo.md. */
 #include "briks_ui.h"
@@ -105,17 +107,27 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
     const mos_t *m = (const mos_t *)user; if (!m->cells) return;
     float u = r.w / 34.0f; if (u < 14.0f) u = 14.0f; if (u > 30.0f) u = 30.0f;
     int cols = (int)ceilf(r.w / u), rows = (int)ceilf(r.h / u); if (cols > 96) cols = 96; if (rows > 64) rows = 64;
-    static unsigned char used[64][96]; memset(used, 0, sizeof used);
-    static const int SZ[][2] = { {2,1},{2,1},{1,1},{2,2},{2,2},{3,1},{4,1},{2,3},{1,2},{3,2},{4,2} }; const int NS = (int)(sizeof SZ / sizeof SZ[0]);
-    for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) {
-        if (used[y][x]) continue;
-        int w = 1, h = 1; const unsigned h0 = hash2((unsigned)x, (unsigned)y);
-        for (int k = 0; k < NS; k++) {
-            const int *s2 = SZ[(h0 + (unsigned)k) % (unsigned)NS]; bool ok = x + s2[0] <= cols && y + s2[1] <= rows;
-            for (int j = 0; ok && j < s2[1]; j++) for (int i = 0; i < s2[0]; i++) if (used[y + j][x + i]) { ok = false; break; }
-            if (ok) { w = s2[0]; h = s2[1]; break; }
+    /* distribuição das peças (medido: recalcular a cada quadro custa menos de 0,02 ms, então não há cache) */
+    typedef struct { unsigned char x, y, w, h; } pc_t;
+    static pc_t cache[64 * 96]; static int cn; static unsigned char used[64][96]; const bool use_cache = false;
+    LARGE_INTEGER t0, fq; QueryPerformanceCounter(&t0); QueryPerformanceFrequency(&fq);
+    {
+        cn = 0; memset(used, 0, sizeof used);
+        static const int SZ[][2] = { {2,1},{2,1},{1,1},{2,2},{2,2},{3,1},{4,1},{2,3},{1,2},{3,2},{4,2} }; const int NS = (int)(sizeof SZ / sizeof SZ[0]);
+        for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) {
+            if (used[y][x]) continue;
+            int w = 1, h = 1; const unsigned h0 = hash2((unsigned)x, (unsigned)y);
+            for (int k = 0; k < NS; k++) {
+                const int *s2 = SZ[(h0 + (unsigned)k) % (unsigned)NS]; bool ok = x + s2[0] <= cols && y + s2[1] <= rows;
+                for (int j = 0; ok && j < s2[1]; j++) for (int i = 0; i < s2[0]; i++) if (used[y + j][x + i]) { ok = false; break; }
+                if (ok) { w = s2[0]; h = s2[1]; break; }
+            }
+            for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) used[y + j][x + i] = 1;
+            cache[cn++] = (pc_t){ (unsigned char)x, (unsigned char)y, (unsigned char)w, (unsigned char)h };
         }
-        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) used[y + j][x + i] = 1;
+    }
+    for (int pi = 0; pi < cn; pi++) {
+        const int x = cache[pi].x, y = cache[pi].y, w = cache[pi].w, h = cache[pi].h;
         cui_rect c = { r.x + (float)x * u, r.y + (float)y * u, (float)w * u, (float)h * u };
         if (c.x + c.w > r.x + r.w) c.w = r.x + r.w - c.x;
         if (c.y + c.h > r.y + r.h) c.h = r.y + r.h - c.y;
@@ -135,11 +147,14 @@ static void paint_mos(cui_ctx *ui, cui_rect r, void *user) {
         const float sr = u * 0.31f;
         for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) {
             const float cx = c.x + ((float)i + 0.5f) * u, cy = c.y + ((float)j + 0.5f) * u; if (cx + sr > c.x + c.w || cy + sr > c.y + c.h) continue;
+            if (g_perf >= PERF_SIMPLE) { cui_color top = shade(base, 1.1f); top.a = 235; cui_draw_rect_border(ui, (cui_rect){ cx - sr, cy - sr, sr * 2, sr * 2 }, CUI_CORNERS(sr), top, shade(base, 0.6f), 1.0f); continue; }   /* modos de desempenho: um desenho por pino */
             cui_color sh = shade(base, 0.6f); sh.a = 200; cui_draw_rect(ui, (cui_rect){ cx - sr + 1.5f, cy - sr + 2.0f, sr * 2, sr * 2 }, CUI_CORNERS(sr), sh);
             cui_color top = shade(base, 1.1f); top.a = 235; cui_draw_rect_border(ui, (cui_rect){ cx - sr, cy - sr, sr * 2, sr * 2 }, CUI_CORNERS(sr), top, shade(base, 0.72f), 1.0f);
             cui_color hi = shade(base, 1.45f); hi.a = 170; cui_draw_rect(ui, (cui_rect){ cx - sr * 0.55f, cy - sr * 0.65f, sr * 0.7f, sr * 0.55f }, CUI_CORNERS(sr * 0.3f), hi);
         }
     }
+    { static double acc; static int n; LARGE_INTEGER t1; QueryPerformanceCounter(&t1); acc += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)fq.QuadPart;
+      if (getenv("BRIKS_MOS_TIMING") && ++n >= 60) { fprintf(stderr, "mosaico: %.3f ms/quadro (perf=%d, pecas=%d, cache=%d)\n", acc / n, (int)g_perf, cn, (int)use_cache); acc = 0; n = 0; } }
 }
 void brick_mosaic(cui_ctx *ui, int slot, const unsigned char *cells, int cw, int ch, float w, float h, int radius) {
     if (slot < 0 || slot > BRIKS_MAX_PEERS + 1) return;

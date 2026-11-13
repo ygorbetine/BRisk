@@ -570,7 +570,7 @@ bool share_mini(cui_ctx *ui, app_state_t *s, float w) {
  * 3 avatares por quadro. Pede o decodificador ao core igual à miniatura da lateral; sobe poucos quadros por segundo. */
 static fview_t g_thumb[BRIKS_MAX_PEERS]; static bool g_thumb_req[BRIKS_MAX_PEERS], g_thumb_prev[BRIKS_MAX_PEERS]; static int g_thumb_nreq;
 static fview_t g_thumb_me; static bool g_thumb_me_req, g_thumb_me_prev;   /* thumb da PROPRIA transmissao (prévia local), no bloco "Você" */
-static double thumb_dt(void) { return g_perf >= PERF_SIMPLE ? 0.2 : 0.1; }
+static double thumb_dt(void) { return g_perf >= PERF_MIN ? 10.0 : g_perf == PERF_SIMPLE ? 0.25 : 0.125; }   /* fundo desfocado: Normal 8 quadros/s, Simplificado 4, Mínimo estático (um quadro a cada 10 s) */
 bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w, int *h) {
     if (slot == BRIKS_MAX_PEERS + 1) {   /* SLOT_ME */
         if (!s->sh.active) return false;
@@ -586,7 +586,7 @@ bool share_thumb(cui_ctx *ui, app_state_t *s, int slot, cui_texture *tex, int *w
     if (!(q->remote[slot].path[0] && q->remote[slot].watching && !q->remote[slot].stalled)) return false;
     fview_t *v = &g_thumb[slot]; v->want = 40; v->blur = 1;   /* bem pequena: esticada ao bloco inteiro vira desfoque */
     const double now = cui_time(ui);
-    if (!v->tex || now - v->last >= thumb_dt()) {   /* fundo desfocado ao vivo: 10 quadros/s (5 nos modos de desempenho) */ if (!fv_update(ui, s, v, q->remote[slot].path)) return false; }
+    if (!v->tex || now - v->last >= thumb_dt()) {   /* fundo desfocado ao vivo: 8 / 4 quadros/s, estático no Mínimo */ if (!fv_update(ui, s, v, q->remote[slot].path)) return false; }
     if (!v->tex || v->w <= 0) return false;
     *tex = v->tex; *w = v->w; *h = v->h; return true;
 }

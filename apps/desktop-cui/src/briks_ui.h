@@ -87,7 +87,7 @@ typedef struct {
     /* 2ª tela simultânea (segundo monitor), minha e dos outros: sem áudio próprio (o áudio da transmissão é o da 1ª) */
     bool pick_second;                          /* o seletor aberto vai iniciar a 2ª tela */
     struct { bool active, starting; int w, h, fps, kbps; char label[64], kind[12], id[24]; } second;
-    int viewers[2]; bool vknown[2]; char vnames[2][200];   /* quem assiste à MINHA tela (slot 0/1): só P2P e só depois do 1º aviso do core (sem dado = oculto) */
+    int viewers[2]; bool vknown[2]; char vnames[2][200]; char vids[2][10][96]; int vidn[2];   /* quem assiste à MINHA tela (slot 0/1): só P2P e só depois do 1º aviso do core (sem dado = oculto) */
     struct { bool on, watching, has_frame, stalled; int w, h, fps, kbps; char label[64], path[300]; } remote2[BRIKS_MAX_PEERS];
 } share_state_t;
 

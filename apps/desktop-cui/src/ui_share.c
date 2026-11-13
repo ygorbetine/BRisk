@@ -278,6 +278,8 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
     } else if (!strcmp(ev, "share.viewers")) {   /* core: {slot, count, peers:[ids]}; nunca conta o próprio usuário */
         const int sl = jint(j, "slot") == 1 ? 1 : 0; q->vknown[sl] = true; q->viewers[sl] = jint(j, "count"); q->vnames[sl][0] = 0;
         const jval *pl = json_get(j, "peers"); const int np = json_len(pl); int shown = 0;
+        q->vidn[sl] = 0;   /* ids de quem assiste: o nome é resolvido na hora de desenhar (o nome pode chegar depois do aviso) */
+        for (int k = 0; k < np && q->vidn[sl] < 10; k++) { const jval *e = json_at(pl, k); if (e && e->type == J_STR && e->str) snprintf(q->vids[sl][q->vidn[sl]++], sizeof q->vids[sl][0], "%s", e->str); }
         for (int k = 0; k < np && shown < 3; k++) {
             const jval *e = json_at(pl, k); const char *pid = e && e->type == J_STR && e->str ? e->str : "";
             const char *nm = "Participante";
@@ -336,6 +338,8 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
         /* quem assiste: com menos de 3 quadros por segundo por 4 s seguidos, a conexão não está dando conta (o emissor não baixa a
            qualidade por um espectador só quando há outros bem; avisa em vez de deixar a imagem parada sem explicação) */
         int i = slot_of(s, json_str(j, "peer_id", "")); if (i < 0 || !q->remote[i].watching) return false;
+        if (jint(j, "slot") == 1) { q->remote2[i].fps = jint(j, "fps"); q->remote2[i].kbps = jint(j, "kbps"); }   /* o que EU recebo (medido aqui), não o que o emissor anunciou (no servidor de chamadas vinha 0) */
+        else { q->remote[i].fps = jint(j, "fps"); q->remote[i].kbps = jint(j, "kbps"); }
         if (jint(j, "fps") < 3) { if (q->remote[i].low_secs < 99) q->remote[i].low_secs++; } else q->remote[i].low_secs = 0;
         q->remote[i].poor = q->remote[i].low_secs >= 4;
     } else if (!strcmp(ev, "share.remote")) {
@@ -494,6 +498,11 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
     if (q->fps < 0 || q->fps >= FPS_N) q->fps = FPS_DEFAULT;   /* padrão: 1080p · 30 FPS · automático */
     /* só assiste no modo Transmissão (aba Chamada): fora dele o core nem decodifica */
     bool viewing = share_viewing(s);
+    {   /* enquanto assiste a uma transmissão o computador não suspende nem apaga a tela; ao parar de assistir, volta ao normal */
+        static bool awake; bool want = false;
+        for (int i = 0; i < BRIKS_MAX_PEERS && !want; i++) want = (q->remote[i].on && q->remote[i].watching) || (q->remote2[i].on && q->remote2[i].watching);
+        if (want != awake) { awake = want; SetThreadExecutionState(want ? (ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) : ES_CONTINUOUS); }
+    }
     mini_update_sel(s);
     memcpy(g_thumb_prev, g_thumb_req, sizeof g_thumb_prev); memset(g_thumb_req, 0, sizeof g_thumb_req); g_thumb_nreq = 0;
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
@@ -929,13 +938,21 @@ void ui_share_bar(cui_ctx *ui, app_state_t *s) {
             }
             if (!modal && briks_clicked_r(ui, "b2", 25.0f)) { if (on2) share_stop_second(s); else { share_open_dialog(s); q->pick_second = true; qual_switch(q, 1); } }
         }
-        if (q->active && (q->vknown[0] || (q->second.active && q->vknown[1]))) {   /* olho: quantas pessoas assistem às minhas telas (sem dado = não aparece) */
+        if (q->active || q->second.active) {   /* olho: quantas pessoas assistem às minhas telas e quem são (P2P e servidor de chamadas); sem ninguém mostra 0 */
             vsep(ui);
-            static char ebuf[40], etip[460]; const bool two = q->second.active && q->vknown[1] && q->vknown[0];
-            if (two) snprintf(ebuf, sizeof ebuf, "%d · %d", q->viewers[0], q->viewers[1]); else snprintf(ebuf, sizeof ebuf, "%d", q->vknown[0] ? q->viewers[0] : q->viewers[1]);
+            static char ebuf[40], etip[640]; const bool two = q->second.active && q->active;
+            if (two) snprintf(ebuf, sizeof ebuf, "%d · %d", q->viewers[0], q->viewers[1]); else snprintf(ebuf, sizeof ebuf, "%d", q->active ? q->viewers[0] : q->viewers[1]);
             etip[0] = 0;
-            for (int sl = 0; sl < 2; sl++) if (q->vknown[sl] && (sl == 0 || q->second.active)) {
-                size_t l = strlen(etip); snprintf(etip + l, sizeof etip - l, "%s%s%s%s", l ? "\n" : "", q->second.active ? (sl ? "Tela 2: " : "Tela 1: ") : "Assistindo: ", q->viewers[sl] ? q->vnames[sl] : "ninguém", "");
+            for (int sl = 0; sl < 2; sl++) if ((sl == 0 && q->active) || (sl == 1 && q->second.active)) {
+                size_t l = strlen(etip); snprintf(etip + l, sizeof etip - l, "%s%s", l ? "\n" : "", two ? (sl ? "Tela 2: " : "Tela 1: ") : "Assistindo: ");
+                if (q->viewers[sl] <= 0) { l = strlen(etip); snprintf(etip + l, sizeof etip - l, "ninguém"); continue; }
+                int shown = 0;
+                for (int k = 0; k < q->vidn[sl]; k++) {
+                    const char *nm = "Participante";
+                    for (int i = 0; i < BRIKS_MAX_PEERS; i++) if (s->rtc_peers[i].id[0] && !strcmp(s->rtc_peers[i].id, q->vids[sl][k]) && s->rtc_peers[i].name[0]) nm = s->rtc_peers[i].name;
+                    l = strlen(etip); snprintf(etip + l, sizeof etip - l, "%s%s", shown ? ", " : "", nm); shown++;
+                }
+                if (q->viewers[sl] > shown) { l = strlen(etip); snprintf(etip + l, sizeof etip - l, " e mais %d", q->viewers[sl] - shown); }
             }
             cui_box(ui, .id = "bey", .dir = CUI_ROW, .gap = 6, .pad_x = 12, .height = CUI_FILL, .align = CUI_ALIGN_CENTER) {
                 cui_icon(ui, CUI_ICON_EYE, 14, B_TEXT); cui_text(ui, ebuf, .size = 12, .nowrap = true);

@@ -69,6 +69,9 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.21", {
+        "Overlay: a barra de edição ganhou a caixa Atravessar cliques, a mesma opção das Configurações (fora da edição; no modo de edição o overlay sempre recebe o mouse).",
+        NULL } },
     { "1.5.20", {
         "Transmissão: a taxa de quadros escolhida não cai mais; quando falta rede ou PC, cai só a resolução e o bitrate. Envio em cadência fixa e adaptação sem vaivém.",
         "Aviso \"começou a transmitir\": o botão Assistir agora responde ao clique.",

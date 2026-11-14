@@ -69,6 +69,11 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.27", {
+        "Chamada P2P: com 3 ou mais pessoas a conexão fecha em até 0,5 s (antes 1 a 2 s).",
+        "Chamada P2P: quem desliga some da chamada na hora, sem esperar o prazo de presença.",
+        "Fechar o app no meio de uma chamada avisa a saída aos outros antes de encerrar.",
+        NULL } },
     { "1.5.26", {
         "Transmissão em chamada: corrigido um problema desde a 1.5.7 em que qualquer perda de pacotes no envio travava a transmissão (o emissor não pedia retransmissão ao servidor).",
         "Transmissão: reprodução suavizada no receptor e correção de perdas por paridade (FEC), com menos travadas em rede ruim.",

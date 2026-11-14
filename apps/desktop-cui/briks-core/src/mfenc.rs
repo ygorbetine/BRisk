@@ -50,6 +50,11 @@ pub fn classify_hr(hr: i32) -> FaultKind {
     }
 }
 
+/// Teto de QP de partida: nitidez de texto no quadro-chave (IDR a ~35 dB; com 34 cai para ~30 e com 40 para ~24, medido). Conteúdo que
+/// não cabe no bitrate com este teto (grão pesado, jogo caótico) faz o NVENC ignorar o bitrate — 67 Mbps com 2 a 6 pedidos, medido —, e aí
+/// o `share::QpGovernor` sobe o teto.
+pub const DEFAULT_MAX_QP: u32 = 28;
+
 pub struct MfEnc {
     /// o objeto de ativação que criou o MFT: precisa de ShutdownObject no fim, senão o MFT de hardware deixa handles para trás
     act: Option<IMFActivate>,
@@ -100,7 +105,10 @@ fn profile_order() -> Vec<i32> {
 
 impl MfEnc {
     /// `allow_hw = false` força o codificador de software.
-    pub fn new(w: usize, h: usize, fps: u32, bps: u32, allow_hw: bool) -> Result<Self> {
+    pub fn new(w: usize, h: usize, fps: u32, bps: u32, allow_hw: bool) -> Result<Self> { Self::new_qp(w, h, fps, bps, allow_hw, DEFAULT_MAX_QP) }
+    /// Igual a `new`, com o teto de QP escolhido (ver `share::QpGovernor`). O NVENC aceita trocar o teto ao vivo mas NÃO obedece
+    /// (medido: 67 Mbps antes e depois da troca), por isso o teto só muda recriando o codificador.
+    pub fn new_qp(w: usize, h: usize, fps: u32, bps: u32, allow_hw: bool, max_qp: u32) -> Result<Self> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             mf_startup()?;
@@ -118,13 +126,13 @@ impl MfEnc {
             let mut last = anyhow!("nenhum codificador H264 do Media Foundation");
             for (act, hw) in tries {
                 let name = friendly(&act);
-                match Self::open(&act, w, h, fps, bps, hw, name.clone()) { Ok(e) => return Ok(e), Err(e) => { last = anyhow!("{name}: {e}"); let _ = act.ShutdownObject(); } }
+                match Self::open(&act, w, h, fps, bps, hw, name.clone(), max_qp) { Ok(e) => return Ok(e), Err(e) => { last = anyhow!("{name}: {e}"); let _ = act.ShutdownObject(); } }
             }
             Err(last)
         }
     }
 
-    unsafe fn open(act: &IMFActivate, w: usize, h: usize, fps: u32, bps: u32, hw: bool, name: String) -> Result<Self> {
+    unsafe fn open(act: &IMFActivate, w: usize, h: usize, fps: u32, bps: u32, hw: bool, name: String, max_qp: u32) -> Result<Self> {
         let tr: IMFTransform = act.ActivateObject()?;
         let attrs = tr.GetAttributes().ok();
         let mut is_async = false;
@@ -150,7 +158,7 @@ impl MfEnc {
         if let Some(q) = envu("BRIKS_ENC_QVS") { set("QualityVsSpeed", &CODECAPI_AVEncCommonQualityVsSpeed, q); }
         // Teto de QP: sem ele o NVENC em CBR faz o quadro-chave (a cada PLI/novo espectador) sair com QP altíssimo (luma ~22 dB, texto ilegível)
         // seguido de P-quadros quase vazios que refinam devagar: é o "reload/zoom" que o usuário vê. Com 28 o IDR sai ~36 dB (medido).
-        set("MaxQP", &CODECAPI_AVEncVideoMaxQP, envu("BRIKS_ENC_MAXQP").unwrap_or(28));
+        set("MaxQP", &CODECAPI_AVEncVideoMaxQP, envu("BRIKS_ENC_MAXQP").unwrap_or(max_qp.clamp(10, 51)));
         if let Some(q) = envu("BRIKS_ENC_MINQP") { set("MinQP", &CODECAPI_AVEncVideoMinQP, q); }
         if let Some(c) = &codec {
             let ll = std::env::var("BRIKS_ENC_LOWLAT").map(|v| v != "0").unwrap_or(true);

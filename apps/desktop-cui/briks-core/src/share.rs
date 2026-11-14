@@ -432,6 +432,40 @@ pub fn steady_fps(prev: u64, frames: u64, secs: f64) -> u64 {
 /// Bitrate do codificador para um orçamento de rede: desconta cabeçalhos RTP/UDP/IP e a folga das retransmissões.
 fn enc_bps(budget: u32) -> u32 { (budget as f64 * 0.85) as u32 }
 
+/// Teto de QP do codificador H264 conforme o conteúdo. O teto baixo (28) é o que mantém o texto nítido no quadro-chave, mas com ele o
+/// NVENC IGNORA o bitrate quando o conteúdo não cabe (grão de filme pesado, jogo caótico): 67 Mbps com 2 a 6 Mbps pedidos (medido). O
+/// excesso entope o pacer, o emissor pula quadros (FPS baixo) e a escada derruba a resolução. Aqui, dois segundos seguidos de estouro
+/// sobem o teto um degrau (28 → 34 → 40 → 51) e o codificador é recriado com ele (a troca ao vivo é aceita e não obedecida). Depois de
+/// um tempo calmo tenta descer um degrau; se estourar de novo, volta e dobra a espera (até 10 min) para não ficar sondando.
+pub struct QpGovernor { pub cap: u32, over: u32, calm: u32, hold: u32, grace: u32 }
+impl QpGovernor {
+    const STEPS: [u32; 4] = [crate::mfenc::DEFAULT_MAX_QP, 34, 40, 51];
+    pub fn new() -> Self { QpGovernor { cap: Self::STEPS[0], over: 0, calm: 0, hold: 60, grace: 0 } }
+    /// Uma vez por segundo: `sent`/`asked` = bps que saíram do codificador e bps pedidos; `transient` = segundo com quadro-chave forçado
+    /// ou troca de nível (o excesso é do quadro-chave, não do conteúdo). Devolve o teto novo quando ele muda (recrie o codificador).
+    pub fn note(&mut self, sent: f64, asked: f64, transient: bool) -> Option<u32> {
+        if self.grace > 0 { self.grace -= 1; return None; }   // codificador recém-criado: o 1º quadro-chave distorce a medida
+        if transient || asked <= 0.0 { self.over = 0; return None; }
+        let i = Self::STEPS.iter().position(|q| *q == self.cap).unwrap_or(0);
+        if sent > asked * 1.5 {
+            self.over += 1; self.calm = 0;
+            // estouro de 3x ou mais não é quadro-chave nem cena difícil passageira: sobe já
+            if (self.over >= 2 || sent > asked * 3.0) && i + 1 < Self::STEPS.len() { self.cap = Self::STEPS[i + 1]; self.over = 0; self.grace = 2; self.hold = (self.hold * 2).min(600); return Some(self.cap); }
+        } else {
+            self.over = 0; self.calm += 1;
+            if i > 0 && self.calm >= self.hold { self.cap = Self::STEPS[i - 1]; self.calm = 0; self.grace = 2; return Some(self.cap); }
+        }
+        None
+    }
+}
+impl Default for QpGovernor { fn default() -> Self { Self::new() } }
+
+/// Quadro-chave periódico (rede de segurança; os de verdade saem a pedido do receptor, por PLI/FIR). Estava em 3 s para encurtar a
+/// imagem corrompida no espectador; a causa dela era o receptor pular quadros (ver `DecodeFeed`), não a falta de quadro-chave. Cada
+/// quadro-chave custa caro: em texto parado a 4,5 Mbps a luminância cai de 45 para 35 dB e leva mais de 1 s para voltar (uma piscada a
+/// cada 3 s); em filme a 2 Mbps, −0,6 dB na média e −1,5 dB no pior quadro, com um quadro de 133 KB em vez de 106 (medido).
+pub const KEY_EVERY_S: u32 = 10;
+
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
 pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, out: VideoOut, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {
     let cap = Capture::start(cfg.kind.clone(), cfg.fps, cfg.height, preview.is_some(), dump.is_some()).map_err(|e| e.to_string())?;
@@ -477,6 +511,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut announce = false;
         let mut guard = BlackoutGuard::new();
         let mut sup = EncSupervisor::new();
+        let mut qpg = QpGovernor::new();
         let mut recreated_for_fault = false;
         let mut held_win = 0u64;   // quadros pretos segurados na janela (telemetria)
         let mut closed_reason = String::new();
@@ -536,6 +571,12 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     }
                     dec = d;
                 }
+                // o codificador ignorou o bitrate (conteúdo que não cabe com o teto de QP atual): recria com o teto um degrau acima.
+                // Vale também sem adaptação (bitrate fixo pelo usuário).
+                if let Some(e) = enc.as_ref() { if frames >= 1 && out_codec == Codec::H264 && e.hardware { if let Some(q) = qpg.note(sent_bps, e.bps as f64, idrs != idrs0 || trans_win) {
+                    crate::netlog::write(&format!("transmissao: teto de QP {q} (o codificador enviou {:.0} kbps com {} pedidos)", sent_bps / 1000.0, e.bps / 1000));
+                    enc = None; recreated = Instant::now();
+                } } }
                 let (loss, rtt, jit) = worst.unwrap_or((0.0, 0.0, 0.0));
                 // por que o nível está abaixo do configurado (prova nos logs): "cpu" = sobrecarga local, "conteudo" = o codificador não
                 // obedece o bitrate neste conteúdo (piso de bits por pixel), "rede" = banda estimada
@@ -595,7 +636,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             if enc.as_ref().map(|e| (e.w, e.h) != (tw, th)).unwrap_or(true) {
                 let bps = if cfg.adaptive { enc_bps(dec.bps) } else if cfg.kbps == 0 { video::auto_bitrate(th, fps) } else { (cfg.kbps * 1000).min(MAX_BPS) };
                 let tc = Instant::now();
-                let made = H264Enc::new_codec(out_codec, tw, th, fps as f32, bps, !sup.software);
+                let made = H264Enc::new_codec_qp(out_codec, tw, th, fps as f32, bps, !sup.software, qpg.cap);
                 if tc.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] criar codificador {tw}x{th}: {} ms", tc.elapsed().as_millis()); }
                 match made {
                     Ok(e) => {
@@ -633,7 +674,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
             // Um IDR custa ~1 s do orçamento (600 KB a 4,5 Mbps em 1080p de texto): rajadas de IDR são o que o espectador vê como "reload".
             let min_gap = Duration::from_millis(if est.reason != "" { 3000 } else { 1500 });   // rede apertada: quadros-chave mais espaçados
-            if since_idr >= fps * 3 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); idrs += 1; }
+            if since_idr >= fps * KEY_EVERY_S || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); idrs += 1; }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento
@@ -1056,6 +1097,33 @@ mod jb_tests {
         let mut got = vec![];
         feed.drain(|m| { got.push(m.map(|x| x.1[0])); Ok(()) });
         assert_eq!(got, vec![None, Some(50)]);
+    }
+
+    /// Teto de QP: sobe com o codificador ignorando o bitrate, não reage a quadro-chave isolado, e a sondagem para descer fica mais rara.
+    #[test]
+    fn qp_governor_raises_on_sustained_overshoot_and_probes_down_with_backoff() {
+        let mut g = QpGovernor::new();
+        assert_eq!(g.cap, 28);
+        // um segundo de estouro moderado (quadro-chave grande) e segundos marcados como transitórios não mudam nada
+        assert_eq!(g.note(5e6, 3e6, false), None);
+        assert_eq!(g.note(3e6, 3e6, false), None);
+        for _ in 0..5 { assert_eq!(g.note(9e6, 3e6, true), None); }
+        // dois segundos seguidos acima de 1,5x: sobe um degrau; os 2 s seguintes (codificador novo) não contam
+        assert_eq!(g.note(4.6e6, 3e6, false), None);
+        assert_eq!(g.note(4.6e6, 3e6, false), Some(34));
+        assert_eq!(g.note(60e6, 3e6, false), None);
+        assert_eq!(g.note(60e6, 3e6, false), None);
+        // estouro enorme sobe na hora
+        assert_eq!(g.note(60e6, 3e6, false), Some(40));
+        for _ in 0..2 { g.note(3e6, 3e6, false); }
+        // calmo: só tenta descer depois da espera (que dobrou duas vezes: 240 s)
+        for k in 0..239 { assert_eq!(g.note(3e6, 3e6, false), None, "segundo {k}"); }
+        assert_eq!(g.note(3e6, 3e6, false), Some(34));
+        // nunca passa de 51
+        let mut g = QpGovernor::new();
+        let mut caps = vec![];
+        for _ in 0..40 { if let Some(q) = g.note(90e6, 3e6, false) { caps.push(q); } }
+        assert_eq!(caps, vec![34, 40, 51]);
     }
 
     #[test]

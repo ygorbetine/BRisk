@@ -220,9 +220,11 @@ fn injected_fault() -> crate::mfenc::EncFault {
 impl H264Enc {
     pub fn new(w: usize, h: usize, fps: f32, bps: u32) -> Result<Self> { Self::new_with(w, h, fps, bps, true) }
     /// Codificador do codec pedido: H264 como sempre; VP8/VP9 pela libvpx (feature `vpx`). `allow_hw` só vale para H264.
-    pub fn new_codec(codec: crate::codec::Codec, w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> {
+    pub fn new_codec(codec: crate::codec::Codec, w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> { Self::new_codec_qp(codec, w, h, fps, bps, allow_hw, crate::mfenc::DEFAULT_MAX_QP) }
+    /// Igual, com o teto de QP do codificador H264 do Media Foundation (os outros não têm teto).
+    pub fn new_codec_qp(codec: crate::codec::Codec, w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool, max_qp: u32) -> Result<Self> {
         match codec {
-            crate::codec::Codec::H264 => Self::new_with(w, h, fps, bps, allow_hw),
+            crate::codec::Codec::H264 => Self::new_with_qp(w, h, fps, bps, allow_hw, max_qp),
             #[cfg(feature = "vpx")]
             c => { let e = crate::vpx::VpxEnc::new(c, w, h, fps, bps)?; Ok(H264Enc { be: Backend::Vpx(e), w, h, bps, name: format!("libvpx {} (software)", c.name().to_uppercase()), hardware: false, idr: true, nv12: vec![], inject: false }) }
             #[cfg(not(feature = "vpx"))]
@@ -230,10 +232,11 @@ impl H264Enc {
         }
     }
     /// `allow_hw = false`: pula o MFT de hardware (fallback depois de falhas repetidas do NVENC/GPU) e usa o de software da Microsoft ou o OpenH264.
-    pub fn new_with(w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> {
+    pub fn new_with(w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool) -> Result<Self> { Self::new_with_qp(w, h, fps, bps, allow_hw, crate::mfenc::DEFAULT_MAX_QP) }
+    pub fn new_with_qp(w: usize, h: usize, fps: f32, bps: u32, allow_hw: bool, max_qp: u32) -> Result<Self> {
         let pref = std::env::var("BRIKS_ENCODER").unwrap_or_default();
         if pref != "openh264" {
-            match crate::mfenc::MfEnc::new(w, h, fps.round() as u32, bps, allow_hw && pref != "mf-soft") {
+            match crate::mfenc::MfEnc::new_qp(w, h, fps.round() as u32, bps, allow_hw && pref != "mf-soft", max_qp) {
                 Ok(m) => { let (name, hardware) = (m.name.clone(), m.hardware); return Ok(H264Enc { be: Backend::Mf(m), w, h, bps, name, hardware, idr: true, nv12: vec![], inject: false }); }
                 Err(e) => eprintln!("codificador Media Foundation indisponível ({e}); usando OpenH264"),
             }
@@ -697,6 +700,25 @@ mod qualidade {
         for ln in 0..2usize { for c in 0..36usize { if (c * 5 + fala * 7 + ln) % 8 < 6 { let gl = glyph((fala * 131 + ln * 17 + c) as u32); let (x0, y0) = (w / 2 - 36 * 13 + c * 26, h - 150 + ln * 46);
             for (ry, bits) in gl.iter().enumerate() { for rx in 0..5 { if bits >> rx & 1 == 1 { for dy in 0..4 { for dx in 0..4 { let (px, py) = (x0 + rx * 4 + dx, y0 + ry * 4 + dy); if px < w && py < h { let o = (py * w + px) * 4; f[o] = 245; f[o + 1] = 245; f[o + 2] = 245; } } } } } } } } }
         f
+    }
+
+    /// Teto de QP x obediência ao bitrate: grão pesado a 3 Mbps em 1080p, um codificador por teto (o NVENC não obedece a troca ao vivo).
+    /// Com 28 o codificador ignora o bitrate; a partir de 34 obedece. É o que o `share::QpGovernor` usa.
+    #[test]
+    #[ignore]
+    fn teto_de_qp_e_bitrate() {
+        std::env::set_var("BRIKS_Q_GRAO", "15");
+        let (w, h, fps, bps) = (1920usize, 1080usize, 30usize, 3_000_000u32);
+        let mut linha = vec![];
+        let mut nome = String::new();
+        for qp in [28u32, 34, 40, 51] {
+            let mut enc = H264Enc::new_with_qp(w, h, fps as f32, bps, true, qp).unwrap();
+            let mut bytes = 0usize;
+            for t in 0..3 * fps { let f = filme(w, h, t, fps); for au in enc.encode(&bgra_to_i420(&f, w, h, w, h)).unwrap() { if t >= fps { bytes += au.len(); } } }
+            linha.push(format!("teto {qp}: {:.1} Mbps", bytes as f64 * 8.0 / 2.0 / 1e6));
+            nome = enc.name.clone();
+        }
+        eprintln!("[{nome}] grão pesado, pedido {:.1} Mbps: {}", bps as f64 / 1e6, linha.join(" | "));
     }
 
     /// Filme a 1080p: PSNR médio e mínimo, PSNR só da faixa da legenda logo depois de cada troca de fala (o "fantasma" da legenda

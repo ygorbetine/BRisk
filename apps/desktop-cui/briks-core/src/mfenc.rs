@@ -73,6 +73,9 @@ pub struct MfEnc {
     out_size: u32,
     n: i64,
     params: Vec<u8>, // SPS+PPS (Annex-B) vistos por último
+    /// onde vai o tempo de `encode`, acumulado em ns: [montar a amostra (buffer + cópia), esperar o pedido de entrada, ProcessInput,
+    /// esperar a saída, buscar a saída]. Só para medição (`sonda::onde_vai_o_tempo_de_codificar`).
+    pub prof: [u64; 5],
 }
 
 unsafe impl Send for MfEnc {}
@@ -196,7 +199,7 @@ impl MfEnc {
         tr.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0).ok();
         tr.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
         tr.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
-        Ok(MfEnc { act: Some(act.clone()), tr, events, codec, w, h, bps, hardware: hw, name, fps, need_input: 0, have_output: 0, provides_samples: provides, out_size: info.cbSize.max((w * h * 2) as u32), n: 0, params: vec![] })
+        Ok(MfEnc { act: Some(act.clone()), tr, events, codec, w, h, bps, hardware: hw, name, fps, need_input: 0, have_output: 0, provides_samples: provides, out_size: info.cbSize.max((w * h * 2) as u32), n: 0, params: vec![], prof: [0; 5] })
     }
 
     /// Bitrate médio ao vivo (ICodecAPI). Devolve false se o codificador recusar.
@@ -272,6 +275,7 @@ impl MfEnc {
     pub fn encode(&mut self, nv12: &[u8], force_idr: bool) -> Result<Vec<Vec<u8>>> {
         unsafe {
             if force_idr { if let Some(c) = &self.codec { let _ = c.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &var_u32(1)); } }
+            let tp = std::time::Instant::now();
             let len = (self.w * self.h * 3 / 2) as u32;
             let b = MFCreateMemoryBuffer(len)?;
             let (mut p, mut _max) = (std::ptr::null_mut(), 0u32);
@@ -286,6 +290,7 @@ impl MfEnc {
             s.SetSampleDuration(dur)?;
             self.n += dur;   // relógio acumulado: o FPS pode mudar no meio
             let mut out: Vec<Vec<u8>> = vec![];
+            self.prof[0] += tp.elapsed().as_nanos() as u64;
             if self.events.is_some() {
                 let mut t0 = std::time::Instant::now();
                 let mut resynced = false;
@@ -301,10 +306,16 @@ impl MfEnc {
                     }
                 }
                 self.need_input -= 1;
+                self.prof[1] += t0.elapsed().as_nanos() as u64;
+                let t1 = std::time::Instant::now();
                 self.tr.ProcessInput(0, &s, 0).map_err(|e| anyhow::Error::new(EncFault::from_hr(e.code().0, "ProcessInput")))?;
+                self.prof[2] += t1.elapsed().as_nanos() as u64;
                 let t0 = std::time::Instant::now();
                 while self.have_output == 0 && t0.elapsed().as_millis() < 250 { if !self.pump(false)? { std::thread::sleep(std::time::Duration::from_micros(300)); } }
+                self.prof[3] += t0.elapsed().as_nanos() as u64;
+                let t2 = std::time::Instant::now();
                 while self.have_output > 0 { self.have_output -= 1; if let Some(v) = self.take_output()? { out.push(v); } }
+                self.prof[4] += t2.elapsed().as_nanos() as u64;
             } else {
                 self.tr.ProcessInput(0, &s, 0).map_err(|e| anyhow::Error::new(EncFault::from_hr(e.code().0, "ProcessInput")))?;
                 while let Some(v) = self.take_output()? { out.push(v); }
@@ -393,6 +404,29 @@ mod sonda {
             eprintln!("[sonda] {} ({}): suportada = {sup}, SetValue({v}) = {}", nome, if enc.hardware { "hardware" } else { "software" }, if set.is_ok() { "ok".to_string() } else { format!("{:?}", set.err().map(|e| e.code())) });
         }
         eprintln!("[sonda] codificador: {}", enc.name);
+    }
+
+    /// Onde vai o tempo de codificar um quadro (ms por quadro), com conteúdo em movimento. `BRIKS_SONDA_FINO=1` liga o relógio fino do
+    /// Windows (1 ms), como o emissor de verdade faz enquanto transmite; sem ele cada espera curta arredonda para ~15 ms.
+    #[test]
+    #[ignore]
+    fn onde_vai_o_tempo_de_codificar() {
+        let _fino = std::env::var("BRIKS_SONDA_FINO").ok().map(|_| crate::share::FineTimer::acquire());
+        for (w, h) in [(2580usize, 1080usize), (1920, 1080), (1280, 720)] {
+            let mut enc = MfEnc::new(w, h, 30, 6_000_000, true).expect("codificador");
+            let mut nv12 = vec![0u8; w * h * 3 / 2];
+            let n = 120u64;
+            let mut total = 0u128;
+            for t in 0..n + 10 {
+                for (i, b) in nv12[..w * h].iter_mut().enumerate() { *b = (((i % w) + (t as usize) * 5) / 3 ^ (i / w) / 3) as u8; }
+                if t == 10 { enc.prof = [0; 5]; total = 0; }
+                let t0 = std::time::Instant::now();
+                let _ = enc.encode(&nv12, false).expect("codificar");
+                total += t0.elapsed().as_nanos();
+            }
+            let ms = |v: u64| v as f64 / n as f64 / 1e6;
+            eprintln!("[tempo {w}x{h}] total {:.2} ms: montar a amostra {:.2}, esperar pedido de entrada {:.2}, ProcessInput {:.2}, esperar a saída {:.2}, buscar a saída {:.2} ({})", total as f64 / n as f64 / 1e6, ms(enc.prof[0]), ms(enc.prof[1]), ms(enc.prof[2]), ms(enc.prof[3]), ms(enc.prof[4]), enc.name);
+        }
     }
 }
 

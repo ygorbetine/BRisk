@@ -65,6 +65,12 @@ visual é pequeno (desvio de alguns níveis em cores saturadas). Não feito.
 O H264 do MFT de hardware é 4:2:0 de 8 bits. Texto colorido fino perde croma (o teto medido da subamostragem está no teste
 `rolagem_de_texto`). Não há caminho pelo Media Foundation.
 
+### Custo de codificar um quadro
+Com a GPU livre (`mfenc::sonda::onde_vai_o_tempo_de_codificar`): 2580x1080 leva 3,9 ms no total — 0,7 para montar a amostra (buffer
++ cópia), 0,9 no `ProcessInput` e 2,3 esperando o NVENC; 1920x1080, 3,0 ms; 1280x720, 1,9 ms. Os 9–12 ms do `rede.log` real eram a
+conversão `i420_to_nv12` antiga (2,3 ms, hoje 0,23) mais a GPU ocupada com o próprio filme. Escrever o NV12 direto no buffer do Media
+Foundation economizaria ~0,5 ms; não vale a mudança.
+
 ### VBV maior e VBR
 Filme a 2 Mbps: VBV de 125 / 500 / 1000 ms dá 36,7 / 37,0 / 37,0 dB com pico de 1 s de 2,87 / 4,12 / 5,06 Mbps; VBR com teto de
 150% dá 37,2 dB gastando 3,04 Mbps. Ganho de no máximo 0,5 dB com rajada maior. Mantido como estava.
@@ -81,7 +87,9 @@ Filme a 2 Mbps: VBV de 125 / 500 / 1000 ms dá 36,7 / 37,0 / 37,0 dB com pico de
 - `share::enc_recovery_tests::hardware_encoder_that_always_fails_falls_back_to_software_and_the_stream_continues`: sempre, com a suíte
   inteira; passa sozinho.
 - `tests_sfuipc::ipc_room_join_pure_sfu_end_to_end_with_remote_mute_and_kick` e
-  `tests_sfurec::sfu_reconnects_after_server_restart_with_renewed_token`: sempre, no grupo com o LiveKit real.
+  `tests_sfurec::sfu_reconnects_after_server_restart_with_renewed_token` falhavam sempre no grupo com o LiveKit real. Não era
+  defeito do app: os testes ainda cobravam regras antigas (só o dono expulsa, até a 1.5.15; um token novo a cada queda, até a
+  1.5.19). Atualizados para as regras atuais depois da 1.5.26; o grupo passa 20 de 20.
 - `tests_sfurede::sfu_network_loss_and_outage_matrix`: falhava já na fase sem perda (5,5 qps) por causa do estouro de bitrate do `mf-soft`.
 - Ocasionais (2 em 20 rodadas na base): `camera_e2e::camera_flows_both_ways_next_to_a_screen_share_and_stops_cleanly`,
   `tests::two_simultaneous_shares_in_one_room`; `ipc::cfg_tests::realtime_falls_back_to_supabase_json_and_keeps_precedence` (3 em 20).

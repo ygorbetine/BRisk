@@ -422,16 +422,56 @@ pub enum Tick {
 /// quadro perdido (dois chegam no mesmo período, o mais velho é sobrescrito). Esperar um instante pelo quadro novo evita os dois.
 pub struct Cadence { period: Duration, next: Instant,
     /// false = comportamento antigo (só reenvia a tela parada uma vez por segundo); `BRIKS_SHARE_NO_REPEAT` (diagnóstico)
-    pub repeat: bool }
+    pub repeat: bool,
+    /// Seguir a fonte (pedido do usuário, 2026-11-14): um filme a 24 qps numa transmissão de 30 saía com 6 quadros repetidos por
+    /// segundo, encaixados na grade de 33 ms — cadência irregular e bits gastos em quadros iguais. Quando a fonte entrega quadros num
+    /// ritmo REGULAR mais lento que o alvo (20 qps ou mais: vídeo/filme), cada quadro novo sai assim que chega, sem repetições, e o
+    /// FPS enviado é o da fonte. Fonte irregular ou abaixo de 20 qps (página rolando aos trancos), tela parada e fonte no ritmo do
+    /// alvo continuam na grade, como antes. `BRIKS_SHARE_NO_FOLLOW` desliga (diagnóstico).
+    pub follow_source: bool,
+    /// chegadas dos últimos quadros novos (13 = 12 intervalos)
+    arrivals: std::collections::VecDeque<Instant>,
+    /// o quadro novo que está esperando já foi contado em `arrivals`
+    seen: bool,
+    /// período médio da fonte enquanto ela está sendo seguida
+    follow: Option<Duration> }
 impl Cadence {
     pub const POLL: Duration = Duration::from_millis(1);
-    pub fn new(now: Instant, fps: u32) -> Self { Cadence { period: Self::period_of(fps), next: now, repeat: true } }
+    pub fn new(now: Instant, fps: u32) -> Self { Cadence { period: Self::period_of(fps), next: now, repeat: true, follow_source: true, arrivals: Default::default(), seen: false, follow: None } }
+    /// FPS da fonte que está sendo seguida (None = na grade do FPS alvo).
+    pub fn follow_fps(&self) -> Option<u32> { self.follow.map(|p| (1.0 / p.as_secs_f64()).round() as u32) }
+    /// Fonte mais lenta que isto não é seguida (não é vídeo: é tela que muda pouco, e aí vale a grade com repetição).
+    const FOLLOW_MIN_FPS: f64 = 20.0;
+    /// Chegou um quadro novo: guarda o instante e decide se a fonte tem ritmo regular mais lento que o alvo.
+    fn note_arrival(&mut self, now: Instant) {
+        self.arrivals.push_back(now);
+        while self.arrivals.len() > 13 { self.arrivals.pop_front(); }
+        let was = self.follow.is_some();
+        self.follow = None;
+        if self.follow_source && self.repeat && self.arrivals.len() == 13 {
+            let iv: Vec<f64> = self.arrivals.iter().zip(self.arrivals.iter().skip(1)).map(|(a, b)| b.duration_since(*a).as_secs_f64()).collect();
+            let m = iv.iter().sum::<f64>() / iv.len() as f64;
+            // regular: no máximo um intervalo fora de 0,7x–1,4x da média (um filme a 24 qps num monitor de 60 Hz chega alternando
+            // 33 e 50 ms; um quadro pulado pela fonte de vez em quando não derruba o modo)
+            let off = iv.iter().filter(|x| **x < m * 0.7 || **x > m * 1.4).count();
+            if off <= 1 && m >= self.period.as_secs_f64() * 1.12 && m <= 1.0 / Self::FOLLOW_MIN_FPS * 1.02 { self.follow = Some(Duration::from_secs_f64(m)); }
+        }
+        if was && self.follow.is_none() { self.next = now; }   // voltou para a grade: ela recomeça daqui
+    }
     fn period_of(fps: u32) -> Duration { Duration::from_micros(1_000_000 / fps.clamp(1, 240) as u64) }
     pub fn set_fps(&mut self, fps: u32) { self.period = Self::period_of(fps); }
     pub fn period(&self) -> Duration { self.period }
     pub fn grace(&self) -> Duration { self.period / 3 }
     /// `fresh` = a captura tem quadro novo esperando; `held` = há um último quadro para repetir; `since_send` = tempo desde o último envio.
     pub fn step(&mut self, now: Instant, fresh: bool, held: bool, since_send: Duration) -> Tick {
+        if !fresh { self.seen = false; } else if !self.seen { self.seen = true; self.note_arrival(now); }
+        if let Some(sp) = self.follow {
+            // seguindo a fonte: o quadro novo sai ao chegar; sem quadro novo, espera — até a fonte parar (2,2 períodos dela sem nada)
+            if fresh { self.next = now + self.period; return Tick::Fresh; }
+            let last = self.arrivals.back().copied().unwrap_or(now);
+            if now.saturating_duration_since(last) <= sp.mul_f64(2.2) { return Tick::Wait(Self::POLL); }
+            self.follow = None; self.arrivals.clear(); self.next = now;   // a fonte parou: de volta à grade (repete o último quadro)
+        }
         if now < self.next { return Tick::Wait((self.next - now).min(Duration::from_millis(5))); }
         if fresh { self.advance(now); return Tick::Fresh; }
         // ainda sem quadro nenhum (início, janela minimizada): olha de novo em 1 ms, e a grade começa no 1º quadro que chegar —
@@ -520,6 +560,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let _fine = FineTimer::acquire();   // esperas de 1 ms (pacer e este laço) enquanto a transmissão está no ar
         let mut cad = Cadence::new(Instant::now(), fps);
         cad.repeat = std::env::var("BRIKS_SHARE_NO_REPEAT").is_err();
+        cad.follow_source = std::env::var("BRIKS_SHARE_NO_FOLLOW").is_err();
+        let mut enc_fps = fps;   // FPS informado ao codificador (o da fonte, quando ela está sendo seguida)
         let mut cap = cap;
         let mut enc: Option<H264Enc> = None;
         let mut pv = preview.and_then(|p| FrameSink::create(&p).ok());
@@ -616,8 +658,8 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     static LOGN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                     if LOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
                         let (en, hw) = enc.as_ref().map(|e| (e.name.to_string(), e.hardware)).unwrap_or_default();
-                        crate::netlog::write(&format!("transmissao: {en} ({}) {tw}x{th} enviou {:.1} fps (alvo {}) {} kbps, captura ofereceu {:.0} fps, cpu do briks {:.0}% de 1 nucleo, tempo por quadro {:.1} ms (codificar {:.1} ms), nivel {} motivo '{}'",
-                            if hw { "hardware" } else { "software" }, sent_fps, dec.level.fps, (sent_bps / 1000.0).round(), offered, (cpu - win_cpu) / (secs * 1000.0) * 100.0,
+                        crate::netlog::write(&format!("transmissao: {en} ({}) {tw}x{th} enviou {:.1} fps (alvo {}{}) {} kbps, captura ofereceu {:.0} fps, cpu do briks {:.0}% de 1 nucleo, tempo por quadro {:.1} ms (codificar {:.1} ms), nivel {} motivo '{}'",
+                            if hw { "hardware" } else { "software" }, sent_fps, dec.level.fps, cad.follow_fps().map(|f| format!(", seguindo a fonte a {f}")).unwrap_or_default(), (sent_bps / 1000.0).round(), offered, (cpu - win_cpu) / (secs * 1000.0) * 100.0,
                             work_ms, if frames > 0 { enc_ns as f64 / frames as f64 / 1e6 } else { 0.0 }, ctl.idx, why));
                     }
                 }
@@ -627,7 +669,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis, "idrs": idrs,
                     "blackout_held": std::mem::take(&mut held_win), "bpp_floor": (ctl.bpp_floor * 1000.0).round() / 1000.0, "cpu_idx": ctl.cpu_idx, "why": why,
-                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "repeated": std::mem::take(&mut repeated), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000, "fec_sent": out_fec.swap(0, Ordering::Relaxed) }));
+                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "repeated": std::mem::take(&mut repeated), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000, "fec_sent": out_fec.swap(0, Ordering::Relaxed), "source_fps": cad.follow_fps().unwrap_or(0) }));
                 idrs0 = idrs; trans_win = false; frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo, ou o último de novo quando a tela não mudou neste período (a cadência fica no FPS alvo)
@@ -670,7 +712,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 if tc.elapsed() > Duration::from_millis(200) && std::env::var("BRIKS_EST_DEBUG").is_ok() { eprintln!("[lento] criar codificador {tw}x{th}: {} ms", tc.elapsed().as_millis()); }
                 match made {
                     Ok(e) => {
-                        id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true;   // codificador novo já começa com quadro-chave
+                        id2.store(false, Ordering::Relaxed); since_idr = 0; last_idr = Instant::now(); enc = Some(e); announce = true; enc_fps = fps;   // codificador novo já começa com quadro-chave
                         if recreated_for_fault {
                             recreated_for_fault = false;
                             let st = if sup.software { "software" } else { "recovered" };
@@ -693,6 +735,9 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 }
             }
             let e = enc.as_mut().unwrap();
+            // seguindo a fonte: o controle de taxa conta com o FPS informado; com 24 quadros reais e 30 informados ele gastaria só 80% do bitrate
+            let want_fps = cad.follow_fps().unwrap_or(fps).clamp(1, fps);
+            if want_fps != enc_fps { let _ = e.set_fps(want_fps); enc_fps = want_fps; }
             if std::mem::take(&mut announce) {
                 crate::netlog::write(&format!("transmissao iniciada: codificador {} ({}) codec {} {tw}x{th} a {fps} fps, {} kbps", e.name, if e.hardware { "hardware" } else { "software" }, out_codec.name(), e.bps / 1000));
                 let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": e.bps / 1000, "src_w": src.0, "src_h": src.1,
@@ -1401,6 +1446,70 @@ mod cadence_tests {
         for (k, (t, _)) in v.iter().enumerate() { assert!(*t - arr[k] <= 1.5, "quadro {k}: chegou {:.1}, saiu {t:.1}", arr[k]); }
     }
 
+    /// Chegadas de um filme a 24 qps capturado num monitor de 60 Hz: intervalos alternando 33,3 e 50 ms.
+    fn film24(n: usize) -> Vec<f64> { let mut t = 5.0; (0..n).map(|i| { let v = t; t += if i % 2 == 0 { 100.0 / 3.0 } else { 50.0 }; v }).collect() }
+
+    /// Seguir a fonte: filme a 24 qps numa transmissão de 30. Depois de reconhecer o ritmo (meio segundo), saem só os 24 quadros
+    /// reais por segundo, cada um até 1,5 ms depois de chegar, sem nenhuma repetição.
+    #[test]
+    fn a_24_fps_film_is_sent_at_the_source_cadence_without_repeats() {
+        let t0 = Instant::now();
+        let arr = film24(240);
+        let mut c = Cadence::new(t0, 30);
+        let v = run(&mut c, t0, 10.0, &arr);
+        assert_eq!(count(&v, Tick::Fresh), 240, "todo quadro do filme é enviado");
+        assert_eq!(c.follow_fps(), Some(24));
+        let late: Vec<&(f64, Tick)> = v.iter().filter(|x| x.0 > 1000.0).collect();
+        assert_eq!(late.iter().filter(|x| x.1 == Tick::Repeat).count(), 0, "sem repetições depois de reconhecer o ritmo");
+        let n = late.len() as f64 / 9.0;
+        assert!((23.5..=24.5).contains(&n), "{n:.1} quadros por segundo");
+        for x in &late { let a = arr.iter().copied().filter(|a| *a <= x.0).fold(0.0, f64::max); assert!(x.0 - a <= 1.5, "saiu {:.1}, chegou {a:.1}", x.0); }
+        // com o modo desligado (diagnóstico), o comportamento de antes: 30 por segundo com repetições
+        let mut old = Cadence::new(t0, 30); old.follow_source = false;
+        let v = run(&mut old, t0, 10.0, &arr);
+        assert!((298..=302).contains(&v.len()) && count(&v, Tick::Repeat) >= 55, "{} quadros, {} repetidos", v.len(), count(&v, Tick::Repeat));
+    }
+
+    /// O filme pausa (a fonte para de entregar): a grade volta e repete o último quadro no FPS alvo; ao voltar a tocar, segue de novo.
+    #[test]
+    fn a_paused_film_falls_back_to_the_grid_and_follows_again_when_it_resumes() {
+        let t0 = Instant::now();
+        let mut arr = film24(72);                                   // 3 s de filme
+        let resume = 6000.0;
+        arr.extend(film24(96).into_iter().map(|a| a + resume));     // pausa até os 6 s, depois mais 4 s
+        let mut c = Cadence::new(t0, 30);
+        let v = run(&mut c, t0, 10.0, &arr);
+        let paused: Vec<&(f64, Tick)> = v.iter().filter(|x| x.0 > 3300.0 && x.0 < 5900.0).collect();
+        assert!(paused.iter().all(|x| x.1 == Tick::Repeat) && (74..=80).contains(&paused.len()), "pausado: {} repetições em 2,6 s", paused.len());
+        let first_repeat = v.iter().find(|x| x.1 == Tick::Repeat && x.0 > 2900.0).unwrap().0;
+        assert!(first_repeat - arr[71] < 110.0, "a repetição começa logo depois de a fonte parar: {:.0} ms", first_repeat - arr[71]);
+        let after: Vec<&(f64, Tick)> = v.iter().filter(|x| x.0 > 7000.0).collect();
+        assert!(after.iter().all(|x| x.1 == Tick::Fresh), "voltou a seguir a fonte");
+        assert_eq!(count(&v, Tick::Fresh), 168, "nenhum quadro do filme perdido");
+    }
+
+    /// Só fonte de ritmo regular entre 20 qps e o alvo é seguida: irregular (rolagem aos trancos), lenta (14 qps) e no ritmo do alvo ficam na grade.
+    #[test]
+    fn only_a_steady_source_between_20_fps_and_the_target_is_followed() {
+        let t0 = Instant::now();
+        for (nome, arr, segue) in [
+            ("25 qps", (0..250).map(|i| 3.0 + i as f64 * 40.0).collect::<Vec<f64>>(), true),
+            ("14 qps", (0..140).map(|i| 3.0 + i as f64 * 1000.0 / 14.0).collect(), false),
+            ("30 qps", (0..300).map(|i| 3.0 + i as f64 * 1000.0 / 30.0).collect(), false),
+            ("irregular", { let mut t = 3.0; (0..220usize).map(|i| { let v = t; t += [20.0, 70.0, 35.0, 90.0, 25.0][i % 5]; v }).collect() }, false),
+        ] {
+            let mut c = Cadence::new(t0, 30);
+            let v = run(&mut c, t0, 10.0, &arr);
+            assert_eq!(c.follow_fps().is_some(), segue, "{nome}");
+            if !segue { assert!((296..=302).contains(&v.len()), "{nome}: na grade saem 30 por segundo ({} em 10 s)", v.len()); }
+            else { assert!((248..=262).contains(&v.len()), "{nome}: {} em 10 s", v.len()); }
+        }
+        // transmissão de 60: um vídeo a 50 qps é seguido; um filme a 24 (abaixo de... não: 24 >= 20) também
+        let mut c = Cadence::new(t0, 60);
+        run(&mut c, t0, 5.0, &(0..250).map(|i| 3.0 + i as f64 * 20.0).collect::<Vec<f64>>());
+        assert_eq!(c.follow_fps(), Some(50));
+    }
+
     /// O laço travou meio segundo (codificador recriado, máquina ocupada): a grade recomeça dali, sem rajada para compensar.
     #[test]
     fn a_stall_restarts_the_grid_without_a_burst() {
@@ -1426,10 +1535,11 @@ mod cadence_tests {
         assert_eq!(steady_fps(1, 0, 1.0), 0);
     }
 
-    /// Ponta a ponta do emissor, sem rede: a fonte de teste entrega MENOS quadros que o FPS pedido (ela dorme um período inteiro e
-    /// ainda gasta o tempo de desenhar), como uma tela que muda pouco. O que sai do codificador tem de ficar nos 30 por segundo.
+    /// Ponta a ponta do emissor, sem rede: a fonte de teste entrega MENOS quadros que o FPS pedido, num ritmo regular (~22 qps: ela
+    /// dorme um período inteiro e ainda gasta o tempo de desenhar), como um vídeo. Até a 1.5.25 o emissor completava até 30 repetindo
+    /// quadros; desde o pedido de seguir a fonte (2026-11-14) sai cada quadro real, no ritmo dela, sem repetição.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_source_slower_than_the_target_is_still_sent_at_the_target_fps() {
+    async fn a_slower_source_is_sent_at_its_own_cadence_or_filled_to_the_target() {
         let out = VideoOut::new();
         let (tx, mut rx) = mpsc::channel(256);
         let cfg = ShareCfg { kind: SourceKind::Test, height: 360, fps: 30, kbps: 0, label: "Cadencia".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false };
@@ -1443,8 +1553,12 @@ mod cadence_tests {
         assert!(wins.len() >= 6, "sem estatísticas do emissor");
         for w in &wins[2..] {   // as duas primeiras janelas pegam a abertura do codificador
             eprintln!("enviado {} FPS (repetidos {}, a fonte ofereceu {}), {} kbps, {} ms/quadro", w["fps"], w["repeated"], w["offered_fps"], w["kbps"], w["work_ms"]);
-            let f = w["fps"].as_f64().unwrap_or(0.0);
-            assert!((28.5..=31.0).contains(&f), "FPS enviado fora do alvo: {w}");
+            let (f, o) = (w["fps"].as_f64().unwrap_or(0.0), w["offered_fps"].as_f64().unwrap_or(0.0));
+            // Dois modos válidos por janela: seguindo a fonte (enviado = oferecido) ou na grade (30, repetindo). Com a suíte inteira em
+            // paralelo a fonte de teste perde a regularidade e o emissor volta, corretamente, para a grade; a regra de quando seguir
+            // está nos testes de `Cadence` acima, com relógio simulado.
+            if w["source_fps"].as_u64().unwrap_or(0) > 0 { assert!((f - o).abs() <= 2.5, "seguindo a fonte, devia enviar o que ela oferece: {w}"); }
+            else { assert!((27.0..=31.5).contains(&f), "na grade, devia ficar no FPS alvo: {w}"); }
         }
     }
 }

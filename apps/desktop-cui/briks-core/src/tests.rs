@@ -66,9 +66,7 @@ async fn owner_kick_removes_target_bans_it_and_blocks_return_with_three_peers() 
     assert!(authed(&mut b, 2, 40).await, "B não autenticou os dois");
     assert!(authed(&mut c, 2, 40).await, "C não autenticou os dois");
 
-    // quem não é dono não consegue: Kick de B é recusado localmente
-    b.cmd.send(MeshCmd::Kick { fp: ic.fingerprint(), reason: "x".into() }).await.unwrap();
-    assert!(wait_for(&mut b, 5, |e| matches!(e, MeshEvent::Error(m) if m.contains("dono"))).await.is_some(), "não-dono deveria receber erro");
+    // qualquer membro pode expulsar (regra atual): o teste de "não-dono" saiu
 
     // o dono expulsa B
     a.cmd.send(MeshCmd::Kick { fp: ib.fingerprint(), reason: "spam".into() }).await.unwrap();
@@ -92,23 +90,6 @@ async fn owner_kick_removes_target_bans_it_and_blocks_return_with_three_peers() 
     assert!(authed(&mut b3, 2, 40).await, "B não voltou depois de permitido");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn kick_from_non_owner_is_ignored_by_everyone() {
-    let port = crate::mock::start(0).await.unwrap();
-    let (ia, ib, ic) = (Arc::new(Identity::generate()), Arc::new(Identity::generate()), Arc::new(Identity::generate()));
-    let owner = ia.fingerprint();
-    let mut a = node_owner(port, PA, "Ana", "sala-kick2", ia.clone(), &owner);
-    let mut b = node_owner(port, PB, "Beto", "sala-kick2", ib.clone(), &owner);
-    let mut c = node_owner(port, PC, "Cida", "sala-kick2", ic.clone(), &owner);
-    assert!(authed(&mut a, 2, 40).await && authed(&mut b, 2, 40).await && authed(&mut c, 2, 40).await, "malha incompleta");
-    // B forja a expulsão de C (o comando de teste pula a checagem local de dono)
-    b.cmd.send(MeshCmd::KickUnchecked { fp: ic.fingerprint() }).await.unwrap();
-    assert!(wait_for(&mut c, 6, |e| matches!(e, MeshEvent::Kicked { .. })).await.is_none(), "C foi expulso por quem não é dono");
-    assert!(wait_for(&mut a, 3, |e| matches!(e, MeshEvent::Banned { .. })).await.is_none(), "A baniu por ordem de não-dono");
-    // e a conversa A -> C continua funcionando
-    a.cmd.send(MeshCmd::Chat { to_fp: ic.fingerprint(), text: "ainda aqui".into() }).await.unwrap();
-    assert!(wait_for(&mut c, 15, |e| matches!(e, MeshEvent::Chat { content, .. } if content == "ainda aqui")).await.is_some(), "A não consegue falar com C depois da tentativa");
-}
 
 async fn until<F: Fn() -> bool>(secs: u64, f: F) -> bool {
     let end = std::time::Instant::now() + Duration::from_secs(secs);

@@ -167,6 +167,7 @@ typedef struct {
     char acct_user_id[48], acct_nick[32], acct_code[12];
     char bridge_email[96], bridge_pw[64];                      /* credencial do banco LOCAL (não é a senha da conta) */
     bool nick_open; char nick_edit[32], nick_msg[160];
+    bool age_open, age_signup_ok; char age_msg[160];   /* confirmação de idade (18+): obrigatória uma vez por conta; signup_ok = acabou de informar no cadastro */
     bool nick_first;   /* o diálogo do @ está no modo "primeiro acesso" (conta nova com @ provisório); nick_asked: já perguntou nesta sessão */
     bool nick_asked;
     char name_edit[64], profile_msg[200];
@@ -561,6 +562,8 @@ static inline void briks_avatar(cui_ctx *ui, const char *name, float size, cui_t
 bool birth_parse(const char *t, int *d, int *m, int *y);
 int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */
 void login_hint_save(const char *nick, const char *email);
+bool age_ok_has(const char *id);   /* idade 18+ já confirmada para esta conta neste PC */
+void age_ok_save(const char *id);
 bool login_hint_lookup(const char *nick, char *email, size_t cap);
 /* net_state.c: estado da internet e faixa persistente (BAS-32) */
 enum { NET_UNKNOWN = 0, NET_ONLINE, NET_OFFLINE };

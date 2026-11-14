@@ -1,5 +1,5 @@
 // Regra da expulsão de verdade (tirar do servidor de mídia), separada do `Deno.serve` para poder ser testada com simulações.
-// Quem pode: só o DONO da chamada. O servidor não tem tabela de salas nem de membros, então o dono é definido pelo que o
+// Quem pode: QUALQUER participante da chamada (basta estar na sala). Antes era só o dono; o dono ainda é calculado abaixo. O servidor não tem tabela de salas nem de membros, então o dono é definido pelo que o
 // próprio LiveKit registra:
 //   1. quem entrou com a marca de dono no token (emitida pela `livekit-token`, ver ./owner.ts): o dono fixo, que continua
 //      sendo o mesmo depois de uma queda ou reinício do servidor de chamadas;
@@ -69,7 +69,7 @@ export async function handleKick(request: Request, deps: KickDeps): Promise<Resp
   try { participants = await deps.listParticipants(body.room); }
   catch { return json({ message: "Servidor de chamadas indisponível." }, 502); }
   if (!participants.some((p) => p.identity === requester)) return json({ message: "Você não está nesta chamada." }, 403);
-  if (roomOwner(participants) !== requester) return json({ message: "Só o dono da chamada pode expulsar." }, 403);
+  // Qualquer participante da chamada pode expulsar qualquer outro (regra atual do Briks); `roomOwner` segue exportada p/ outros usos.
   if (!participants.some((p) => p.identity === body.identity)) return json({ message: "Essa pessoa não está na chamada." }, 404);
   try { await deps.removeParticipant(body.room, body.identity); }
   catch { return json({ message: "Servidor de chamadas indisponível." }, 502); }

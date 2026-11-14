@@ -468,7 +468,7 @@ impl Layer {
 
     fn on_room_cmd(&mut self, t: &str, from_fp: &str, jwk: &PublicJwk, v: &Value) -> Vec<Out> {
         let (Some(target), Some(sig), Some(ts)) = (v["target_fp"].as_str(), v["sig"].as_str(), v["ts"].as_i64()) else { return vec![] };
-        if self.owner() != from_fp { return vec![Out::Ev(MeshEvent::Error("comando de sala ignorado: remetente não é o dono".into()))]; }
+        if t == "mute" && self.owner() != from_fp { return vec![Out::Ev(MeshEvent::Error("comando de sala ignorado: remetente não é o dono".into()))]; }   // expulsar/permitir: qualquer membro autenticado; silenciar: só o dono
         if (now_ms() - ts).abs() > CMD_WINDOW_MS { return vec![]; }
         let room = self.cfg.room_hash.clone();
         let reason = short(v["reason"].as_str().unwrap_or(""), 120);
@@ -528,16 +528,14 @@ impl Layer {
                 }
             }
             MeshCmd::Kick { fp, reason } => {
-                if self.owner() != self.fp { return Some(vec![Out::Ev(MeshEvent::Error("só o dono da sala pode expulsar".into()))]); }
-                let (ts, reason) = (now_ms(), short(&reason, 120));
+                                let (ts, reason) = (now_ms(), short(&reason, 120));
                 let sig = self.cfg.identity.sign(&kick_canon(&self.cfg.room_hash, &fp, ts, &reason));
                 let mut out = vec![Out::Send { to: vec![], msg: json!({ "v": 1, "t": "kick", "target_fp": fp, "reason": reason, "ts": ts, "sig": sig }) }];
                 out.extend(self.ban(&fp));
                 Some(out)
             }
             MeshCmd::Allow { fp } => {
-                if self.owner() != self.fp { return Some(vec![Out::Ev(MeshEvent::Error("só o dono da sala pode permitir".into()))]); }
-                let ts = now_ms();
+                                let ts = now_ms();
                 let sig = self.cfg.identity.sign(&allow_canon(&self.cfg.room_hash, &fp, ts));
                 self.banned.remove(&fp);
                 let mut out = vec![Out::Send { to: vec![], msg: json!({ "v": 1, "t": "allow", "target_fp": fp, "ts": ts, "sig": sig }) }];
@@ -856,7 +854,6 @@ mod t {
         assert!(a.set_server_owner(Some("idc".into())).is_empty(), "não anuncia dono que ainda não se autenticou");
         b.set_server_owner(Some("idc".into()));
         assert_eq!(a.owner(), ""); assert_eq!(b.owner(), "");
-        assert!(matches!(&a.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "x".into() }, (true, false)).unwrap()[0], Out::Ev(MeshEvent::Error(_))), "a mais antiga não é mais a dona");
         // a Cris se autentica: passa a ser a dona para todos, e ela mesma sabe que é
         let o = a.on_packet("idc", &bytes(&hc));
         assert!(o.iter().any(|x| matches!(x, Out::Ev(MeshEvent::Owner { fp, me: false }) if *fp == c.fp)), "dono marcado não foi anunciado");
@@ -867,9 +864,6 @@ mod t {
         assert_eq!((a.owner(), b.owner(), c.owner()), (c.fp.clone(), c.fp.clone(), c.fp.clone()));
         // a expulsão assinada pela Cris vale; a mesma mensagem assinada pela Ana (a mais antiga) não
         let kick = sends(&c.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "regra".into() }, (true, false)).unwrap()).remove(0);
-        let ts = now_ms();
-        let forged = json!({ "v": 1, "t": "kick", "target_fp": b.fp, "reason": "x", "ts": ts, "sig": a.cfg.identity.sign(&kick_canon("sala-x", &b.fp, ts, "x")) });
-        assert!(b.on_packet("ida", &bytes(&forged)).iter().all(|x| !matches!(x, Out::Leave)), "a mais antiga expulsou sem ser a dona");
         assert!(b.on_packet("idc", &bytes(&kick)).iter().any(|x| matches!(x, Out::Leave)), "a dona marcada não conseguiu expulsar");
         // a marcada sai de vez e o servidor não aponta mais ninguém: volta o mais antigo
         let _ = a.left("idc");
@@ -883,18 +877,12 @@ mod t {
     }
 
     #[test]
-    fn only_the_owner_can_kick_allow_and_mute() {
+    fn kick_allow_by_anyone_mute_by_owner() {
         let mut a = layer("Ana", "ida", None, 1);   // dona: a mais antiga
         let (mut b, mut c) = (layer("Beto", "idb", None, 2), layer("Cris", "idc", None, 3));
         let (ha, hb, hc) = (a.hello(), b.hello(), c.hello());
         for (l, hs) in [(&mut a, vec![("idb", &hb), ("idc", &hc)]), (&mut b, vec![("ida", &ha), ("idc", &hc)]), (&mut c, vec![("ida", &ha), ("idb", &hb)])] { for (id, h) in hs { l.on_packet(id, &bytes(h)); } }
         assert_eq!(a.owner(), a.fp); assert_eq!(b.owner(), a.fp);
-        // C (não dono) tenta expulsar B: o comando local é recusado e um pacote forjado é ignorado
-        assert!(matches!(&c.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "x".into() }, (true, false)).unwrap()[0], Out::Ev(MeshEvent::Error(_))));
-        let ts = now_ms();
-        let forged = json!({ "v": 1, "t": "kick", "target_fp": b.fp, "reason": "x", "ts": ts, "sig": c.cfg.identity.sign(&kick_canon("sala-x", &b.fp, ts, "x")) });
-        let o = b.on_packet("idc", &bytes(&forged));
-        assert!(o.iter().all(|x| !matches!(x, Out::Leave | Out::Ev(MeshEvent::Kicked { .. }))), "não-dono não expulsa");
         // dona expulsa B
         let kick = sends(&a.on_cmd(MeshCmd::Kick { fp: b.fp.clone(), reason: "regra".into() }, (true, false)).unwrap()).remove(0);
         let ob = b.on_packet("ida", &bytes(&kick));
@@ -902,7 +890,7 @@ mod t {
         let oc = c.on_packet("ida", &bytes(&kick));
         assert!(oc.iter().any(|x| matches!(x, Out::MuteLocal { ident, muted: true } if ident == "idb")) && oc.iter().any(|x| matches!(x, Out::Ev(MeshEvent::Banned { .. }))));
         // replay antigo e assinatura de outro alvo
-        let mut old = kick.clone(); old["ts"] = json!(ts - 3_600_000); assert!(evs(&c.on_packet("ida", &bytes(&old))) <= 1);
+        let ts = now_ms(); let mut old = kick.clone(); old["ts"] = json!(ts - 3_600_000); assert!(evs(&c.on_packet("ida", &bytes(&old))) <= 1);
         let mut other = kick.clone(); other["target_fp"] = json!(c.fp); assert!(c.on_packet("ida", &bytes(&other)).iter().all(|x| !matches!(x, Out::Leave)), "assinatura é do alvo B");
         // B banido volta com hello: C ignora e mantém silenciado
         let o = c.on_packet("idb", &bytes(&b.hello()));
@@ -918,6 +906,21 @@ mod t {
         let ts = now_ms();
         let fake = json!({ "v": 1, "t": "mute", "target_fp": c.fp, "muted": true, "ts": ts, "sig": b.cfg.identity.sign(&mute_canon("sala-x", &c.fp, true, ts)) });
         assert!(c.on_packet("idb", &bytes(&fake)).iter().all(|x| !matches!(x, Out::Mic(_))), "não-dono não silencia");
+    }
+
+    #[test]
+    fn any_member_can_kick_even_the_owner() {
+        let mut a = layer("Ana", "ida", None, 1);   // dona
+        let (mut b, mut c) = (layer("Beto", "idb", None, 2), layer("Cris", "idc", None, 3));
+        let (ha, hb, hc) = (a.hello(), b.hello(), c.hello());
+        for (l, hs) in [(&mut a, vec![("idb", &hb), ("idc", &hc)]), (&mut b, vec![("ida", &ha), ("idc", &hc)]), (&mut c, vec![("ida", &ha), ("idb", &hb)])] { for (id, h) in hs { l.on_packet(id, &bytes(h)); } }
+        // C (não dono) expulsa a dona A: vale
+        let kick = sends(&c.on_cmd(MeshCmd::Kick { fp: a.fp.clone(), reason: "x".into() }, (true, false)).unwrap()).remove(0);
+        let oa = a.on_packet("idc", &bytes(&kick));
+        assert!(oa.iter().any(|x| matches!(x, Out::Leave)), "qualquer membro expulsa");
+        // e qualquer um permite de novo
+        let allow = sends(&b.on_cmd(MeshCmd::Allow { fp: a.fp.clone() }, (true, false)).unwrap()).remove(0);
+        let _ = c.on_packet("idb", &bytes(&allow));
     }
 
     #[test]

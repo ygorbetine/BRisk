@@ -695,7 +695,6 @@ impl Actor {
                 }
             }
             MeshCmd::Kick { fp, reason } => {
-                if self.owner().as_deref() != Some(self.identity.fingerprint().as_str()) { self.emit(MeshEvent::Error("só o dono da sala pode expulsar".into())).await; return; }
                 self.do_kick(&fp, &reason).await;
             }
             #[cfg(test)]
@@ -1470,7 +1469,6 @@ impl Actor {
                 let Some(p) = self.peers.get(peer) else { return };
                 let (true, Some(jwk), Some(from_fp)) = (p.proven && p.sent_proof, p.jwk.clone(), p.fp.clone()) else { return };
                 let (Some(target), Some(sig), Some(ts)) = (v["target_fp"].as_str(), v["signature"].as_str(), v["timestamp"].as_i64()) else { return };
-                if self.owner().as_deref() != Some(from_fp.as_str()) { self.emit(MeshEvent::Error("comando de sala ignorado: remetente não é o dono".into())).await; return; }
                 if now_ms().saturating_sub(ts).saturating_abs() > 5 * 60 * 1000 { return; }   // antigo demais (replay)
                 let reason: String = v["reason"].as_str().unwrap_or("").chars().take(120).collect();
                 let canon = if kick { self.kick_canon(target, ts, &reason) } else { self.allow_canon(target, ts) };

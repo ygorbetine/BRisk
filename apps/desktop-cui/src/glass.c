@@ -200,14 +200,14 @@ static const char *FS_COMP =
     "    float k = u_card.x; float depth = max(-d, 0.0);\n"
     "    float bgl = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
     "    float tA = (0.10 + 0.42 * smoothstep(0.25, 0.75, bgl)) * mix(1.0, 0.5, exp(-depth / 6.0));\n"
-    "    c = mix(c, vec3(0.30, 0.16, 0.62), clamp(tA * k, 0.0, 1.0));\n"
+    "    c = mix(c, mix(vec3(0.30, 0.16, 0.62), vec3(0.90, 0.04, 0.10), u_bub.w), clamp((tA * (1.0 + 2.0 * u_bub.w) + 0.36 * u_bub.w) * k, 0.0, 0.85));\n"
     "    float w = 1.0 - smoothstep(0.0, mix(4.5, 2.4, tailw), depth); w = w * w * (3.0 - 2.0 * w);\n"
     "    float tt = 0.5 + 0.5 * sin(atan(g0.y, g0.x) + 0.6 + u_m3.x * 0.1);\n"
     "    vec3 cy = vec3(0.35, 0.85, 1.0), vi = vec3(0.62, 0.42, 1.0), pk = vec3(1.0, 0.45, 0.82);\n"
-    "    vec3 ir = tt < 0.5 ? mix(cy, vi, tt * 2.0) : mix(vi, pk, (tt - 0.5) * 2.0); ir = mix(ir, vec3(0.80, 0.75, 1.0), 0.8 * tailw);\n"
+    "    vec3 ir = tt < 0.5 ? mix(cy, vi, tt * 2.0) : mix(vi, pk, (tt - 0.5) * 2.0); ir = mix(ir, vec3(0.80, 0.75, 1.0), 0.8 * tailw); ir = mix(ir, mix(vec3(1.0, 0.30, 0.38), vec3(1.0, 0.62, 0.45), tt), u_bub.w);\n"
     "    float curv = clamp(length(fwidth(g0)) * 7.0, 0.0, 1.0);\n"
     "    c = mix(c, ir, clamp(w * (0.50 + 0.45 * curv) * 0.42 * k, 0.0, 1.0));\n"
-    "    c = mix(c, vec3(0.95, 0.92, 1.0), clamp(0.35 * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
+    "    c = mix(c, mix(vec3(0.95, 0.92, 1.0), vec3(1.0, 0.88, 0.88), u_bub.w), clamp(0.35 * clamp(1.5 - depth, 0.0, 1.0) * k, 0.0, 1.0));\n"
     "    float tl = max(dot(g0, normalize(vec2(-0.7, -0.7))), 0.0), brc = max(dot(g0, normalize(vec2(0.7, 0.7))), 0.0);\n"
     "    c = mix(c, vec3(1.0), clamp(0.20 * (1.0 - 0.5 * tailw) * tl * tl * exp(-depth / 4.0) * k, 0.0, 1.0));\n"
     "    c = mix(c, vec3(0.80, 0.90, 1.0), clamp(0.14 * (1.0 - tailw) * pow(brc, 1.5) * exp(-max(depth - 1.5, 0.0) / 4.0) * k, 0.0, 1.0));\n"
@@ -219,7 +219,7 @@ static const char *FS_COMP =
     "    sc = mix(sc, vec3(1.0), 0.10 * exp(-dp2 / 5.0) * max(dot(g0, normalize(vec2(-0.7, -0.7))), 0.0));\n"
     "    c = mix(c, sc, tailw);\n"
     "  }\n"
-    "  f = vec4(c * cov + vec3(0.27, 0.12, 0.55) * sa, cov + sa); }\n";
+    "  f = vec4(c * cov + mix(vec3(0.27, 0.12, 0.55), vec3(0.50, 0.08, 0.14), u_bub.w) * sa, cov + sa); }\n";
 
 /* Dither final: ruído triangular (2 amostras de ruído de gradiente intercalado) de +-1 LSB somado antes de gravar em 8 bits. */
 static const char *FS_DITH =
@@ -312,13 +312,14 @@ static void capture_and_blur(int w, int h, GLuint target_fb) {
         fs_pass(G.p_up, G.lvl[i], G.lw[i], G.lh[i], G.lvl[i - 1], G.lw[i - 1], G.lh[i - 1], G.offset * g_th.blur_offset, false);
 }
 
-typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; int grp; float rc, rs, alpha; bool card, bubble, skip; float m1[4], m2[4]; } glass_quad;
+typedef struct { int idx; float cx, cy, hw, hh, r[4]; int layer; float tint_a; int cmd; int grp; float rc, rs, alpha; bool card, bubble, red, skip; float m1[4], m2[4]; } glass_quad;
 
 static int glass_layer(cui_color c) {
     if (c.r == B_GLASS.r && c.g == B_GLASS.g && c.b == B_GLASS.b && c.a == B_GLASS.a) return 0;
     if (c.r == B_GLASS_SOFT.r && c.g == B_GLASS_SOFT.g && c.b == B_GLASS_SOFT.b && c.a == B_GLASS_SOFT.a) return 0;
     if (c.r == B_GLASS_CARD.r && c.g == B_GLASS_CARD.g && c.b == B_GLASS_CARD.b && c.a == B_GLASS_CARD.a) return 0;
     if (c.r == B_GLASS_BUBBLE.r && c.g == B_GLASS_BUBBLE.g && c.b == B_GLASS_BUBBLE.b && c.a == B_GLASS_BUBBLE.a) return 0;
+    if (c.r == B_GLASS_BUBBLE_RED.r && c.g == B_GLASS_BUBBLE_RED.g && c.b == B_GLASS_BUBBLE_RED.b && c.a == B_GLASS_BUBBLE_RED.a) return 0;
     if (c.r == B_GLASS_STRONG.r && c.g == B_GLASS_STRONG.g && c.b == B_GLASS_STRONG.b && c.a == B_GLASS_STRONG.a) return 0;
     if (c.r == B_GLASS_POPUP.r && c.g == B_GLASS_POPUP.g && c.b == B_GLASS_POPUP.b && c.a == B_GLASS_POPUP.a) return 1;
     return -1;
@@ -366,7 +367,7 @@ static void draw_glass(const glass_quad *q, int W, int H, const cui_rect *clip, 
         float k = !q->card ? 0.0f : g_perf == PERF_SIMPLE ? 0.5f : 1.0f;
         if (q->bubble) {   /* bolha de status: Normal = refração + dispersão + aro + gota; Simplificado = aro e gota estáticos, sem refração */
             glUniform4f(G.c_card, 1.0f / inv2, 0, 0, g_perf == PERF_SIMPLE ? 1.0f : 2.0f);
-            glUniform4f(G.c_bub, g_th.bubble_refract, g_th.bubble_disp, g_th.bubble_spec, g_th.bubble_tint);
+            glUniform4f(G.c_bub, g_th.bubble_refract, g_th.bubble_disp, g_th.bubble_spec, q->red ? 1.0f : 0.0f);
         } else
         glUniform4f(G.c_card, k * g_th.sheen / inv2, k * g_th.sheen_line / inv2, g_perf == PERF_SIMPLE || !q->card ? 0.0f : g_th.card_fill / inv2, 0.0f);
     }
@@ -483,7 +484,8 @@ static void render_hook(cui_app *app, const cui_draw_data *dd_in, cui_gl_rendere
                 else { q->cx = v->x - v->lx; q->cy = v->y - v->ly; }
                 q->r[0] = v->r_tl; q->r[1] = v->r_tr; q->r[2] = v->r_br; q->r[3] = v->r_bl;
                 q->layer = layer; q->tint_a = pg >= 0 ? 0.11f : v->color.a / 255.0f; q->cmd = c;
-                q->bubble = pg < 0 && ov->color.r == B_GLASS_BUBBLE.r && ov->color.g == B_GLASS_BUBBLE.g && ov->color.b == B_GLASS_BUBBLE.b && ov->color.a == B_GLASS_BUBBLE.a;
+                q->red = pg < 0 && (ov->color.r == B_GLASS_BUBBLE_RED.r && ov->color.g == B_GLASS_BUBBLE_RED.g && ov->color.b == B_GLASS_BUBBLE_RED.b && ov->color.a == B_GLASS_BUBBLE_RED.a);
+                q->bubble = q->red || (pg < 0 && ov->color.r == B_GLASS_BUBBLE.r && ov->color.g == B_GLASS_BUBBLE.g && ov->color.b == B_GLASS_BUBBLE.b && ov->color.a == B_GLASS_BUBBLE.a);
                 q->card = pg < 0 && ov->color.r == B_GLASS_CARD.r && ov->color.g == B_GLASS_CARD.g && ov->color.b == B_GLASS_CARD.b && ov->color.a == B_GLASS_CARD.a;
             }
             run++;

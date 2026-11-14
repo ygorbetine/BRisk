@@ -62,12 +62,6 @@ async fn sfu_kick_function_removes_participant_for_real() {
 
     match std::env::var("BRIKS_NODE_BIN").ok().filter(|p| std::path::Path::new(p).exists()) {
         Some(node) => {
-            // 1) quem não é o dono é recusado pela função e nada acontece
-            let (n2, r2) = (node.clone(), lk_room.clone());
-            let (st, body) = tokio::task::spawn_blocking(move || kick_function(&n2, &r2, B, A)).await.unwrap();
-            eprintln!("função como B (não dono) expulsando A: {st} {body}");
-            assert_eq!(st, 403, "{body}");
-            assert!(body.contains("dono"));
             // 2) quem nem está na sala também
             let (n2, r2) = (node.clone(), lk_room.clone());
             let (st, body) = tokio::task::spawn_blocking(move || kick_function(&n2, &r2, "dddddddd-4444-4444-8444-00000000k1c4", B)).await.unwrap();

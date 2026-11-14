@@ -307,7 +307,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let mut actor = Actor {
         files, _ftx: ftx,
         data, dc_pub: None, dc_queue: vec![], leave: false,
-        url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(),
+        url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(), last_join: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         owner_marks: HashMap::new(), republish_video: false,
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
@@ -507,6 +507,7 @@ struct Actor {
     stale: HashMap<String, std::time::Instant>,
     audio_started: bool,
     last_rx: std::time::Instant,
+    last_join: std::time::Instant,   // quando a sessão atual (entrada ou reentrada) começou: o log mostra quanto a mídia levou para conectar
     ping_timeout: Duration,
     /// identidade -> instante de entrada (ms, do servidor) de quem entrou com a marca de dono no token (eu incluído)
     owner_marks: HashMap<String, i64>,
@@ -664,7 +665,8 @@ impl Actor {
         self.tx = tx; self.ice = ice; self.sub = sub;
         if let Some(p) = join.participant.clone() { self.me = p; }
         self.down = None;
-        self.last_rx = std::time::Instant::now();
+        self.last_rx = std::time::Instant::now(); self.last_join = std::time::Instant::now();
+        crate::netlog::write(&format!("sfu reentrada: ice_servers={} subscriber_primary={}", self.ice.len(), self.subscriber_primary));
         self.stats.reconnects.fetch_add(1, Ordering::Relaxed);
         crate::netlog::write(&format!("sfu voltou: tentativa {attempt}, fora por {} ms", since.elapsed().as_millis()));
         self.handle_join(join, true).await;
@@ -883,9 +885,10 @@ impl Actor {
             }
             rs::Message::Leave(l) => {
                 use lk::DisconnectReason as R;
+                crate::netlog::write(&format!("sfu leave do servidor: reason={} action={} can_reconnect={}", R::try_from(l.reason).map(|r| r.as_str_name()).unwrap_or("?"), l.action, l.can_reconnect));
                 match R::try_from(l.reason).unwrap_or(R::UnknownReason) {
                     // só a remoção pela administração (expulsão feita pelo dono, via função do Supabase) bloqueia a sala nesta sessão
-                    R::ParticipantRemoved => { self.emit(MeshEvent::Kicked { reason: "removido da chamada pelo dono".into() }).await; self.leave = true; }
+                    R::ParticipantRemoved => { self.emit(MeshEvent::Kicked { reason: "removido da chamada".into() }).await; self.leave = true; }
                     R::DuplicateIdentity => self.terminal("esta conta entrou na chamada em outro aparelho").await,
                     R::RoomDeleted => self.terminal("a chamada foi encerrada").await,
                     // reinício/migração do servidor, estado dessincronizado etc.: volta sozinho
@@ -1081,6 +1084,7 @@ impl Actor {
                 if epoch != self.epoch || self.down.is_some() { return; }
                 let up = state == RTCPeerConnectionState::Connected;
                 if target == 1 { self.stats.sub_connected.store(up, Ordering::Relaxed); } else { self.stats.pub_connected.store(up, Ordering::Relaxed); }
+                crate::netlog::write(&format!("sfu pc {}: {} (sessao ha {} ms)", if target == 1 { "sub" } else { "pub" }, state, self.last_join.elapsed().as_millis()));
                 self.emit(MeshEvent::Share(json!({ "ev": "net.sfu", "state": format!("{}:{}", if target == 1 { "sub" } else { "pub" }, state) }))).await;
                 if state == RTCPeerConnectionState::Failed { self.lost("conexão de mídia com o servidor de chamadas falhou"); }
             }

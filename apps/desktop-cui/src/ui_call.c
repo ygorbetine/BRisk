@@ -230,10 +230,13 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                 }
             }
         }
-        if (t->live) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = sm ? 8 : 14) {   /* AO VIVO no canto: indicativo de transmissão além da legenda */
-            cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = sm ? 8 : 11, .pad_y = sm ? 3 : 5, .radius = 14, .bg = CUI_RGB(0xff4d6d), .align = CUI_ALIGN_CENTER) {
-                cui_box(ui, .width = CUI_PX(8), .height = CUI_PX(8), .radius = 4, .bg = CUI_RGB(0xffffff)) {}
-                cui_text(ui, "AO VIVO", .size = sm ? 10 : 12, .color = CUI_RGB(0xffffff), .nowrap = true);
+        if (t->live) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = sm ? 8 : 14) {   /* AO VIVO: mesmo vidro reflexivo do chip "Transmitindo a tela" (bolha de status), tingido de vermelho */
+            const float pr = briks_bubble_radius(26);
+            cui_box(ui, .dir = CUI_ROW, .radius = pr, .bg = g_perf < PERF_MIN ? B_GLASS_BUBBLE_RED : CUI_RGBA(0x7a1a2aff), .border = 1, .border_color = briks_bubble_border()) {   /* camada de vidro */
+                cui_box(ui, .dir = CUI_ROW, .gap = 6, .pad_x = sm ? 9 : 12, .pad_y = sm ? 3 : 5, .radius = pr, .bg = CUI_RGBA(0xff4d6d14), .border = 1, .border_color = CUI_RGBA(0xff4d6dc0), .align = CUI_ALIGN_CENTER) {   /* tinta vermelha + aro */
+                    cui_box(ui, .width = CUI_PX(7), .height = CUI_PX(7), .radius = 4, .bg = CUI_RGB(0xff4d6d)) {}
+                    cui_text(ui, "AO VIVO", .size = sm ? 10 : 12, .color = CUI_RGB(0xffe8ee), .nowrap = true);
+                }
             }
         }
         if (t->badge && !sm) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad = 14) {
@@ -277,8 +280,12 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
             const cui_vec2 mp = cui_mouse_pos(ui);
             if (!t->me) {
                 if (briks_clicked_r(ui, "lab", 20.0f)) act = TILE_MUTE;
-                if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && in_rect(tr, mp)) cui_popover_open(ui, "pmenu");   /* botão direito em qualquer ponto do bloco */
-                cui_popover(ui, "pmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
+                static int g_menu_slot = -2; static cui_vec2 g_menu_at;   /* o menu abre onde o botão direito foi clicado (âncora de 1 px nesse ponto) */
+                if (!briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && in_rect(tr, mp)) { g_menu_slot = t->slot; g_menu_at = mp; cui_popover_open(ui, "pmenu"); }
+                if (g_menu_slot == t->slot && tr.w > 0) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = fmaxf(g_menu_at.x - tr.x, 0.0f), .pad_top = fmaxf(g_menu_at.y - tr.y, 0.0f)) {
+                    cui_canvas(ui, "mpos", CUI_PX(1), CUI_PX(1), NULL, NULL, 0);
+                }
+                cui_popover(ui, "pmenu", .anchor = cui_make_id(ui, "mpos"), .placement = CUI_PLACE_BOTTOM_START, .pad = 6, .gap = 4) {
                     cui_menu_label(ui, t->name);
                     if (cui_menu_item(ui, t->by_me ? "Reativar o áudio dele" : "Silenciar para mim", .icon = CUI_ICON_VOLUME_X)) act = TILE_MUTE;
                     if (g_tile_s && t->slot >= 0 && t->slot < BRIKS_MAX_PEERS) {   /* CHM-36: volume por pessoa no próprio menu do bloco (lembrado entre chamadas) */
@@ -456,7 +463,7 @@ static void empty_state(cui_ctx *ui, const char *icon, const char *title, const 
         cui_box(ui, .width = CUI_PX(60), .height = CUI_PX(60), .radius = 30, .bg = CUI_RGBA(0xffffff10), .border = 1, .border_color = CUI_RGBA(0xffffff1c),
                 .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) { cui_icon(ui, icon, 26, B_C3); }
         cui_text(ui, title, .font = CUI_FONT_DISPLAY, .size = 20, .nowrap = true);
-        cui_box(ui, .max_width = 420, .align = CUI_ALIGN_CENTER) { cui_text(ui, sub, .size = 14, .color = B_MUTED); }
+        cui_box(ui, .width = CUI_FILL, .max_width = 420, .align = CUI_ALIGN_CENTER) { cui_text(ui, sub, .size = 14, .color = B_MUTED, .width = CUI_FILL, .align = CUI_TEXT_CENTER); }   /* texto centralizado, alinhado ao título */
     }
 }
 
@@ -649,7 +656,7 @@ static int build_tiles(cui_ctx *ui, app_state_t *s, tile_t *T, char (*names)[64]
         if (s->rtc_peers[i].name[0]) snprintf(names[i], sizeof names[i], "%s", s->rtc_peers[i].name); else snprintf(names[i], sizeof names[i], "Participante %d", i + 1);
         const bool live = share_peer_live(s, i);
         T[n++] = (tile_t){ names[i], false, s->rtc_peers[i].mic_off, s->rtc_peers[i].muted_by_me ? 0 : s->rtc_peers[i].level, i, s->rtc_peers[i].muted_by_me,
-                           s->rtc_owner_me && s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
+                           s->rtc_peers[i].fp[0] != 0, live, live ? "Transmitindo a tela" : s->rtc_peers[i].status, NULL, 0, 0, 0, s->rtc_peers[i].deafened };
         T[n - 1].ptex = friend_photo_by_name(s, names[i]);   /* o participante da chamada traz só o nome: casa com a lista de amigos (cache de texturas por pessoa) */
         if (cam_frame(ui, s, i, &vt, &vw, &vh)) { T[n - 1].vtex = vt; T[n - 1].vw = vw; T[n - 1].vh = vh; }
     }

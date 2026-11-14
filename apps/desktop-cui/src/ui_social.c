@@ -1,4 +1,6 @@
 #include "briks_ui.h"
+#include <windows.h>
+#include <string.h>
 #include <math.h>
 #include "layout.h"
 #include "msgui.h"
@@ -817,6 +819,23 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
         }
     }
     if (!s->nick_open) s->nick_first = false;
+    if (s->age_open) {   /* confirmação de idade: não fecha até confirmar 18+ ou sair da conta */
+        bool open = true;
+        cui_dialog(ui, "Confirme sua idade", &open) {
+            cui_text(ui, "O Briks é só para maiores de 18 anos. Digite sua data de nascimento. Ela é usada só para esta conferência e não é guardada.", .color = B_MUTED, .width = CUI_FILL);
+            int br = cui_input(ui, "age-birth", s->birth, sizeof s->birth, .placeholder = "dd/mm/aaaa", .autofocus = true);
+            if (s->age_msg[0]) cui_text(ui, s->age_msg, .color = CUI_RGB(0xff9a9a), .size = 13, .width = CUI_FILL);
+            cui_dialog_footer(ui) {
+                if (cui_button(ui, "Sair da conta")) { s->age_open = false; s->birth[0] = 0; account_logout(s); }
+                if (cui_button(ui, "Confirmar", .variant = CUI_BUTTON_PRIMARY) || (br & CUI_SUBMITTED)) {
+                    SYSTEMTIME st; GetLocalTime(&st);
+                    if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->age_msg, sizeof s->age_msg) == 0) { age_ok_save(s->acct_user_id); s->age_open = false; s->birth[0] = 0; }
+                    else if (strstr(s->age_msg, "maiores de 18")) { snprintf(s->age_msg, sizeof s->age_msg, "O Briks é só para maiores de 18 anos. Você não pode usar o app."); s->birth[0] = 0; }
+                }
+            }
+        }
+        (void)open;
+    }
     bubbles_draw(ui);
     call_banner(ui, s);   /* "pediu para você transmitir" também com a chamada minimizada */
     groups_overlay(ui, s);

@@ -69,6 +69,12 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.16", {
+        "Qualquer pessoa na chamada pode expulsar e permitir de volta (P2P e servidor).",
+        "Confirmação de idade: o Briks é só para maiores de 18 anos; contas que entram por Google ou Discord confirmam uma vez.",
+        "AO VIVO agora é um vidro vermelho translúcido e reflexivo; o menu de clique direito abre onde você clicou.",
+        "Registro da rede mais detalhado (rede.log) para achar a causa do \"Reconectando à chamada\".",
+        NULL } },
     { "1.5.15", {
         "Transmissão: o fundo desfocado atualiza a 8 quadros/s (4 no modo Simplificado, estático no Mínimo); as ondas rodam a 15 quadros/s e só no modo Normal.",
         "Corrigido um anel preto que aparecia em volta das ondas.",

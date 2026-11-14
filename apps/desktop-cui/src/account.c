@@ -106,7 +106,7 @@ void account_submit(app_state_t *s) {
         if (!s->name[0]) { copy(s->acct_error, sizeof s->acct_error, "Diga como devemos chamar você."); return; }
         if (strlen(s->password) < 8) { copy(s->acct_error, sizeof s->acct_error, "A senha precisa ter pelo menos 8 caracteres."); return; }
         if (strcmp(s->password, s->confirm)) { copy(s->acct_error, sizeof s->acct_error, "As senhas não conferem."); return; }
-        { SYSTEMTIME st; GetLocalTime(&st); if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->acct_error, sizeof s->acct_error)) return; }   /* AUT-03: só maiores de 18; a data não é enviada nem guardada */
+        { SYSTEMTIME st; GetLocalTime(&st); if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->acct_error, sizeof s->acct_error)) return; s->age_signup_ok = true; }   /* AUT-03: só maiores de 18; a data não é enviada nem guardada */
     }
     if (s->acct_view == AV_LOGIN && !s->password[0]) { copy(s->acct_error, sizeof s->acct_error, "Digite sua senha."); return; }
     if (!need_core(s)) return;
@@ -393,6 +393,8 @@ static void on_state(app_state_t *s, const jval *j) {
         bool same = s->acct_state == ACCT_IN && !strcmp(s->acct_user_id, json_str(u, "id", ""));
         s->acct_state = ACCT_IN; s->acct_error[0] = 0; s->acct_code[0] = 0;
         copy(s->acct_user_id, sizeof s->acct_user_id, json_str(u, "id", ""));
+        if (s->age_signup_ok) { age_ok_save(s->acct_user_id); s->age_signup_ok = false; }   /* cadastro por e-mail já checou 18+ */
+        else if (!s->acct_demo && !age_ok_has(s->acct_user_id)) { s->age_open = true; s->age_msg[0] = 0; s->birth[0] = 0; }   /* Google/Discord ou conta antiga: pede a data uma vez */
         copy(s->user_name, sizeof s->user_name, json_str(u, "display_name", "Você"));
         copy(s->user_email, sizeof s->user_email, json_str(u, "email", ""));
         if (!s->acct_nick[0]) copy(s->user_nick, sizeof s->user_nick, json_str(j, "nick_hint", ""));   /* provisório até o servidor devolver o @nick */
@@ -627,6 +629,7 @@ void account_tick(app_state_t *s) {
         }
     }
     if (s->acct_demo) { static bool my_done; const char *mp = getenv("BRIKS_DEV_PHOTO"); if (!my_done && mp && mp[0]) { my_done = true; set_photo(s, mp); } }   /* captura: BRIKS_DEV_PHOTO põe essa imagem como a MINHA foto (sem conta) */
+    if (s->acct_demo && getenv("BRIKS_DEV_AGE") && !s->age_open && s->screen != SCREEN_AUTH) { static bool once; if (!once) { once = true; s->age_open = true; if (getenv("BRIKS_DEV_AGE")[0] == 'm') { copy(s->birth, sizeof s->birth, "10/05/2015"); copy(s->age_msg, sizeof s->age_msg, "O Briks é só para maiores de 18 anos. Você não pode usar o app."); } } }
     if (s->acct_demo && getenv("BRIKS_DEV_NICK_FIRST") && !s->nick_asked && s->screen != SCREEN_AUTH) {   /* captura: abre a telinha do @ como numa conta nova */
         s->nick_asked = s->nick_first = s->nick_open = true; copy(s->acct_nick, sizeof s->acct_nick, "ygor_48213"); s->nick_edit[0] = 0; s->nick_msg[0] = 0;
     }

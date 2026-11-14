@@ -44,7 +44,7 @@ static void person_card(cui_ctx *ui, app_state_t *s, int slot, bool me) {
         #define P (s->rtc_peers[slot])
         if (P.name[0]) snprintf(nmbuf, sizeof nmbuf, "%s", P.name); else snprintf(nmbuf, sizeof nmbuf, "Participante %d", slot + 1);
         name = nmbuf; sub = share_peer_live(s, slot) ? "Transmitindo a tela" : P.status[0] ? P.status : P.presence;
-        by_me = P.muted_by_me; level = by_me ? 0 : P.level; mic_off = P.mic_off; deaf = P.deafened; can_kick = s->rtc_owner_me && P.fp[0];
+        by_me = P.muted_by_me; level = by_me ? 0 : P.level; mic_off = P.mic_off; deaf = P.deafened; can_kick = P.fp[0] != 0;
     }
     cui_push_id_int(ui, me ? 6000 : 6100 + slot);
     cui_box(ui, .width = CUI_FILL, .radius = 16, .bg = level > 0 ? CUI_RGBA(0x57d28b14) : CUI_RGBA(0xffffff0e), .border = 1,

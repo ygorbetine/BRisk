@@ -70,6 +70,8 @@ void briks_theme_validate(briks_theme_t *t) {
     while (same(t->glass_card, t->glass) || same(t->glass_card, t->glass_strong) || same(t->glass_card, t->glass_popup)) t->glass_card.a++;
     t->glass_bubble = t->glass_soft; t->glass_bubble.a = 16;   /* a cor do estilo vem do shader; este alfa só identifica a bolha (glass.c) */
     while (same(t->glass_bubble, t->glass) || same(t->glass_bubble, t->glass_soft) || same(t->glass_bubble, t->glass_card) || same(t->glass_bubble, t->glass_strong) || same(t->glass_bubble, t->glass_popup)) t->glass_bubble.a++;
+    t->glass_bubble_red = t->glass_soft; t->glass_bubble_red.a = 19;   /* AO VIVO: mesmo vidro da bolha, tingido de vermelho no shader */
+    while (same(t->glass_bubble_red, t->glass) || same(t->glass_bubble_red, t->glass_soft) || same(t->glass_bubble_red, t->glass_card) || same(t->glass_bubble_red, t->glass_strong) || same(t->glass_bubble_red, t->glass_popup) || same(t->glass_bubble_red, t->glass_bubble)) t->glass_bubble_red.a++;
     while (same(t->glass_popup, t->glass) || same(t->glass_popup, t->glass_soft) || same(t->glass_popup, t->glass_strong)) t->glass_popup.a++;
 }
 

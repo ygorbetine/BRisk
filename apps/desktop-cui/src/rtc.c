@@ -85,7 +85,7 @@ void rtc_join_p2p(app_state_t *s) {
 }
 
 void rtc_kick_peer(app_state_t *s, int slot) {
-    if (!s->rtc_owner_me || slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].fp[0]) return;
+    if (slot < 0 || slot >= BRIKS_MAX_PEERS || !s->rtc_peers[slot].fp[0]) return;
     char extra[200], fp[96]; json_escape(s->rtc_peers[slot].fp, fp, sizeof fp);
     snprintf(extra, sizeof extra, "\"fp\":\"%s\"", fp);
     if (core_state() == CORE_READY) send_cmd("peer.kick", extra);

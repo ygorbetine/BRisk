@@ -74,3 +74,28 @@ bool login_hint_lookup(const char *nick, char *email, size_t cap) {
     }
     fclose(f); return ok;
 }
+
+/* Idade confirmada (18+): guardamos só o id da conta, nunca a data (age-ok.txt, uma linha por conta, neste computador). */
+static bool age_path(char *out, size_t cap) {
+    const char *o = getenv("BRIKS_AGE_FILE");
+    if (o && o[0]) { snprintf(out, cap, "%s", o); return true; }
+    const char *dd = getenv("BRIKS_CUI_DATA");
+    if (dd && dd[0]) { snprintf(out, cap, "%s\age-ok.txt", dd); return true; }
+    char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) != S_OK) return false;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\age-ok.txt", dir); return true;
+}
+
+bool age_ok_has(const char *id) {
+    char p[MAX_PATH], l[200]; if (!id || !id[0] || !age_path(p, sizeof p)) return false;
+    FILE *f = fopen(p, "rb"); if (!f) return false;
+    bool hit = false;
+    while (fgets(l, sizeof l, f)) { size_t k = strlen(l); while (k && (l[k - 1] == '\n' || l[k - 1] == '\r')) l[--k] = 0; if (!strcmp(l, id)) { hit = true; break; } }
+    fclose(f); return hit;
+}
+
+void age_ok_save(const char *id) {
+    char p[MAX_PATH]; if (!id || !id[0] || age_ok_has(id) || !age_path(p, sizeof p)) return;
+    FILE *f = fopen(p, "ab"); if (!f) return;
+    fprintf(f, "%s\n", id); fclose(f);
+}

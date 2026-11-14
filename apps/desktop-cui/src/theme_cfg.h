@@ -42,7 +42,7 @@ typedef struct {
     int bubble_align;                /* balão recebido x avatar: 0 = topo com topo (padrão), 1 = pontinha (topo do balão) na altura do centro do avatar */
     /* derivados (briks_theme_apply) */
     cui_color field, muted, line, ph;   /* campos de texto, texto secundario, divisores e placeholder: derivados do matiz do tema (theme.c), contraste >= 4.5:1 */
-    cui_color glass, glass_soft, glass_strong, glass_popup, glass_card, glass_bubble;
+    cui_color glass, glass_soft, glass_strong, glass_popup, glass_card, glass_bubble, glass_bubble_red;
 } briks_theme_t;
 
 extern briks_theme_t g_th;
@@ -60,6 +60,7 @@ void briks_theme_editor(cui_ctx *ui);                      /* Ctrl+Shift+T com B
 #define B_GLASS_SOFT   (g_th.glass_soft)
 #define B_GLASS_STRONG (g_th.glass_strong)
 #define B_GLASS_POPUP  (g_th.glass_popup)
+#define B_GLASS_BUBBLE_RED (g_th.glass_bubble_red)   /* mesma familia do vidro (RGB do glass_soft), alfa 18: so identifica o quad tingido de vermelho (AO VIVO) */
 #define B_GLASS_BUBBLE (g_th.glass_bubble)   /* bolha de status: vidro com refração (glass.c) */
 #define B_GLASS_CARD   (g_th.glass_card)   /* como SOFT (mesmo RGB, alfa vizinho): glass.c acrescenta reflexo e tinta */
 #endif

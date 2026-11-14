@@ -177,11 +177,10 @@ async fn ipc_room_join_pure_sfu_end_to_end_with_remote_mute_and_kick() {
     eprintln!("mudo remoto (room.mute): recusado para não-dono, aplicado e desfeito pela dona, estado local coerente");
 
     // 6) expulsão: o B é avisado e sai; a dona registra o banimento; o B não volta nesta sessão.
-    // Quem não é dono não chama a função do servidor (e o pedido assinado dele é recusado pelos outros)
-    b.send(json!({ "cmd": "peer.kick", "fp": fa, "reason": "abuso" })).await;
-    tokio::time::sleep(Duration::from_millis(800)).await;
-    assert!(kicks.lock().unwrap().is_empty(), "não-dono chamou a função de expulsão");
-    assert_eq!(a.count(|v| v["ev"] == "kicked"), 0);
+    // (Até a 1.5.15 este passo provava que quem não é dono NÃO expulsa. Desde a 1.5.16 qualquer membro autenticado expulsa — ver
+    // `sfudata::on_room_cmd` e os testes dele —, então o B expulsar a dona aqui é comportamento válido e tiraria a dona da sala antes do
+    // resto deste teste. O passo saiu; fica a expulsão feita pela dona, com a chamada à função do servidor.)
+    assert!(kicks.lock().unwrap().is_empty(), "ninguém pediu expulsão ainda");
     a.send(json!({ "cmd": "peer.kick", "fp": fb, "reason": "teste" })).await;
     b.wait(15, "B expulso", |v| v["ev"] == "kicked").await;
     // a dona também pediu ao servidor (função livekit-kick): sessão DELA no Bearer, sala do LiveKit e identidade do B no corpo

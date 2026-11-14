@@ -178,7 +178,10 @@ async fn sfu_reconnects_after_server_restart_with_renewed_token() {
             let end = Instant::now() + Duration::from_secs(30);
             while Instant::now() < end && c.stats.reconnects.load(Ordering::Relaxed) < round { tokio::time::sleep(Duration::from_millis(50)).await; }
             assert_eq!(c.stats.reconnects.load(Ordering::Relaxed), round, "{} não reconectou", c.ident);
-            assert_eq!(c.renewals.load(Ordering::Relaxed), round, "{}: um token novo por queda", c.ident);
+            // Até a 1.5.19 cada queda pedia um token novo. Desde a 1.5.20 o token com menos de 50 min é reaproveitado (`TOKEN_REUSE`) e só
+            // se pede outro quando o servidor recusa; o livekit-server de teste aceita o token de entrada (validade de 6 s) ainda alguns
+            // segundos depois de vencido, então aqui pode não haver renovação nenhuma. O que continua valendo: nunca mais de uma por queda.
+            assert!(c.renewals.load(Ordering::Relaxed) <= round, "{}: no máximo um token novo por queda ({} em {round} quedas)", c.ident, c.renewals.load(Ordering::Relaxed));
         }
         eprintln!("rodada {round}: os 3 clientes voltaram {:.1} s depois de o servidor subir (fora do ar por {:.1} s); tokens renovados: {}", t_up.elapsed().as_secs_f32(), t_kill.elapsed().as_secs_f32(), cs.iter().map(|c| c.renewals.load(Ordering::Relaxed)).sum::<u64>());
         // vídeo do espectador logo depois de voltar: quanto demora o 1º quadro novo e a que taxa os quadros chegam, segundo a segundo

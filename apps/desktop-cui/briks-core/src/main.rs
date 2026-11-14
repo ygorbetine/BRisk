@@ -14,6 +14,7 @@ mod camera;
 mod capture;
 mod video;
 mod codec;
+mod fec;
 #[cfg(feature = "vpx")]
 mod vpx;
 mod gpuconv;

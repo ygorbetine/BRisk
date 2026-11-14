@@ -99,7 +99,19 @@ pub struct VideoOut {
     pub rtx_twice: Arc<AtomicBool>,
     /// pacotes pedidos pela PRIMEIRA vez (perda real antes do conserto; pedidos repetidos do mesmo pacote não contam)
     pub nack_unique: Arc<AtomicU64>,
+    /// para onde vão os pacotes de paridade (FEC, ver `fec.rs`): o transporte (SFU ou malha) instala; sem destino não há FEC
+    fec_sink: Arc<Mutex<Option<FecSink>>>,
+    /// pacotes de paridade enviados (telemetria)
+    pub fec_sent: Arc<AtomicU64>,
+    /// até quando (relógio `mono_ms`) o pacer gera paridade: 10 s depois do último sinal de perda
+    fec_until_ms: Arc<AtomicU64>,
 }
+/// Relógio monotônico do processo em ms (para prazos guardados em atômicos).
+pub fn mono_ms() -> u64 { static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new(); T0.get_or_init(Instant::now).elapsed().as_millis() as u64 }
+/// Por quanto tempo o FEC fica ligado depois de um sinal de perda.
+const FEC_HOLD_MS: u64 = 10_000;
+/// Destino dos pacotes de paridade de uma saída de vídeo (o transporte acrescenta o slot e manda pelo canal de dados sem retransmissão).
+pub type FecSink = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
 impl VideoOut {
     /// API interna de publicação (ver docs/plans/transmissao-api-interna.md): entrega UMA unidade de acesso H264 (Annex-B, já com
     /// SPS/PPS no quadro-chave) ao pacer, que empacota (RTP, MTU 1180), espaça e guarda para retransmissão. `samples` = intervalo desde
@@ -109,6 +121,12 @@ impl VideoOut {
         self.queued.fetch_add(au.len() as u64, Ordering::Relaxed);
         let _ = self.tx.send((au, samples.max(1), pace_bps));
     }
+    /// Liga o FEC desta saída: `sink` recebe cada pacote de paridade. O pacer só os gera enquanto há perda (pedidos de retransmissão
+    /// nos últimos 10 s), para não gastar banda numa rede limpa. `BRIKS_FEC=0` desliga.
+    pub fn set_fec_sink(&self, sink: FecSink) { if std::env::var("BRIKS_FEC").as_deref() != Ok("0") { *self.fec_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink); } }
+    /// Um espectador avisou que está perdendo pacotes (no SFU o emissor não vê a perda do lado de quem assiste: é o servidor que
+    /// responde aos pedidos de retransmissão). Liga o FEC pelos próximos 10 s.
+    pub fn request_fec(&self) { self.fec_until_ms.store(mono_ms() + FEC_HOLD_MS, Ordering::Relaxed); }
     pub fn new() -> Self { Self::new_slot(0) }
     pub fn new_slot(slot: usize) -> Self { Self::with_ids(if slot == 1 { VIDEO_TRACK_ID_2 } else { VIDEO_TRACK_ID }, if slot == 1 { "briks-screen-2" } else { "briks-screen" }) }
     /// Saída de vídeo da câmera (faixa `camera-video`, fluxo `briks-camera`).
@@ -135,8 +153,10 @@ impl VideoOut {
         let rtx_twice = Arc::new(AtomicBool::new(false));
         let (ctl, ctl_rx) = mpsc::unbounded_channel();
         let cur = Arc::new(Mutex::new((codec, track.clone())));
-        tokio::spawn(pacer_task(codec, ctl_rx, track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone(), rtx_gap_ms.clone(), rtx_twice.clone()));
-        VideoOut { cur, ids, ctl, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique, rtx_gap_ms, rtx_twice }
+        let (fec_sink, fec_sent): (Arc<Mutex<Option<FecSink>>>, _) = (Arc::new(Mutex::new(None)), Arc::new(AtomicU64::new(0)));
+        let fec_until_ms = Arc::new(AtomicU64::new(0));
+        tokio::spawn(pacer_task(codec, ctl_rx, track.clone(), rx, nack_rx, queued.clone(), rtx_sent.clone(), rtx_skipped.clone(), nack_unique.clone(), rtx_gap_ms.clone(), rtx_twice.clone(), fec_sink.clone(), fec_sent.clone(), fec_until_ms.clone()));
+        VideoOut { cur, ids, ctl, tx, nack_tx, queued, rtx_sent, rtx_skipped, nack_unique, rtx_gap_ms, rtx_twice, fec_sink, fec_sent, fec_until_ms }
     }
 }
 
@@ -146,7 +166,7 @@ const HISTORY: usize = 2048;
 /// (uma rajada de centenas de kB estoura filas e buffers no caminho e vira perda). Também responde aos NACKs: guarda os últimos
 /// pacotes e retransmite pelo mesmo espaçamento, com orçamento de 25% da taxa e no máximo uma vez a cada 150 ms por pacote —
 /// retransmissão sem limite, numa rede já congestionada, só aumenta o congestionamento.
-async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec, Arc<TrackLocalStaticRTP>)>, mut track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>, rtx_twice: Arc<AtomicBool>) {
+async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec, Arc<TrackLocalStaticRTP>)>, mut track: Arc<TrackLocalStaticRTP>, mut rx: mpsc::UnboundedReceiver<(Vec<u8>, u32, u32)>, mut nack_rx: mpsc::Receiver<Vec<u16>>, queued: Arc<AtomicU64>, rtx_sent: Arc<AtomicU64>, rtx_skipped: Arc<AtomicU64>, nack_unique: Arc<AtomicU64>, rtx_gap_ms: Arc<AtomicU64>, rtx_twice: Arc<AtomicBool>, fec_sink: Arc<Mutex<Option<FecSink>>>, fec_sent: Arc<AtomicU64>, fec_until: Arc<AtomicU64>) {
     use std::collections::{HashMap, VecDeque};
     // um sequenciador só para a vida toda da transmissão: ao trocar de codec o número de sequência CONTINUA (um início aleatório novo cai
     // fora da janela anti-replay do SRTP do receptor em metade das vezes e os pacotes do codec novo seriam descartados)
@@ -159,6 +179,8 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
     let mut hist: HashMap<u16, (webrtc::rtp::packet::Packet, Option<Instant>, bool, Instant, bool)> = HashMap::new();   // (pacote, última retransmissão, já pedido, enviado em)
     let mut order: VecDeque<u16> = VecDeque::new();
     let (mut pace, mut rtx_credit, mut rtx_t) = (2_000_000f64, 0f64, Instant::now());
+    // FEC: só enquanto há perda (um pedido de retransmissão de pacote novo, ou o aviso de um espectador, nos últimos 10 s)
+    let mut fec = crate::fec::FecTx::new();
     loop {
         // Atende um lote de pedidos de retransmissão. É macro (e não ramo único do select) porque também roda ENTRE os pacotes de um
         // quadro: um quadro-chave com a rede apertada leva 1 s ou mais para sair, e se os NACKs esperassem o quadro terminar o
@@ -171,7 +193,7 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
                 rtx_t = Instant::now();
                 for sq in seqs {
                     let Some((p, last, asked, sent_at, is_key)) = hist.get_mut(&sq) else { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue };
-                    if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); }
+                    if !std::mem::replace(asked, true) { nack_unique.fetch_add(1, Ordering::Relaxed); fec_until.store(mono_ms() + FEC_HOLD_MS, Ordering::Relaxed); }
                     // pacote velho: o receptor já desistiu desse quadro (espera no máximo 400 ms) e vai pedir quadro-chave; reenviar só
                     // gastaria banda. O gerador de NACK do outro lado continua pedindo por muito tempo.
                     if sent_at.elapsed() > Duration::from_millis(if *is_key { 1500 } else { 600 }) { rtx_skipped.fetch_add(1, Ordering::Relaxed); continue; }
@@ -193,7 +215,7 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
             c = ctl_rx.recv() => {
                 // troca de codec: faixa e empacotador novos; o histórico de retransmissão é do codec antigo e não vale mais
                 let Some((nc, nt)) = c else { continue };
-                codec = nc; track = nt; pk = mk_pk(nc); hist.clear(); order.clear();
+                codec = nc; track = nt; pk = mk_pk(nc); hist.clear(); order.clear(); fec.reset();
             }
             m = rx.recv() => {
                 let Some((au, samples, pace_bps)) = m else { break };
@@ -205,6 +227,9 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
                 let is_key = if codec == Codec::H264 { crate::mfenc::nals(&au).iter().any(|n| n.0 == 5) } else { crate::codec::is_key_frame(codec, &au) };   // o receptor espera mais pelos pedaços de um quadro-chave
                 let Ok(pkts) = pk.packetize(&Bytes::from(au), samples) else { queued.fetch_sub(len, Ordering::Relaxed); continue };
                 if tokio::time::Instant::now().saturating_duration_since(budget_at) > Duration::from_millis(500) { budget_at = tokio::time::Instant::now(); }   // ficou parado: sem crédito acumulado
+                let fec_to = if mono_ms() < fec_until.load(Ordering::Relaxed) { fec_sink.lock().unwrap_or_else(|e| e.into_inner()).clone() } else { None };
+                if fec_to.is_none() { fec.reset(); }
+                let last_seq = pkts.last().map(|p| p.header.sequence_number);
                 for p in pkts {
                     let now = tokio::time::Instant::now();
                     // espera a vez deste pacote atendendo os NACKs que chegarem nesse meio-tempo
@@ -219,6 +244,9 @@ async fn pacer_task(mut codec: Codec, mut ctl_rx: mpsc::UnboundedReceiver<(Codec
                     while let Ok(seqs) = nack_rx.try_recv() { serve_nacks!(seqs); }
                     let now = tokio::time::Instant::now();
                     let _ = track.write_rtp(&p).await;
+                    if let Some(sink) = &fec_to {
+                        if let Some(par) = fec.add(p.header.sequence_number, p.header.timestamp, p.header.marker, &p.payload, Some(p.header.sequence_number) == last_seq) { fec_sent.fetch_add(1, Ordering::Relaxed); sink(par); }
+                    }
                     budget_at = budget_at.max(now - Duration::from_millis(20)) + Duration::from_secs_f64((p.payload.len() + 12) as f64 * 8.0 / pace);
                     let sq = p.header.sequence_number;
                     if hist.insert(sq, (p, None, false, Instant::now(), is_key)).is_none() { order.push_back(sq); }
@@ -444,6 +472,7 @@ impl QpGovernor {
     /// Uma vez por segundo: `sent`/`asked` = bps que saíram do codificador e bps pedidos; `transient` = segundo com quadro-chave forçado
     /// ou troca de nível (o excesso é do quadro-chave, não do conteúdo). Devolve o teto novo quando ele muda (recrie o codificador).
     pub fn note(&mut self, sent: f64, asked: f64, transient: bool) -> Option<u32> {
+        if std::env::var("BRIKS_ENC_MAXQP").is_ok() { return None; }   // teto fixado para diagnóstico: recriar o codificador não mudaria nada
         if self.grace > 0 { self.grace -= 1; return None; }   // codificador recém-criado: o 1º quadro-chave distorce a medida
         if transient || asked <= 0.0 { self.over = 0; return None; }
         let i = Self::STEPS.iter().position(|q| *q == self.cap).unwrap_or(0);
@@ -474,6 +503,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
     let (tx, queued) = (out.tx.clone(), out.queued.clone());   // bytes esperando no pacer
     let out_codec = out.codec();
     let out_rtx = (out.rtx_sent.clone(), out.rtx_skipped.clone(), out.nack_unique.clone());
+    let out_fec = out.fec_sent.clone();
     let (st, id2) = (stop.clone(), idr.clone());
     std::thread::spawn(move || {
         // Um pânico aqui dentro não pode deixar a UI mostrando "transmitindo" para sempre: o laço roda protegido e, se cair,
@@ -573,7 +603,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 }
                 // o codificador ignorou o bitrate (conteúdo que não cabe com o teto de QP atual): recria com o teto um degrau acima.
                 // Vale também sem adaptação (bitrate fixo pelo usuário).
-                if let Some(e) = enc.as_ref() { if frames >= 1 && out_codec == Codec::H264 && e.hardware { if let Some(q) = qpg.note(sent_bps, e.bps as f64, idrs != idrs0 || trans_win) {
+                if let Some(e) = enc.as_ref() { if frames >= 1 && e.has_qp_cap() { if let Some(q) = qpg.note(sent_bps, e.bps as f64, idrs != idrs0 || trans_win) {
                     crate::netlog::write(&format!("transmissao: teto de QP {q} (o codificador enviou {:.0} kbps com {} pedidos)", sent_bps / 1000.0, e.bps / 1000));
                     enc = None; recreated = Instant::now();
                 } } }
@@ -597,7 +627,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis, "idrs": idrs,
                     "blackout_held": std::mem::take(&mut held_win), "bpp_floor": (ctl.bpp_floor * 1000.0).round() / 1000.0, "cpu_idx": ctl.cpu_idx, "why": why,
-                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "repeated": std::mem::take(&mut repeated), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
+                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "repeated": std::mem::take(&mut repeated), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000, "fec_sent": out_fec.swap(0, Ordering::Relaxed) }));
                 idrs0 = idrs; trans_win = false; frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
             // quadro novo, ou o último de novo quando a tela não mudou neste período (a cadência fica no FPS alvo)
@@ -746,6 +776,18 @@ pub struct RecvState {
     /// diagnóstico (1.5.22): tempo total gasto decodificando (ns) e qual decodificador está em uso
     pub dec_ns: AtomicU64,
     pub dec_name: Mutex<String>,
+    /// pacotes de paridade (FEC) deste emissor, entregues pelo transporte e consumidos pelo laço de RTP
+    pub fec_in: Mutex<Vec<Vec<u8>>>,
+    /// avisa o emissor de que este espectador está perdendo pacotes (liga o FEC dele); o transporte instala quando há como avisar
+    pub fec_ask: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+}
+impl RecvState {
+    /// Entrega um pacote de paridade (já sem o byte do slot). Sem ninguém assistindo, ou com a fila cheia, é descartado.
+    pub fn push_fec(&self, parity: Vec<u8>) {
+        if !self.watching.load(Ordering::Relaxed) { return; }
+        let mut q = self.fec_in.lock().unwrap_or_else(|e| e.into_inner());
+        if q.len() < 256 { q.push(parity); }
+    }
 }
 
 /// O pacote começa uma NAL? (FU-A só com o bit S; NAL única e STAP-A sempre.)
@@ -1041,6 +1083,8 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     let mut feed = DecodeFeed::new();
     // suavização só na transmissão de tela: na câmera (conversa) o atraso extra atrapalharia mais do que o ritmo irregular
     let mut play = if evp == "share" { Playout::new() } else { Playout::with_max(Duration::ZERO) };
+    let mut fecrx = crate::fec::FecRx::new();
+    let (mut loss_seen, mut fec_asked) = (0u64, Instant::now() - Duration::from_secs(10));
     let mut fine: Option<FineTimer> = None;   // esperas de 1 ms enquanto assiste (sem isso o Windows arredonda cada espera para ~15 ms)
     let to_dec = |m: Option<(Codec, Vec<u8>)>| dtx.try_send(m).map_err(|e| match e { std::sync::mpsc::TrySendError::Full(m) | std::sync::mpsc::TrySendError::Disconnected(m) => m });
     let mut my_epoch = 0u64;
@@ -1065,17 +1109,25 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         if !was || ep != my_epoch {
             was = true; my_epoch = ep; jb = JitterBuf::with_codec(rx_codec);
             st.frames.store(0, Ordering::Relaxed); frames0 = 0; log_frames0 = 0; last_frame = Instant::now();
-            feed.reset(); play.reset();
+            feed.reset(); play.reset(); fecrx.reset();
             ask(&mut last_pli, &mut plis, Duration::ZERO);
         }
         if let Some(p) = pkt {
             // troca de codec no meio da transmissão (o emissor fez replace_track): outro payload type = outro empacotamento
             if let Some(c) = pts.iter().find(|(pt, _)| *pt == p.header.payload_type).map(|(_, c)| *c) {
-                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); feed.reset(); play.reset(); ask(&mut last_pli, &mut plis, Duration::ZERO); }
+                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); feed.reset(); play.reset(); fecrx.reset(); ask(&mut last_pli, &mut plis, Duration::ZERO); }
             }
             rx_bytes += p.payload.len() as u64;
+            // FEC: este pacote pode ser o que faltava para a paridade refazer outro do mesmo grupo
+            for r in fecrx.on_media(crate::fec::Pkt { seq: p.header.sequence_number, ts: p.header.timestamp, marker: p.header.marker, payload: p.payload.clone() }) { jb.push(fec_packet(r)); }
             jb.push(p);
         }
+        // paridades que o transporte entregou (canal de dados): refazem o pacote perdido sem esperar a retransmissão
+        let pars = std::mem::take(&mut *st.fec_in.lock().unwrap_or_else(|e| e.into_inner()));
+        for par in pars { for r in fecrx.on_parity(&par) { jb.push(fec_packet(r)); } }
+        // perda nova (buraco fechado por retransmissão ou pela paridade, ou quadro perdido): pede ao emissor que mantenha o FEC ligado
+        let loss_now = jb.recovered + jb.lost_frames + fecrx.recovered;
+        if loss_now != loss_seen { loss_seen = loss_now; if fec_asked.elapsed() > Duration::from_secs(2) { fec_asked = Instant::now(); let f = st.fec_ask.lock().unwrap_or_else(|e| e.into_inner()).clone(); if let Some(f) = f { f(); } } }
         let now = Instant::now();
         let (aus, want) = jb.pop(now);
         if std::mem::take(&mut jb.fresh) { play.reset(); feed.reset(); }   // descontinuidade: decodificador novo para o quadro-chave
@@ -1097,14 +1149,14 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
             let got = f.saturating_sub(frames0);
             shown_fps = steady_fps(shown_fps, got, win.elapsed().as_secs_f64());
             let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": shown_fps, "frames": got, "kbps": (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
-                "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
+                "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed), "fec_recovered": fecrx.recovered, "fec_parities": fecrx.received, "playout_ms": play.delay_ms().round() }));
             {   // diagnóstico de desempenho de quem assiste: uma linha a cada ~5 s no rede.log
                 static RXLOGN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                 if RXLOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
                     let (fed, ns) = (st.fed.load(Ordering::Relaxed), st.dec_ns.swap(0, Ordering::Relaxed));
                     let name = st.dec_name.lock().map(|n| n.clone()).unwrap_or_default();
-                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, descartados por atraso do decodificador {}, suavizacao {:.0} ms, tempo medio de decodificar {:.1} ms (unidades {fed})",
-                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed), feed.dropped, play.delay_ms(),
+                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, descartados por atraso do decodificador {}, suavizacao {:.0} ms, FEC refez {} pacotes ({} paridades), tempo medio de decodificar {:.1} ms (unidades {fed})",
+                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed), feed.dropped, play.delay_ms(), fecrx.recovered, fecrx.received,
                         // o tempo acumula desde a última linha (~5 s): divide pelos quadros do MESMO período. Antes dividia pelos quadros de
                         // 1 s só, e o log mostrava ~5x o tempo real ("27 ms" eram ~5,5 ms).
                         { let n5 = f.saturating_sub(log_frames0); log_frames0 = f; if n5 > 0 { ns as f64 / n5 as f64 / 1e6 } else { 0.0 } }));
@@ -1116,6 +1168,13 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     // a faixa terminou (a pessoa saiu ou a conexão fechou): sem este aviso a UI ficava com a última imagem parada
     let (pid, slot) = split_key(&peer);
     let _ = ev.send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "off", "reason": "faixa encerrada" })).await;
+}
+
+/// Pacote RTP refeito pela paridade, no formato que o montador de quadros espera.
+fn fec_packet(r: crate::fec::Pkt) -> webrtc::rtp::packet::Packet {
+    let mut p = webrtc::rtp::packet::Packet::default();
+    p.header.sequence_number = r.seq; p.header.timestamp = r.ts; p.header.marker = r.marker; p.payload = r.payload;
+    p
 }
 
 /// Sem nenhum pacote de vídeo por este tempo, quem assiste é avisado ("stalled") para tirar a última imagem; ao voltar, "resumed".

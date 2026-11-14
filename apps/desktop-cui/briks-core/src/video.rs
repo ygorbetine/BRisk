@@ -251,6 +251,8 @@ impl H264Enc {
         Ok(H264Enc { be: Backend::Open(enc), w, h, bps, name: "OpenH264 (software)".into(), hardware: false, idr: true, nv12: vec![], inject: false })
     }
     pub fn force_idr(&mut self) { self.idr = true; }
+    /// Este codificador tem teto de QP (o H264 do Media Foundation, de hardware ou de software)? Só nele o `share::QpGovernor` age.
+    pub fn has_qp_cap(&self) -> bool { matches!(self.be, Backend::Mf(_)) }
     /// Muda o bitrate alvo sem recriar o codificador. false = este codificador não aceita (recrie).
     pub fn set_bitrate(&mut self, bps: u32) -> bool {
         match &mut self.be { Backend::Mf(m) => { if m.set_bitrate(bps) { self.bps = bps; true } else { false } } Backend::Open(_) => false, #[cfg(feature = "vpx")] Backend::Vpx(e) => { if e.set_bitrate(bps) { self.bps = bps; true } else { false } } }

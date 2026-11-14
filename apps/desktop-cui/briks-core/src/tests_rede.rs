@@ -249,3 +249,35 @@ async fn mesh_adaptive_under_random_loss() {
     std::fs::write(out_dir().join("malha-perda-aleatoria-adaptativo.csv"), csv).unwrap();
     s.close().await;
 }
+
+/// FEC na malha com perda aleatória: a mesma transmissão (720p, 3 Mbps fixos, 30 qps) com o FEC desligado e ligado, a 3% e a 8% de
+/// perda. Mostra quadros recebidos, latência, congelamentos, pedidos de quadro-chave e quantos pacotes a paridade refez.
+///   cargo test --release -- --ignored --nocapture --test-threads=1 fec_under_random_loss
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn fec_under_random_loss() {
+    if std::env::var("BRIKS_ENCODER").is_err() { std::env::set_var("BRIKS_ENCODER", "mf-soft"); }
+    let mut csv = String::from("fec,perda_pct,qps_recebido,lat_p50_ms,lat_p95_ms,maior_intervalo_ms,congelamentos_250ms,nacks_unicos,plis,quadros_perdidos_rx,paridades_enviadas,paridades_recebidas,pacotes_refeitos\n");
+    for (tag, fec) in [("f0", "0"), ("f1", "1")] {
+        std::env::set_var("BRIKS_FEC", fec);
+        let (mut s, sim) = Session::open(tag, true, 720, 3000, false).await;
+        let sim = sim.unwrap();
+        let _ = s.sample(4000).await;
+        for loss in [3.0f64, 8.0] {
+            sim.set(0.0, loss);
+            let _ = s.sample(3000).await;   // acomodação (o FEC liga no 1º pedido de retransmissão)
+            let rx0 = s.rx.clone();
+            let mut sent = 0u64;
+            let mut r = Samp::default();
+            // amostra em pedaços de 1 s para somar as paridades enviadas (o evento do emissor traz o total do último segundo)
+            for _ in 0..12 { let p = s.sample(1000).await; sent += s.tx["fec_sent"].as_u64().unwrap_or(0); r.frames += p.frames; r.max_gap = r.max_gap.max(p.max_gap); r.freezes += p.freezes; r.lats.extend(p.lats); r.nacks += p.nacks; r.plis += p.plis; r.lost_frames += p.lost_frames; r.ms += p.ms; }
+            r.lats.sort();
+            let d = |k: &str| s.rx[k].as_u64().unwrap_or(0).saturating_sub(rx0[k].as_u64().unwrap_or(0));
+            let line = format!("{},{loss},{:.1},{},{},{},{},{},{},{},{sent},{},{}", if fec == "1" { "ligado" } else { "desligado" }, r.fps(), pct(&r.lats, 0.5), pct(&r.lats, 0.95), r.max_gap, r.freezes, r.nacks, r.plis, r.lost_frames, d("fec_parities"), d("fec_recovered"));
+            eprintln!("{line}"); csv.push_str(&line); csv.push('\n');
+        }
+        s.close().await;
+    }
+    std::env::remove_var("BRIKS_FEC");
+    std::fs::write(out_dir().join("malha-fec-perda-aleatoria.csv"), csv).unwrap();
+}

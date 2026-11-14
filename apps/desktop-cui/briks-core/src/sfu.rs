@@ -133,6 +133,8 @@ struct Shared {
 /// `epoch` = geração da sessão (sobe a cada reconexão): o que vier de PeerConnections antigos é descartado.
 enum Internal {
     Data(u32, Vec<u8>),
+    /// quem assiste a tela (identidade, slot) está perdendo pacotes: pede o FEC ao emissor
+    FecWant(String, u8),
     DcOpen(u32),
     Ice { epoch: u32, target: i32, init: RTCIceCandidateInit },
     Pc { epoch: u32, target: i32, state: RTCPeerConnectionState },
@@ -245,8 +247,10 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
     wire_pc(&sub, epoch, 1, itx);
     {
         let (audio, shared, etx, wk, sev, stats) = (audio.clone(), shared.clone(), etx.clone(), Arc::downgrade(&sub), sev_tx.clone(), stats.clone());
+        let itx_fec = itx.clone();
         sub.on_track(Box::new(move |track, rtp_rx, _tr| {
             let (audio, shared, etx, wk, sev, stats) = (audio.clone(), shared.clone(), etx.clone(), wk.clone(), sev.clone(), stats.clone());
+            let itx_fec = itx_fec.clone();
             Box::pin(async move {
                 let pts = share::payload_codecs(&rtp_rx).await;
                 tokio::spawn(async move { while rtp_rx.read_rtcp().await.is_ok() {} });
@@ -278,6 +282,8 @@ async fn make_sub(ice: &[RTCIceServer], epoch: u32, itx: &mpsc::Sender<Internal>
                             }
                         });
                     }
+                    // FEC: no SFU só quem assiste vê a própria perda; o receptor avisa o emissor por aqui
+                    if !is_cam { let ident = meta.identity.clone(); *recv.fec_ask.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(move || { let _ = itx_fec.try_send(Internal::FecWant(ident.clone(), slot as u8)); })); }
                     if is_cam { tokio::spawn(share::run_remote_video_as("cam", meta.identity.clone(), track, recv, sev, pli, pts)); }
                     else { tokio::spawn(share::run_remote_video(rkey, track, recv, sev, pli, pts)); }
                 } else if let Some(a) = audio {
@@ -319,7 +325,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let data = j.data.map(|c| crate::sfudata::Layer::new(c, me.identity.clone()));
     let mut actor = Actor {
         files, _ftx: ftx,
-        data, dc_pub: None, dc_queue: vec![], leave: false,
+        data, dc_pub: None, fec_dc: Arc::new(Mutex::new(None)), dc_queue: vec![], leave: false,
         url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(), short_drops: 0, token_born: std::time::Instant::now(), last_join: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         owner_marks: HashMap::new(), republish_video: false,
@@ -511,6 +517,8 @@ struct Actor {
     subscriber_primary: bool,
     data: Option<crate::sfudata::Layer>,
     dc_pub: Option<Arc<webrtc::data_channel::RTCDataChannel>>,
+    /// canal de dados sem retransmissão do publisher (`_lossy`): por ele saem as paridades do FEC da transmissão (ver `fec.rs`)
+    fec_dc: Arc<Mutex<Option<Arc<webrtc::data_channel::RTCDataChannel>>>>,
     dc_queue: Vec<Vec<u8>>,
     leave: bool,
     /// anexos pela camada de dados (só com ela ligada); `_ftx` mantém a fila aberta mesmo sem transferências
@@ -630,6 +638,7 @@ impl Actor {
         let (old_sub, old_pub) = (self.sub.clone(), self.publisher.take());
         tokio::spawn(async move { if let Some(p) = old_pub { let _ = tokio::time::timeout(Duration::from_secs(3), p.close()).await; } let _ = tokio::time::timeout(Duration::from_secs(3), old_sub.close()).await; });
         self.dc_pub = None;
+        *self.fec_dc.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.pending.clear();
         self.published.clear();
         self.pub_offering = false;
@@ -765,7 +774,8 @@ impl Actor {
         let dc = pc.create_data_channel("_reliable", Some(RTCDataChannelInit { ordered: Some(true), ..Default::default() })).await?;
         { let (itx, ep) = (self.itx.clone(), self.epoch); dc.on_open(Box::new(move || { let itx = itx.clone(); Box::pin(async move { let _ = itx.send(Internal::DcOpen(ep)).await; }) })); }
         self.dc_pub = Some(dc);
-        pc.create_data_channel("_lossy", Some(RTCDataChannelInit { ordered: Some(false), max_retransmits: Some(0), ..Default::default() })).await?;
+        let lossy = pc.create_data_channel("_lossy", Some(RTCDataChannelInit { ordered: Some(false), max_retransmits: Some(0), ..Default::default() })).await?;
+        *self.fec_dc.lock().unwrap_or_else(|e| e.into_inner()) = Some(lossy);
         self.publisher = Some(pc.clone());
         Ok(pc)
     }
@@ -1103,6 +1113,7 @@ impl Actor {
     async fn on_internal(&mut self, i: Internal) {
         match i {
             Internal::Data(ep, b) => { if ep == self.epoch { self.on_data(b).await } }
+            Internal::FecWant(to, slot) => self.fec_want(to, slot).await,
             Internal::DcOpen(ep) => { if ep == self.epoch { for b in std::mem::take(&mut self.dc_queue) { self.dc_send_raw(b).await; } } }
             Internal::Ice { epoch, target, init } => {
                 if epoch != self.epoch { return; }
@@ -1216,11 +1227,24 @@ impl Actor {
     /// Pacote de dados do LiveKit (DataPacket) recebido: o servidor carimba a identidade do remetente; só o tópico "briks" interessa.
     #[allow(deprecated)]
     async fn on_data(&mut self, bytes: Vec<u8>) {
-        if self.data.is_none() { return; }
         let Ok(p) = lk::DataPacket::decode(bytes.as_slice()) else { return };
         let Some(lk::data_packet::Value::User(u)) = p.value else { return };
-        if u.topic.as_deref() != Some("briks") { return; }
         let from = if !p.participant_identity.is_empty() { p.participant_identity } else { u.participant_identity };
+        // paridade do FEC da transmissão de alguém (1º byte = slot da tela): vai para o receptor de vídeo dessa pessoa
+        if u.topic.as_deref() == Some(FEC_TOPIC) {
+            if let Some((slot, par)) = u.payload.split_first() {
+                if *slot == FEC_WANT {
+                    // um espectador da nossa tela avisou que está perdendo pacotes: liga o FEC dessa saída
+                    if let Some(v) = par.first().and_then(|s| self.vout.get((*s as usize).min(1))).and_then(|v| v.as_ref()) { v.request_fec(); }
+                } else {
+                    let recv = self.shared.lock().unwrap().recv.get(&share::recv_key(&from, (*slot as usize).min(1))).cloned();
+                    if let Some(r) = recv { r.push_fec(par.to_vec()); }
+                }
+            }
+            return;
+        }
+        if self.data.is_none() { return; }
+        if u.topic.as_deref() != Some("briks") { return; }
         self.set_media();
         let outs = self.data.as_mut().map(|l| l.on_packet(&from, &u.payload)).unwrap_or_default();
         self.apply(outs).await;
@@ -1231,6 +1255,18 @@ impl Actor {
     async fn flush_files(&mut self) {
         let urgent = self.files.as_mut().map(|f| f.take_urgent()).unwrap_or_default();
         for (to, m) in urgent { self.publish_data(vec![to], json!({ "v": 1, "t": "file", "m": m })).await; }
+    }
+
+    /// Avisa o emissor `to` de que estamos perdendo pacotes da tela `slot` dele (ver `fec.rs`). Vai pelo canal sem retransmissão:
+    /// se não chegar, o próximo aviso sai em 2 s.
+    #[allow(deprecated)]
+    async fn fec_want(&mut self, to: String, slot: u8) {
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+        let Some(dc) = self.fec_dc.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
+        if dc.ready_state() != RTCDataChannelState::Open { return; }
+        let pkt = lk::DataPacket { kind: lk::data_packet::Kind::Lossy as i32, participant_identity: self.me.identity.clone(), destination_identities: vec![to.clone()],
+            value: Some(lk::data_packet::Value::User(lk::UserPacket { payload: vec![FEC_WANT, slot], topic: Some(FEC_TOPIC.into()), destination_identities: vec![to], ..Default::default() })), ..Default::default() };
+        let _ = dc.send(&bytes::Bytes::from(pkt.encode_to_vec())).await;
     }
 
     async fn publish_data(&mut self, to: Vec<String>, msg: Value) {
@@ -1308,6 +1344,7 @@ impl Actor {
         let cid = share::video_cid(slot);
         let first = !self.published.contains_key(cid) && !self.pending.contains_key(cid);
         let vout = self.vout[slot].get_or_insert_with(|| share::VideoOut::new_slot(slot)).clone();
+        vout.set_fec_sink(fec_sink(self.fec_dc.clone(), self.me.identity.clone(), slot));
         // o codec de cada tela é decidido na 1ª publicação da chamada (a faixa fica publicada entre uma transmissão e outra); depois dela, segue o mesmo
         if first { let want = if cfg.codec.available() { cfg.codec } else { crate::codec::Codec::H264 }; let _ = vout.set_codec(want); }
         let (amode, label, h) = (cfg.audio.clone(), cfg.label.clone(), cfg.height as u32);
@@ -1437,6 +1474,32 @@ fn rtx_gap_ms(rtt_ms: f32, high_loss: bool) -> u64 {
 fn track_name(label: &str, slot: usize) -> String {
     let base = if label.is_empty() { "tela" } else { label };
     if slot == 1 { format!("{}{}", share::SLOT2_NAME, base) } else { base.to_string() }
+}
+
+/// Tópico dos pacotes de dados que levam a paridade do FEC (ver `fec.rs`). Versões antigas só olham o tópico "briks" e ignoram este.
+const FEC_TOPIC: &str = "briks-fec";
+/// 1º byte de um pacote do tópico do FEC que não é paridade e sim o aviso "estou perdendo pacotes da sua tela" (2º byte = slot).
+/// Paridades começam pelo slot (0 ou 1).
+const FEC_WANT: u8 = 0xFF;
+
+/// Destino das paridades no SFU: um DataPacket "lossy" (sem retransmissão) por paridade, com o slot da tela no 1º byte. O servidor
+/// repassa a todos da sala; quem não está assistindo descarta. Com o canal fechado ou travado (mais de 64 envios pendentes) a paridade
+/// é descartada: ela é um extra, nunca pode segurar o vídeo.
+#[allow(deprecated)]
+fn fec_sink(dc: Arc<Mutex<Option<Arc<webrtc::data_channel::RTCDataChannel>>>>, identity: String, slot: usize) -> share::FecSink {
+    let inflight = Arc::new(AtomicU64::new(0));
+    Arc::new(move |par: Vec<u8>| {
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+        let Some(dc) = dc.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
+        if dc.ready_state() != RTCDataChannelState::Open || inflight.load(Ordering::Relaxed) > 64 { return; }
+        let mut payload = Vec::with_capacity(par.len() + 1);
+        payload.push(slot as u8); payload.extend_from_slice(&par);
+        let pkt = lk::DataPacket { kind: lk::data_packet::Kind::Lossy as i32, participant_identity: identity.clone(),
+            value: Some(lk::data_packet::Value::User(lk::UserPacket { payload, topic: Some(FEC_TOPIC.into()), ..Default::default() })), ..Default::default() };
+        let (b, inflight) = (bytes::Bytes::from(pkt.encode_to_vec()), inflight.clone());
+        inflight.fetch_add(1, Ordering::Relaxed);
+        tokio::spawn(async move { let _ = dc.send(&b).await; inflight.fetch_sub(1, Ordering::Relaxed); });
+    })
 }
 
 /// Lê o RTCP que o SFU manda ao publisher de vídeo: PLI/FIR (quadro-chave), NACK (retransmissão pelo pacer) e Receiver Reports

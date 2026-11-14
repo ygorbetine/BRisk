@@ -204,6 +204,7 @@ struct Peer {
     asender: bool,   // faixa de áudio da transmissão já ligada a este peer
     reneg_pending: bool,   // pediram (ou preciso de) uma nova offer, mas havia uma em andamento: sai quando a resposta chegar
     recv_v2: bool,         // vaga de recepção extra para a 2ª tela deste peer
+    fec_dc: Option<Arc<RTCDataChannel>>,   // canal sem retransmissão por onde vão as paridades do FEC para este peer (só se ele anunciou suporte)
     recv_slots: bool,      // já criei as vagas de recepção (áudio + vídeo) para a transmissão deste peer
     recv: [Arc<RecvState>; 2],   // recepção por slot
     recv_cam: Arc<RecvState>,   // vídeo da câmera DESTE peer (a transmissão de tela dele é `recv`)
@@ -301,6 +302,8 @@ struct Actor {
     cam_gen: u64,
     cam_vout: Option<share::VideoOut>,
     vcodecs: Vec<&'static str>,   // codecs de vídeo que este nó decodifica e anuncia no peer.state
+    /// canais de FEC abertos com os peers (ver `open_fec`); a saída de vídeo manda cada paridade por todos
+    fec_dcs: Arc<std::sync::Mutex<Vec<Arc<RTCDataChannel>>>>,
     cam_net: Arc<std::sync::Mutex<crate::adapt::NetShared>>,   // perda/RTT por espectador da CÂMERA: não mistura com a da transmissão de tela
     cam_idr: Arc<std::sync::atomic::AtomicBool>,
     cam_tx: mpsc::Sender<Value>,
@@ -320,7 +323,7 @@ impl Actor {
         let sons = crate::sonsnet::Net::new(&identity.fingerprint(), &room_hash, crate::sons::store_for(&identity.fingerprint()));
         let (sev_tx, sev_rx) = mpsc::channel::<Value>(256);
         let (cam_tx, cam_rx) = mpsc::channel::<Value>(256);
-        Actor { vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), viewers: [HashSet::new(), HashSet::new()], peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), sons, incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
+        Actor { fec_dcs: Arc::new(std::sync::Mutex::new(vec![])), vcodecs: crate::codec::local_caps(), cfg, identity, rt, ev, room_hash, validator, present: HashSet::new(), viewers: [HashSet::new(), HashSet::new()], peers: HashMap::new(), itx, irx: Some(irx), next_gen: 1, outbox: HashMap::new(), sent_notified: HashSet::new(), dm_off: HashSet::new(), watch_intent: HashMap::new(), remote_live: HashSet::new(), cam_live: HashSet::new(), seen_msgs: HashSet::new(), sons, incoming: HashMap::new(), outgoing: HashMap::new(), pending: HashMap::new(), recv_dir: recv_dir(), ev_last_ts: 0, seen_events: HashSet::new(), audio, audio_rx, joined: HashMap::new(), banned: HashSet::new(), profile: (String::new(), String::new()), media: None, sfu_id: String::new(), dead: false, blocked: HashSet::new(), share: [None, None], share_gens: [0, 0], share_gen: 0, net: Default::default(), idr: [Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(std::sync::atomic::AtomicBool::new(true))], vtrack: [None, None], cam: None, cam_gen: 0, cam_vout: None, cam_net: Default::default(), cam_idr: Arc::new(std::sync::atomic::AtomicBool::new(true)), cam_tx, cam_rx: Some(cam_rx), cam_watch: HashMap::new(), atrack: None, sev_tx, sev_rx: Some(sev_rx), seen_groups: HashSet::new(), hist: crate::history::Store::open(hist_dir()), hist_reqs: HashMap::new() }
     }
 
     async fn run(&mut self, mut rt_events: mpsc::Receiver<RtEvent>, mut cmds: mpsc::Receiver<MeshCmd>) {
@@ -471,7 +474,7 @@ impl Actor {
         let recv_cam = Arc::new(RecvState::default());
         let pc = self.new_pc(peer_id, gen, recv.clone(), recv_cam.clone()).await?;
         let polite = !is_initiator(&self.cfg.local_peer, peer_id);
-        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: [None, None], recv_v2: false, csender: None, asender: false, reneg_pending: false, recv_slots: false, recv, recv_cam, vcodecs: vec!["h264".into()], caps_known: false });
+        self.peers.insert(peer_id.into(), Peer { pc, gen, polite, making_offer: false, ignore_offer: false, pending_ice: vec![], dc: None, fp: None, jwk: None, my_nonce: String::new(), proven: false, sent_proof: false, name: String::new(), vsender: [None, None], recv_v2: false, fec_dc: None, csender: None, asender: false, reneg_pending: false, recv_slots: false, recv, recv_cam, vcodecs: vec!["h264".into()], caps_known: false });
         Ok(())
     }
 
@@ -804,6 +807,7 @@ impl Actor {
         self.share_stop(slot).await;
         if slot == 1 { cfg.audio = crate::procaudio::AudioMode::None; }   // o áudio da transmissão é um só, no slot 0
         let vout = self.vtrack[slot].get_or_insert_with(|| share::VideoOut::new_slot(slot)).clone();
+        vout.set_fec_sink(fec_sink(self.fec_dcs.clone(), slot));
         // Codec: o pedido, se este binário o tem e TODOS os peers o decodificam; senão H264 (padrão e reserva). A faixa troca de codec sem
         // renegociar (`replace_track`); se algum peer recusar a troca, volta tudo para H264.
         let mut want = if cfg.codec.available() && self.authed_ids().iter().all(|id| self.peer_decodes(id, cfg.codec)) { cfg.codec } else { crate::codec::Codec::H264 };
@@ -1234,7 +1238,7 @@ impl Actor {
 
     async fn send_state(&self, peer: &str) {
         let (mic, deaf) = self.audio.as_ref().map(|a| (a.mic_open(), a.deaf())).or(self.media).unwrap_or((true, false));
-        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id, "vcodecs": self.vcodecs })).await;
+        self.dc_send(peer, json!({ "version": 2, "type": "peer.state", "microphone": mic, "deafened": deaf, "status": self.profile.0, "presence": self.profile.1, "sfuId": self.sfu_id, "vcodecs": self.vcodecs, "fec": 1 })).await;
     }
 
     /// Pede ao peer recém-autenticado as mensagens desta DM que eu ainda não tenho (informa os ids que já tenho).
@@ -1325,6 +1329,17 @@ impl Actor {
             }
             Internal::DcAttach { peer, gen, dc } => {
                 if !self.gen_ok(&peer, gen) { return; }
+                // canal do FEC aberto pelo outro lado: cada mensagem é uma paridade da transmissão dele (1º byte = slot da tela)
+                if dc.label() == FEC_LABEL {
+                    if let Some(p) = self.peers.get(&peer) {
+                        let recv = p.recv.clone();
+                        dc.on_message(Box::new(move |m: DataChannelMessage| {
+                            if m.data.len() <= 1600 { if let Some((slot, par)) = m.data.split_first() { recv[(*slot as usize).min(1)].push_fec(par.to_vec()); } }
+                            Box::pin(async {})
+                        }));
+                    }
+                    return;
+                }
                 self.wire_dc(&peer, gen, &dc);
                 if let Some(p) = self.peers.get_mut(&peer) { p.dc = Some(dc); }
             }
@@ -1334,6 +1349,19 @@ impl Actor {
     }
 
     fn gen_ok(&self, peer: &str, gen: u32) -> bool { self.peers.get(peer).map(|p| p.gen == gen).unwrap_or(false) }
+
+    /// FEC (ver `fec.rs`): com um peer que anunciou suporte no peer.state, abre o canal de dados sem retransmissão por onde vão as
+    /// paridades da nossa transmissão. Só com quem anunciou: uma versão antiga trata QUALQUER canal novo como o do chat.
+    async fn open_fec(&mut self, peer: &str) {
+        let pc = match self.peers.get(peer) { Some(p) if p.fec_dc.is_none() => p.pc.clone(), _ => return };
+        let init = webrtc::data_channel::data_channel_init::RTCDataChannelInit { ordered: Some(false), max_retransmits: Some(0), ..Default::default() };
+        let Ok(dc) = pc.create_data_channel(FEC_LABEL, Some(init)).await else { return };
+        if let Some(p) = self.peers.get_mut(peer) { p.fec_dc = Some(dc.clone()); }
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+        let mut l = self.fec_dcs.lock().unwrap_or_else(|e| e.into_inner());
+        l.retain(|d| !matches!(d.ready_state(), RTCDataChannelState::Closed | RTCDataChannelState::Closing));   // canais de quem já saiu
+        l.push(dc);
+    }
 
     async fn dc_send(&self, peer: &str, v: Value) {
         if let Some(dc) = self.peers.get(peer).and_then(|p| p.dc.clone()) { let _ = dc.send_text(v.to_string()).await; }
@@ -1490,6 +1518,7 @@ impl Actor {
                 let caps: Vec<String> = v["vcodecs"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|x| ["h264", "vp8", "vp9"].contains(x)).map(String::from).collect()).filter(|a: &Vec<String>| !a.is_empty()).unwrap_or_else(|| vec!["h264".into()]);
                 let changed = self.peers.get(peer).map(|p| !p.caps_known || p.vcodecs != caps).unwrap_or(false);
                 if let Some(p) = self.peers.get_mut(peer) { p.vcodecs = caps; p.caps_known = true; }
+                if v["fec"].as_u64() == Some(1) { self.open_fec(peer).await; }
                 if changed {
                     for s in 0..2 {
                         if self.share[s].is_none() { continue; }
@@ -1670,6 +1699,23 @@ pub(crate) fn recv_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("BRIKS_RECV_DIR") { return d.into(); }
     let base = std::env::var("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
     base.join("Briks-CUI").join("recebidos")
+}
+
+/// Nome do canal de dados do FEC na malha.
+const FEC_LABEL: &str = "briks.fec";
+
+/// Destino das paridades na malha: cada uma vai, com o slot da tela no 1º byte, por todos os canais de FEC abertos. A paridade é
+/// um extra: canal fechado = descartada.
+fn fec_sink(dcs: Arc<std::sync::Mutex<Vec<Arc<RTCDataChannel>>>>, slot: usize) -> share::FecSink {
+    Arc::new(move |par: Vec<u8>| {
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+        let open: Vec<Arc<RTCDataChannel>> = dcs.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|d| d.ready_state() == RTCDataChannelState::Open).cloned().collect();
+        if open.is_empty() { return; }
+        let mut b = Vec::with_capacity(par.len() + 1);
+        b.push(slot as u8); b.extend_from_slice(&par);
+        let b = bytes::Bytes::from(b);
+        for dc in open { let b = b.clone(); tokio::spawn(async move { let _ = dc.send(&b).await; }); }
+    })
 }
 
 fn caps() -> Value { json!({ "protocol": 2, "client": "native-0.1", "capabilities": [] }) }

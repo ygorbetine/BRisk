@@ -154,6 +154,12 @@ fn ws_url(base: &str, token: &str) -> String {
     format!("{b}/rtc?access_token={token}&protocol={PROTOCOL}&auto_subscribe=0&sdk=rust&version=briks-0.1&adaptive_stream=0")
 }
 
+/// Realimentação RTCP anunciada para o vídeo que publicamos (REMB, FIR, NACK, PLI, TWCC). Uma lista só, usada no registro dos codecs
+/// e na preferência de codec de cada faixa.
+fn publish_video_feedback() -> Vec<webrtc::rtp_transceiver::RTCPFeedback> {
+    [("goog-remb", ""), ("ccm", "fir"), ("nack", ""), ("nack", "pli"), ("transport-cc", "")].iter().map(|(t, p)| webrtc::rtp_transceiver::RTCPFeedback { typ: (*t).into(), parameter: (*p).into() }).collect()
+}
+
 /// `publish` = PeerConnection de ENVIO: só Opus e H264 (o nosso codificador). Com todos os codecs padrão a offer lista VP8 primeiro e o
 /// LiveKit registra a faixa como VP8, mesmo com a mídia H264 (visto no teste real: mime_type "video/VP8" e ninguém recebia o vídeo).
 async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConnection>> {
@@ -808,7 +814,10 @@ impl Actor {
                 if p.video {   // a m-line desta faixa só oferece o codec dela (H264, VP9 ou VP8)
                     for t in pc.get_transceivers().await {
                         if Arc::ptr_eq(&t.sender().await, &sender) {
-                            let cap = webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability { mime_type: p.codec.mime().into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: share::video_fmtp(p.codec).into(), rtcp_feedback: vec![] };
+                            // A lista de realimentação tem de vir junto: a preferência SUBSTITUI os codecs da m-line como estão aqui. Com ela vazia
+                            // (da 1.5.7 em diante) a offer saía sem `a=rtcp-fb ... nack` e o LiveKit parava de pedir retransmissão ao emissor:
+                            // com perda no envio só chegavam PLI e relatórios, nenhum NACK, e a transmissão morria (0 qps a 3% de perda, medido).
+                            let cap = webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability { mime_type: p.codec.mime().into(), clock_rate: 90_000, channels: 0, sdp_fmtp_line: share::video_fmtp(p.codec).into(), rtcp_feedback: publish_video_feedback() };
                             let pt = match p.codec { crate::codec::Codec::H264 => 102, crate::codec::Codec::Vp9 => 98, crate::codec::Codec::Vp8 => 96 };
                             if let Err(e) = t.set_codec_preferences(vec![webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters { capability: cap, payload_type: pt, ..Default::default() }]).await { self.emit(MeshEvent::Error(format!("codec da faixa {}: {e}", r.cid))).await; }
                             break;

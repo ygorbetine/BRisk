@@ -194,8 +194,12 @@ async fn sfu_fec_under_random_loss() {
     let Some(_srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
     soft_codecs();
     let mut csv = String::from("lado,fec,perda_pct,qps_recebido,lat_p50_ms,lat_p95_ms,maior_intervalo_ms,congelamentos_250ms,plis,quadros_perdidos_rx,paridades_enviadas,paridades_recebidas,pacotes_refeitos\n");
+    let only = std::env::var("BRIKS_SFUREDE_LADO").ok();   // "a" ou "b": mede só um lado
+    let only_fec = std::env::var("BRIKS_SFUREDE_FEC").ok();   // "0" ou "1": mede só com o FEC desligado ou ligado
     for (side, label) in [("a", "envio"), ("b", "recepcao")] {
+        if only.as_deref().map(|o| o != side).unwrap_or(false) { continue; }
         for fec in ["0", "1"] {
+            if only_fec.as_deref().map(|o| o != fec).unwrap_or(false) { continue; }
             std::env::set_var("BRIKS_FEC", fec);
             let mut x = open(&format!("g{side}{fec}"), side, 720, 3000, false).await;
             let _ = x.s.sample(8000).await;

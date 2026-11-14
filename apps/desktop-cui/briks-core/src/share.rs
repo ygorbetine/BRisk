@@ -777,6 +777,8 @@ pub struct JitterBuf {
     /// o próximo quadro-chave entregue vem depois de uma descontinuidade: quem decodifica deve recomeçar do zero
     pub fresh: bool,
     pub recovered: u64,   // buracos fechados por retransmissão dentro do prazo
+    /// timestamp RTP (90 kHz) de cada unidade devolvida pelo último `pop`, na mesma ordem (para a reprodução suavizada, ver `Playout`)
+    pub out_ts: Vec<u32>,
     codec: Codec,
 }
 const WAIT: Duration = Duration::from_millis(400);
@@ -786,7 +788,7 @@ const WAIT_KEY: Duration = Duration::from_millis(1500);
 
 impl JitterBuf {
     pub fn new() -> Self { Self::with_codec(Codec::H264) }
-    pub fn with_codec(codec: Codec) -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, fresh: false, recovered: 0, codec } }
+    pub fn with_codec(codec: Codec) -> Self { JitterBuf { pkts: Default::default(), next: None, hi: 0, gap_since: None, need_key: true, lost_frames: 0, fresh: false, recovered: 0, out_ts: vec![], codec } }
     fn pkt_key_start(&self, p: &Bytes) -> bool { if self.codec == Codec::H264 { key_start(p) } else { crate::codec::rtp_start(self.codec, p).1 } }
     fn pkt_frame_start(&self, p: &Bytes) -> bool { if self.codec == Codec::H264 { frame_start(p) } else { crate::codec::rtp_start(self.codec, p).0 } }
     fn ext(&mut self, seq: u16) -> u64 {
@@ -805,6 +807,7 @@ impl JitterBuf {
     /// Unidades de acesso prontas (Annex-B). O bool diz se é preciso pedir um quadro-chave.
     pub fn pop(&mut self, now: Instant) -> (Vec<Vec<u8>>, bool) {
         let (mut out, mut want_pli) = (vec![], false);
+        self.out_ts.clear();
         loop {
             // Esperando quadro-chave: nada antes dele serve. Salta para o quadro-chave mais recente do buffer; se não há nenhum,
             // joga tudo fora. Sem isso, depois de uma rajada de perda o buffer gastaria um prazo inteiro em cada quadro velho e
@@ -863,7 +866,7 @@ impl JitterBuf {
                 if self.need_key && !key { continue; }   // sem referência: espera o quadro-chave
                 if self.need_key && self.lost_frames > 0 { self.fresh = true; }
                 self.need_key = false;
-                out.push(au);
+                out.push(au); self.out_ts.push(ts);
             } else {
                 if self.pkts.is_empty() { break; }
                 let since = match self.gap_since { Some((q, t)) if q == next => t, _ => { self.gap_since = Some((next, now)); now } };
@@ -923,6 +926,69 @@ impl DecodeFeed {
 }
 impl Default for DecodeFeed { fn default() -> Self { Self::new() } }
 
+/// Reprodução suavizada de quem assiste. Os quadros chegam em intervalos irregulares (variação da rede, rajada depois de uma
+/// retransmissão) e eram mostrados assim que ficavam completos: travada seguida de acelerada. Aqui cada quadro tem a sua hora, tirada
+/// do timestamp RTP do emissor (o ritmo em que ele foi capturado) mais um atraso que cobre a variação de chegada dos últimos 3 s (com
+/// 10 ms de folga), limitado a `max`. O atraso sobe na hora em que a variação aparece e desce devagar (30 ms por segundo). Um quadro
+/// que chega mais atrasado que o limite sai na hora, como antes. `max` = 0 desliga (cada quadro sai ao chegar).
+pub struct Playout {
+    q: std::collections::VecDeque<(Instant, Vec<u8>)>,
+    /// (timestamp RTP, instante de chegada) de referência
+    base: Option<(u32, Instant)>,
+    /// (chegada, atraso de chegada sobre o ritmo do emissor, em s) dos últimos 3 s
+    hist: std::collections::VecDeque<(Instant, f64)>,
+    delay: f64,
+    touched: Option<Instant>,
+    last_due: Option<Instant>,
+    max: f64,
+}
+impl Playout {
+    /// Limite padrão do atraso. O áudio da transmissão não é atrasado junto, então cada ms aqui é ms de imagem atrás do som:
+    /// 100 ms é o que ainda passa sem parecer dublagem fora de sincronia. `BRIKS_PLAYOUT_MAX_MS` muda (0 desliga).
+    pub const MAX_MS: u64 = 100;
+    pub fn new() -> Self { Self::with_max(Duration::from_millis(std::env::var("BRIKS_PLAYOUT_MAX_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(Self::MAX_MS))) }
+    pub fn with_max(max: Duration) -> Self { Playout { q: Default::default(), base: None, hist: Default::default(), delay: 0.0, touched: None, last_due: None, max: max.as_secs_f64() } }
+    /// Descontinuidade (voltou a assistir, troca de codec, perda sem conserto): o que esperava é do fluxo antigo.
+    pub fn reset(&mut self) { self.q.clear(); self.base = None; self.hist.clear(); self.delay = 0.0; self.touched = None; self.last_due = None; }
+    /// Atraso em uso agora (ms), para a telemetria.
+    pub fn delay_ms(&self) -> f64 { self.delay * 1000.0 }
+    pub fn push(&mut self, au: Vec<u8>, ts: u32, now: Instant) {
+        if self.max <= 0.0 { self.q.push_back((now, au)); return; }
+        let (mut bts, mut bt) = *self.base.get_or_insert((ts, now));
+        let mut dt = ts.wrapping_sub(bts) as i32 as f64 / 90_000.0;
+        let mut d = now.saturating_duration_since(bt).as_secs_f64() - dt;
+        if d.abs() > 1.0 {
+            // salto de timestamp ou pausa do emissor (o relógio RTP dele anda no máximo 1 s por quadro): recomeça a referência daqui
+            (bt, dt, d) = (now, 0.0, 0.0); self.base = Some((ts, now)); self.hist.clear();
+        } else if dt > 1800.0 {
+            // referência velha: traz para perto, mantendo o mesmo mapeamento (a diferença de timestamp não pode dar a volta)
+            bt += Duration::from_secs_f64(dt); bts = ts; dt = 0.0; self.base = Some((bts, bt));
+        }
+        self.hist.push_back((now, d));
+        while self.hist.front().map(|h| now.saturating_duration_since(h.0) > Duration::from_secs(3)).unwrap_or(false) { self.hist.pop_front(); }
+        let (dmin, dmax) = self.hist.iter().fold((f64::MAX, f64::MIN), |a, h| (a.0.min(h.1), a.1.max(h.1)));
+        let target = (dmax - dmin + 0.010).min(self.max);
+        let since = self.touched.map(|t| now.saturating_duration_since(t).as_secs_f64()).unwrap_or(0.0);
+        self.touched = Some(now);
+        self.delay = if target >= self.delay { target } else { target.max(self.delay - 0.030 * since) };
+        let off = (dt + dmin + self.delay).max(0.0);
+        let mut due = (bt + Duration::from_secs_f64(off)).max(now);
+        if let Some(l) = self.last_due { due = due.max(l); }   // nunca fora de ordem
+        self.last_due = Some(due);
+        self.q.push_back((due, au));
+    }
+    /// Quadros cuja hora chegou, em ordem.
+    pub fn pop_due(&mut self, now: Instant) -> Vec<Vec<u8>> {
+        let mut out = vec![];
+        while self.q.front().map(|f| f.0 <= now).unwrap_or(false) { if let Some((_, au)) = self.q.pop_front() { out.push(au); } }
+        out
+    }
+    /// Hora do próximo quadro em espera.
+    pub fn next_due(&self) -> Option<Instant> { self.q.front().map(|f| f.0) }
+    pub fn waiting(&self) -> usize { self.q.len() }
+}
+impl Default for Playout { fn default() -> Self { Self::new() } }
+
 /// Lê o RTP da faixa de vídeo do peer. Só decodifica enquanto `watching`; sem espectador descarta os pacotes (custo ~zero).
 /// `pli` pede um quadro-chave ao emissor (início, perda sem conserto, erro de decodificação).
 /// Tabela payload type → codec negociada com o par (para o receptor reconhecer a troca de codec feita pelo emissor com `replace_track`).
@@ -973,6 +1039,9 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     });
     let mut jb = JitterBuf::with_codec(rx_codec);
     let mut feed = DecodeFeed::new();
+    // suavização só na transmissão de tela: na câmera (conversa) o atraso extra atrapalharia mais do que o ritmo irregular
+    let mut play = if evp == "share" { Playout::new() } else { Playout::with_max(Duration::ZERO) };
+    let mut fine: Option<FineTimer> = None;   // esperas de 1 ms enquanto assiste (sem isso o Windows arredonda cada espera para ~15 ms)
     let to_dec = |m: Option<(Codec, Vec<u8>)>| dtx.try_send(m).map_err(|e| match e { std::sync::mpsc::TrySendError::Full(m) | std::sync::mpsc::TrySendError::Disconnected(m) => m });
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
@@ -984,33 +1053,38 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
         // acorda a cada 50 ms mesmo sem pacotes, para o prazo do buraco valer
-        let pkt = match tokio::time::timeout(Duration::from_millis(50), track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
+        // (ou antes, na hora do próximo quadro da reprodução suavizada)
+        let nap = play.next_due().map(|d| d.saturating_duration_since(Instant::now()).max(Duration::from_millis(1))).unwrap_or(Duration::from_millis(50)).min(Duration::from_millis(50));
+        let pkt = match tokio::time::timeout(nap, track.read_rtp()).await { Ok(Ok((p, _))) => Some(p), Ok(Err(_)) => break, Err(_) => None };
         let w = st.watching.load(Ordering::Relaxed);
-        if !w { was = false; stalled = false; last_pkt = Instant::now(); continue; }
+        if !w { was = false; stalled = false; last_pkt = Instant::now(); fine = None; continue; }
+        if fine.is_none() && evp == "share" { fine = Some(FineTimer::acquire()); }
         if pkt.is_some() { last_pkt = Instant::now(); if stalled { stalled = false; let (pid, slot) = split_key(&peer); let _ = ev.try_send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "resumed" })); } }
         else if !stalled && last_pkt.elapsed() > STALL_AFTER { stalled = true; let (pid, slot) = split_key(&peer); let _ = ev.try_send(json!({ "ev": ev_remote, "peer_id": pid, "slot": slot, "state": "stalled" })); }
         let ep = st.epoch.load(Ordering::Relaxed);
         if !was || ep != my_epoch {
             was = true; my_epoch = ep; jb = JitterBuf::with_codec(rx_codec);
             st.frames.store(0, Ordering::Relaxed); frames0 = 0; log_frames0 = 0; last_frame = Instant::now();
-            feed.reset();
+            feed.reset(); play.reset();
             ask(&mut last_pli, &mut plis, Duration::ZERO);
         }
         if let Some(p) = pkt {
             // troca de codec no meio da transmissão (o emissor fez replace_track): outro payload type = outro empacotamento
             if let Some(c) = pts.iter().find(|(pt, _)| *pt == p.header.payload_type).map(|(_, c)| *c) {
-                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); feed.reset(); ask(&mut last_pli, &mut plis, Duration::ZERO); }
+                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); feed.reset(); play.reset(); ask(&mut last_pli, &mut plis, Duration::ZERO); }
             }
             rx_bytes += p.payload.len() as u64;
             jb.push(p);
         }
-        let (aus, want) = jb.pop(Instant::now());
-        if std::mem::take(&mut jb.fresh) { feed.reset(); }   // descontinuidade: decodificador novo para o quadro-chave
-        for au in aus {
+        let now = Instant::now();
+        let (aus, want) = jb.pop(now);
+        if std::mem::take(&mut jb.fresh) { play.reset(); feed.reset(); }   // descontinuidade: decodificador novo para o quadro-chave
+        // cada quadro completo ganha a sua hora de saída (ver `Playout`); o que já venceu segue para o decodificador
+        for (au, ts) in aus.into_iter().zip(jb.out_ts.iter().copied()) { play.push(au, ts, now); last_frame = now; }
+        for au in play.pop_due(now) {
             let key = if rx_codec == Codec::H264 { crate::mfenc::nals(&au).iter().any(|n| n.0 == 5) } else { crate::codec::is_key_frame(rx_codec, &au) };
             // decodificador para trás: nada de pular um quadro no meio da cadeia (ver `DecodeFeed`); descarta até o quadro-chave pedido
             if feed.push(rx_codec, au, key) { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }
-            last_frame = Instant::now();
         }
         feed.drain(to_dec);
         if feed.skipping() { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }   // o pedido pode ter se perdido: repete até o quadro-chave chegar
@@ -1029,8 +1103,8 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
                 if RXLOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
                     let (fed, ns) = (st.fed.load(Ordering::Relaxed), st.dec_ns.swap(0, Ordering::Relaxed));
                     let name = st.dec_name.lock().map(|n| n.clone()).unwrap_or_default();
-                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, descartados por atraso do decodificador {}, tempo medio de decodificar {:.1} ms (unidades {fed})",
-                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed), feed.dropped,
+                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, descartados por atraso do decodificador {}, suavizacao {:.0} ms, tempo medio de decodificar {:.1} ms (unidades {fed})",
+                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed), feed.dropped, play.delay_ms(),
                         // o tempo acumula desde a última linha (~5 s): divide pelos quadros do MESMO período. Antes dividia pelos quadros de
                         // 1 s só, e o log mostrava ~5x o tempo real ("27 ms" eram ~5,5 ms).
                         { let n5 = f.saturating_sub(log_frames0); log_frames0 = f; if n5 > 0 { ns as f64 / n5 as f64 / 1e6 } else { 0.0 } }));
@@ -1124,6 +1198,53 @@ mod jb_tests {
         let mut caps = vec![];
         for _ in 0..40 { if let Some(q) = g.note(90e6, 3e6, false) { caps.push(q); } }
         assert_eq!(caps, vec![34, 40, 51]);
+    }
+
+    /// Reprodução suavizada: quadros que chegam aos trancos saem no ritmo do emissor, com atraso limitado.
+    #[test]
+    fn playout_turns_bursty_arrivals_into_the_senders_rhythm() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = Playout::with_max(ms(100));
+        // emissor a 30 qps (3000 ticks de 90 kHz por quadro); os quadros ímpares chegam 30 ms atrasados (intervalos de 63 e 3 ms)
+        let mut out: Vec<(usize, Duration)> = vec![];
+        let mut clock = t0;
+        for i in 0..90usize {
+            let arrive = t0 + Duration::from_micros(33_333 * i as u64) + if i % 2 == 1 { ms(30) } else { ms(0) };
+            while clock < arrive { for au in p.pop_due(clock) { out.push((au[0] as usize, clock - t0)); } clock += ms(1); }
+            p.push(vec![i as u8], 3000 * i as u32, arrive);
+        }
+        while p.waiting() > 0 { for au in p.pop_due(clock) { out.push((au[0] as usize, clock - t0)); } clock += ms(1); }
+        assert_eq!(out.iter().map(|o| o.0).collect::<Vec<_>>(), (0..90).collect::<Vec<_>>(), "todos, em ordem");
+        // depois de aprender a variação (1º segundo), o intervalo entre saídas fica em ~33 ms
+        let gaps: Vec<i64> = out.windows(2).skip(30).map(|w| (w[1].1.as_millis() as i64) - (w[0].1.as_millis() as i64)).collect();
+        assert!(gaps.iter().all(|g| (g - 33).abs() <= 3), "intervalos de saída: {gaps:?}");
+        assert!(p.delay_ms() >= 30.0 && p.delay_ms() <= 60.0, "atraso cobre a variação (30 ms) com folga: {:.0} ms", p.delay_ms());
+    }
+
+    /// O atraso nunca passa do limite, a ordem nunca se inverte, `max` = 0 desliga e uma pausa longa do emissor recomeça a referência.
+    #[test]
+    fn playout_is_bounded_ordered_and_can_be_turned_off() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = Playout::with_max(ms(100));
+        for i in 0..10u32 { p.push(vec![i as u8], 3000 * i, t0 + ms(33 * i as u64)); }
+        // buraco de 400 ms (retransmissão) e depois a rajada dos 12 quadros que esperavam atrás dele
+        let burst = t0 + ms(33 * 9 + 400);
+        for i in 10..22u32 { p.push(vec![i as u8], 3000 * i, burst); }
+        assert!(p.delay_ms() <= 100.0 + 1e-6);
+        let (mut got, mut clock, mut last) = (vec![], t0, None);
+        while p.waiting() > 0 { for au in p.pop_due(clock) { got.push(au[0]); last = Some(clock); } clock += ms(1); }
+        assert_eq!(got, (0..22).collect::<Vec<u8>>());
+        // o atraso é limitado: o último quadro da rajada sai no máximo 100 ms depois dela (antes do limite existir, sairia 11 quadros depois)
+        let tail = last.unwrap() - burst;
+        assert!(tail <= ms(110), "cauda da rajada: {tail:?}");
+        let mut off = Playout::with_max(Duration::ZERO);
+        off.push(vec![1], 0, t0); off.push(vec![2], 90_000, t0);
+        assert_eq!(off.pop_due(t0), vec![vec![1], vec![2]], "desligado: sai ao chegar");
+        let mut p = Playout::with_max(ms(100));
+        p.push(vec![1], 0, t0); p.push(vec![2], 90_000, t0 + ms(5000));
+        assert_eq!(p.pop_due(t0 + ms(5015)).len(), 2, "pausa longa: sai com a folga de 10 ms, sem segurar");
     }
 
     #[test]

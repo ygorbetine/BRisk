@@ -211,8 +211,8 @@ impl Estimator {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Level { pub h: usize, pub fps: u32 }
 
-/// Bitrate mínimo para o nível ficar aceitável (metade do "automático" daquela resolução/FPS).
-pub fn need_bps(l: Level) -> f64 { auto_bitrate(l.h, l.fps) as f64 * 0.5 }
+/// Bitrate abaixo do qual a resolução cai (1.5.22): só 20% do "automático" daquela resolução/FPS. Acima disso o Briks mantém resolução e FPS e só reduz o bitrate.
+pub fn need_bps(l: Level) -> f64 { auto_bitrate(l.h, l.fps) as f64 * 0.2 }
 
 const HEIGHTS: [usize; 7] = [2160, 1440, 1080, 900, 720, 540, 360];
 
@@ -397,6 +397,22 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 1.5.22: com a rede ou a CPU apertadas, o Briks segura resolução e FPS e só baixa o bitrate; a resolução só cai bem no fundo.
+    #[test]
+    fn resolution_stays_and_only_the_bitrate_follows_the_budget() {
+        let top = Level { h: 1080, fps: 60 };
+        let mut c = Controller::new(Content::Detail, 1080, 60, 0);
+        c.decide(auto_bitrate(1080, 60) as f64 * 2.0);
+        for frac in [0.9, 0.6, 0.4, 0.3] {
+            let b = auto_bitrate(1080, 60) as f64 * frac;
+            let d = c.decide(b); let d = if d.level != top { c.decide(b) } else { d };
+            assert_eq!(d.level, top, "{frac}: resolução e FPS ficam");
+            assert!((d.bps as f64 - b).abs() < 2.0, "{frac}: o bitrate acompanha o orçamento: {} x {b}", d.bps);
+        }
+        let mut d = c.decide(auto_bitrate(1080, 60) as f64 * 0.05); for _ in 0..3 { d = c.decide(auto_bitrate(1080, 60) as f64 * 0.05); }
+        assert!(d.level.h < 1080 && d.level.fps == 60, "só com o orçamento muito pequeno a resolução cai: {d:?}");
+    }
 
     #[test]
     fn the_chosen_frame_rate_never_drops_only_the_resolution_does() {

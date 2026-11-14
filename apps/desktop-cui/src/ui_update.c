@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.22", {
+        "Transmissão: resolução e taxa de quadros ficam fixas; quando falta rede ou PC, o Briks reduz só o bitrate (a resolução só cai com banda muito pequena).",
+        "Registro de desempenho (rede.log) também de quem assiste: decodificador, quadros por segundo e tempo de decodificação.",
+        NULL } },
     { "1.5.21", {
         "Overlay: a barra de edição ganhou a caixa Atravessar cliques, a mesma opção das Configurações (fora da edição; no modo de edição o overlay sempre recebe o mouse).",
         NULL } },

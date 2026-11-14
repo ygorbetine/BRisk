@@ -702,6 +702,9 @@ pub struct RecvState {
     pub fed: AtomicU64,
     pub dec_err: AtomicU64,
     pub dec_none: AtomicU64,
+    /// diagnóstico (1.5.22): tempo total gasto decodificando (ns) e qual decodificador está em uso
+    pub dec_ns: AtomicU64,
+    pub dec_name: Mutex<String>,
 }
 
 /// O pacote começa uma NAL? (FU-A só com o bit S; NAL única e STAP-A sempre.)
@@ -866,7 +869,10 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
             if dec.is_some() && c != dec_codec { dec = None; }   // o emissor trocou de codec
             if dec.is_none() { dec = H264Dec::new_codec(c).ok(); dec_codec = c; }
             let Some(d) = dec.as_mut() else { continue };
+            let (t_dec, dname) = (Instant::now(), d.name);
             let r = d.decode(&au);
+            st2.dec_ns.fetch_add(t_dec.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            if st2.fed.load(Ordering::Relaxed) == 0 || st2.dec_name.lock().map(|n| n.is_empty()).unwrap_or(false) { if let Ok(mut n) = st2.dec_name.lock() { *n = format!("{} ({})", dname, dec_codec.name()); } }
             st2.fed.fetch_add(1, Ordering::Relaxed);
             match &r { Err(_) => { st2.dec_err.fetch_add(1, Ordering::Relaxed); st2.want_pli.store(true, Ordering::Relaxed); } Ok(None) => { st2.dec_none.fetch_add(1, Ordering::Relaxed); dry += 1; } _ => { dry = 0; } }
             // rede de segurança: 15 unidades seguidas sem sair quadro = decodificador perdido; recria e pede quadro-chave
@@ -925,6 +931,16 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
             shown_fps = steady_fps(shown_fps, got, win.elapsed().as_secs_f64());
             let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": shown_fps, "frames": got, "kbps": (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
+            {   // diagnóstico de desempenho de quem assiste: uma linha a cada ~5 s no rede.log
+                static RXLOGN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                if RXLOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
+                    let (fed, ns) = (st.fed.load(Ordering::Relaxed), st.dec_ns.swap(0, Ordering::Relaxed));
+                    let name = st.dec_name.lock().map(|n| n.clone()).unwrap_or_default();
+                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, tempo medio de decodificar {:.1} ms (unidades {fed})",
+                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed),
+                        if got > 0 { ns as f64 / got as f64 / 1e6 } else { 0.0 }));
+                }
+            }
             frames0 = f; win = Instant::now(); rx_bytes = 0;
         }
     }

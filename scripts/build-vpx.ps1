@@ -9,7 +9,8 @@ $outDir = "$root\apps\desktop-cui\briks-core\vendor\vpx"
 $lib = "$outDir\libvpx.lib"
 if ((Test-Path $lib) -and -not $Force) { "libvpx.lib já existe ($lib); use -Force para refazer."; return }
 
-$pathAntes = $env:PATH   # o PATH do processo e mexido abaixo (o usr/bin do Git tem um link.exe do Unix que esconde o do MSVC no cargo build seguinte): restaurado no fim
+# O ambiente do processo e mexido abaixo (PATH com o usr/bin do Git, mais as variaveis do vcvars64: com elas o rustc acha que o ambiente MSVC ja esta pronto e usa o link.exe do PATH, que no Git e o do Unix): tudo restaurado no fim
+$envAntes = @{}; Get-ChildItem env: | ForEach-Object { $envAntes[$_.Name] = $_.Value }
 $pins = @{
   "libvpx.tgz" = @{ url = "https://github.com/webmproject/libvpx/archive/refs/tags/v1.14.1.tar.gz"; sha = "901747254d80a7937c933d03bd7c5d41e8e6c883e0665fadcb172542167c7977" }  # idêntico ao chromium.googlesource.com/webm/libvpx v1.14.1 (conferido por diff)
   "nasm.zip"   = @{ url = "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip"; sha = "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6" }  # o nasm.us não publica hash; este é o hash do arquivo auditado
@@ -68,4 +69,5 @@ Set-Location $root
 # O rustc embute a .lib no rlib do env-libvpx-sys e o cargo não vê a troca do arquivo: limpa esse pacote para o próximo build religar.
 cmd /c "cargo clean -p env-libvpx-sys --release --manifest-path `"$root\apps\desktop-cui\briks-core\Cargo.toml`" >nul 2>&1"
 "OK: $lib ($([math]::Round((Get-Item $lib).Length/1MB,1)) MB)"
-$env:PATH = $pathAntes
+foreach ($e in @(Get-ChildItem env:)) { if (-not $envAntes.ContainsKey($e.Name)) { Remove-Item "env:$($e.Name)" -ErrorAction SilentlyContinue } }
+foreach ($n in $envAntes.Keys) { Set-Item "env:$n" $envAntes[$n] }

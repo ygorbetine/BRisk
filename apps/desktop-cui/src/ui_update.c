@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.25", {
+        "Qualidade da transmissão: o painel mostra o codec em uso agora (H.264, VP9 ou VP8) e avisa quando o escolhido só vale na próxima chamada.",
+        "Qualidade da transmissão: removida a opção Nitidez/Fluidez; os quadros por segundo ficam sempre fixos e só a taxa de bits (e, se preciso, a resolução) se adapta.",
+        NULL } },
     { "1.5.24", {
         "Transmissão: corrigida a imagem em blocos com \"fantasmas\" (datamoshing); nenhum quadro some mais no meio da cadeia de decodificação.",
         "Transmissão: com conteúdo pesado, o limite de qualidade do codificador se ajusta sozinho para o bitrate não estourar.",

@@ -1,0 +1,6 @@
+title: Briks
+description: Chamadas de voz e transmissão de tela para jogar e conversar com amigos.
+theme: jekyll-theme-midnight
+exclude:
+  - plans
+  - mockups-modo-call

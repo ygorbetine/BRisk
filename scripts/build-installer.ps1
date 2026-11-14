@@ -65,6 +65,11 @@ if (Test-Path $SupabaseJson) {
     @{ url = $sj.url; anon_key = $k } | ConvertTo-Json | Set-Content "$stage\supabase.json" -Encoding UTF8
     Write-Host "supabase.json incluido (chave publishable)."
 } else { Write-Warning "supabase.json nao encontrado: o instalador sai sem login online." }
+# google-birthday.on: liga a conferencia de idade pela data de nascimento da conta Google (escopo user.birthday.read).
+# So entra no instalador com BRIKS_GOOGLE_BIRTHDAY=1 no ambiente: o escopo so pode ir ao ar DEPOIS de o Google aprovar a verificacao do app;
+# antes disso todo login mostra "app nao verificado". O arquivo e so um marcador.
+if ($env:BRIKS_GOOGLE_BIRTHDAY -eq "1") { Set-Content -Path "$stage\google-birthday.on" -Value "1" -Encoding ASCII; Write-Host "google-birthday.on incluido (conferencia de idade pelo Google LIGADA)." }
+else { Write-Host "google-birthday.on NAO incluido (conferencia de idade pelo Google desligada)." }
 # livekit.json (so URLs publicas: servidor wss:// e funcao de tokens https://) ao lado do Briks.exe; o core le dali quando a pasta de dados nao tem um.
 # Origem, em ordem: BRIKS_LIVEKIT_JSON_SRC (arquivo), BRIKS_LIVEKIT_URL/TOKEN_URL, ou o padrao do Briks (desligue com -SemSfu).
 # NUNCA leva chave/segredo: so as chaves url, token_url e kick_url passam, com esquema validado; qualquer outra chave faz o script recusar.

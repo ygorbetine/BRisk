@@ -1,5 +1,7 @@
 # Privacy policy / Política de privacidade
 
+**Full, current version (PT-BR): https://ygorbetine.github.io/Briks/privacidade**. Briks is for adults (18+) only.
+
 Briks is an open-source (AGPL-3.0) Windows app for screen sharing and voice calls. This page says what the app sends over the network. The source code is public, so every statement here can be checked.
 
 ## What the app does and does not collect

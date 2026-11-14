@@ -271,6 +271,14 @@ pub struct Controller {
     aspect: f64,
     /// teto de bitrate do modo manual (None = automático: o teto é o "automático" do nível em uso)
     pub manual_ceil: Option<f64>,
+    /// segundos seguidos em que a rede pediu um degrau abaixo por pouco (ver `decide`)
+    down_ticks: u32,
+    /// segundos desde a última subida de nível por folga de rede
+    since_up: u32,
+    /// segundos de folga exigidos a mais para subir, depois de um vaivém (0 = sem castigo); `pub` para a telemetria e os testes
+    pub up_penalty: u32,
+    /// segundos desde a última queda por rede (30 s calmos perdoam o castigo)
+    calm: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -278,7 +286,7 @@ pub struct Decision { pub level: Level, pub bps: u32, pub net_limited: bool, pub
 
 impl Controller {
     pub fn new(content: Content, max_h: usize, max_fps: u32, manual_kbps: u32) -> Self {
-        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, cpu_samples: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, bpp_run: 0, floor_driven: false, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None } }
+        Controller { content, ladder: ladder(content, max_h, max_fps), idx: 0, cpu_idx: 0, up_ticks: 0, cpu_bad: 0, cpu_good: 0, cpu_relaxed: false, cpu_samples: 0, overshoot: 1.0, bpp_floor: 0.0, bpp_prev: None, bpp_run: 0, floor_driven: false, aspect: 16.0 / 9.0, manual_ceil: if manual_kbps > 0 { Some(manual_kbps as f64 * 1000.0) } else { None }, down_ticks: 0, since_up: u32::MAX, up_penalty: 0, calm: 0 }
     }
     pub fn why_floor(&self) -> bool { self.floor_driven }
     /// Teto de bitrate do nível de topo (o que o estimador nunca passa).
@@ -351,16 +359,50 @@ impl Controller {
         }
     }
 
-    /// Decide o nível para o orçamento de rede `budget` (bps). Cai na hora; só sobe com 30% de folga por 3 segundos seguidos.
+    /// Uma queda por rede até este tanto de segundos depois de uma subida é vaivém (a rede não sustenta o degrau de cima).
+    pub const FLAP_WINDOW: u32 = 10;
+    /// Castigo do vaivém: segundos de folga exigidos para a próxima subida (dobra a cada repetição, até o máximo).
+    pub const FLAP_MIN: u32 = 6;
+    pub const FLAP_MAX: u32 = 24;
+
+    /// Decide o nível para o orçamento de rede `budget` (bps). Queda grande: na hora. Só sobe com 30% de folga por 3 segundos seguidos.
+    ///
+    /// Histerese (o FPS/resolução enviados não podem ficar pulando a cada segundo):
+    ///   - **Queda rasa espera 2 s.** Se a rede pede só UM degrau abaixo e o orçamento ainda está a menos de 20% do que o nível atual
+    ///     precisa, a queda só vale no 2º segundo seguido. Um segundo de estimativa um pouco baixa (um relatório de RTT ruim, o corte
+    ///     de sondagem do estimador) derrubava 30 → 20 FPS na hora e a volta custava 3 s ou mais. Nesse segundo o bitrate já segue o
+    ///     orçamento (a rede não é sobrecarregada); só o nível espera.
+    ///   - **Vaivém dobra a espera para subir.** Subiu e a rede derrubou de novo em menos de 10 s: o degrau de cima não se sustenta.
+    ///     A próxima subida exige 6 s seguidos de folga, depois 12, até 24; 30 s sem queda por rede perdoam. Sem isso, com a banda
+    ///     na fronteira entre dois degraus, o FPS alternava (30, 20, 30, 20...) a cada poucos segundos.
     pub fn decide(&mut self, budget: f64) -> Decision {
         let net_now = self.net_index(budget);
         let net_up = self.net_index(budget / 1.3);
         // folga grande (2x o que o degrau pede): a queda foi passageira, volta em 1 s em vez de 3
         let ticks_needed = if self.idx > 0 && self.net_index(budget / 2.0) < self.idx { 1 } else { 3 };
         let mut want = self.idx;
-        if net_now > self.idx { want = net_now; self.up_ticks = 0; }
-        else if net_up < self.idx { self.up_ticks += 1; if self.up_ticks >= ticks_needed { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; } }   // até 3 degraus por vez
-        else { self.up_ticks = 0; }
+        self.since_up = self.since_up.saturating_add(1);
+        self.calm = self.calm.saturating_add(1);
+        if self.calm >= 30 { self.up_penalty = 0; }
+        if net_now > self.idx {
+            // a rede sozinha pede a queda? (senão é o piso de bits por pixel do conteúdo, que tem a sua própria memória)
+            let by_net = self.plain_index(budget) > self.idx;
+            let shallow = by_net && net_now == self.idx + 1 && budget >= need_bps(self.ladder[self.idx]) * 0.8;
+            self.down_ticks += 1;
+            if !shallow || self.down_ticks >= 2 {
+                if by_net {
+                    if self.since_up <= Self::FLAP_WINDOW { self.up_penalty = (self.up_penalty * 2).clamp(Self::FLAP_MIN, Self::FLAP_MAX); }
+                    self.calm = 0;
+                }
+                want = net_now; self.down_ticks = 0;
+            }
+            self.up_ticks = 0;
+        }
+        else if net_up < self.idx {
+            self.down_ticks = 0; self.up_ticks += 1;
+            if self.up_ticks >= ticks_needed.max(self.up_penalty) { want = net_up.max(self.idx.saturating_sub(3)); self.up_ticks = 0; self.since_up = 0; }   // até 3 degraus por vez
+        }
+        else { self.up_ticks = 0; self.down_ticks = 0; }
         // a folga local voltou e era ela que segurava o nível: sobe já até onde a rede deixa (sem esperar os 3 s da rede)
         if std::mem::take(&mut self.cpu_relaxed) && want > net_now.max(self.cpu_idx) { want = net_now.max(self.cpu_idx); }
         self.floor_driven = want > net_now.max(self.cpu_idx) || (want == net_now && net_now > 0 && self.plain_index(budget) < net_now);
@@ -652,6 +694,55 @@ mod tests {
                 assert!(!d.cpu_limited, "{name}: alegou PC lento no segundo {i}");
             }
         }
+    }
+
+    /// Um segundo de estimativa um pouco abaixo do que o nível pede não derruba o FPS; dois seguidos derrubam; queda grande é na hora.
+    #[test]
+    fn a_one_second_shallow_dip_does_not_drop_the_fps() {
+        let top = Level { h: 1080, fps: 30 };
+        let need = need_bps(top);
+        let mut c = Controller::new(Content::Detail, 1080, 30, 0);
+        assert_eq!(c.decide(need * 1.5).level, top);
+        let d = c.decide(need * 0.9);
+        assert_eq!(d.level, top, "1 s raso: o nível fica");
+        assert!((d.bps as f64) <= need * 0.9 + 1.0, "mas o bitrate já segue o orçamento: {}", d.bps);
+        assert_eq!(c.decide(need * 1.5).level, top);
+        // dois segundos seguidos: desce um degrau
+        assert_eq!(c.decide(need * 0.9).level, top);
+        assert_eq!(c.decide(need * 0.9).level, Level { h: 1080, fps: 20 }, "2 s rasos seguidos: desce");
+        // queda funda (menos de 80% do que o nível pede, ou mais de um degrau): na hora
+        let mut c = Controller::new(Content::Detail, 1080, 30, 0);
+        c.decide(need * 1.5);
+        assert_ne!(c.decide(need * 0.7).level, top, "queda funda não espera");
+    }
+
+    /// Banda na fronteira entre dois degraus (sobe, a rede derruba, sobe de novo...): cada vaivém dobra a espera para subir, e o FPS
+    /// para de alternar. Antes: uma troca de nível a cada ~2 s para sempre.
+    #[test]
+    fn flapping_between_two_levels_backs_off_instead_of_oscillating() {
+        let (top, low) = (Level { h: 1080, fps: 30 }, Level { h: 1080, fps: 20 });
+        let (hi, lo) = (need_bps(top) * 1.35, need_bps(top) * 0.85);   // folga para subir / falta para o topo (cabe no degrau de baixo)
+        let mut c = Controller::new(Content::Detail, 1080, 30, 0);
+        c.decide(hi);
+        // 120 s: sempre que está no topo falta banda (cai em 2 s); embaixo, há folga para subir
+        let (mut changes, mut late_changes, mut at_low, mut prev) = (0, 0, 0, top);
+        for t in 0..120 {
+            let l = c.decide(if c.idx == 0 { lo } else { hi }).level;
+            assert!(l == top || l == low, "{l:?}");
+            if l != prev { changes += 1; if t >= 60 { late_changes += 1; } prev = l; }
+            if l == low { at_low += 1; }
+        }
+        assert!(changes <= 20, "trocas de nível em 120 s: {changes} (sem o castigo: ~48)");
+        assert!(late_changes <= 6, "depois de 1 min quase não troca mais: {late_changes}");
+        assert!(at_low >= 100, "fica no degrau que a rede sustenta: {at_low} s de 120");
+        assert_eq!(c.up_penalty, Controller::FLAP_MAX);
+        // a rede melhora de verdade: 30 s sem queda perdoam o castigo e a subida volta a levar 3 s
+        for _ in 0..40 { c.decide(hi); }
+        assert_eq!((c.ladder[c.idx], c.up_penalty), (top, 0));
+        // uma queda isolada (sem subida recente) não é vaivém: volta em 3 s como sempre
+        assert_ne!(c.decide(need_bps(top) * 0.5).level, top);
+        assert_eq!(c.up_penalty, 0);
+        let mut n = 0; while c.decide(hi).level != top { n += 1; assert!(n <= 3); }
     }
 
     #[test]

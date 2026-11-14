@@ -69,6 +69,13 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.24", {
+        "Transmissão: corrigida a imagem em blocos com \"fantasmas\" (datamoshing); nenhum quadro some mais no meio da cadeia de decodificação.",
+        "Transmissão: com conteúdo pesado, o limite de qualidade do codificador se ajusta sozinho para o bitrate não estourar.",
+        "Overlay: Atravessar cliques não reativa mais sozinho depois de mover o overlay.",
+        "Menu de volume da transmissão: abre onde você clica com o botão direito e com o tamanho normal.",
+        "Som novo quando alguém começa a transmitir.",
+        NULL } },
     { "1.5.23", {
         "Transmissão: o bitrate não cai a ponto de a imagem virar blocos borrados com \"fantasmas\"; abaixo de um mínimo de qualidade, a resolução cai antes.",
         "Transmissão: quadro-chave a cada 10 s (antes 30 s), para qualquer falha de imagem se corrigir rápido.",

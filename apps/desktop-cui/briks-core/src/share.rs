@@ -464,7 +464,7 @@ impl Default for QpGovernor { fn default() -> Self { Self::new() } }
 /// imagem corrompida no espectador; a causa dela era o receptor pular quadros (ver `DecodeFeed`), não a falta de quadro-chave. Cada
 /// quadro-chave custa caro: em texto parado a 4,5 Mbps a luminância cai de 45 para 35 dB e leva mais de 1 s para voltar (uma piscada a
 /// cada 3 s); em filme a 2 Mbps, −0,6 dB na média e −1,5 dB no pior quadro, com um quadro de 133 KB em vez de 106 (medido).
-pub const KEY_EVERY_S: u32 = 10;
+pub const KEY_EVERY_S: u32 = 5;
 
 /// Inicia o emissor numa thread. `ev` recebe eventos JSON ("share.local"...); `preview` = arquivo de quadro compartilhado da prévia.
 pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt::NetShared>>, cfg: ShareCfg, out: VideoOut, ev: mpsc::Sender<Value>, preview: Option<PathBuf>, dump: Option<PathBuf>) -> Result<Sender, String> {

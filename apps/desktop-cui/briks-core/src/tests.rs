@@ -54,6 +54,53 @@ async fn authed(h: &mut MeshHandle, n: usize, secs: u64) -> bool {
     true
 }
 
+/// Medição (ignorado): quanto demora a malha P2P para fechar com 2, 3 e 4 pessoas, com áudio (como numa chamada). Dois cenários:
+/// todos entram juntos, e o último entra 2 s depois dos outros. Mostra, por nó, o tempo até autenticar todos os outros.
+///   cargo test --release -- --ignored --nocapture --test-threads=1 medicao_tempo_de_conexao_da_malha
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore]
+async fn medicao_tempo_de_conexao_da_malha() {
+    const IDS: [&str; 4] = [PA, PB, PC, "dddddddd-4444-4444-8444-000000000004"];
+    /// tempo (s) até `h` ver `n` peers autenticados, ou None se não fechou em 60 s
+    async fn fechar(mut h: MeshHandle, n: usize, t0: std::time::Instant) -> (Option<f64>, MeshHandle) {
+        let mut got = std::collections::HashSet::new();
+        let end = std::time::Instant::now() + Duration::from_secs(60);
+        while got.len() < n {
+            match timeout(end.saturating_duration_since(std::time::Instant::now()), h.events.recv()).await {
+                Ok(Some(MeshEvent::Peer { peer_id, state })) if state == "autenticado" => { got.insert(peer_id); }
+                Ok(Some(_)) => {}
+                _ => return (None, h),
+            }
+        }
+        (Some(t0.elapsed().as_secs_f64()), h)
+    }
+    for rodada in 1..=3 {
+        for n in [2usize, 3, 4] {
+            for atraso in [false, true] {
+                let port = crate::mock::start(0).await.unwrap();
+                let sala = format!("med-{rodada}-{n}-{atraso}");
+                let t0 = std::time::Instant::now();
+                let mut tarefas = vec![];
+                let mut audios = vec![];
+                for (k, id) in IDS.iter().take(n).enumerate() {
+                    let ultimo = k + 1 == n;
+                    if atraso && ultimo { tokio::time::sleep(Duration::from_secs(2)).await; }
+                    let t_no = if atraso && ultimo { std::time::Instant::now() } else { t0 };
+                    let (h, au) = node_audio(port, id, &format!("N{k}"), &sala, Arc::new(Identity::generate()));
+                    audios.push(au);
+                    tarefas.push(tokio::spawn(fechar(h, n - 1, t_no)));
+                }
+                let mut tempos = vec![];
+                let mut hs = vec![];
+                for t in tarefas { let (r, h) = t.await.unwrap(); tempos.push(r.map(|v| format!("{v:.1}")).unwrap_or("NÃO FECHOU".into())); hs.push(h); }
+                eprintln!("[malha] rodada {rodada}, {n} pessoas, {}: tempo até cada um autenticar todos (s): {}", if atraso { "o último entra 2 s depois (tempo dele contado da entrada)" } else { "todos juntos" }, tempos.join(" / "));
+                for h in hs { let _ = h.cmd.send(MeshCmd::Close).await; }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn owner_kick_removes_target_bans_it_and_blocks_return_with_three_peers() {
     let port = crate::mock::start(0).await.unwrap();

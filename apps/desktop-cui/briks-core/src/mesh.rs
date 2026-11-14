@@ -423,6 +423,15 @@ impl Actor {
         // desiste mais cedo de uma conexão sem resposta (padrão: ~30 s para falhar): a malha refaz o par sozinha (`Reconnect`), então
         // depois de uma queda longa a transmissão volta em ~10 s em vez de ~30 s
         se.set_ice_timeouts(Some(std::time::Duration::from_secs(4)), Some(std::time::Duration::from_secs(8)), Some(std::time::Duration::from_secs(2)));
+        // Espera mínima antes de aceitar um caminho, por tipo de candidato. O padrão do webrtc-rs é 0 (host), 500 ms (srflx), 1 s (prflx) e
+        // 2 s (relay): serve para dar chance a um caminho melhor antes de fechar num pior. Só que o prflx (endereço descoberto pelo próprio
+        // teste de conexão, quando ele chega antes do candidato pela sinalização) é um caminho DIRETO, tão bom quanto o srflx, e esperava
+        // 1 s. Com 3 ou mais pessoas a sinalização fica para trás dos testes e isso virava ~1 s a mais por pessoa (medido em loopback:
+        // 2 pessoas 0,0 s; 3 pessoas 1,1 s; 4 pessoas 2,0 s). srflx e prflx passam a 250 ms; o relay (TURN) continua em 2 s, para não
+        // trocar um caminho direto que ainda ia fechar por um retransmitido. `BRIKS_ICE_WAIT_MS` muda os dois (diagnóstico).
+        let direct_wait = std::time::Duration::from_millis(std::env::var("BRIKS_ICE_WAIT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(250));
+        se.set_srflx_acceptance_min_wait(Some(direct_wait));
+        se.set_prflx_acceptance_min_wait(Some(direct_wait));
         crate::netmode::apply(&mut se);
         let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
         let pc = Arc::new(api.new_peer_connection(self.rtc_config()).await?);
@@ -464,7 +473,21 @@ impl Actor {
         { let (itx, id) = (itx.clone(), id.clone());
           pc.on_peer_connection_state_change(Box::new(move |state| { let (itx, id) = (itx.clone(), id.clone()); Box::pin(async move { let _ = itx.send(Internal::PcState { peer: id, gen, state }).await; }) })); }
         { let (itx, id) = (itx.clone(), id.clone());
-          pc.on_data_channel(Box::new(move |dc| { let (itx, id) = (itx.clone(), id.clone()); Box::pin(async move { let _ = itx.send(Internal::DcAttach { peer: id, gen, dc }).await; }) })); }
+          pc.on_data_channel(Box::new(move |dc| { let (itx, id) = (itx.clone(), id.clone()); Box::pin(async move {
+              // O tratamento das mensagens do chat é ligado JÁ, aqui, e não só quando o ator processar o DcAttach: quem abriu o canal manda
+              // o desafio de identidade assim que ele abre, e a mensagem que chegava antes de o ator ligar o `on_message` era descartada —
+              // a autenticação só fechava no reenvio, 2 s depois (com 3 ou mais pessoas o ator fica ocupado e isso era frequente). O
+              // portão garante a ordem na fila do ator: as mensagens só entram depois do DcAttach (sem o canal guardado não há como responder).
+              let gate = Arc::new(tokio::sync::Mutex::new(()));
+              let held = gate.clone().lock_owned().await;
+              if dc.label() != FEC_LABEL {
+                  let (itx, id, gate) = (itx.clone(), id.clone(), gate.clone());
+                  dc.on_message(Box::new(move |m: DataChannelMessage| { let (itx, id, gate) = (itx.clone(), id.clone(), gate.clone());
+                      Box::pin(async move { let _g = gate.lock().await; if m.data.len() <= identity::MAX_PAYLOAD_BYTES { let _ = itx.send(Internal::DcMsg { peer: id, gen, text: String::from_utf8_lossy(&m.data).to_string() }).await; } }) }));
+              }
+              let _ = itx.send(Internal::DcAttach { peer: id, gen, dc }).await;
+              drop(held);
+          }) })); }
         Ok(pc)
     }
 
@@ -1340,7 +1363,8 @@ impl Actor {
                     }
                     return;
                 }
-                self.wire_dc(&peer, gen, &dc);
+                // canal de chat recebido: o `on_message` já foi ligado no `on_data_channel`; aqui só falta o `on_open`
+                { let (itx, id) = (self.itx.clone(), peer.clone()); dc.on_open(Box::new(move || { let (itx, id) = (itx.clone(), id.clone()); Box::pin(async move { let _ = itx.send(Internal::DcOpen { peer: id, gen }).await; }) })); }
                 if let Some(p) = self.peers.get_mut(&peer) { p.dc = Some(dc); }
             }
             Internal::DcOpen { peer, gen } => { if self.gen_ok(&peer, gen) { self.send_challenge(&peer).await; } }

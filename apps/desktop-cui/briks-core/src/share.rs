@@ -633,7 +633,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             // pedidos numa rede congestionada não virar uma rajada de quadros enormes
             // Um IDR custa ~1 s do orçamento (600 KB a 4,5 Mbps em 1080p de texto): rajadas de IDR são o que o espectador vê como "reload".
             let min_gap = Duration::from_millis(if est.reason != "" { 3000 } else { 1500 });   // rede apertada: quadros-chave mais espaçados
-            if since_idr >= fps * 30 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); idrs += 1; }
+            if since_idr >= fps * 10 || (id2.load(Ordering::Relaxed) && last_idr.elapsed() >= min_gap) { id2.store(false, Ordering::Relaxed); e.force_idr(); since_idr = 0; last_idr = Instant::now(); idrs += 1; }
             let t0 = Instant::now();
             let slow = if cfg.label == SLOW_LABEL { TEST_SLOW_MS.load(Ordering::Relaxed) } else { 0 };
             if slow > 0 { std::thread::sleep(Duration::from_millis(slow)); }   // só testes: simula codificador lento

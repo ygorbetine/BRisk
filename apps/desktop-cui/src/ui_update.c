@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.23", {
+        "Transmissão: o bitrate não cai a ponto de a imagem virar blocos borrados com \"fantasmas\"; abaixo de um mínimo de qualidade, a resolução cai antes.",
+        "Transmissão: quadro-chave a cada 10 s (antes 30 s), para qualquer falha de imagem se corrigir rápido.",
+        NULL } },
     { "1.5.22", {
         "Transmissão: resolução e taxa de quadros ficam fixas; quando falta rede ou PC, o Briks reduz só o bitrate (a resolução só cai com banda muito pequena).",
         "Registro de desempenho (rede.log) também de quem assiste: decodificador, quadros por segundo e tempo de decodificação.",

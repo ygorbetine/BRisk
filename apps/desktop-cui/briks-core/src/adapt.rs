@@ -211,8 +211,8 @@ impl Estimator {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Level { pub h: usize, pub fps: u32 }
 
-/// Bitrate abaixo do qual a resolução cai (1.5.22): só 20% do "automático" daquela resolução/FPS. Acima disso o Briks mantém resolução e FPS e só reduz o bitrate.
-pub fn need_bps(l: Level) -> f64 { auto_bitrate(l.h, l.fps) as f64 * 0.2 }
+/// Bitrate abaixo do qual a resolução cai (1.5.22): só 35% do "automático" (abaixo disso o vídeo vira blocos borrados e "fantasmas", pior que perder resolução) daquela resolução/FPS. Acima disso o Briks mantém resolução e FPS e só reduz o bitrate.
+pub fn need_bps(l: Level) -> f64 { auto_bitrate(l.h, l.fps) as f64 * 0.35 }
 
 const HEIGHTS: [usize; 7] = [2160, 1440, 1080, 900, 720, 540, 360];
 
@@ -404,7 +404,7 @@ mod tests {
         let top = Level { h: 1080, fps: 60 };
         let mut c = Controller::new(Content::Detail, 1080, 60, 0);
         c.decide(auto_bitrate(1080, 60) as f64 * 2.0);
-        for frac in [0.9, 0.6, 0.4, 0.3] {
+        for frac in [0.9, 0.6, 0.45, 0.4] {
             let b = auto_bitrate(1080, 60) as f64 * frac;
             let d = c.decide(b); let d = if d.level != top { c.decide(b) } else { d };
             assert_eq!(d.level, top, "{frac}: resolução e FPS ficam");

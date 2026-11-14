@@ -18,7 +18,7 @@
  *   end                                    mostra o quadro (sem linhas = esconde a janela)
  *   quit                                   fecha
  * O overlay responde pela saída padrão (uma linha por evento):  layout <monitor> <x> <y> <largura>  (soltou depois de mover/redimensionar)  |  edit 0  (Concluir ou Esc)
- *   widget <live|voice|status|mute|all> <0|1>  (botão da barra)  |  opacity <10-100>  (opacidade da barra)  |  selectlive  (Trocar transmissão, só com mais de 4 lives)
+ *   widget <live|voice|status|mute|all> <0|1>  (botão da barra)  |  opacity <10-100>  (opacidade da barra)  |  through <0|1>  (caixa Atravessar cliques)  |  selectlive  (Trocar transmissão, só com mais de 4 lives)
  *   tile <chave> <monitor> <x> <y> <%>  (miniatura movida/redimensionada)  |  tileon <chave> <0|1>  (ligou/ocultou a miniatura)
  * Só desenha por cima de janelas e jogos em modo janela ou janela sem bordas; tela cheia exclusiva do jogo cobre qualquer sobreposição. */
 #define UNICODE
@@ -232,9 +232,9 @@ static void paint(const frame_t *f) {
 static int g_inject; static POINT g_inj;
 static POINT cursor_pos(void) { if (g_inject) return g_inj; POINT p; GetCursorPos(&p); return p; }
 /* ---- barra de edição: 2ª janela (embaixo da tela, no monitor do painel), vidro escuro de cantos arredondados ---- */
-enum { B_NONE, B_ALL, B_W0, B_W1, B_W2, B_W3, B_OPM, B_OPP, B_SLIDER, B_LIVE, B_DONE, B_T0, B_T1, B_T2, B_T3, B_N };
-#define BAR_MAXW 680
-#define BAR_MINW 560
+enum { B_NONE, B_ALL, B_W0, B_W1, B_W2, B_W3, B_OPM, B_OPP, B_SLIDER, B_LIVE, B_DONE, B_THRU, B_T0, B_T1, B_T2, B_T3, B_N };
+#define BAR_MAXW 780
+#define BAR_MINW 704
 #define HINT_H 26
 #define BAR_PAD 10
 #define BTN_H 32
@@ -271,6 +271,8 @@ static void bar_layout(int ww, int lives, int ntile) {
     g_bh[B_DONE] = (RECT){ x1 - donew, y2, x1, y2 + BTN_H };
     int right = g_bh[B_DONE].left - 16;
     if (lives > NT) { g_bh[B_LIVE] = (RECT){ right - livew, y2, right, y2 + BTN_H }; right -= livew + 16; }
+    const int thruw = 146;   /* 1.5.20: caixa "Atravessar cliques" (vale só fora do modo de edição; aqui o mouse sempre é do overlay) */
+    g_bh[B_THRU] = (RECT){ right - thruw, y2, right, y2 + BTN_H }; right -= thruw + 16;
     g_oplab = (RECT){ x0, y2, x0 + 112, y2 + BTN_H };
     g_bh[B_OPM] = (RECT){ g_oplab.right, y2, g_oplab.right + BTN_H, y2 + BTN_H };
     g_bh[B_OPP] = (RECT){ right - BTN_H, y2, right, y2 + BTN_H };
@@ -361,6 +363,12 @@ static void paint_bar(const frame_t *f) {
             RECT fr = { tr.left, tr.top, tx, tr.bottom }; if (fr.right > fr.left) px_rr(px, ww, hh, fr, 3, RGB(0xa7, 0x8b, 0xfa), 1.0f, 0);
             RECT th = { tx - 9, cy - 9, tx + 9, cy + 9 }; px_rr(px, ww, hh, th, 9, RGB(0, 0, 0), 0.35f, 0); RECT th2 = { tx - 8, cy - 8, tx + 8, cy + 8 }; px_rr(px, ww, hh, th2, 8, WHITE, 1.0f, 0);
         }
+        else if (i == B_THRU) {
+            const int on = !f->drag;
+            if (on) px_rr(px, ww, hh, r, BTN_H / 2, PURP, hov ? 1.0f : 0.92f, 0); else { px_rr(px, ww, hh, r, BTN_H / 2, WHITE, hov ? 0.16f : 0.05f, 0); px_rr(px, ww, hh, r, BTN_H / 2, WHITE, 0.28f, 1); }
+            RECT dot = { r.left + 11, (r.top + r.bottom) / 2 - 4, r.left + 19, (r.top + r.bottom) / 2 + 4 };
+            if (on) px_rr(px, ww, hh, dot, 4, WHITE, 1.0f, 0); else px_rr(px, ww, hh, dot, 4, WHITE, 0.6f, 1.5f);
+        }
         else if (i == B_LIVE) { px_rr(px, ww, hh, r, BTN_H / 2, WHITE, hov ? 0.18f : 0.08f, 0); px_rr(px, ww, hh, r, BTN_H / 2, WHITE, 0.35f, 1); }
         else if (i == B_DONE) { px_rr(px, ww, hh, r, BTN_H / 2, ACCENT, hov ? 1.0f : 0.94f, 0); px_rr(px, ww, hh, r, BTN_H / 2, WHITE, 0.25f, 1); }
     }
@@ -376,6 +384,7 @@ static void paint_bar(const frame_t *f) {
         else if (i == B_OPM) bar_text(mem, L"\x2212", r, TEXT, DT_CENTER);
         else if (i == B_OPP) bar_text(mem, L"+", r, TEXT, DT_CENTER);
         else if (i == B_LIVE) { r.left += 8; r.right -= 8; bar_text(mem, L"Trocar transmissão", r, TEXT, DT_CENTER | DT_END_ELLIPSIS); }
+        else if (i == B_THRU) { r.left += 26; r.right -= 8; bar_text(mem, L"Atravessar cliques", r, !f->drag ? RGB(255, 255, 255) : RGB(0xc9, 0xbd, 0xd8), DT_LEFT | DT_END_ELLIPSIS); }
         else if (i == B_DONE) bar_text(mem, L"Concluir", r, RGB(255, 255, 255), DT_CENTER);
     }
     { wchar_t ot[32]; swprintf(ot, 32, L"Opacidade %d%%", f->opacity < 0 ? 0 : f->opacity > 100 ? 100 : f->opacity); bar_text(mem, ot, g_oplab, MUTED, DT_LEFT | DT_END_ELLIPSIS); }
@@ -413,6 +422,7 @@ static void bar_act(int id, int x) {
     else if (id == B_SLIDER) { g_bar_drag = 1; if (!g_inject) SetCapture(hbar); bar_set_opacity(slider_value(x)); }
     else if (id >= B_T0 && id <= B_T3) { int k = id - B_T0; if (k < cur.ntile) { cur.t[k].on = !cur.t[k].on; emit("tileon %s %d\n", cur.t[k].key, cur.t[k].on); bar_touch(); } }
     else if (id == B_LIVE) emit("selectlive\n");
+    else if (id == B_THRU) { cur.drag = !cur.drag; emit("through %d\n", !cur.drag); bar_touch(); }
     else if (id == B_DONE) emit("edit 0\n");
 }
 static void bar_down(int x, int y) { if (g_bar_on) bar_act(bar_hit(x, y), x); }
@@ -423,9 +433,9 @@ static void bar_move(int x, int y) {
 static void bar_up(void) { if (!g_bar_drag) return; g_bar_drag = 0; if (!g_inject) ReleaseCapture(); }
 /* quadro vindo do app: dentro da janela de espera, o que o usuário acabou de mudar vale mais */
 static void adopt_frame(const frame_t *nw) {
-    const int fl = cur.flags, op = cur.opacity, on = cur.ntile; tspec_t old[NT]; memcpy(old, cur.t, sizeof old); cur = *nw;
+    const int fl = cur.flags, op = cur.opacity, on = cur.ntile, dr = cur.drag; tspec_t old[NT]; memcpy(old, cur.t, sizeof old); cur = *nw;
     if ((int)(g_hold - GetTickCount()) > 0 || g_bar_drag || g_tdrag >= 0) {
-        cur.flags = fl; cur.opacity = op;
+        cur.flags = fl; cur.opacity = op; cur.drag = dr;
         for (int k = 0; k < cur.ntile && k < on; k++) if (!strcmp(cur.t[k].key, old[k].key)) {
             cur.t[k].on = old[k].on; cur.t[k].pct = old[k].pct;
             if (old[k].pvalid) { cur.t[k].pvalid = 1; snprintf(cur.t[k].pdev, sizeof cur.t[k].pdev, "%s", old[k].pdev); cur.t[k].px = old[k].px; cur.t[k].py = old[k].py; }
@@ -799,7 +809,7 @@ static int px_alpha(int k, int x, int y) { return g_snap[k].px && x >= 0 && y >=
 static int bar_selftest(frame_t *b, frame_t *o) {
     int f = 0; RECT br, wa = bar_workarea(), hs = g_hintshape; GetWindowRect(hbar, &br);
     f += check(g_bar_on && IsWindow(hbar), "em edição existe a barra (2ª janela)");
-    f += check(br.right - br.left <= BAR_MAXW && br.left >= wa.left && br.right <= wa.right && br.bottom == wa.bottom - 24 && abs((br.left + br.right) / 2 - (wa.left + wa.right) / 2) <= 1, "barra embaixo, centralizada na área útil do monitor e com largura contida (<= 680)");
+    f += check(br.right - br.left <= BAR_MAXW && br.left >= wa.left && br.right <= wa.right && br.bottom == wa.bottom - 24 && abs((br.left + br.right) / 2 - (wa.left + wa.right) / 2) <= 1, "barra embaixo, centralizada na área útil do monitor e com largura contida (<= 780)");
     LONG ex = GetWindowLongW(hbar, GWL_EXSTYLE);
     f += check((ex & WS_EX_NOACTIVATE) && (ex & WS_EX_TOPMOST) && !(ex & WS_EX_TRANSPARENT) && SendMessageW(hbar, WM_NCHITTEST, 0, 0) == HTCLIENT, "barra: no topo, sem ativar, recebe o mouse");
     /* geometria em várias larguras: tudo dentro da barra, sem sobreposição, alvos de pelo menos 28 px */
@@ -816,7 +826,7 @@ static int bar_selftest(frame_t *b, frame_t *o) {
         if (g_bh[B_SLIDER].right - g_bh[B_SLIDER].left < 48) geo = 0;
         if (g_oplab.right > g_bh[B_OPM].left) geo = 0;
     }
-    f += check(geo && !over, "botões sempre dentro da barra (560 a 680 px), sem sobrepor e com o controle de opacidade >= 48 px");
+    f += check(geo && !over, "botões sempre dentro da barra (704 a 780 px), sem sobrepor e com o controle de opacidade >= 48 px");
     f += check(tall, "alvos de clique com 28 px ou mais de altura");
     bar_layout(g_bww, 6, 0);
     {   /* textos: com a largura cheia nenhum rótulo precisa de reticências; nas menores a elipse protege (DT_END_ELLIPSIS) */
@@ -871,6 +881,8 @@ static int bar_selftest(frame_t *b, frame_t *o) {
     bar_move(CTR(B_W2)); f += check(g_bhover == B_W2, "passar o mouse destaca o botão");
     bar_move(2, 2); f += check(g_bhover == B_NONE, "tirar o mouse remove o destaque");
     /* Concluir e Esc */
+    CLR(); bar_down(CTR(B_THRU)); f += check(strstr(g_out, "through 0\n") != NULL && cur.drag == 1, "caixa Atravessar cliques desligada manda 'through 0' (as miniaturas passam a arrastar fora da edição)");
+    CLR(); bar_down(CTR(B_THRU)); f += check(strstr(g_out, "through 1\n") != NULL && cur.drag == 0, "ligada de novo manda 'through 1'");
     CLR(); bar_down(CTR(B_DONE)); f += check(strstr(g_out, "edit 0\n") != NULL, "Concluir manda 'edit 0'");
     CLR(); SendMessageW(hbar, WM_HOTKEY, 1, 0); f += check(strstr(g_out, "edit 0\n") != NULL, "Esc (WM_HOTKEY da barra) também manda 'edit 0'");
     /* roda do mouse no painel */

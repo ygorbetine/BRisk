@@ -10,7 +10,7 @@
 void settings_overlay(bool *on, float *opacity, int *flags, int *corner);
 bool settings_ovl_place(char *dev, size_t cap, int *x, int *y, int *w);        /* settings.c: posição do monitor ativo */
 void settings_ovl_set(const char *dev, int x, int y, int w);
-bool settings_ovl_selfshare(void); bool settings_ovl_through(void);
+bool settings_ovl_selfshare(void); bool settings_ovl_through(void); void settings_ovl_set_through(bool on);
 bool settings_ovl_widget(const char *id, bool on); void settings_ovl_opacity(int pct);   /* settings.c: botões da barra de edição do overlay */
 bool settings_tile_place(const char *key, char *dev, size_t cap, int *x, int *y, int *pct); void settings_tile_set(const char *key, const char *dev, int x, int y, int pct);
 bool settings_tile_enabled(const char *key); void settings_tile_enable(const char *key, bool on);   /* settings.c: miniaturas de transmissão */
@@ -254,6 +254,7 @@ static void handle_line(const char *ln) {
         char id[16]; int v;
         if (sscanf(ln + 7, "%15s %d", id, &v) == 2 && settings_ovl_widget(id, v != 0)) g_widget_evs++;
     }
+    else if (!strncmp(ln, "through ", 8)) { settings_ovl_set_through(atoi(ln + 8) != 0); g_widget_evs++; }
     else if (!strncmp(ln, "opacity ", 8)) { settings_ovl_opacity(atoi(ln + 8)); g_opacity_evs++; }
     else if (!strcmp(ln, "selectlive")) { g_live_sel = g_nlives > NT ? (g_live_sel + 1) % g_nlives : 0; g_select_evs++; }
     else if (!strncmp(ln, "tileon ", 7)) { char k[16], kb[16]; int v; const char *key; if (sscanf(ln + 7, "%15s %d", k, &v) == 2 && (key = tile_key(k, kb, sizeof kb)) != NULL) { settings_tile_enable(key, v != 0); g_tileon_evs++; } }

@@ -209,6 +209,7 @@ bool settings_ovl_widget(const char *id, bool on) {
     if (all || !strcmp(id, "selfshare")) { g_set.ov_selfshare = on; hit = true; }
     return hit;
 }
+void settings_ovl_set_through(bool on) { g_set.ov_through = on; }
 void settings_ovl_opacity(int pct) { g_set.ov_opacity = (float)(pct < 10 ? 10 : pct > 100 ? 100 : pct); }
 /* Miniaturas de transmissão (até 4, cada uma com chave estável da pessoa): posição/escala por monitor e liga/desliga por transmissão. */
 bool settings_tile_place(const char *key, char *dev, size_t cap, int *x, int *y, int *pct) {

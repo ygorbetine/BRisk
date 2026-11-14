@@ -54,6 +54,42 @@ async fn authed(h: &mut MeshHandle, n: usize, secs: u64) -> bool {
     true
 }
 
+/// Quem desliga some da chamada dos outros na hora, mesmo com o prazo de graça da presença em 10 s (o padrão do app): o aviso
+/// "peer.bye" sai pelo canal de dados antes de a conexão fechar. Sem ele o peer ficava 10 s como "fantasma".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_that_hangs_up_disappears_at_once_despite_the_10_s_presence_grace() {
+    let port = crate::mock::start(0).await.unwrap();
+    // nós com o prazo de graça PADRÃO (10 s), como no app; os outros testes usam 200 ms
+    let mk = |peer: &str, name: &str| {
+        let cfg = RealtimeCfg::new(&format!("ws://127.0.0.1:{port}"), "chave-de-teste");
+        let topic = topic_name("room", &secure_room_id("room", "tchau"));
+        let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": 1, "clientVersion": "teste" }));
+        mesh::spawn(MeshCfg { namespace: "room".into(), room: "tchau".into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: None, joined_at: 1 }, Arc::new(Identity::generate()), rt, rx)
+    };
+    let (mut a, mut b, mut c) = (mk(PA, "Ana"), mk(PB, "Beto"), mk(PC, "Cida"));
+    assert!(authed(&mut a, 2, 40).await && authed(&mut b, 2, 40).await && authed(&mut c, 2, 40).await, "a malha de 3 não fechou");
+    let t0 = std::time::Instant::now();
+    c.cmd.send(MeshCmd::Close).await.unwrap();
+    for (h, who) in [(&mut a, "A"), (&mut b, "B")] {
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        let mut gone = false;
+        while !gone {
+            match timeout(end.saturating_duration_since(std::time::Instant::now()), h.events.recv()).await {
+                Ok(Some(MeshEvent::Peer { peer_id, state })) if peer_id == PC && state == "fechado" => gone = true,
+                Ok(Some(_)) => {}
+                _ => panic!("{who} ainda via a Cida {:.1} s depois de ela desligar", t0.elapsed().as_secs_f32()),
+            }
+        }
+    }
+    let dt = t0.elapsed().as_secs_f64();
+    eprintln!("quem desligou sumiu para os dois outros em {dt:.2} s (prazo de graça da presença: 10 s)");
+    assert!(dt < 3.0, "demorou {dt:.1} s");
+    // A e B continuam ligados entre si
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(e) = a.events.try_recv() { if let MeshEvent::Peer { peer_id, state } = e { assert!(!(peer_id == PB && state == "fechado"), "A perdeu o B junto"); } }
+    let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
+}
+
 /// Medição (ignorado): quanto demora a malha P2P para fechar com 2, 3 e 4 pessoas, com áudio (como numa chamada). Dois cenários:
 /// todos entram juntos, e o último entra 2 s depois dos outros. Mostra, por nó, o tempo até autenticar todos os outros.
 ///   cargo test --release -- --ignored --nocapture --test-threads=1 medicao_tempo_de_conexao_da_malha
@@ -165,7 +201,10 @@ async fn audio_tone_travels_between_two_cores_and_mute_deafen_work() {
     assert!(until(15, || au_b.rx_stat(PA).frames > 50).await, "B não recebeu áudio de A");
     let st = au_b.rx_stat(PA);
     assert!((st.freq() - 440.0).abs() < 25.0, "frequência recebida {} Hz", st.freq());
-    assert!(st.peak > 0.2 && st.peak < 0.4, "pico {}", st.peak);
+    // teto de 0,5 (era 0,4): quando um dos primeiros pacotes se perde na abertura, o quadro refeito pelo decodificador (PLC/FEC do
+    // Opus) passa um pouco do nível do tom — pico de 0,4229, o mesmo valor nas duas vezes em que apareceu (2 em 14 rodadas da suíte
+    // inteira, depois de a malha passar a fechar mais cedo). Volume errado de verdade (ganho dobrado) daria 0,6 ou mais.
+    assert!(st.peak > 0.2 && st.peak < 0.5, "pico {}", st.peak);
     assert!(until(15, || au_a.rx_stat(PB).frames > 50).await, "A não recebeu áudio de B");
 
     // o mixer toca o tom; depois de um pouco para o jitter buffer encher

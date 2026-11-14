@@ -365,6 +365,12 @@ impl Actor {
         if let Some(a) = &self.audio { a.stop(); }
         for s in 0..2 { if let Some(sh) = self.share[s].take() { sh.sender.stop(); if let Some(a) = &sh.audio { a.stop(); } } }
         if let Some(c) = self.cam.take() { c.sender.stop(); }   // fechar a chamada desliga a captura (a luz apaga)
+        // Saída de propósito: avisa cada peer autenticado pelo canal de dados ("peer.bye") antes de fechar. Sem o aviso os outros só
+        // tiravam quem saiu depois do prazo de graça da presença (10 s, que existe para a sinalização que cai e volta): era o "amigo
+        // fantasma" que continuava na chamada depois de desligar. Queda de verdade (rede, processo morto) continua pelo prazo.
+        let byes = self.authed_ids();
+        for id in &byes { self.dc_send(id, json!({ "version": 2, "type": "peer.bye" })).await; }
+        if !byes.is_empty() { tokio::time::sleep(std::time::Duration::from_millis(150)).await; }   // tempo para o aviso sair antes de a conexão fechar
         for (_, p) in self.peers.drain() { let _ = p.pc.close().await; }
         self.rt.close().await;
     }
@@ -384,10 +390,7 @@ impl Actor {
             RtEvent::PeerLeft(p) => {
                 self.present.remove(&p);
                 self.joined.remove(&p);
-                for n in &self.net { n.lock().unwrap().peers.remove(&p); }
-                if let Some(a) = &self.audio { a.remove_peer(&p); }
-                self.end_remote_streams(&p, true).await;
-                if let Some(peer) = self.peers.remove(&p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p, state: "fechado".into() }).await; }
+                self.peer_gone(&p).await;
             }
             RtEvent::Broadcast { event: _, payload } => {
                 let present = self.present.clone();
@@ -1372,6 +1375,16 @@ impl Actor {
         }
     }
 
+    /// O peer saiu (presença, ou o próprio aviso "peer.bye"): encerra o áudio, as transmissões e a conexão dele e avisa a UI. Pode ser
+    /// chamado duas vezes para a mesma saída (o aviso e, 10 s depois, a presença): a segunda não encontra mais nada.
+    async fn peer_gone(&mut self, p: &str) {
+        for n in &self.net { n.lock().unwrap().peers.remove(p); }
+        if let Some(a) = &self.audio { a.remove_peer(p); }
+        if !self.peers.contains_key(p) { return; }
+        self.end_remote_streams(p, true).await;
+        if let Some(peer) = self.peers.remove(p) { let _ = peer.pc.close().await; self.emit(MeshEvent::Peer { peer_id: p.to_string(), state: "fechado".into() }).await; }
+    }
+
     fn gen_ok(&self, peer: &str, gen: u32) -> bool { self.peers.get(peer).map(|p| p.gen == gen).unwrap_or(false) }
 
     /// FEC (ver `fec.rs`): com um peer que anunciou suporte no peer.state, abre o canal de dados sem retransmissão por onde vão as
@@ -1535,6 +1548,14 @@ impl Actor {
                     self.emit(MeshEvent::Kicked { reason }).await;
                     self.dead = true;
                 } else { self.ban(&target).await; }
+            }
+            // o peer avisou que está saindo da chamada (ver o fim de `run`): sai já, sem esperar o prazo de graça da presença. Só vale
+            // vindo de quem já provou a identidade neste canal. Versões antigas não mandam (e ignoram) este aviso.
+            "peer.bye" => {
+                if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }
+                // também sai da lista de presentes (a presença só o tiraria em 10 s; se ele voltar antes, o PeerJoined o recoloca)
+                self.present.remove(peer); self.joined.remove(peer);
+                self.peer_gone(peer).await;
             }
             "peer.state" => {
                 if self.peers.get(peer).map(|p| p.proven && p.sent_proof) != Some(true) { return; }

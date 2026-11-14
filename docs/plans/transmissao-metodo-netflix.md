@@ -84,8 +84,10 @@ Filme a 2 Mbps: VBV de 125 / 500 / 1000 ms dá 36,7 / 37,0 / 37,0 dB com pico de
 
 ## Falhas de teste que já existem na base (e456149)
 
-- `share::enc_recovery_tests::hardware_encoder_that_always_fails_falls_back_to_software_and_the_stream_continues`: sempre, com a suíte
-  inteira; passa sozinho.
+- `share::enc_recovery_tests::hardware_encoder_that_always_fails_falls_back_to_software_and_the_stream_continues` falhava sempre com a
+  suíte inteira e passava sozinho: com a GPU disputada o NVENC às vezes não abre na recriação e o codificador já nasce em software,
+  caso que o teste não aceitava. Ajustado depois da 1.5.26 (exige que a transmissão siga e que nenhum quadro venha do hardware);
+  a suíte passa inteira (331) em 3 de 4 rodadas, e na outra só a falha ocasional da câmera.
 - `tests_sfuipc::ipc_room_join_pure_sfu_end_to_end_with_remote_mute_and_kick` e
   `tests_sfurec::sfu_reconnects_after_server_restart_with_renewed_token` falhavam sempre no grupo com o LiveKit real. Não era
   defeito do app: os testes ainda cobravam regras antigas (só o dono expulsa, até a 1.5.15; um token novo a cada queda, até a

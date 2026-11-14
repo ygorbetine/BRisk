@@ -1708,8 +1708,12 @@ mod enc_recovery_tests {
         let (out, hw, _dropped, gave_up, rec) = drive(120, &mut sup);
         video::FAULT_HW.store(false, Relaxed); video::FAULT_HR.store(0, Relaxed);
         assert!(!gave_up, "não pode derrubar a transmissão");
-        assert!(sup.software || rec == 0, "caiu para software (ou a máquina não tem codificador de hardware: nada a recuperar)");
-        assert!(out >= 60, "a transmissão continua produzindo quadros com o codificador de software: {out}");
-        assert!(sup.software && hw == 0 || rec == 0, "sem quadros vindos do hardware depois do fallback");
+        // O que tem de valer: a transmissão segue e nenhum quadro vem do hardware (que falha sempre). O caminho até o software pode ser o
+        // do supervisor (3 recriações e troca: `sup.software`) ou o da própria criação — com a suíte inteira usando a GPU em paralelo, o
+        // NVENC às vezes não abre na recriação e o codificador já nasce em software antes de o supervisor trocar. A exigência antiga
+        // (`sup.software || rec == 0`) falhava sempre nesse caso; a troca feita pelo supervisor tem teste próprio, com tempo simulado
+        // (`repeated_hardware_failures_fall_back_to_software_then_give_up_with_a_clear_message`).
+        assert!(out >= 60, "a transmissão continua produzindo quadros com o codificador de software: {out} (recriações {rec}, supervisor em software: {})", sup.software);
+        assert_eq!(hw, 0, "sem quadros vindos do hardware");
     }
 }

@@ -220,30 +220,10 @@ const HEIGHTS: [usize; 7] = [2160, 1440, 1080, 900, 720, 540, 360];
 pub fn ladder(content: Content, max_h: usize, max_fps: u32) -> Vec<Level> {
     let mut hs: Vec<usize> = HEIGHTS.iter().copied().filter(|h| *h < max_h).collect();
     hs.insert(0, max_h);
-    let low_fps = |floor: u32| -> Vec<u32> { [20u32, 15, 10].into_iter().filter(|f| *f < max_fps && *f >= floor).collect() };
-    let mut out = vec![];
-    match content {
-        Content::Detail => {
-            out.push(Level { h: max_h, fps: max_fps });
-            if max_fps > 30 { out.push(Level { h: max_h, fps: 30 }); }
-            for f in low_fps(10) { out.push(Level { h: max_h, fps: f }); }
-            let fmin = out.last().unwrap().fps;
-            for h in hs.iter().skip(1) { out.push(Level { h: *h, fps: fmin }); }
-        }
-        Content::Motion => {
-            // Piso de legibilidade: a resolução cai só até 720p; daí em diante cai o FPS (texto/HUD a 540p/360p vira borrão, e foi o
-            // que o usuário viu em 1.4.0). 540p/360p ficam por último, já no FPS mínimo.
-            let f_hi = max_fps;
-            let hs_hi: Vec<usize> = hs.iter().copied().filter(|h| *h >= 720).collect();
-            let hs_hi = if hs_hi.is_empty() { hs.clone() } else { hs_hi };
-            for h in &hs_hi { out.push(Level { h: *h, fps: f_hi }); }
-            let hfloor = *hs_hi.last().unwrap();
-            if f_hi > 30 { out.push(Level { h: hfloor, fps: 30 }); }
-            for f in low_fps(15) { out.push(Level { h: hfloor, fps: f }); }
-            let fmin = out.last().unwrap().fps;
-            for h in hs.iter().filter(|h| **h < hfloor) { out.push(Level { h: *h, fps: fmin }); }
-        }
-    }
+    // A taxa de quadros escolhida NUNCA cai (pedido do usuário, 1.5.20): quando falta banda ou CPU, cai a resolução (e com ela o bitrate)
+    // até 360p, sempre no FPS alvo. `content` segue no controlador só para as mensagens/política de piso aprendido.
+    let _ = content;
+    let out: Vec<Level> = hs.iter().map(|h| Level { h: *h, fps: max_fps }).collect();
     out
 }
 
@@ -419,15 +399,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detail_drops_fps_before_resolution_and_motion_the_opposite() {
-        let d = ladder(Content::Detail, 1080, 30);
-        assert_eq!(&d[..4], &[Level { h: 1080, fps: 30 }, Level { h: 1080, fps: 20 }, Level { h: 1080, fps: 15 }, Level { h: 1080, fps: 10 }]);
-        assert_eq!(d[4], Level { h: 900, fps: 10 });
-        let m = ladder(Content::Motion, 1080, 60);
-        assert_eq!(&m[..3], &[Level { h: 1080, fps: 60 }, Level { h: 900, fps: 60 }, Level { h: 720, fps: 60 }]);
-        assert_eq!(m.iter().take_while(|l| l.fps == 60).count(), 3, "a resolução cai até 720p (piso de legibilidade) antes do FPS");
-        assert!(m.iter().filter(|l| l.h < 720).all(|l| l.fps == 15), "540p/360p só no FPS mínimo");
-        assert_eq!(m.last().unwrap(), &Level { h: 360, fps: 15 });
+    fn the_chosen_frame_rate_never_drops_only_the_resolution_does() {
+        for (content, fps) in [(Content::Detail, 30), (Content::Motion, 60), (Content::Detail, 24)] {
+            let d = ladder(content, 1080, fps);
+            assert_eq!(&d[..3], &[Level { h: 1080, fps }, Level { h: 900, fps }, Level { h: 720, fps }]);
+            assert!(d.iter().all(|l| l.fps == fps), "o FPS escolhido é fixo: {d:?}");
+            assert_eq!(d.last().unwrap(), &Level { h: 360, fps });
+        }
     }
 
     /// Enlace simulado, um passo por segundo: capacidade `cap` (bps), fila de 250 ms, perda aleatória `rand`, RTT base `base`
@@ -582,7 +560,7 @@ mod tests {
         // ruído em 1080p: pediu 1,5 Mbps, saíram 4,3 Mbps a 3 qps → ~0,7 bit por pixel por quadro
         for _ in 0..3 { c.note_encoder(4_300_000.0, 1_500_000.0, 3.0, 1920, 1080, false); }
         let d = c.decide(1_500_000.0);
-        assert!(d.level.h <= 360 && d.level.fps == 10, "desce de uma vez: {d:?}");
+        assert!(d.level.h <= 360 && d.level.fps == 30, "desce de uma vez: {d:?}");
         // conteúdo fácil de novo: o piso some e a resolução volta
         for _ in 0..40 { c.note_encoder(900_000.0, 1_200_000.0, 10.0, 640, 360, false); }
         for _ in 0..8 { c.decide(4_500_000.0); }
@@ -593,8 +571,8 @@ mod tests {
     fn controller_steps_down_at_once_and_up_only_with_headroom() {
         let mut c = Controller::new(Content::Detail, 1080, 30, 0);
         assert_eq!(c.decide(4_500_000.0).level, Level { h: 1080, fps: 30 });
-        let d = c.decide(900_000.0);   // 1080p10 pede ~1 Mbps: não cabe, desce a resolução
-        assert!(d.level.fps == 10 && d.level.h < 1080 && d.net_limited, "{d:?}");
+        let d = c.decide(900_000.0);   // 1080p30 pede mais que isso: não cabe, desce a resolução (o FPS fica)
+        assert!(d.level.fps == 30 && d.level.h < 1080 && d.net_limited, "{d:?}");
         let low = d.level;
         assert_ne!(c.decide(4_500_000.0).level, low, "folga grande (mais de 2x): sobe em 1 s");
         // folga moderada (30–100%): só sobe depois de 3 s seguidos
@@ -709,7 +687,7 @@ mod tests {
         assert_eq!(c.decide(need * 1.5).level, top);
         // dois segundos seguidos: desce um degrau
         assert_eq!(c.decide(need * 0.9).level, top);
-        assert_eq!(c.decide(need * 0.9).level, Level { h: 1080, fps: 20 }, "2 s rasos seguidos: desce");
+        assert_eq!(c.decide(need * 0.9).level, Level { h: 900, fps: 30 }, "2 s rasos seguidos: desce");
         // queda funda (menos de 80% do que o nível pede, ou mais de um degrau): na hora
         let mut c = Controller::new(Content::Detail, 1080, 30, 0);
         c.decide(need * 1.5);
@@ -720,7 +698,7 @@ mod tests {
     /// para de alternar. Antes: uma troca de nível a cada ~2 s para sempre.
     #[test]
     fn flapping_between_two_levels_backs_off_instead_of_oscillating() {
-        let (top, low) = (Level { h: 1080, fps: 30 }, Level { h: 1080, fps: 20 });
+        let (top, low) = (Level { h: 1080, fps: 30 }, Level { h: 900, fps: 30 });
         let (hi, lo) = (need_bps(top) * 1.35, need_bps(top) * 0.85);   // folga para subir / falta para o topo (cabe no degrau de baixo)
         let mut c = Controller::new(Content::Detail, 1080, 30, 0);
         c.decide(hi);

@@ -70,7 +70,7 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
     { "1.5.20", {
-        "Transmissão: taxa de quadros mais estável, com envio em cadência fixa no FPS escolhido e adaptação de qualidade sem vaivém.",
+        "Transmissão: a taxa de quadros escolhida não cai mais; quando falta rede ou PC, cai só a resolução e o bitrate. Envio em cadência fixa e adaptação sem vaivém.",
         "Aviso \"começou a transmitir\": o botão Assistir agora responde ao clique.",
         "Transmissões: nome, qualidade e volume só aparecem quando o mouse está em cima.",
         "Ao entrar numa chamada que já tem gente, o Briks escolhe sozinho entre servidor (SFU) e P2P.",

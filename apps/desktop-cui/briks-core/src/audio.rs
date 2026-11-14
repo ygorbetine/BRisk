@@ -20,6 +20,12 @@ pub const RATE: u32 = 48_000;
 pub const FRAME: usize = 960; // 20 ms
 // Os buffers por peer guardam ESTÉREO intercalado (E, D): a voz (mono) entra duplicada, o áudio da transmissão entra em estéreo.
 const PRIME: usize = FRAME * 3 * 2; // 60 ms antes de começar a tocar
+/// Áudio de transmissão ("peer#screen"): 100 ms antes de começar a tocar. A imagem da transmissão sai com a reprodução suavizada
+/// (`share::Playout`, 10 a 100 ms de atraso conforme a rede) mais a decodificação; com os 60 ms da voz o som podia ficar até ~60 ms
+/// ADIANTADO em relação à imagem, que é o lado em que o descompasso se nota mais cedo (a partir de ~45 ms; som atrasado só incomoda
+/// depois de ~125 ms). Com 100 ms fixos o som fica entre ~20 ms adiantado e ~70 ms atrasado, sem mexer no ritmo do áudio em tempo
+/// real (acompanhar o atraso variável da imagem exigiria esticar/encolher o som). A voz da chamada continua em 60 ms.
+const PRIME_SCREEN: usize = FRAME * 5 * 2;
 const MAX_BUF: usize = FRAME * 10 * 2; // 200 ms; acima disso descarta o mais antigo
 
 #[derive(Debug, Clone, PartialEq)]
@@ -329,7 +335,7 @@ impl Audio {
         let gains = self.gains.lock().unwrap().clone();
         let mut sinks = self.sinks.lock().unwrap();
         for (peer, s) in sinks.iter_mut() {
-            if !s.primed { if s.buf.len() >= PRIME { s.primed = true; } else { continue; } }
+            if !s.primed { if s.buf.len() >= (if peer.ends_with("#screen") { PRIME_SCREEN } else { PRIME }) { s.primed = true; } else { continue; } }
             let take = out.len().min(s.buf.len()) & !1;
             let g = gains.get(peer).copied().unwrap_or(1.0);
             // ensurdecer corta só as VOZES; o áudio das transmissões ("peer#screen") segue, com o volume próprio de cada uma (1.4.4)
@@ -658,6 +664,25 @@ impl Drop for MicTest { fn drop(&mut self) { self.stop(); } }
 #[cfg(test)]
 mod unit {
     use super::*;
+
+    /// O áudio de uma transmissão só começa a tocar com 100 ms guardados (acompanha a reprodução suavizada da imagem); a voz, com 60 ms.
+    #[test]
+    fn stream_audio_primes_at_100_ms_and_voice_at_60_ms() {
+        let (a, _rx) = Audio::new(true);
+        let tone = |n: usize| -> std::collections::VecDeque<f32> { (0..n).map(|i| 0.4 * (2.0 * std::f32::consts::PI * 440.0 * (i / 2) as f32 / 48000.0).sin()).collect() };
+        let plays = |a: &Audio, key: &str, n: usize| -> bool {
+            { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert(key.to_string(), Sink { buf: tone(n), primed: false, gen: 1 }); }
+            let mut out = vec![0.0f32; FRAME * 2];
+            a.mix_pull_stereo(&mut out);
+            out.iter().any(|v| v.abs() > 0.05)
+        };
+        assert!(plays(&a, "ana", PRIME), "voz: toca com 60 ms");
+        assert!(!plays(&a, "ana", PRIME - 2), "voz: ainda não com menos de 60 ms");
+        assert!(!plays(&a, "ana#screen", PRIME), "transmissão: 60 ms ainda não bastam");
+        assert!(!plays(&a, "ana#screen", PRIME_SCREEN - 2));
+        assert!(plays(&a, "ana#screen", PRIME_SCREEN), "transmissão: toca com 100 ms");
+        assert!(PRIME_SCREEN < MAX_BUF, "o limite do buffer tem de caber os 100 ms");
+    }
 
     /// 1.4.4: ensurdecer corta a voz (mic das pessoas) mas mantém o áudio das transmissões, com o ganho próprio de cada uma, em estéreo.
     #[test]

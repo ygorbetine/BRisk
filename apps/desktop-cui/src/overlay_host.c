@@ -205,7 +205,7 @@ static void collect_lives(const app_state_t *s) {
 /* Monta o quadro do que aparece por cima do jogo. Visível para teste (sonda). Em edição fora de chamada mostra exemplos que respeitam os itens ligados. */
 static void compose(const app_state_t *s, float opacity, int flags, int corner, char *out, size_t cap) {
     size_t n = 0;
-    n += (size_t)snprintf(out + n, cap - n, "cfg %d %d\nedit %d\nflags %d\nlives %d\n", (int)(opacity + 0.5f), corner, g_edit ? 1 : 0, flags & 15, g_nlives);
+    n += (size_t)snprintf(out + n, cap - n, "cfg %d %d\nedit %d\nflags %d\nlives %d\ndrag %d\n", (int)(opacity + 0.5f), corner, g_edit ? 1 : 0, flags & 15, g_nlives, settings_ovl_through() ? 0 : 1);   /* drag 1 = NÃO atravessar: as miniaturas arrastam fora da edição (1.5.24: esta linha nunca era enviada, e a opção voltava sozinha) */
     if (g_shm_name[0]) n += (size_t)snprintf(out + n, cap - n, "livemap %s\n", g_shm_name);
     { char dev[48]; int x, y, w; if (settings_ovl_place(dev, sizeof dev, &x, &y, &w)) n += (size_t)snprintf(out + n, cap - n, "place %s %d %d %d\n", dev, x, y, w); else n += (size_t)snprintf(out + n, cap - n, "place -\n"); }
     n += (size_t)snprintf(out + n, cap - n, "begin\n");

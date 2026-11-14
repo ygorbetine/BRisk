@@ -794,6 +794,9 @@ static int protocol_selftest(void) {
     apply_line(&b, &o, "place x"); f += check(!b.pvalid, "place inválido apaga a posição");
     apply_line(&b, &o, "flags 11"); apply_line(&b, &o, "lives 3"); apply_line(&b, &o, "end");
     f += check(o.flags == 11 && o.lives == 3, "flags (itens ligados) e lives entram no quadro");
+    apply_line(&b, &o, "drag 1"); apply_line(&b, &o, "end"); f += check(o.drag == 1, "drag 1 (não atravessar cliques) entra no quadro");
+    apply_line(&b, &o, "begin"); apply_line(&b, &o, "end"); f += check(o.drag == 1, "a opção persiste entre quadros (só muda com nova linha drag)");
+    apply_line(&b, &o, "drag 0"); apply_line(&b, &o, "end");
     apply_line(&b, &o, "flags 99"); apply_line(&b, &o, "lives -4"); f += check(b.flags == 15 && b.lives == 0, "flags e lives fora da faixa são contidos");
     f += check(apply_line(&b, &o, "quit") == 2 && apply_line(&b, &o, "lixo qualquer") == 0, "quit fecha; linha desconhecida é ignorada");
     for (int i = 0; i < 20; i++) apply_line(&b, &o, "p 0 x");

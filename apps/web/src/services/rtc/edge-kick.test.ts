@@ -54,12 +54,11 @@ describe("livekit-kick: regra da função", () => {
     expect(r.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("quem não é o dono é recusado e ninguém é removido", async () => {
+  it("qualquer participante da chamada pode expulsar outro (regra atual do Briks, desde a 1.5.16)", async () => {
     const d = deps({ user: GUEST });
     const r = await handleKick(post({ room: ROOM, identity: OWNER }), d);
-    expect(r.status).toBe(403);
-    expect(await message(r)).toContain("dono");
-    expect(d.removeParticipant).not.toHaveBeenCalled();
+    expect(r.status).toBe(200);
+    expect(d.removeParticipant).toHaveBeenCalledWith(ROOM, OWNER);
   });
 
   it("quem nem está na chamada é recusado (mesmo sabendo o nome da sala)", async () => {
@@ -79,8 +78,8 @@ describe("livekit-kick: regra da função", () => {
   });
 
   it("a identidade de quem pede vem da sessão, nunca do corpo", async () => {
-    const d = deps({ user: GUEST });
-    // o convidado tenta se passar pelo dono mandando campos a mais
+    const d = deps({ user: "44444444-4444-4444-8444-444444444444" });
+    // quem nem está na chamada tenta se passar por participante mandando campos a mais: vale a sessão, não o corpo
     const r = await handleKick(post({ room: ROOM, identity: OTHER, requester: OWNER, user: OWNER, owner: GUEST }), d);
     expect(r.status).toBe(403);
     expect(d.removeParticipant).not.toHaveBeenCalled();

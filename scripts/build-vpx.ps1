@@ -29,7 +29,11 @@ Expand-Archive "$Cache\dl\nasm.zip" "$tools\nasm" -Force
 Expand-Archive "$Cache\dl\make.zip" "$tools\make" -Force
 $nasm = (Get-ChildItem "$tools\nasm" -Recurse -Filter nasm.exe | Select-Object -First 1).DirectoryName
 $make = (Get-ChildItem "$tools\make" -Recurse -Filter make.exe | Select-Object -First 1).DirectoryName
-$vs = "C:\Program Files\Microsoft Visual Studio\18\Community"
+# Visual Studio: o instalado mais novo (vswhere); o caminho fixo 18\Community só existe na máquina do mantenedor, não no runner do GitHub (VS 2022, toolset v143).
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vs = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath } else { $null }
+if (-not $vs) { $vs = "C:\Program Files\Microsoft Visual Studio\18\Community" }
+$toolset = if ($vs -match '\\2022\\') { "v143" } elseif ($vs -match '\\2019\\') { "v142" } else { "v145" }
 $gitsh = (Get-Command git).Source | Split-Path | Split-Path   # raiz do Git: usr\bin tem sh/perl
 $srcdir = (Get-ChildItem $src -Directory | Select-Object -First 1).FullName.Replace([string][char]92, '/')
 # Tudo roda com o PATH só deste processo: git\usr\bin (sh, perl), nasm, make e o ambiente do Visual Studio.
@@ -55,7 +59,7 @@ cmd /c "sh gen.sh >gen.log 2>&1"
 $nc = (Select-String -Path vpx.vcxproj -Pattern 'Include=.*\.c"' -AllMatches).Matches.Count
 if ($nc -lt 200) { throw "vpx.vcxproj incompleto ($nc fontes .c; esperado ~209)" }
 # Sem /GL (WholeProgramOptimization): objetos LTCG não resolvem símbolos quando o rustc empacota a .lib; sem PDB para a lib ficar pequena.
-cmd /c "msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /m /v:m /p:WholeProgramOptimization=false /p:DebugInformationFormat=None /t:Rebuild >msbuild.log 2>&1"
+cmd /c "msbuild vpx.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$toolset /m /v:m /p:WholeProgramOptimization=false /p:DebugInformationFormat=None /t:Rebuild >msbuild.log 2>&1"
 if ($LASTEXITCODE) { throw "build da libvpx falhou" }
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Copy-Item "$bld\x64\Release\vpxmd.lib" $lib -Force

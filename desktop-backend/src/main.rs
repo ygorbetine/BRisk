@@ -1,3 +1,5 @@
+#![cfg_attr(not(windows), allow(dead_code))] // partes só do Windows (captura de janela/áudio por app): fora dele o clippy do CI acusava "nunca usado"
+
 mod p2p;
 
 use anyhow::Context;

@@ -50,6 +50,7 @@ pub struct Accounts {
     session: Mutex<Option<Session>>,
     refresh_lock: tokio::sync::Mutex<()>,
     replaced: Mutex<Option<String>>,
+    age_hint: Mutex<Option<String>>,   // "adult" | "minor" | "unknown": resultado da conferência de idade pelo Google no último login
     opener: Opener,
     pub oauth_timeout: Duration,
     pub email_timeout: Duration,
@@ -65,6 +66,8 @@ pub enum SignUpOutcome {
     SignedIn(AccountUser),
     ConfirmEmail(EmailWait),
 }
+
+pub(crate) mod age;
 
 fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -111,7 +114,7 @@ impl Accounts {
         Self::with_stores(provider, SecretFile::dpapi(data_dir.join("account-session.bin")), SecretFile::dpapi(data_dir.join("local-bridge.bin")), opener)
     }
     pub fn with_stores(provider: Arc<dyn AuthProvider>, store: SecretFile, bridge: SecretFile, opener: Opener) -> Self {
-        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), replaced: Mutex::new(None), opener,
+        Accounts { provider, store, bridge, session: Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()), replaced: Mutex::new(None), age_hint: Mutex::new(None), opener,
             oauth_timeout: Duration::from_secs(300), email_timeout: Duration::from_secs(900) }
     }
 
@@ -170,9 +173,18 @@ impl Accounts {
         (self.opener)(url)?;
         let code = lb.wait_code(self.oauth_timeout).await?;
         let (p, verifier) = (self.provider.clone(), pk.verifier);
-        let s = blk(move || p.exchange_code(&code, &verifier)).await?;
+        let mut s = blk(move || p.exchange_code(&code, &verifier)).await?;
+        // idade pelo Google (só se ligado): maior / menor / sem data. O token do provedor é descartado logo depois.
+        let tok = s.provider_token.take();
+        *self.age_hint.lock().unwrap() = match (provider == OAuthProvider::Google && age::google_birthday_on(), tok) {
+            (true, Some(t)) => Some(blk(move || Ok(age::google_age_hint(&t))).await.unwrap_or_else(|_| "error".into())),
+            _ => None,
+        };
         Ok(self.adopt(s))
     }
+
+    /// Resultado da conferência de idade do último login (uma vez só).
+    pub fn take_age_hint(&self) -> Option<String> { self.age_hint.lock().unwrap().take() }
 
     pub async fn sign_in_password(&self, email: &str, password: &str) -> AResult<AccountUser> {
         let email = check_email(email)?;

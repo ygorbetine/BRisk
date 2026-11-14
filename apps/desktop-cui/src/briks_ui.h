@@ -167,7 +167,7 @@ typedef struct {
     char acct_user_id[48], acct_nick[32], acct_code[12];
     char bridge_email[96], bridge_pw[64];                      /* credencial do banco LOCAL (não é a senha da conta) */
     bool nick_open; char nick_edit[32], nick_msg[160];
-    bool age_open, age_signup_ok; char age_msg[160];   /* confirmação de idade (18+): obrigatória uma vez por conta; signup_ok = acabou de informar no cadastro */
+    bool age_open, age_signup_ok; int age_kind;   /* age_kind: 0 digitar a data, 1 menor de 18, 2 falta a data na conta Google, 3 não deu para conferir */ char age_msg[160];   /* confirmação de idade (18+): obrigatória uma vez por conta; signup_ok = acabou de informar no cadastro */
     bool nick_first;   /* o diálogo do @ está no modo "primeiro acesso" (conta nova com @ provisório); nick_asked: já perguntou nesta sessão */
     bool nick_asked;
     char name_edit[64], profile_msg[200];

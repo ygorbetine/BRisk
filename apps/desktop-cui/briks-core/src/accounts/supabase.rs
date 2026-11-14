@@ -176,13 +176,16 @@ pub(crate) fn session_of(v: &Value) -> AResult<Session> {
         return Err(AccountError::new("server", "Resposta inesperada do servidor de contas."));
     }
     let expires_at = v["expires_at"].as_u64().unwrap_or_else(|| now() + v["expires_in"].as_u64().unwrap_or(3600));
-    Ok(Session { access_token: access.into(), refresh_token: refresh.into(), expires_at, user })
+    Ok(Session { access_token: access.into(), refresh_token: refresh.into(), expires_at, user, provider_token: v["provider_token"].as_str().map(|t| t.to_string()) })
 }
 
 impl AuthProvider for SupabaseProvider {
     fn oauth_url(&self, provider: OAuthProvider, redirect_to: &str, challenge: &str) -> String {
-        format!("{}/auth/v1/authorize?provider={}&redirect_to={}&code_challenge={}&code_challenge_method=s256",
-            self.base, provider.as_str(), url_encode(redirect_to), url_encode(challenge))
+        let extra = if provider == OAuthProvider::Google && crate::accounts::age::google_birthday_on() {
+            format!("&scopes={}", url_encode("https://www.googleapis.com/auth/user.birthday.read"))
+        } else { String::new() };
+        format!("{}/auth/v1/authorize?provider={}&redirect_to={}&code_challenge={}&code_challenge_method=s256{}",
+            self.base, provider.as_str(), url_encode(redirect_to), url_encode(challenge), extra)
     }
     fn exchange_code(&self, code: &str, verifier: &str) -> AResult<Session> {
         session_of(&self.call("POST", "/auth/v1/token?grant_type=pkce", None, Some(json!({ "auth_code": code, "code_verifier": verifier })))?)

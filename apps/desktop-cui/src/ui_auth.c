@@ -78,7 +78,7 @@ static void view_main(cui_ctx *ui, app_state_t *s) {
     }
     cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 4, .justify = CUI_JUSTIFY_CENTER) {
         if (cui_button(ui, "Entrar com e-mail", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM, .disabled = !on)) go(s, AV_LOGIN);
-        if (cui_button(ui, "Criar conta com e-mail", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM, .disabled = !on)) go(s, AV_SIGNUP);
+//         if (cui_button(ui, "Criar conta com e-mail", .variant = CUI_BUTTON_LINK, .size = CUI_SIZE_SM, .disabled = !on)) go(s, AV_SIGNUP);
     }
     if (!on && s->acct_state != ACCT_UNKNOWN && cui_button(ui, "Tentar de novo", .variant = CUI_BUTTON_SECONDARY, .full_width = true)) account_retry(s);
 }

@@ -821,13 +821,21 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
     if (!s->nick_open) s->nick_first = false;
     if (s->age_open) {   /* confirmação de idade: não fecha até confirmar 18+ ou sair da conta */
         bool open = true;
-        cui_dialog(ui, "Confirme sua idade", &open) {
-            cui_text(ui, "O Briks é só para maiores de 18 anos. Digite sua data de nascimento. Ela é usada só para esta conferência e não é guardada.", .color = B_MUTED, .width = CUI_FILL);
-            int br = cui_input(ui, "age-birth", s->birth, sizeof s->birth, .placeholder = "dd/mm/aaaa", .autofocus = true);
+        cui_dialog(ui, "Confirme sua idade", &open, .width = 500) {
+            int br = 0;
+            if (s->age_kind == 1) cui_text(ui, "O Briks é só para maiores de 18 anos.", .color = B_MUTED, .width = CUI_FILL);
+            else if (s->age_kind == 2) cui_text(ui, "O Briks é só para maiores de 18 anos e confere a idade pela sua conta Google. A sua não tem data de nascimento com ano. Preencha-a na conta Google e tente de novo; sem isso não dá para entrar.", .color = B_MUTED, .width = CUI_FILL);
+            else if (s->age_kind == 3) cui_text(ui, "Não deu para conferir sua idade agora. Verifique a conexão e tente de novo.", .color = B_MUTED, .width = CUI_FILL);
+            else {
+                cui_text(ui, "O Briks é só para maiores de 18 anos. Digite sua data de nascimento. Ela é usada só para esta conferência e não é guardada.", .color = B_MUTED, .width = CUI_FILL);
+                br = cui_input(ui, "age-birth", s->birth, sizeof s->birth, .placeholder = "dd/mm/aaaa", .autofocus = true);
+            }
             if (s->age_msg[0]) cui_text(ui, s->age_msg, .color = CUI_RGB(0xff9a9a), .size = 13, .width = CUI_FILL);
             cui_dialog_footer(ui) {
-                if (cui_button(ui, "Sair da conta")) { s->age_open = false; s->birth[0] = 0; account_logout(s); }
-                if (cui_button(ui, "Confirmar", .variant = CUI_BUTTON_PRIMARY) || (br & CUI_SUBMITTED)) {
+                if (cui_button(ui, "Sair")) { s->age_open = false; s->age_kind = 0; s->birth[0] = 0; account_logout(s); }
+                if (s->age_kind == 2 && cui_button(ui, "Abrir Google")) ShellExecuteA(NULL, "open", "https://myaccount.google.com/birthday", NULL, NULL, SW_SHOWNORMAL);
+                if ((s->age_kind == 2 || s->age_kind == 3) && cui_button(ui, "Tentar", .variant = CUI_BUTTON_PRIMARY)) { s->age_open = false; s->age_kind = 0; account_logout(s); account_oauth(s, "google"); }
+                if (s->age_kind == 0 && (cui_button(ui, "Confirmar", .variant = CUI_BUTTON_PRIMARY) || (br & CUI_SUBMITTED))) {
                     SYSTEMTIME st; GetLocalTime(&st);
                     if (birth_check(s->birth, st.wYear, st.wMonth, st.wDay, s->age_msg, sizeof s->age_msg) == 0) { age_ok_save(s->acct_user_id); s->age_open = false; s->birth[0] = 0; }
                     else if (strstr(s->age_msg, "maiores de 18")) { snprintf(s->age_msg, sizeof s->age_msg, "O Briks é só para maiores de 18 anos. Você não pode usar o app."); s->birth[0] = 0; }

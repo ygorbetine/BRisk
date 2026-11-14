@@ -75,6 +75,8 @@ pub struct Session {
     /// segundos Unix em que o access token vence
     pub expires_at: u64,
     pub user: AccountUser,
+    /// token do provedor (Google) devolvido no login social; usado só para conferir a idade e descartado
+    pub provider_token: Option<String>,
 }
 
 pub enum SignUp {

@@ -139,7 +139,7 @@ async fn signed_in_ex(rt: &Runtime, acc: &Accounts, tx: &mpsc::Sender<Value>, re
     if let Some(prev) = acc.take_previous_id(&u.id) { avatar::clear(&rt.data_dir, &prev); }
     // foto: usa o cache se houver; baixa em segundo plano e avisa quando chegar. nick_hint: provisório, derivado do nome.
     let photo = avatar::cached(&rt.data_dir, &u.id);
-    let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name) }))).await;
+    let _ = tx.send(with(base(rt, "signed_in"), json!({ "user": u, "recovery": recovery, "photo": photo, "nick_hint": avatar::nick_hint(&u.display_name), "age": acc.take_age_hint() }))).await;
 
     let id = match crate::ipc::load_or_create_identity(&rt.data_dir) {
         Ok(id) => id,

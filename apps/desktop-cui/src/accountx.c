@@ -99,3 +99,14 @@ void age_ok_save(const char *id) {
     FILE *f = fopen(p, "ab"); if (!f) return;
     fprintf(f, "%s\n", id); fclose(f);
 }
+
+/* Máscara dd/mm/aaaa enquanto digita: só dígitos, com "/" depois do dia e do mês. Devolve true se mudou o texto. */
+bool birth_mask(char *t, size_t cap) {
+    char d[16]; int n = 0;
+    for (const char *p = t; *p && n < 8; p++) if (*p >= '0' && *p <= '9') d[n++] = *p;
+    char o[16]; int k = 0;
+    for (int i = 0; i < n; i++) { if (i == 2 || i == 4) o[k++] = '/'; o[k++] = d[i]; }
+    o[k] = 0;
+    if (k >= (int)cap || !strcmp(o, t)) return false;
+    strcpy(t, o); return true;
+}

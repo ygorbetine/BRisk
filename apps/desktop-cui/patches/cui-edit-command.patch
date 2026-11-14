@@ -16,7 +16,7 @@ index 72a3031..481d58e 100644
  CUI_API int cui_textarea_ex(cui_ctx *ui, const char *id, char *buf, size_t cap, const cui_input_opts *opts);
 +/* Briks: comandos de edicao vindos de fora (menu de contexto). `id` e o cui_make_id do campo, no escopo de id do cui_input.
 + * O comando entra na fila e roda no proximo quadro, com o foco devolvido ao campo (o clique no menu tirou o foco). */
-+typedef enum { CUI_EDIT_NONE = 0, CUI_EDIT_UNDO, CUI_EDIT_REDO, CUI_EDIT_CUT, CUI_EDIT_COPY, CUI_EDIT_PASTE, CUI_EDIT_SELECT_ALL } cui_edit_cmd;
++typedef enum { CUI_EDIT_NONE = 0, CUI_EDIT_UNDO, CUI_EDIT_REDO, CUI_EDIT_CUT, CUI_EDIT_COPY, CUI_EDIT_PASTE, CUI_EDIT_SELECT_ALL, CUI_EDIT_END } cui_edit_cmd;
 +CUI_API void cui_edit_command(cui_ctx *ui, cui_id id, cui_edit_cmd cmd);
 +/* Estado do campo no quadro anterior: bytes selecionados [*s0,*s1), pode desfazer/refazer. Falso se o campo nao existe. */
 +CUI_API bool cui_edit_focused(cui_ctx *ui, cui_id id);   /* o campo tem o foco do teclado neste quadro */
@@ -85,7 +85,7 @@ index cfca9d8..f73cff0 100644
 +    int cmd = ui->edit_cmd;
 +    ui->edit_cmd = 0;
 +    int s0 = CUI_MIN(e->cursor, e->anchor), s1 = CUI_MAX(e->cursor, e->anchor);
-+    if (cmd == CUI_EDIT_SELECT_ALL) { e->anchor = 0; e->cursor = c->len; c->moved = true; }
++    if (cmd == CUI_EDIT_SELECT_ALL || cmd == CUI_EDIT_END) { e->anchor = cmd == CUI_EDIT_END ? c->len : 0; e->cursor = c->len; c->moved = true; }
 +    else if ((cmd == CUI_EDIT_COPY || cmd == CUI_EDIT_CUT) && s1 > s0 && !c->password) {
 +        if (ui->platform.set_clipboard) ui->platform.set_clipboard(ui->platform.user, cui__frame_strdup(ui, c->buf + s0, s1 - s0));
 +        if (cmd == CUI_EDIT_CUT && !c->read_only) {

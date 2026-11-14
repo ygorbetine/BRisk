@@ -1,6 +1,8 @@
 /* Remake da interface do Briks em CUI. Paleta e medidas vêm de apps/web/src/styles.css e glass-layout.css. */
 #ifndef BRIKS_UI_H
 #define BRIKS_UI_H
+#include <string.h>
+#include <stdio.h>
 #include <cui/cui.h>
 #include <cui/cui_app.h>
 #include <stdbool.h>
@@ -562,6 +564,8 @@ static inline void briks_avatar(cui_ctx *ui, const char *name, float size, cui_t
 bool birth_parse(const char *t, int *d, int *m, int *y);
 int birth_check(const char *txt, int ty, int tm, int td, char *err, size_t cap);   /* 0 = maior de 18; 1 formato, 2 futuro, 3 menor */
 void login_hint_save(const char *nick, const char *email);
+bool birth_mask(char *t, size_t cap);   /* coloca as "/" de dd/mm/aaaa enquanto digita */
+static inline void birth_input_fix(cui_ctx *ui, const char *id, char *t, size_t cap) { if (birth_mask(t, cap)) cui_edit_command(ui, cui_make_id(ui, id), CUI_EDIT_END); }   /* a "/" entra no texto e o cursor vai ao fim */
 bool age_ok_has(const char *id);   /* idade 18+ já confirmada para esta conta neste PC */
 void age_ok_save(const char *id);
 bool login_hint_lookup(const char *nick, char *email, size_t cap);

@@ -185,7 +185,11 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
 fn wire_pc(pc: &Arc<RTCPeerConnection>, epoch: u32, target: i32, itx: &mpsc::Sender<Internal>) {
     let itx1 = itx.clone();
     pc.on_ice_candidate(Box::new(move |c| { let itx = itx1.clone(); Box::pin(async move {
-        if let Some(c) = c { if let Ok(init) = c.to_json() { let _ = itx.send(Internal::Ice { epoch, target, init }).await; } } }) }));
+        if let Some(c) = c { crate::netlog::write(&format!("sfu ice {} candidato: {} {}", if target == 1 { "sub" } else { "pub" }, c.typ, c.protocol)); if let Ok(init) = c.to_json() { let _ = itx.send(Internal::Ice { epoch, target, init }).await; } } }) }));
+    // diagnóstico (rede.log): estado do ICE e tipo dos candidatos de cada conexão; nunca endereços IP
+    let who = if target == 1 { "sub" } else { "pub" };
+    pc.on_ice_connection_state_change(Box::new(move |s| { crate::netlog::write(&format!("sfu ice {who}: {s}")); Box::pin(async {}) }));
+    pc.on_ice_gathering_state_change(Box::new(move |s| { crate::netlog::write(&format!("sfu ice {who} coleta: {s}")); Box::pin(async {}) }));
     let itx2 = itx.clone();
     pc.on_peer_connection_state_change(Box::new(move |state| { let itx = itx2.clone(); Box::pin(async move { let _ = itx.send(Internal::Pc { epoch, target, state }).await; }) }));
 }

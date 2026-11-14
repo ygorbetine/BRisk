@@ -829,6 +829,7 @@ void ui_social(cui_ctx *ui, app_state_t *s) {
             else {
                 cui_text(ui, "O Briks é só para maiores de 18 anos. Digite sua data de nascimento. Ela é usada só para esta conferência e não é guardada.", .color = B_MUTED, .width = CUI_FILL);
                 br = cui_input(ui, "age-birth", s->birth, sizeof s->birth, .placeholder = "dd/mm/aaaa", .autofocus = true);
+                birth_input_fix(ui, "age-birth", s->birth, sizeof s->birth);
             }
             if (s->age_msg[0]) cui_text(ui, s->age_msg, .color = CUI_RGB(0xff9a9a), .size = 13, .width = CUI_FILL);
             cui_dialog_footer(ui) {

@@ -95,7 +95,7 @@ static void view_form(cui_ctx *ui, app_state_t *s) {
     if (v != AV_RECOVER) r |= cui_input(ui, "password", s->password, sizeof s->password, .password = true, .placeholder = v == AV_SIGNUP ? "Senha (mínimo 8 caracteres)" : "Senha");
     if (v == AV_SIGNUP) r |= cui_input(ui, "confirm", s->confirm, sizeof s->confirm, .password = true, .placeholder = "Repita a senha");
     if (v == AV_SIGNUP) {
-        r |= cui_input(ui, "birth", s->birth, sizeof s->birth, .placeholder = "Data de nascimento (dd/mm/aaaa)");
+        r |= cui_input(ui, "birth", s->birth, sizeof s->birth, .placeholder = "Data de nascimento (dd/mm/aaaa)"); birth_input_fix(ui, "birth", s->birth, sizeof s->birth);
         cui_text(ui, "O Briks é só para maiores de 18 anos. A data serve só para conferir isso e não é guardada.", .size = 13, .color = B_MUTED, .width = CUI_FILL);
     }
     messages(ui, s);

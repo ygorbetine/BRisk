@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.18", {
+        "Data de nascimento: a barra (dd/mm/aaaa) entra sozinha enquanto você digita.",
+        "Registro da rede da chamada em servidor com mais detalhes (estado das conexões) para achar a instabilidade.",
+        NULL } },
     { "1.5.17", {
         "Entrada só com Google e Discord: a criação de conta por e-mail saiu da tela (quem já tem conta continua entrando por e-mail).",
         "Idade: com a leitura pelo Google ligada, contas sem data de nascimento com ano precisam preenchê-la no Google para entrar.",

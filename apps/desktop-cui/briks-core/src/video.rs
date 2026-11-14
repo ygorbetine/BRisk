@@ -64,10 +64,16 @@ impl FrameSource {
         Ok(FrameSource { map: unsafe { memmap2::Mmap::map(&f)? } })
     }
     pub fn ts(&self) -> u64 { u64::from_le_bytes(self.map[24..32].try_into().unwrap_or([0; 8])) }
-    /// (largura, altura, nº do quadro, RGBA) do último quadro estável.
+    /// (largura, altura, nº do quadro, RGBA) do último quadro estável. None = ainda não há quadro (largura/altura zeradas).
+    ///
+    /// Com quem grava em atividade, tenta por até 100 ms. Antes eram 8 tentativas e pronto: copiar um quadro 720p leva ~1 ms e, com a
+    /// máquina carregada (a suíte de testes inteira em paralelo), a thread que lê perde a vez no meio da cópia, um quadro novo chega e
+    /// a tentativa é perdida — oito vezes seguidas isso devolvia None com a transmissão funcionando. Era a falha ocasional de
+    /// `camera_e2e` ("quadro da tela") e dos testes de duas telas.
     pub fn read(&self) -> Option<(usize, usize, u64, Vec<u8>)> {
         let seq = unsafe { &*(self.map.as_ptr().add(4) as *const AtomicU32) };
-        for _ in 0..8 {
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < std::time::Duration::from_millis(100) {
             let a = seq.load(Ordering::Acquire);
             if a & 1 == 1 { std::thread::yield_now(); continue; }
             let w = u32::from_le_bytes(self.map[8..12].try_into().ok()?) as usize;
@@ -407,6 +413,46 @@ mod tests {
             if x >= (t * 8) % w && x < (t * 8) % w + 40 { f[o] = 255; f[o + 1] = 255; f[o + 2] = 0; }
         } }
         f
+    }
+
+    /// Quem grava ocupa o arquivo metade do tempo (bem pior que uma transmissão de verdade): toda leitura ainda devolve um quadro
+    /// inteiro e coerente. Com o limite antigo de 8 tentativas, mais de 95% das leituras voltavam vazias nessas condições (386 a 396 de
+    /// 400, medido; o teste imprime a contagem).
+    #[test]
+    fn reader_gets_a_whole_frame_while_the_writer_is_busy() {
+        let (w, h) = (1280usize, 720usize);
+        let dir = std::env::temp_dir().join(format!("briks-seq-{}", std::process::id()));
+        let mut sink = FrameSink::create(&dir.join("s.bin")).unwrap();
+        let src = FrameSource::open(&dir.join("s.bin")).unwrap();
+        assert!(src.read().is_none(), "sem quadro gravado: None (e sem esperar os 100 ms à toa mais de uma vez)");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let st = stop.clone();
+        let wr = std::thread::spawn(move || {
+            let mut k = 0u8;
+            while !st.load(Ordering::Relaxed) { k = k.wrapping_add(1); let f = vec![k; w * h * 4]; sink.write(w, h, &f); std::thread::sleep(std::time::Duration::from_micros(500)); }
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        for i in 0..400 {
+            let (rw, rh, n, d) = src.read().unwrap_or_else(|| panic!("leitura {i} voltou vazia"));
+            assert_eq!((rw, rh), (w, h));
+            assert!(n > 0 && d.iter().all(|b| *b == d[0]), "leitura {i}: quadro misturado");
+        }
+        // o leitor antigo (8 tentativas), nas mesmas condições: quantas leituras voltariam vazias (só informa; depende da máquina)
+        let seq = unsafe { &*(src.map.as_ptr().add(4) as *const AtomicU32) };
+        let mut vazias = 0;
+        for _ in 0..400 {
+            let mut ok = false;
+            for _ in 0..8 {
+                let a = seq.load(Ordering::Acquire);
+                if a & 1 == 1 { std::thread::yield_now(); continue; }
+                let d = src.map[HDR..HDR + w * h * 4].to_vec();
+                if seq.load(Ordering::Acquire) == a { std::hint::black_box(d); ok = true; break; }
+            }
+            if !ok { vazias += 1; }
+        }
+        eprintln!("leitor antigo (8 tentativas), quem grava ocupado: {vazias} de 400 leituras vazias; leitor novo: 0 de 400");
+        stop.store(true, Ordering::Relaxed);
+        wr.join().unwrap();
     }
 
     #[test]

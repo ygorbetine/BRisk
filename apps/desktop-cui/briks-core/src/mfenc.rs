@@ -353,11 +353,61 @@ pub fn nals(d: &[u8]) -> Vec<(u8, usize, usize)> {
     out
 }
 
+/// I420 → NV12 (Y igual; U e V intercalados). Roda uma vez por quadro enviado, então importa: a versão antiga fazia `push` byte a
+/// byte (1,4 milhão de vezes num quadro 2580x1080); esta escreve em pares, que o compilador vetoriza.
 pub fn i420_to_nv12(y: &[u8], u: &[u8], v: &[u8], out: &mut Vec<u8>) {
+    let n = y.len() + u.len() * 2;
     out.clear();
-    out.reserve(y.len() + u.len() * 2);
+    out.reserve(n);
     out.extend_from_slice(y);
-    for (a, b) in u.iter().zip(v) { out.push(*a); out.push(*b); }
+    out.resize(n, 0);
+    for ((o, a), b) in out[y.len()..].chunks_exact_mut(2).zip(u).zip(v) { o[0] = *a; o[1] = *b; }
+}
+
+#[cfg(test)]
+mod nv12_tests {
+    use super::i420_to_nv12;
+
+    fn antigo(y: &[u8], u: &[u8], v: &[u8], out: &mut Vec<u8>) {
+        out.clear();
+        out.reserve(y.len() + u.len() * 2);
+        out.extend_from_slice(y);
+        for (a, b) in u.iter().zip(v) { out.push(*a); out.push(*b); }
+    }
+    fn planos(w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        ((0..w * h).map(|i| (i * 7) as u8).collect(), (0..w * h / 4).map(|i| (i * 3 + 1) as u8).collect(), (0..w * h / 4).map(|i| (i * 5 + 2) as u8).collect())
+    }
+
+    /// A versão nova produz exatamente os mesmos bytes da antiga, inclusive reaproveitando um buffer maior ou menor.
+    #[test]
+    fn interleaving_matches_the_old_byte_by_byte_version() {
+        let mut out = vec![9u8; 5_000_000];
+        for (w, h) in [(2usize, 2usize), (640, 360), (1920, 1080), (322, 182)] {
+            let (y, u, v) = planos(w, h);
+            let mut want = vec![];
+            antigo(&y, &u, &v, &mut want);
+            i420_to_nv12(&y, &u, &v, &mut out);
+            assert_eq!(out, want, "{w}x{h}");
+        }
+    }
+
+    /// Medição (ignorado): ms por quadro em 2580x1080 e 1920x1080, versão antiga x nova.
+    #[test]
+    #[ignore]
+    fn bench_i420_to_nv12() {
+        for (w, h) in [(2580usize, 1080usize), (1920, 1080)] {
+            let (y, u, v) = planos(w, h);
+            let mut out = vec![];
+            let mut t = [0.0f64; 2];
+            for (k, f) in [antigo as fn(&[u8], &[u8], &[u8], &mut Vec<u8>), i420_to_nv12].iter().enumerate() {
+                for _ in 0..20 { f(&y, &u, &v, &mut out); }
+                let t0 = std::time::Instant::now();
+                for _ in 0..300 { f(&y, &u, &v, &mut out); std::hint::black_box(&out); }
+                t[k] = t0.elapsed().as_secs_f64() * 1000.0 / 300.0;
+            }
+            eprintln!("[i420_to_nv12 {w}x{h}] antiga {:.2} ms, nova {:.2} ms por quadro", t[0], t[1]);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

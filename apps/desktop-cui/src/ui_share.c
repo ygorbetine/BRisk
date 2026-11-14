@@ -407,6 +407,7 @@ bool share_handle_event(app_state_t *s, const jval *j, const char *ev) {
             q->audio_on = jbool(j, "audio"); q->hardware = jbool(j, "hardware");
             if (q->audio_on && q->audio_muted) cmd("{\"cmd\":\"share.audio.mute\",\"muted\":true}");   /* o codificador reiniciou (mudou a qualidade): o mudo continua valendo */
             copy(q->encoder, sizeof q->encoder, json_str(j, "encoder", ""));
+            copy(q->codec_on, sizeof q->codec_on, json_str(j, "codec", ""));
         } else {
             q->vknown[0] = false; q->viewers[0] = 0; q->active = false; q->starting = false; q->black = false; q->adapting[0] = 0; q->live_h = 0; q->stat_fps = 0; q->stat_kbps = 0;
             share_stop_second(s);   /* a 2ª tela só existe junto com a 1ª */
@@ -850,13 +851,8 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             cui_text(ui, "Quadros por segundo", .size = 13, .color = B_MUTED);
             ch |= seg(ui, "fps", FPS_LABEL, NULL, FPS_N, &q->fps);
         }
-        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
-            cui_column(ui, .gap = 1, .max_width = g_qw > 0 ? fmaxf(g_qw - 190.0f, 150.0f) : 0, .width = CUI_FILL) {
-                wrap_line(ui, "Se a rede ou o PC apertar", 13, B_MUTED);
-                wrap_line(ui, q->content ? "Fluidez: cede resolução antes de quadros" : "Nitidez: cede quadros antes de resolução", 11, CUI_RGBA(0xa592b8aa));
-            }
-            static const char *const pr[2] = { "Nitidez", "Fluidez" };
-            ch |= seg(ui, "pri", pr, NULL, 2, &q->content);
+        cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL) {
+            wrap_line(ui, "Se a rede ou o PC apertar, os quadros por segundo ficam fixos: cai a taxa de bits e, só se preciso, a resolução.", 11, CUI_RGBA(0xa592b8aa));
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_column(ui, .gap = 1, .width = CUI_FILL) {
@@ -867,6 +863,14 @@ static bool quality_controls(cui_ctx *ui, share_state_t *q) {
             }
             static const char *const cd[3] = { "H.264", "VP9", "VP8" };
             ch |= seg(ui, "codec", cd, NULL, 3, &q->codec);
+        }
+        if (q->active && q->codec_on[0]) {
+            int on = !strcmp(q->codec_on, "vp9") ? 1 : !strcmp(q->codec_on, "vp8") ? 2 : 0;
+            static const char *const nm[3] = { "H.264", "VP9", "VP8" };
+            char cl[200];
+            if (on == q->codec) snprintf(cl, sizeof cl, "Em uso agora: %s", nm[on]);
+            else snprintf(cl, sizeof cl, "Em uso agora: %s. %s só vale na próxima chamada, ou se todos na chamada o abrirem (no P2P).", nm[on], nm[q->codec]);
+            wrap_line(ui, cl, 11, on == q->codec ? CUI_RGBA(0x8fd9a8cc) : CUI_RGBA(0xf0c26ecc));
         }
         cui_box(ui, .dir = CUI_ROW, .width = CUI_FILL, .gap = 6, .wrap = true, .justify = CUI_JUSTIFY_BETWEEN, .align = CUI_ALIGN_CENTER) {
             cui_text(ui, "Bitrate", .size = 13, .color = B_MUTED);

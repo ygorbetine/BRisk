@@ -105,7 +105,7 @@ static inline bool sm_url_ok(const char *u) {
 static inline void sm_autostart_cmd(const char *exe, char *out, size_t cap) { snprintf(out, cap, "\"%s\" --minimizado", exe); }
 
 /* ---------- sons: WAV mono 16 bits sintetizado (nada de arquivo extra) ---------- */
-typedef enum { SND_NOTIFY, SND_JOIN, SND_LEAVE, SND_PEER_JOIN, SND_PEER_LEAVE, SND_COUNT } sound_kind_t;
+typedef enum { SND_NOTIFY, SND_JOIN, SND_LEAVE, SND_PEER_JOIN, SND_PEER_LEAVE, SND_STREAM, SND_COUNT } sound_kind_t;
 #define SM_WAV_RATE 22050
 #define SM_WAV_CAP 26000
 static inline size_t sm_wav(sound_kind_t kind, int vol, unsigned char *buf, size_t cap) {
@@ -115,6 +115,7 @@ static inline size_t sm_wav(sound_kind_t kind, int vol, unsigned char *buf, size
         { { 784, 90 }, { 523, 150 }, { 0, 0 } },        /* eu saí: desce */
         { { 659, 90 }, { 0, 0 }, { 0, 0 } },            /* alguém entrou: um toque */
         { { 440, 100 }, { 0, 0 }, { 0, 0 } },           /* alguém saiu: um toque grave */
+        { { 659, 70 }, { 880, 70 }, { 1319, 170 } },    /* alguém começou a transmitir: três notas subindo */
     };
     if (kind < 0 || kind >= SND_COUNT || cap < 64) return 0;
     if (vol < 0) vol = 0; if (vol > 100) vol = 100;

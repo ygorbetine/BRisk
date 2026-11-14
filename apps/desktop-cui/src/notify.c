@@ -46,7 +46,7 @@ void sound_play(sound_kind_t k) {
     if (!g_sys.sounds || k < 0 || k >= SND_COUNT) return;
     g_sound_played++;
     if (sys_is_headless() && !getenv("BRIKS_SOUND_PLAY")) return;   /* teste: conta, mas não toca no alto-falante de ninguém */
-    static unsigned char buf[SND_COUNT][SM_WAV_CAP]; static int vol[SND_COUNT] = { -1, -1, -1, -1, -1 };
+    static unsigned char buf[SND_COUNT][SM_WAV_CAP]; static int vol[SND_COUNT] = { -1, -1, -1, -1, -1, -1 };
     if (vol[k] != g_sys.sound_vol) { if (!sm_wav(k, g_sys.sound_vol, buf[k], sizeof buf[k])) return; vol[k] = g_sys.sound_vol; }
     PlaySoundA((LPCSTR)buf[k], NULL, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }
@@ -121,7 +121,7 @@ void notify_tick(app_state_t *s) {
     else if (s->in_room && peers != prev_peers) { if (prev_peers >= 0) sound_play(peers > prev_peers ? SND_PEER_JOIN : SND_PEER_LEAVE); prev_peers = peers; }
     for (int i = 0; i < BRIKS_MAX_PEERS; i++) {
         bool on = s->rtc_peers[i].id[0] && s->sh.remote[i].on;
-        if (on && !prev_share[i]) { char t[140]; snprintf(t, sizeof t, "%s começou a transmitir", s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Alguém"); notify_post(s, NT_STREAM, NULL, "Briks", t); }
+        if (on && !prev_share[i]) { if (GetTickCount64() >= g_grace_until) sound_play(SND_STREAM); char t[140]; snprintf(t, sizeof t, "%s começou a transmitir", s->rtc_peers[i].name[0] ? s->rtc_peers[i].name : "Alguém"); notify_post(s, NT_STREAM, NULL, "Briks", t); }
         prev_share[i] = on;
     }
     if (!g_un_loaded) { un_load(); g_last_total = -1; }

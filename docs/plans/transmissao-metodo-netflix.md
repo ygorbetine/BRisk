@@ -96,6 +96,44 @@ saída de propósito; queda de rede ou processo morto continuam pelo prazo. Vers
 elas continua em 10 s). Não verificado no modo SFU, onde a saída vem do `ParticipantUpdate` do LiveKit.
 Medido só em loopback: com STUN/TURN e a sinalização real os tempos absolutos são outros.
 
+### "Amigo fantasma": o que foi medido em cada modo
+- **SFU (o padrão), desligar a chamada:** `tests_sfurec::sfu_participant_that_hangs_up_disappears_at_once`, com livekit-server real: quem
+  desliga some para os outros em 0,06 s. O core já mandava `LeaveRequest`; não havia o que corrigir.
+- **P2P, desligar a chamada:** 10 s → 0,0 s com o `peer.bye` (acima).
+- **Fechar o app com a chamada aberta (os dois modos):** o IPC só enfileirava o `Close` e retornava. `ipc::close_call` agora espera o
+  ator terminar (até 800 ms; a UI dá 1 s ao core antes de matá-lo). **Não consegui reproduzir a perda do aviso em teste**: com a espera
+  zerada ele também chegou. A espera fica por tornar a saída determinística (~150 ms na malha).
+- **Não coberto:** app morto pelo Gerenciador de Tarefas, queda de energia ou de rede. Aí só o prazo do servidor (LiveKit) ou da
+  presença (10 s) tira a pessoa. Se o fantasma aparece com saída normal no SFU, a origem está fora do core (a lista da interface).
+
+## FPS do jogo caindo durante a transmissão (analisado, NÃO medido)
+
+Medir isto exige um jogo rodando com e sem transmissão; não foi feito. O que o código e o `rede.log` real dizem:
+
+- **CPU não parece ser a causa nesta máquina.** No `rede.log` real (NVENC, 2580x1080 a 30 qps) o core usa ~50–60% de UM núcleo, de 16
+  threads. O core não define prioridade de thread nem de processo em lugar nenhum (roda em prioridade normal).
+- **O que o core pede à GPU por quadro** (`gpuconv.rs`): copia a textura capturada em resolução cheia, faz escala + BGRA→NV12 no
+  processador de vídeo, copia o resultado reduzido e o lê de volta (leitura síncrona: a thread de captura espera a GPU). Mais a
+  codificação no NVENC. A captura pede ao Windows no máximo um quadro a cada 60% do período (`wgc_interval`), não um por quadro do jogo.
+- **O que não é do core:** a própria captura do Windows (WGC) tem custo para o jogo, e a interface do Briks desenha a prévia local e o
+  overlay com a GPU. Nada disso foi medido.
+
+Experimentos que valem a pena com um jogo aberto, em ordem de custo:
+1. Transmitir com e sem a janela do Briks visível e com e sem overlay: separa o custo da interface do custo do core.
+2. `IDXGIDevice::SetGPUThreadPriority` negativo no dispositivo da captura/conversão: põe o trabalho de GPU do Briks atrás do jogo. É o
+   botão que ataca diretamente a disputa de GPU; o efeito colateral esperado é a transmissão perder quadros quando a GPU está no limite.
+3. Prioridade abaixo do normal nas threads de captura e de envio: só ajuda se a CPU estiver saturada, o que o log não mostra.
+4. Baixar o FPS ou a resolução da transmissão: reduz as cópias e a codificação na mesma proporção.
+
+Desperdício conhecido, pequeno e sem relação provável com o FPS do jogo: o conversor da GPU entrega NV12, o core separa em I420 e o
+codificador junta de novo em NV12 (duas passadas pela croma e uma cópia a mais do plano Y por quadro, na casa de 0,5 ms em 1080p).
+
+## Jogo em tela cheia exclusiva (NÃO verificado)
+
+Não foi testado. O emissor detecta fonte preta (3 s seguidos de quadro escuro uniforme) e avisa a interface (`share.hint` = "black");
+o comentário no código cita tela cheia exclusiva e conteúdo protegido (DRM) como causas. Se o WGC captura sem piscar um jogo em tela
+cheia exclusiva nesta máquina é algo que só um teste com o jogo responde.
+
 ## O que falta validar
 
 - Teste em 2 PCs, nos dois modos (SFU e P2P), olhando o `rede.log`.

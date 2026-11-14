@@ -54,12 +54,18 @@ extra custa GPU e o MFT vaza ~4 handles por criação), `rid` na offer, e o `Add
 camada por espectador. Não começado: é o item de maior custo desta lista e só ajuda quando há espectadores com redes muito diferentes
 na mesma sala.
 
-### BT.709
+### BT.709 (decidido: não fazer)
 As duas pontas usam BT.601 de faixa limitada (CPU em `video.rs`, GPU em `gpuconv.rs`, receptor em `nv12_to_rgba`). É coerente, então
 as cores estão certas; só não é o padrão de HD. Trocar exige que emissor e receptor mudem juntos: um receptor antigo mostraria as
 cores de um emissor novo levemente erradas (e vice-versa). O caminho compatível é sinalizar a matriz no fluxo (VUI do SPS:
 `colour_primaries` / `matrix_coefficients`) ou no `peer.state`/dados do SFU, e o receptor escolher a conversão por emissor. O ganho
 visual é pequeno (desvio de alguns níveis em cores saturadas). Não feito.
+
+Revisto depois da 1.5.26: entre Briks e Briks não há ganho NENHUM. A matriz só importa quando quem decodifica presume outra; aqui as
+duas pontas são o nosso código e usam a mesma, então a cor que chega é a que saiu (a menos do arredondamento, igual em qualquer
+matriz). Trocar para BT.709 só traria risco: cores levemente erradas entre versões diferentes durante a transição e mais um
+campo de sinalização para manter. Só voltaria a fazer sentido se um decodificador de terceiros (navegador, por exemplo) passasse a
+assistir às transmissões.
 
 ### 4:4:4 e HDR
 O H264 do MFT de hardware é 4:2:0 de 8 bits. Texto colorido fino perde croma (o teto medido da subamostragem está no teste
@@ -74,6 +80,21 @@ Foundation economizaria ~0,5 ms; não vale a mudança.
 ### VBV maior e VBR
 Filme a 2 Mbps: VBV de 125 / 500 / 1000 ms dá 36,7 / 37,0 / 37,0 dB com pico de 1 s de 2,87 / 4,12 / 5,06 Mbps; VBR com teto de
 150% dá 37,2 dB gastando 3,04 Mbps. Ganho de no máximo 0,5 dB com rajada maior. Mantido como estava.
+
+## Fora da transmissão: chamada P2P (depois da 1.5.26)
+
+| Mudança | Onde | Medido (loopback) |
+|---|---|---|
+| Malha com 3 ou mais pessoas fecha rápido | `mesh.rs` | 3 pessoas: ~1,1 s → 0,0–0,5 s; 4 pessoas: ~2,0 s → 0,0–0,5 s; quem entra depois: 1–2 s → ~0,4 s |
+| Quem desliga some na hora (aviso `peer.bye`) | `mesh.rs` | 10 s (prazo de graça da presença) → 0,0 s |
+
+Causas do atraso com 3 ou mais: (1) o `on_message` do canal de dados recebido só era ligado quando o ator processava o `DcAttach`, e o
+desafio de identidade que chegava antes era descartado — a autenticação fechava no reenvio de 2 s; (2) o webrtc-rs espera 1 s antes de
+aceitar um candidato prflx e 500 ms um srflx; os dois são caminhos diretos e passaram a 250 ms (o relay/TURN segue em 2 s).
+O "amigo fantasma": sem aviso de saída, quem desligava só era retirado depois dos 10 s de graça da presença. O aviso vale só para
+saída de propósito; queda de rede ou processo morto continuam pelo prazo. Versões antigas não mandam nem entendem o aviso (para
+elas continua em 10 s). Não verificado no modo SFU, onde a saída vem do `ParticipantUpdate` do LiveKit.
+Medido só em loopback: com STUN/TURN e a sinalização real os tempos absolutos são outros.
 
 ## O que falta validar
 
@@ -95,6 +116,9 @@ Filme a 2 Mbps: VBV de 125 / 500 / 1000 ms dá 36,7 / 37,0 / 37,0 dB com pico de
 - `tests_sfurede::sfu_network_loss_and_outage_matrix`: falhava já na fase sem perda (5,5 qps) por causa do estouro de bitrate do `mf-soft`.
 - Ocasionais (2 em 20 rodadas na base): `camera_e2e::camera_flows_both_ways_next_to_a_screen_share_and_stops_cleanly`,
   `tests::two_simultaneous_shares_in_one_room`; `ipc::cfg_tests::realtime_falls_back_to_supabase_json_and_keeps_precedence` (3 em 20).
+  Corrigidos depois da 1.5.26: o leitor de quadros dos testes desistia em 8 tentativas (`FrameSource::read`, agora tenta por 100 ms) e
+  os dois testes de configuração disputavam um modo global. Depois disso a suíte passou inteira em 12 rodadas seguidas e, com as
+  mudanças da chamada P2P, em 10 de 10 (333 testes).
 
 Ao comparar dois worktrees com o mesmo `CARGO_TARGET_DIR`, o cargo pode reaproveitar o binário do outro: use um diretório por worktree
 ou dê `touch` nas fontes.

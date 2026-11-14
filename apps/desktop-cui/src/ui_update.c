@@ -69,6 +69,10 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.19", {
+        "Chamada em servidor (SFU): corrigida a reconexão infinita; o servidor passou a exigir outro papel no handshake de segurança e o Briks agora responde do jeito certo.",
+        "A confirmação de idade agora é gravada: o diálogo aparece uma vez por conta, não a cada entrada.",
+        NULL } },
     { "1.5.18", {
         "Data de nascimento: a barra (dd/mm/aaaa) entra sozinha enquanto você digita.",
         "Registro da rede da chamada em servidor com mais detalhes (estado das conexões) para achar a instabilidade.",

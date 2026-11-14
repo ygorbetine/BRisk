@@ -51,8 +51,18 @@ mod signaling;
 
 use anyhow::{anyhow, Result};
 
+/// Diagnostico: avisos das bibliotecas WebRTC (ex.: "Failed to start manager dtls: ...") vao para o rede.log.
+struct LibLog;
+impl log::Log for LibLog {
+    fn enabled(&self, m: &log::Metadata) -> bool { m.level() <= log::Level::Warn && (m.target().starts_with("webrtc") || m.target().starts_with("dtls")) && !m.target().contains("agent_gather") && !m.target().contains("agent_internal") && !m.target().contains("client_hello") }
+    fn log(&self, r: &log::Record) { if self.enabled(r.metadata()) { netlog::write(&format!("lib {}: {}", r.target(), r.args()).chars().take(300).collect::<String>()); } }
+    fn flush(&self) {}
+}
+static LIBLOG: LibLog = LibLog;
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = log::set_logger(&LIBLOG); log::set_max_level(log::LevelFilter::Warn);
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str).unwrap_or("serve-ipc") {
         "import-electron" => std::process::exit(import::cli(&args[2..])),

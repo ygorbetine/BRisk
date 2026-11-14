@@ -80,10 +80,10 @@ static bool age_path(char *out, size_t cap) {
     const char *o = getenv("BRIKS_AGE_FILE");
     if (o && o[0]) { snprintf(out, cap, "%s", o); return true; }
     const char *dd = getenv("BRIKS_CUI_DATA");
-    if (dd && dd[0]) { snprintf(out, cap, "%s\age-ok.txt", dd); return true; }
+    if (dd && dd[0]) { snprintf(out, cap, "%s\\age-ok.txt", dd); return true; }
     char ad[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, ad) != S_OK) return false;
-    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
-    snprintf(out, cap, "%s\age-ok.txt", dir); return true;
+    char dir[MAX_PATH]; snprintf(dir, sizeof dir, "%s\\Briks-CUI", ad); CreateDirectoryA(dir, NULL);
+    snprintf(out, cap, "%s\\age-ok.txt", dir); return true;
 }
 
 bool age_ok_has(const char *id) {

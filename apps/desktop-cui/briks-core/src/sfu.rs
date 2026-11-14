@@ -177,6 +177,9 @@ async fn build_pc(ice: &[RTCIceServer], publish: bool) -> Result<Arc<RTCPeerConn
     // O webrtc-rs 0.12 anuncia AEAD_AES_256_GCM mas o SRTP dele entra em pânico com chave de 256 bits (generic-array, key_derivation.rs);
     // o LiveKit/pion prefere esse perfil. Anunciando só os de 128 bits a negociação cai num perfil que funciona.
     se.set_srtp_protection_profiles(vec![SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm, SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80]);
+    // Offer do LiveKit com a=ice-lite faz o webrtc-rs 0.12 responder a=setup:passive (servidor DTLS), e o handshake falha.
+    // Fixa o papel de quem responde: o subscriber e sempre cliente DTLS (a=setup:active).
+    if !publish { se.set_answering_dtls_role(webrtc::dtls_transport::dtls_role::DTLSRole::Client)?; }
     crate::netmode::apply(&mut se);
     let api = APIBuilder::new().with_media_engine(m).with_interceptor_registry(registry).with_setting_engine(se).build();
     Ok(Arc::new(api.new_peer_connection(RTCConfiguration { ice_servers: crate::netmode::ice_servers(ice), ..Default::default() }).await?))
@@ -191,6 +194,7 @@ fn wire_pc(pc: &Arc<RTCPeerConnection>, epoch: u32, target: i32, itx: &mpsc::Sen
     pc.on_ice_connection_state_change(Box::new(move |s| { crate::netlog::write(&format!("sfu ice {who}: {s}")); Box::pin(async {}) }));
     pc.on_ice_gathering_state_change(Box::new(move |s| { crate::netlog::write(&format!("sfu ice {who} coleta: {s}")); Box::pin(async {}) }));
     let itx2 = itx.clone();
+    pc.dtls_transport().on_state_change(Box::new(move |s| { crate::netlog::write(&format!("sfu dtls {who}: {s}")); Box::pin(async {}) }));
     pc.on_peer_connection_state_change(Box::new(move |state| { let itx = itx2.clone(); Box::pin(async move { let _ = itx.send(Internal::Pc { epoch, target, state }).await; }) }));
 }
 
@@ -849,6 +853,9 @@ impl Actor {
                 // subscriber: o servidor oferece, nós respondemos
                 #[cfg(test)]
                 let o = { let mut o = o; o.sdp = self.sim_in_sdp(o.sdp).await; o };
+                { let sdp = &o.sdp; let n = |p: &str| sdp.lines().filter(|l| l.contains(p)).count();
+                  let setup = sdp.lines().find(|l| l.starts_with("a=setup:")).unwrap_or("?"); let fp = sdp.lines().find(|l| l.starts_with("a=fingerprint:")).map(|l| l.split(' ').next().unwrap_or("?")).unwrap_or("?");
+                  crate::netlog::write(&format!("sfu offer sub: {setup} {fp} ice-lite={} cand_udp={} cand_tcp={}", n("a=ice-lite"), n("a=candidate") - sdp.lines().filter(|l| l.starts_with("a=candidate") && l.contains(" tcp ")).count(), sdp.lines().filter(|l| l.starts_with("a=candidate") && l.contains(" tcp ")).count())); }
                 let r: Result<()> = async {
                     self.sub.set_remote_description(RTCSessionDescription::offer(o.sdp)?).await?;
                     self.flush_ice(1).await;
@@ -862,6 +869,7 @@ impl Actor {
                 if let Err(e) = r { self.emit(MeshEvent::Error(format!("resposta ao SFU: {e}"))).await; }
             }
             rs::Message::Answer(a) => {
+                crate::netlog::write(&format!("sfu answer pub: {}", a.sdp.lines().find(|l| l.starts_with("a=setup:")).unwrap_or("?")));
                 #[cfg(test)]
                 let a = { let mut a = a; a.sdp = self.sim_in_sdp(a.sdp).await; a };
                 if let Some(pc) = self.publisher.clone() {

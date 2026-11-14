@@ -313,6 +313,7 @@ dependencies = [
  "image",
  "lewton",
  "livekit-protocol",
+ "log",
  "memmap2",
  "openh264",
  "opus",

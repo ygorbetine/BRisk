@@ -82,9 +82,14 @@ mod cfg_tests {
     fn dir(n: &str) -> PathBuf { let d = std::env::temp_dir().join(format!("briks-cfg-{n}-{}", std::process::id())); let _ = std::fs::remove_dir_all(&d); std::fs::create_dir_all(&d).unwrap(); d }
     fn none(_: &str) -> Option<String> { None }
     fn pair(c: &Config) -> (Option<&str>, Option<&str>) { (c.realtime_url.as_deref(), c.realtime_key.as_deref()) }
+    /// Os dois testes abaixo rodam um de cada vez: o segundo liga por um instante o modo global "só loopback"
+    /// (`netmode::set_loopback_only`), e o primeiro, lendo a configuração nesse instante, via o arquivo remoto ser ignorado e falhava
+    /// (4 em 10 rodadas da suíte inteira).
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn realtime_falls_back_to_supabase_json_and_keeps_precedence() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = dir("a");
         std::fs::write(d.join("supabase.json"), r#"{"url":"https://abc.supabase.co","anon_key":"KEYFILE"}"#).unwrap();
         assert_eq!(pair(&config_with(&none, d.clone())), (Some("https://abc.supabase.co"), Some("KEYFILE")));
@@ -97,6 +102,7 @@ mod cfg_tests {
 
     #[test]
     fn no_file_no_env_stays_unconfigured_and_loopback_ignores_remote_file() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = dir("b");
         assert!(config_with(&none, d.clone()).realtime_url.is_none());
         std::fs::write(d.join("supabase.json"), r#"{"url":"https://abc.supabase.co","anon_key":"K"}"#).unwrap();

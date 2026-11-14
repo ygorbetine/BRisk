@@ -298,7 +298,7 @@ static int tile(cui_ctx *ui, const tile_t *t, float w, float h, bool mic_on) {
                             if (ch & VOLCTL_VOL) rtc_set_peer_volume(g_tile_s, t->slot, *vp / 100.0f);
                         }
                         if (t->live && g_tile_s->sh.remote[t->slot].audio) {   /* o som da TRANSMISSÃO tem controle próprio, separado da voz da pessoa */
-                            cui_menu_label(ui, "Transmissão");
+                            cui_menu_label(ui, "Transmissão (só se ouve na aba Transmissão)");
                             float *sv = share_remote_volume(g_tile_s, t->slot);
                             cui_box(ui, .dir = CUI_ROW, .width = CUI_PX(220), .gap = 8, .pad_x = 10, .pad_y = 4, .align = CUI_ALIGN_CENTER) {
                                 float pct = *sv * 100.0f;
@@ -902,8 +902,8 @@ void ui_call(cui_ctx *ui, app_state_t *s) {
         if (g_call.fullscreen && g_bar_visible) {
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .justify = CUI_JUSTIFY_END, .align = CUI_ALIGN_CENTER, .pad_bottom = 16) { control_bar(ui, s, bar_compact); }
         }
-        call_banner(ui, s);
         if (g_halo_p >= 0 && !fs) { cui_push_id_int(ui, 500 + (int)(g_halo_p * 300.0f)); cui_canvas(ui, "halo", CUI_FILL, CUI_FILL, paint_halo, NULL, 0); cui_pop_id(ui); }   /* por cima do cabeçalho: o halo desenha fora do botão, que recorta o que é dele */
+        call_banner(ui, s);
         sons_dialogs(ui, s);
     }
     ui_share_dialog(ui, s);

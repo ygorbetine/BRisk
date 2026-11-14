@@ -69,6 +69,16 @@ void update_dialog(cui_ctx *ui, app_state_t *s) {
 
 typedef struct { const char *version; const char *items[14]; } notes_t;
 static const notes_t NOTES[] = {
+    { "1.5.20", {
+        "Transmissão: taxa de quadros mais estável, com envio em cadência fixa no FPS escolhido e adaptação de qualidade sem vaivém.",
+        "Aviso \"começou a transmitir\": o botão Assistir agora responde ao clique.",
+        "Transmissões: nome, qualidade e volume só aparecem quando o mouse está em cima.",
+        "Ao entrar numa chamada que já tem gente, o Briks escolhe sozinho entre servidor (SFU) e P2P.",
+        "Chamada em servidor: reconexão mais calma e reaproveitamento do acesso, sem estourar o limite.",
+        "Overlay: arraste as transmissões direto, sem modo de edição; nova opção Atravessar cliques (ligada); imagem mais nítida e fluida.",
+        "Overlay: a opção Transmissão só aparece quando alguém está transmitindo.",
+        "Volume: silenciar a voz não cala a transmissão, e a transmissão só toca depois de você assistir.",
+        NULL } },
     { "1.5.19", {
         "Chamada em servidor (SFU): corrigida a reconexão infinita; o servidor passou a exigir outro papel no handshake de segurança e o Briks agora responde do jeito certo.",
         "A confirmação de idade agora é gravada: o diálogo aparece uma vez por conta, não a cada entrada.",

@@ -174,8 +174,10 @@ async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value
                         let status = f.payload.get("status").and_then(|s| s.as_str()).unwrap_or("");
                         if status != "ok" { return Err(anyhow!("join recusado: {}", f.payload)); }
                         joined = true;
-                        let tr = phoenix::presence_track(topic, meta.clone(), next_ref, &join_ref); next_ref += 1;
-                        sink.send(Message::Text(phoenix::encode(&tr))).await?;
+                        if !meta.is_null() {   // meta nula = só espiar a sala (peek_occupied): não aparece na presença
+                            let tr = phoenix::presence_track(topic, meta.clone(), next_ref, &join_ref); next_ref += 1;
+                            sink.send(Message::Text(phoenix::encode(&tr))).await?;
+                        }
                         let _ = etx.send(RtEvent::Status("connected".into())).await;
                     }
                     "phx_error" | "phx_close" if f.topic == topic => return Err(anyhow!("canal encerrado: {}", f.event)),
@@ -207,7 +209,7 @@ async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value
                     }
                     Some(Out::Track(m)) => {
                         *meta = m.clone();
-                        if joined { let t = phoenix::presence_track(topic, m, next_ref, &join_ref); next_ref += 1; sink.send(Message::Text(phoenix::encode(&t))).await?; }
+                        if joined && !m.is_null() { let t = phoenix::presence_track(topic, m, next_ref, &join_ref); next_ref += 1; sink.send(Message::Text(phoenix::encode(&t))).await?; }
                     }
                 }
             }
@@ -221,4 +223,26 @@ async fn session(cfg: &RealtimeCfg, topic: &str, peer_id: &str, meta: &mut Value
             }
         }
     }
+}
+
+/// Tem alguém na sala P2P (canal de presença) agora? Entra no canal SEM se anunciar (meta nula), espera o estado de presença e sai.
+/// Usado para entrar no mesmo modo de quem já está na chamada. Falha ou demora = `false`.
+pub async fn peek_occupied(cfg: RealtimeCfg, topic: String) -> bool {
+    let (rt, mut rx) = connect(cfg, topic, uuid::Uuid::new_v4().to_string(), Value::Null);
+    let hard = tokio::time::Instant::now() + Duration::from_secs(4);
+    let mut settle: Option<tokio::time::Instant> = None;
+    let found = loop {
+        let until = settle.unwrap_or(hard).min(hard);
+        match tokio::time::timeout_at(until, rx.recv()).await {
+            Ok(Some(RtEvent::PeerJoined { .. })) => break true,
+            Ok(Some(RtEvent::Status(s))) => {
+                if s == "connected" { settle = Some(tokio::time::Instant::now() + Duration::from_millis(900)); }
+                else if s.starts_with("error") { break false; }
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break false,
+        }
+    };
+    rt.close().await;
+    found
 }

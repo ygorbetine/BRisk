@@ -318,7 +318,7 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         // se o token ou a entrada falharem, a chamada NÃO abre em P2P (sala dividida), a não ser com a reserva ligada.
                         if let Some(p) = v["pref"].as_u64() { crate::sfu_cfg::set_pref(p as u8); }
                         let sfu_ns = v["namespace"].as_str().map(|n| n == "room" || n == "group").unwrap_or(true);
-                        let net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
+                        let mut net_mode = v["net"].as_str().and_then(crate::sfu_cfg::NetMode::parse).unwrap_or_else(|| crate::sfu_cfg::load_mode(&net_env, &cfg.data_dir));
                         let mut sfu_err = String::new();
                         let mut sfu_failed = false;
                         let mut hybrid: Option<crate::sfu::SfuHandle> = None;
@@ -326,6 +326,34 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
                         let sfu_conf = crate::sfu_cfg::resolve(&net_env, &cfg.data_dir);
                         let sfu_ready = matches!(sfu_conf, Ok(Some(_)));
                         if let Err(e) = &sfu_conf { sfu_err = e.clone(); }
+                        // Entrar no mesmo modo de quem já está na chamada: sala só no servidor de chamadas -> SFU; sala só em P2P -> P2P
+                        // (sem isto cada um entrava no seu modo e a sala se dividia). Desligue com BRIKS_AUTO_MODE=0.
+                        if sfu_ns && sfu_ready && std::env::var("BRIKS_AUTO_MODE").map(|x| x != "0").unwrap_or(!cfg!(test)) {
+                            if let (Ok(Some(sc)), Some(acc)) = (&sfu_conf, accounts.acc.clone()) {
+                                let (ns2, room2) = (v["namespace"].as_str().unwrap_or("room").to_string(), v["room"].as_str().unwrap_or("").to_string());
+                                if !room2.is_empty() && room2.len() <= 200 {
+                                    let lk_room = format!("{ns2}:{}", &secure_room_id(&ns2, &room2)[..32]);
+                                    let token_url = sc.token_url.clone();
+                                    let sfu_empty = match acc.access_token().await {
+                                        Ok(access) => tokio::task::spawn_blocking(move || crate::sfu::fetch_room_empty(&token_url, &access, &lk_room)).await.ok().and_then(|r| r.ok()),
+                                        Err(_) => None,
+                                    };
+                                    let p2p_busy = match (&cfg.realtime_url, &cfg.realtime_key) {
+                                        (Some(u), Some(k)) if sfu_empty == Some(true) || net_mode == crate::sfu_cfg::NetMode::P2p => realtime::peek_occupied(RealtimeCfg::new(u, k), topic_name(&ns2, &secure_room_id(&ns2, &room2))).await,
+                                        _ => false,
+                                    };
+                                    let want = if sfu_empty == Some(false) && !p2p_busy { Some(crate::sfu_cfg::NetMode::Sfu) } else if sfu_empty == Some(true) && p2p_busy { Some(crate::sfu_cfg::NetMode::P2p) } else { None };
+                                    if let Some(w) = want {
+                                        let cur_p2p = net_mode == crate::sfu_cfg::NetMode::P2p;
+                                        if (w == crate::sfu_cfg::NetMode::Sfu && cur_p2p) || (w == crate::sfu_cfg::NetMode::P2p && !cur_p2p) {
+                                            crate::netlog::write(&format!("modo automatico: sala ja esta em {}, entrando nele", if w == crate::sfu_cfg::NetMode::Sfu { "SFU" } else { "P2P" }));
+                                            out(&mut wr, json!({ "ev": "net.auto", "to": if w == crate::sfu_cfg::NetMode::Sfu { "sfu" } else { "p2p" } })).await?;
+                                            net_mode = w;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if sfu_ns && net_mode != crate::sfu_cfg::NetMode::P2p {
                             if let Ok(Some(sc)) = &sfu_conf {
                                 let (ns, room) = (v["namespace"].as_str().unwrap_or("room").to_string(), v["room"].as_str().unwrap_or("").to_string());

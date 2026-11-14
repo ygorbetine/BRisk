@@ -333,7 +333,7 @@ impl Audio {
             let take = out.len().min(s.buf.len()) & !1;
             let g = gains.get(peer).copied().unwrap_or(1.0);
             // ensurdecer corta só as VOZES; o áudio das transmissões ("peer#screen") segue, com o volume próprio de cada uma (1.4.4)
-            let silent = (deaf && !peer.ends_with("#screen")) || muted.contains(peer) || muted.contains(peer.split('#').next().unwrap_or(""));
+            let silent = (deaf && !peer.ends_with("#screen")) || muted.contains(peer);   // 1.5.20: mudo da voz vale só para a voz; a transmissão ("#screen") tem controle próprio
             for (i, v) in s.buf.drain(..take).enumerate() { if !silent { out[i] += v * g; } }
             if take < out.len() { s.primed = false; }
         }
@@ -688,6 +688,21 @@ mod unit {
         a.set_deaf(false); a.set_screen_gain("ana", 1.0);
         { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert("ana".into(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); }
         assert!(peak(&a) > 0.35, "voz volta ao desensurdecer");
+    }
+
+    /// 1.5.20: "silenciar para mim" cala só a VOZ da pessoa; o áudio da transmissão dela segue com o controle próprio (e o inverso também).
+    #[test]
+    fn muting_a_voice_leaves_the_stream_audio_alone() {
+        let (a, _rx) = Audio::new(true);
+        let tone = |amp: f32, n: usize| -> Vec<f32> { (0..n).map(|i| amp * (2.0 * std::f32::consts::PI * 440.0 * (i / 2) as f32 / 48000.0).sin()).collect() };
+        let one = |a: &Audio, key: &str| { { let mut s = a.sinks.lock().unwrap(); s.clear(); s.insert(key.to_string(), Sink { buf: tone(0.4, PRIME * 3).into(), primed: true, gen: 1 }); } let mut out = vec![0.0f32; 960]; a.mix_pull_stereo(&mut out); out.iter().fold(0.0f32, |m, v| m.max(v.abs())) };
+        a.mute_peer("ana", true);
+        assert_eq!(one(&a, "ana"), 0.0, "voz silenciada");
+        assert!(one(&a, "ana#screen") > 0.35, "a transmissão não é afetada pelo mudo da voz");
+        a.mute_peer("ana", false);
+        a.set_screen_gain("ana", 0.0);
+        assert!(one(&a, "ana") > 0.35, "zerar a transmissão não cala a voz");
+        assert_eq!(one(&a, "ana#screen"), 0.0, "transmissão zerada");
     }
 
     #[test]

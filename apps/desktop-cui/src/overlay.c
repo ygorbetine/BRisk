@@ -36,7 +36,7 @@ enum { R_IDLE, R_SPEAK, R_INFO, R_WARN, R_LIVE };
 #define NT 4   /* miniaturas de transmissão */
 typedef struct { char key[16]; int on, pvalid, px, py, pct; char pdev[40]; wchar_t name[64]; } tspec_t;
 typedef struct { wchar_t text[64]; int kind; } row_t;
-typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, flags, lives; char lmap[48]; tspec_t t[NT]; int ntile; char pdev[40]; int pvalid, px, py, pw; } frame_t;
+typedef struct { row_t r[MAXR]; int n; int opacity, corner; int edit, drag, flags, lives; char lmap[48]; tspec_t t[NT]; int ntile; char pdev[40]; int pvalid, px, py, pw; } frame_t;
 #define W_DEF 260
 #define W_MIN 216
 #define W_MAX 640
@@ -77,6 +77,7 @@ static int apply_line(frame_t *build, frame_t *out, const char *ln) {
         if (sscanf(ln + 7, "%d %39s %d %d %d", &i, dev, &x, &y, &p) == 5 && i >= 0 && i < build->ntile) { tspec_t *t = &build->t[i]; snprintf(t->pdev, sizeof t->pdev, "%s", dev); t->px = x; t->py = y; t->pct = p < 50 ? 50 : p > 200 ? 200 : p; t->pvalid = 1; }
         return 0;
     }
+    if (!strncmp(ln, "drag ", 5)) { build->drag = atoi(ln + 5) != 0; return 0; }
     if (!strncmp(ln, "flags ", 6)) { int v = atoi(ln + 6); build->flags = v < 0 ? 0 : v > 15 ? 15 : v; return 0; }
     if (!strncmp(ln, "lives ", 6)) { int v = atoi(ln + 6); build->lives = v < 0 ? 0 : v > 99 ? 99 : v; return 0; }
     if (!strncmp(ln, "place ", 6)) {
@@ -434,8 +435,8 @@ static void adopt_frame(const frame_t *nw) {
 
 /* ---- miniaturas ao vivo: até NT janelas, uma por transmissão, cada uma com posição e escala próprias.
  * As imagens vêm do app por memória compartilhada (livemap): NT regiões de LV_SLOT bytes (cabeçalho 'BOVL', seq, w, h, n + BGRA reduzido a ~320 px). ---- */
-#define LV_MAXW 320
-#define LV_MAXH 240
+#define LV_MAXW 640
+#define LV_MAXH 360
 #define LV_SLOT (64 + LV_MAXW * LV_MAXH * 4)
 #define TILE_BASE 320            /* largura a 100% */
 #define TH 28                    /* altura da alça (só em edição) */
@@ -467,7 +468,7 @@ static int lv_poll(int k) {
     g_lvw[k] = w; g_lvhh[k] = h; g_lvn[k] = n; g_lvvalid[k] = 1; return 1;
 }
 
-typedef struct { HWND wnd; int shown, edit, x, y, w, h, ty; RECT bminus, bplus, bclose, bpct; } tile_t;   /* x,y: canto da MINIATURA na tela; ty: altura da alça acima dela */
+typedef struct { HWND wnd; int shown, edit, drag, x, y, w, h, ty; RECT bminus, bplus, bclose, bpct; } tile_t;   /* x,y: canto da MINIATURA na tela; ty: altura da alça acima dela */
 static tile_t T[NT]; static POINT g_tc0; static int g_tx0, g_ty0;
 
 static int tile_pct(const tspec_t *s) { int p = s->pct ? s->pct : 100; return p < PCT_MIN ? PCT_MIN : p > PCT_MAX ? PCT_MAX : p; }
@@ -492,11 +493,11 @@ static POINT tile_pos(int k, const frame_t *f, int w, int h) {
 
 static void paint_tile(int k, const frame_t *f) {
     tile_t *t = &T[k]; if (!t->wnd) return;
-    if (k >= f->ntile || (!f->t[k].on && !f->edit)) { t->shown = 0; t->edit = 0; if (!g_noshow) ShowWindow(t->wnd, SW_HIDE); return; }
+    if (k >= f->ntile || (!f->t[k].on && !f->edit)) { t->shown = 0; t->edit = 0; t->drag = 0; if (!g_noshow) ShowWindow(t->wnd, SW_HIDE); return; }
     const tspec_t *sp = &f->t[k]; const int edit = f->edit, on = sp->on;
     const int w = TILE_BASE * tile_pct(sp) / 100, h = w * 9 / 16, ty = edit ? TH + 4 : 0, wh = h + ty;
     const float sc = (float)w / TILE_BASE, rad = 10.0f * sc;
-    t->shown = 1; t->edit = edit; t->w = w; t->h = h; t->ty = ty;
+    t->shown = 1; t->edit = edit; t->drag = edit || f->drag; t->w = w; t->h = h; t->ty = ty;
     POINT pos = g_tdrag == k ? (POINT){ t->x, t->y } : tile_pos(k, f, w, h);
     if (pos.y - ty < 0 && ty) pos.y = ty;
     t->x = pos.x; t->y = pos.y;
@@ -510,8 +511,22 @@ static void paint_tile(int k, const frame_t *f) {
     const int have = on && g_lvvalid[k] && g_lvw[k] > 0;
     int iw = w, ih = h, ix0 = 0, iy0 = ty;   /* imagem encaixada (sem cortar), centralizada */
     if (have) { if (g_lvw[k] * h > g_lvhh[k] * w) { ih = g_lvhh[k] * w / g_lvw[k]; iy0 += (h - ih) / 2; } else { iw = g_lvw[k] * h / g_lvhh[k]; ix0 += (w - iw) / 2; } }
-    if (have) for (int y = iy0; y < iy0 + ih; y++) for (int x = ix0; x < ix0 + iw; x++) {
-        int sx = (x - ix0) * g_lvw[k] / iw, sy = (y - iy0) * g_lvhh[k] / ih; px[y * w + x] = g_lvpx[k][sy * g_lvw[k] + sx] & 0xffffff;
+    if (have) {   /* 1.5.20: ampliação/redução bilinear em ponto fixo (antes: vizinho mais próximo, serrilhado) */
+        static int cx0[1024], cx1[1024], cwx[1024]; const int lw = g_lvw[k], lh = g_lvhh[k]; const unsigned *src = g_lvpx[k]; const int cn = iw < 1024 ? iw : 1024;
+        for (int x = 0; x < cn; x++) { int fx = (int)(((long long)(2 * x + 1) * lw * 256) / (2 * iw)) - 128; if (fx < 0) fx = 0; int x0 = fx >> 8; if (x0 > lw - 1) x0 = lw - 1; cx0[x] = x0; cx1[x] = x0 + 1 < lw ? x0 + 1 : x0; cwx[x] = fx & 255; }
+        for (int y = 0; y < ih; y++) {
+            int fy = (int)(((long long)(2 * y + 1) * lh * 256) / (2 * ih)) - 128; if (fy < 0) fy = 0; int y0 = fy >> 8; if (y0 > lh - 1) y0 = lh - 1; const int y1 = y0 + 1 < lh ? y0 + 1 : y0, wy = fy & 255;
+            const unsigned *r0 = src + (size_t)y0 * lw, *r1 = src + (size_t)y1 * lw; unsigned *dst = px + (size_t)(iy0 + y) * w + ix0;
+            for (int x = 0; x < cn; x++) {
+                const unsigned a = r0[cx0[x]], b = r0[cx1[x]], c = r1[cx0[x]], d = r1[cx1[x]]; const int wx = cwx[x];
+                unsigned out = 0;
+                for (int sh = 0; sh < 24; sh += 8) {
+                    int t0 = (int)((a >> sh) & 255) * (256 - wx) + (int)((b >> sh) & 255) * wx, t1 = (int)((c >> sh) & 255) * (256 - wx) + (int)((d >> sh) & 255) * wx;
+                    out |= (unsigned)((t0 * (256 - wy) + t1 * wy) >> 16) << sh;
+                }
+                dst[x] = out;
+            }
+        }
     }
     if (edit && !on) px_rr(px, w, wh, TR, rad, RGB(0, 0, 0), 0.62f, 0);   /* oculta: véu escuro */
     px_rr(px, w, wh, TR, rad, RGB(255, 255, 255), 0.16f, 1);
@@ -531,7 +546,7 @@ static void paint_tile(int k, const frame_t *f) {
     }
     /* selo "Ao vivo", nome e fontes têm tamanho fixo: o zoom da miniatura só muda a imagem, nunca o texto nem o ícone */
     const int bm = 6, bh = 20;
-    HFONT sf = bar_font(12, FW_SEMIBOLD), nf = bar_font(12, FW_MEDIUM);
+    static HFONT sf, nf; if (!sf) sf = bar_font(12, FW_SEMIBOLD); if (!nf) nf = bar_font(12, FW_MEDIUM);   /* em cache: criar duas fontes por quadro pesava a 30 quadros/s */
     SetBkMode(mem, TRANSPARENT); HGDIOBJ osf = SelectObject(mem, sf);
     RECT mw = { 0, 0, 0, 0 }; DrawTextW(mem, L"Ao vivo", -1, &mw, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
     const int bw = bh / 2 + 6 + mw.right + 12;   /* ponto + texto medido + folga: o selo acompanha o texto, sem sobra nem corte */
@@ -560,11 +575,18 @@ static void paint_tile(int k, const frame_t *f) {
         }
     }
     if (on && !have) { SelectObject(mem, nf); SetTextColor(mem, MUTED); RECT lt = TR; DrawTextW(mem, L"Carregando transmissão…", -1, &lt, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX); }
-    SelectObject(mem, osf); DeleteObject(sf); DeleteObject(nf);
+    SelectObject(mem, osf);
     GdiFlush();
     /* alfa: união da miniatura e da alça, cantos arredondados; a opacidade do overlay vale para a imagem (a alça fica quase opaca) */
     const float base = (f->opacity < 30 ? 30 : f->opacity > 100 ? 100 : f->opacity) / 100.0f;
+    const int rz = (int)rad + 2;   /* só os cantos têm cobertura parcial: o resto da miniatura (fora da edição) tem alfa constante, sem sqrt por pixel */
+    const unsigned ai_fast = (unsigned)(base * (on ? 1.0f : 0.9f) * 255.0f), kmul = ai_fast * 257u;
     for (int y = 0; y < wh; y++) for (int x = 0; x < w; x++) {
+        if (!edit && y >= ty && !((x < rz || x >= w - rz) && (y - ty < rz || y - ty >= h - rz))) {
+            unsigned c = px[y * w + x]; unsigned r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+            px[y * w + x] = (ai_fast << 24) | (((r * kmul) >> 16) << 16) | (((g * kmul) >> 16) << 8) | ((b * kmul) >> 16);
+            continue;
+        }
         float d = rr_dist(x + 0.5f - w * 0.5f, y + 0.5f - (ty + h * 0.5f), w * 0.5f, h * 0.5f, rad), cov = 0.5f - d; cov = cov < 0 ? 0 : cov > 1 ? 1 : cov;
         float a = cov * (on ? base : base * 0.9f);
         if (edit) { float d2 = rr_dist(x + 0.5f - w * 0.5f, y + 0.5f - TH * 0.5f, w * 0.5f, TH * 0.5f, TH * 0.5f), c2 = 0.5f - d2; c2 = c2 < 0 ? 0 : c2 > 1 ? 1 : c2; c2 *= 0.97f; if (y < TH + 2 && c2 > a) a = c2; }
@@ -572,7 +594,7 @@ static void paint_tile(int k, const frame_t *f) {
         px[y * w + x] = ((unsigned)(a * 255) << 24) | ((unsigned)(r * a) << 16) | ((unsigned)(g * a) << 8) | (unsigned)(b * a);
     }
     POINT wp = { t->x, t->y - ty }, src = { 0, 0 }; SIZE sz = { w, wh }; BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    LONG ex = GetWindowLongW(t->wnd, GWL_EXSTYLE); SetWindowLongW(t->wnd, GWL_EXSTYLE, edit ? (ex & ~WS_EX_TRANSPARENT) : (ex | WS_EX_TRANSPARENT));
+    LONG ex = GetWindowLongW(t->wnd, GWL_EXSTYLE); SetWindowLongW(t->wnd, GWL_EXSTYLE, t->drag ? (ex & ~WS_EX_TRANSPARENT) : (ex | WS_EX_TRANSPARENT));
     UpdateLayeredWindow(t->wnd, screen, &wp, &sz, mem, &src, 0, &bf, ULW_ALPHA);
     snap_keep(2 + k, px, w, wh, wp.x, wp.y);
     if (!g_noshow) { if (!IsWindowVisible(t->wnd)) ShowWindow(t->wnd, SW_SHOWNOACTIVATE); SetWindowPos(t->wnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
@@ -583,14 +605,14 @@ static void paint_tiles(const frame_t *f) {
     lv_open(f->lmap);
     int any = 0;
     for (int k = 0; k < NT; k++) { paint_tile(k, f); if (T[k].shown && k < f->ntile && f->t[k].on && g_lvp) any = 1; }
-    if (any && hwnd) SetTimer(hwnd, 1, 33, NULL); else if (hwnd) KillTimer(hwnd, 1);
+    if (any && hwnd) SetTimer(hwnd, 1, 16, NULL); else if (hwnd) KillTimer(hwnd, 1);
 }
 static void tiles_poll(void) { for (int k = 0; k < NT; k++) if (T[k].shown && k < cur.ntile && cur.t[k].on && lv_poll(k)) paint_tile(k, &cur); }
 
 /* ---- interação com as miniaturas (modo de edição): arrastar, − / + / roda (escala), × (oculta) e Ligar ---- */
 enum { TH_NONE, TH_MOVE, TH_MINUS, TH_PLUS, TH_CLOSE };
 static int tile_hit(int k, int x, int y) {
-    const tile_t *t = &T[k]; if (!t->edit || !t->shown || x < 0 || y < 0 || x >= t->w || y >= t->h + t->ty) return TH_NONE;
+    const tile_t *t = &T[k]; if (!t->drag || !t->shown || x < 0 || y < 0 || x >= t->w || y >= t->h + t->ty) return TH_NONE;
     if (rc_in(&t->bminus, x, y)) return TH_MINUS; if (rc_in(&t->bplus, x, y)) return TH_PLUS; if (rc_in(&t->bclose, x, y)) return TH_CLOSE;
     return TH_MOVE;
 }
@@ -624,9 +646,9 @@ static void tile_up(int k) { if (g_tdrag != k) return; g_tdrag = -1; if (!g_inje
 static LRESULT CALLBACK tproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     int k = (int)(GetWindowLongPtrW(h, GWLP_USERDATA) - 1); if (k < 0 || k >= NT) return DefWindowProcW(h, m, w, l);
     switch (m) {
-    case WM_NCHITTEST: return T[k].edit ? HTCLIENT : HTTRANSPARENT;
+    case WM_NCHITTEST: return T[k].drag ? HTCLIENT : HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
-    case WM_SETCURSOR: if (T[k].edit) { POINT p; GetCursorPos(&p); ScreenToClient(h, &p); int t = tile_hit(k, p.x, p.y); SetCursor(LoadCursor(NULL, g_tdrag == k ? IDC_SIZEALL : t >= TH_MINUS ? IDC_HAND : IDC_SIZEALL)); return TRUE; } break;
+    case WM_SETCURSOR: if (T[k].drag) { POINT p; GetCursorPos(&p); ScreenToClient(h, &p); int t = tile_hit(k, p.x, p.y); SetCursor(LoadCursor(NULL, g_tdrag == k ? IDC_SIZEALL : t >= TH_MINUS ? IDC_HAND : IDC_SIZEALL)); return TRUE; } break;
     case WM_LBUTTONDOWN: tile_down(k, (short)LOWORD(l), (short)HIWORD(l)); return 0;
     case WM_MOUSEMOVE: tile_move(k); return 0;
     case WM_LBUTTONUP: case WM_CAPTURECHANGED: tile_up(k); return 0;

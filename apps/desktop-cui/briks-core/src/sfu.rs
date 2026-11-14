@@ -77,6 +77,11 @@ const TOKEN_MIN_GAP: Duration = Duration::from_secs(10);
 /// num servidor que acabou de voltar); desiste após 2 min fora do ar.
 const RETRY_MS: [u64; 6] = [200, 500, 1000, 2000, 4000, 5000];
 const GIVE_UP: Duration = Duration::from_secs(120);
+/// Sessao mais curta que isto conta como "caiu logo depois de abrir"; com SHORT_MAX seguidas a chamada para de insistir.
+const SHORT_SESSION: Duration = Duration::from_secs(30);
+const SHORT_MAX: u32 = 8;
+/// Token ainda aproveitavel numa reentrada (vale ~1 h): so pede outro se o servidor recusar ou se passou disto.
+const TOKEN_REUSE: Duration = Duration::from_secs(50 * 60);
 /// Depois de voltar, quem ainda não reapareceu (ou ainda não republicou a tela) só é dado como saído após este prazo:
 /// numa queda do servidor todos voltam em momentos diferentes e a lista não deve piscar.
 const GRACE: Duration = Duration::from_secs(20);
@@ -315,7 +320,7 @@ pub async fn connect(j: SfuJoin) -> Result<SfuHandle> {
     let mut actor = Actor {
         files, _ftx: ftx,
         data, dc_pub: None, dc_queue: vec![], leave: false,
-        url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(), last_join: std::time::Instant::now(),
+        url: j.url.clone(), token: j.token, renew: j.renew, epoch: 0, down: None, stale: HashMap::new(), audio_started: false, last_rx: std::time::Instant::now(), short_drops: 0, token_born: std::time::Instant::now(), last_join: std::time::Instant::now(),
         ping_timeout: Duration::from_secs(if join.ping_timeout > 0 { (join.ping_timeout as u64).clamp(5, 60) } else { 15 }),
         owner_marks: HashMap::new(), republish_video: false,
         tx, ice, sub, publisher: None, itx, shared, stats: stats.clone(), ev: etx, audio, sev_tx, me: me.clone(),
@@ -339,7 +344,13 @@ pub fn fetch_token(token_url: &str, access_token: &str, room: &str) -> Result<St
 /// Como `fetch_token`, devolvendo também a URL do servidor que o serviço informa (`url`, quando vem) e, numa recusa por excesso
 /// de pedidos (429), quantos segundos esperar (`Retry-After`).
 pub fn fetch_token_ex(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
-    fetch_token_inner(token_url, access_token, room)
+    fetch_token_inner(token_url, access_token, room).map(|t| (t.0, t.1))
+}
+
+/// A sala do servidor de chamadas está VAZIA agora? O serviço de tokens só marca dono quem entra numa sala sem ninguém, então
+/// `owner: true` na resposta (pedido sem token anterior) quer dizer sala vazia. Não entra na sala; gasta um pedido de token.
+pub fn fetch_room_empty(token_url: &str, access_token: &str, room: &str) -> Result<bool, TokenFail> {
+    fetch_token_inner(token_url, access_token, room).map(|t| t.2)
 }
 
 /// Diferença (segundos) entre o relógio do servidor de tokens e o deste PC, lida do cabeçalho `Date` da última resposta. Um relógio fora
@@ -371,7 +382,7 @@ pub fn clock_hint() -> String {
     if s.abs() > 60 { format!(" O relógio deste PC difere do servidor em {} min: ajuste a data e a hora.", s.abs() / 60) } else { String::new() }
 }
 
-fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>), TokenFail> {
+fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<(String, Option<String>, bool), TokenFail> {
     crate::sfu_cfg::check_token_url(token_url)?;
     if let Some(m) = crate::netmode::deny_url(token_url) { return Err(m.into()); }
     let resp = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build()
@@ -382,7 +393,7 @@ fn fetch_token_inner(token_url: &str, access_token: &str, room: &str) -> Result<
         Ok(r) => {
             let v: Value = r.into_json().map_err(|e| format!("resposta do serviço de tokens inválida: {e}"))?;
             let token = v["token"].as_str().filter(|t| !t.is_empty() && t.len() < 4096).map(String::from).ok_or_else(|| "serviço de tokens não devolveu token".to_string())?;
-            Ok((token, v["url"].as_str().map(|u| u.trim().to_string()).filter(|u| !u.is_empty())))
+            Ok((token, v["url"].as_str().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()), v["owner"].as_bool().unwrap_or(false)))
         }
         Err(ureq::Error::Status(429, r)) => {
             // limite de pedidos do serviço: diz quanto esperar em vez de um "recusou" genérico
@@ -515,6 +526,8 @@ struct Actor {
     stale: HashMap<String, std::time::Instant>,
     audio_started: bool,
     last_rx: std::time::Instant,
+    short_drops: u32,                // quedas seguidas de sessoes que duraram menos de SHORT_SESSION: o recuo entre reentradas cresce com elas
+    token_born: std::time::Instant,  // quando o token em uso foi emitido (reaproveitado nas reentradas enquanto novo)
     last_join: std::time::Instant,   // quando a sessão atual (entrada ou reentrada) começou: o log mostra quanto a mídia levou para conectar
     ping_timeout: Duration,
     /// identidade -> instante de entrada (ms, do servidor) de quem entrou com a marca de dono no token (eu incluído)
@@ -592,7 +605,11 @@ impl Actor {
     fn lost(&mut self, reason: &str) {
         if self.down.is_some() || self.leave { return; }
         crate::netlog::write(&format!("sfu queda: {reason}"));
-        self.down = Some(Down { since: std::time::Instant::now(), attempt: 0, next: tokio::time::Instant::now() + retry_delay(0), token_fresh: false, announced: false, reason: reason.to_string(), token_at: None });
+        // recuo: quedas seguidas logo depois de abrir esticam a espera (200 ms -> 5 s) em vez de reentrar e gastar token em laco
+        if self.last_join.elapsed() < SHORT_SESSION { self.short_drops += 1; } else { self.short_drops = 0; }
+        let pre = self.short_drops.min(5);
+        let token_ok = self.token_born.elapsed() < TOKEN_REUSE;   // token novo o bastante: reaproveita
+        self.down = Some(Down { since: std::time::Instant::now(), attempt: pre, next: tokio::time::Instant::now() + retry_delay(pre), token_fresh: token_ok, announced: false, reason: reason.to_string(), token_at: None });
     }
 
     /// Fim definitivo que NÃO é expulsão (a sala não fica bloqueada nesta sessão): a UI mostra o erro e o usuário pode entrar de novo.
@@ -633,6 +650,7 @@ impl Actor {
     /// ter reiniciado e esquecido a sessão), PeerConnections novos e as mesmas faixas republicadas.
     async fn try_rejoin(&mut self) -> Option<WsRx> {
         let (attempt, since, fresh) = { let d = self.down.as_mut()?; d.attempt += 1; (d.attempt, d.since, d.token_fresh) };
+        if self.short_drops >= SHORT_MAX { self.terminal("a conexão com o servidor de chamadas cai logo depois de abrir: verifique a rede ou troque para P2P em Configurações > Rede").await; return None; }
         if since.elapsed() > GIVE_UP { self.terminal("conexão com o servidor de chamadas perdida (sem resposta por 2 minutos)").await; return None; }
         let fail = |a: &mut Actor, e: String| { if let Some(d) = a.down.as_mut() { d.next = tokio::time::Instant::now() + retry_delay(attempt); } e };
         // Token novo: uma vez por queda; de novo só se o servidor recusar, e nunca mais de um pedido a cada 10 s (com o token
@@ -642,7 +660,7 @@ impl Actor {
             if let Some(f) = self.renew.clone() {
                 if let Some(d) = self.down.as_mut() { d.token_at = Some(std::time::Instant::now()); }
                 match tokio::time::timeout(Duration::from_secs(12), f()).await.unwrap_or_else(|_| Err(TokenFail::from("serviço de tokens não respondeu".to_string()))) {
-                    Ok(t) => { forget_token(&self.token); remember_token(&t); self.token = t; self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
+                    Ok(t) => { forget_token(&self.token); remember_token(&t); self.token = t; self.token_born = std::time::Instant::now(); self.stats.token_renewals.fetch_add(1, Ordering::Relaxed); if let Some(d) = self.down.as_mut() { d.token_fresh = true; } }
                     Err(e) => {
                         let msg = fail(self, e.msg);
                         // 429: o serviço disse quanto esperar; a próxima tentativa (e o próximo pedido de token) só depois disso

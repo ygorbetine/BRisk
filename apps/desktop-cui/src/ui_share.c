@@ -646,8 +646,8 @@ void share_tick(cui_ctx *ui, app_state_t *s) {
         /* o SOM de uma transmissão só sai na aba Transmissão: a miniatura, o overlay e a thumb do bloco decodificam a imagem, mas ficam mudos */
         {
             static float sent[BRIKS_MAX_PEERS]; static double sent_at[BRIKS_MAX_PEERS]; static bool known[BRIKS_MAX_PEERS];
-            if (q->remote[i].watching && q->remote[i].audio) {
-                const float vol = q->remote[i].vol_set ? q->remote[i].volume : 1.0f, tgt = viewing ? vol : 0.0f;
+            if (q->remote[i].audio) {   /* 1.5.20: também sem assistir (o P2P entrega o áudio à força): então vale 0 até eu assistir */
+                const float vol = q->remote[i].vol_set ? q->remote[i].volume : 1.0f, tgt = (viewing && q->remote[i].watching) ? vol : 0.0f;
                 const double now_s = (double)GetTickCount64() / 1000.0;
                 if (!known[i] || fabsf(tgt - sent[i]) > 0.004f || now_s - sent_at[i] > 2.0) {
                     char line[220], id[96]; json_escape(s->rtc_peers[i].id, id, sizeof id);
@@ -1206,6 +1206,8 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
     cui_rect r = cui_get_rect(ui, cui_make_id(ui, "vt"));   /* tamanho do quadro anterior: o vídeo cabe inteiro, sem distorcer */
     if (g_tiles < 16) g_trect[g_tiles] = r;   /* onde cada transmissão está: o que sobra do palco é área vazia (clique alterna grade/foco) */
     g_tiles++;
+    /* 1.5.20: nome, olhinho, qualidade e volume só aparecem com o mouse sobre a transmissão (a miniatura compacta mantém o nome) */
+    const bool hov = compact || (r.w > 0 && pt_in(r, cui_mouse_pos(ui)) && !s_modal_hint);
     cui_box(ui, .id = "vt", .dir = CUI_STACK, .width = CUI_FILL, .height = CUI_FILL, .radius = 20, .bg = CUI_RGBA(0x1a0a2680), .border = 1, .border_color = CUI_RGBA(0x6d5cf655)) {
         cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
             if (tex && tw > 0 && th > 0 && r.w > 60 && r.h > 60) {
@@ -1232,7 +1234,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
                 cui_text(ui, wait, .size = 14, .color = B_MUTED);
             }
         }
-        cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = compact ? 8 : 18) {
+        if (hov) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_END, .pad = compact ? 8 : 18) {
             cui_card_begin(ui, &(cui_card_opts){ .id = "lab", .dir = CUI_ROW, .gap = 7, .pad_x = compact ? 8 : 12, .pad_y = compact ? 4 : 8, .align = CUI_ALIGN_CENTER });
             if (!compact) cui_icon(ui, CUI_ICON_MONITOR, 14, B_C3);
             cui_text(ui, title, .size = compact ? 11 : 14, .nowrap = true);
@@ -1244,7 +1246,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
             }
             cui_card_end(ui);
         }
-        if (chip && chip[0]) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 18) { briks_status_pill(ui, chip); }
+        if (hov && chip && chip[0]) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_START, .pad = 18) { briks_status_pill(ui, chip); }
         if (zv && zoom_pct > 100) {   /* selo do zoom: clicar volta a 100% (duplo clique na imagem e a tecla 0 também) */
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad = 18) {
                 char z[48]; snprintf(z, sizeof z, "%d%% · voltar a 100%%", zoom_pct);
@@ -1261,7 +1263,7 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
                 }
             }
         }
-        if (volume) {   /* volume do áudio desta transmissão, só para quem assiste */
+        if (hov && volume) {   /* volume do áudio desta transmissão, só para quem assiste */
             cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_END, .justify = CUI_JUSTIFY_END, .pad = 18) {
                 cui_box(ui, .id = "volbar", .dir = CUI_ROW, .gap = 8, .pad_x = 12, .height = CUI_PX(36), .width = CUI_PX(190), .radius = 18, .bg = B_GLASS_STRONG, .border = 1, .border_color = B_GLASS_BORDER, .align = CUI_ALIGN_CENTER) {
                     briks_volume(ui, "vol", volume, 0.0f, 2.0f, 0.01f, NULL, false);   /* 1.4.4: ícone muta/desmuta, roda ajusta (volume_ctl.c) */

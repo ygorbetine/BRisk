@@ -10,7 +10,7 @@
 void settings_overlay(bool *on, float *opacity, int *flags, int *corner);
 bool settings_ovl_place(char *dev, size_t cap, int *x, int *y, int *w);        /* settings.c: posição do monitor ativo */
 void settings_ovl_set(const char *dev, int x, int y, int w);
-bool settings_ovl_selfshare(void);
+bool settings_ovl_selfshare(void); bool settings_ovl_through(void);
 bool settings_ovl_widget(const char *id, bool on); void settings_ovl_opacity(int pct);   /* settings.c: botões da barra de edição do overlay */
 bool settings_tile_place(const char *key, char *dev, size_t cap, int *x, int *y, int *pct); void settings_tile_set(const char *key, const char *dev, int x, int y, int pct);
 bool settings_tile_enabled(const char *key); void settings_tile_enable(const char *key, bool on);   /* settings.c: miniaturas de transmissão */
@@ -18,10 +18,10 @@ void ovlkey_set(bool on); int ovlkey_take(void); int ovlkey_status(void);       
 
 #define NT 4              /* miniaturas de transmissão ao mesmo tempo */
 #define MAXLIVE 16        /* transmissões consideradas (mais de NT: "Trocar transmissão" gira a janela de NT) */
-#define LV_W 320
-#define LV_HMAX 240
+#define LV_W 640
+#define LV_HMAX 360
 #define LV_SLOT (64 + LV_W * LV_HMAX * 4)   /* um quadro por miniatura na memória compartilhada: cabeçalho 'BOVL', seq, w, h, n (64 bytes) + BGRA */
-#define LV_PERIOD 0.25                      /* ~4 quadros/s por miniatura */
+#define LV_PERIOD 0.030                     /* ~30 quadros/s por miniatura (1.5.20; antes 0,25 s = 4/s) */
 
 static HANDLE g_proc, g_pipe, g_rd;   /* g_rd: saída do overlay (layout/edit 0) */
 static bool g_edit; static char g_rbuf[512]; static size_t g_rn; static int g_layouts, g_hk_state;
@@ -77,9 +77,9 @@ static void tile_pump(int j, const char *path) {
     unsigned char *m = g_shm + (size_t)j * LV_SLOT, *dst = m + 64; const unsigned char *src = l->p + 64;
     volatile unsigned *ws = (volatile unsigned *)(m + 4); *ws += 1; MemoryBarrier();   /* seq ímpar: o overlay não lê no meio */
     for (int y = 0; y < dh; y++) {
-        int sy = y * h / dh, sy2 = sy + 1 < h ? sy + 1 : sy;
+        const int ya = (2 * y + 1) * h / (2 * dh), sy = (4 * y + 1) * h / (4 * dh), sy2 = (4 * y + 3) * h / (4 * dh); (void)ya;
         for (int x = 0; x < dw; x++) {
-            int sx = x * w / dw, sx2 = sx + 1 < w ? sx + 1 : sx;
+            const int sx = (4 * x + 1) * w / (4 * dw), sx2 = (4 * x + 3) * w / (4 * dw);   /* 1.5.20: 4 amostras nos 1/4 e 3/4 da caixa de origem (antes: 2x2 colado no ponto) */
             const unsigned char *p00 = src + ((size_t)sy * w + sx) * 4, *p01 = src + ((size_t)sy * w + sx2) * 4, *p10 = src + ((size_t)sy2 * w + sx) * 4, *p11 = src + ((size_t)sy2 * w + sx2) * 4;
             unsigned char *o = dst + ((size_t)y * dw + x) * 4;
             o[0] = (unsigned char)((p00[2] + p01[2] + p10[2] + p11[2]) >> 2); o[1] = (unsigned char)((p00[1] + p01[1] + p10[1] + p11[1]) >> 2); o[2] = (unsigned char)((p00[0] + p01[0] + p10[0] + p11[0]) >> 2); o[3] = 255;
@@ -322,5 +322,5 @@ void overlay_tick(cui_ctx *ui, app_state_t *s) {
         snprintf(g_last, sizeof g_last, "%s", frame); g_last_send = now;
         if (g_pipe) { DWORD w; if (!WriteFile(g_pipe, frame, (DWORD)strlen(frame), &w, NULL)) { stop(); g_state = 3; g_fail_at = now; } }
     }
-    cui_request_wakeup(ui, 0.15f);
+    { bool live = false; for (int j = 0; j < NT; j++) if (g_img_w[j] || (j < g_nshown && g_tile_on[j])) live = true; cui_request_wakeup(ui, live && tiles_on ? 0.016f : 0.15f); }   /* miniatura ligada: acorda a ~60 Hz para entregar 30 quadros/s */
 }

@@ -56,6 +56,7 @@ pub async fn spawn(mesh: MeshHandle, sfu: SfuHandle, audio: Option<Arc<Audio>>) 
                             let (mic, deaf) = state(&audio);
                             let _ = mesh_cmd.send(MeshCmd::SetHybrid { mic, deaf, sfu_id: sfu_id.clone() }).await;
                         }
+                        MeshCmd::PeerVolume { key, gain } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::PeerVolume { key: k, gain }).await; }
                         MeshCmd::MutePeer { key, muted } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::MutePeer { key: k, muted }).await; }
                         MeshCmd::ShareVolume { key, gain } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::ShareVolume { key: k, gain }).await; }
                         MeshCmd::ShareWatch { key, on, path } => { let k = links.ident_of(&key).unwrap_or(key); let _ = sfu_cmd.send(MeshCmd::ShareWatch { key: k, on, path }).await; }

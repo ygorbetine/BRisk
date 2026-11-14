@@ -357,6 +357,78 @@ impl EncSupervisor {
     }
 }
 
+#[link(name = "winmm")]
+extern "system" {
+    fn timeBeginPeriod(period: u32) -> u32;
+    fn timeEndPeriod(period: u32) -> u32;
+}
+/// Relógio fino do Windows (1 ms) enquanto existir. Sem ele as esperas do sistema andam em passos de ~15,6 ms: o pacer (temporizador do
+/// tokio) soltava os pacotes em rajadas a cada 15 ms em vez de espaçados, e qualquer `Sleep` curto do processo arredondava para cima —
+/// o que aparecia para quem assiste como quadros chegando em intervalos irregulares. O pedido vale para o processo e é contado pelo
+/// próprio Windows (cada `timeBeginPeriod` tem o seu `timeEndPeriod`), então só fica ligado enquanto há transmissão no ar.
+pub struct FineTimer(());
+impl FineTimer { pub fn acquire() -> Self { unsafe { timeBeginPeriod(1); } FineTimer(()) } }
+impl Drop for FineTimer { fn drop(&mut self) { unsafe { timeEndPeriod(1); } } }
+
+/// O que o laço do emissor faz agora.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tick {
+    /// ainda não é hora (ou está dando um instante para a captura entregar): dorme isto e pergunta de novo
+    Wait(Duration),
+    /// há quadro novo da captura: codifica e envia
+    Fresh,
+    /// não chegou quadro novo neste período: codifica de novo o último (a cadência não cai quando a tela fica parada)
+    Repeat,
+    /// nada para enviar neste período
+    Idle,
+}
+
+/// Cadência do emissor: uma grade fixa no FPS alvo. Antes o laço só enviava quando a captura entregava um quadro novo — e a captura
+/// do Windows só entrega quando a tela MUDA. Tela parada, vídeo a 24 qps, página rolando aos trancos: o FPS enviado acompanhava o
+/// conteúdo ("14 FPS" numa transmissão de 30) e o controle de taxa do codificador, que conta com o FPS configurado, errava o tamanho
+/// dos quadros. Agora cada período da grade sai um quadro: o novo, se houver; senão o último de novo (para o codificador é um quadro
+/// "igual ao anterior", de poucas centenas de bytes).
+///
+/// Tolerância (`grace`, 1/3 do período): captura e grade são dois relógios quase iguais e fora de fase; quando o quadro novo chega
+/// logo DEPOIS do instante da grade, repetir na hora e deixar o novo para o período seguinte dava um quadro repetido seguido de um
+/// quadro perdido (dois chegam no mesmo período, o mais velho é sobrescrito). Esperar um instante pelo quadro novo evita os dois.
+pub struct Cadence { period: Duration, next: Instant,
+    /// false = comportamento antigo (só reenvia a tela parada uma vez por segundo); `BRIKS_SHARE_NO_REPEAT` (diagnóstico)
+    pub repeat: bool }
+impl Cadence {
+    pub const POLL: Duration = Duration::from_millis(1);
+    pub fn new(now: Instant, fps: u32) -> Self { Cadence { period: Self::period_of(fps), next: now, repeat: true } }
+    fn period_of(fps: u32) -> Duration { Duration::from_micros(1_000_000 / fps.clamp(1, 240) as u64) }
+    pub fn set_fps(&mut self, fps: u32) { self.period = Self::period_of(fps); }
+    pub fn period(&self) -> Duration { self.period }
+    pub fn grace(&self) -> Duration { self.period / 3 }
+    /// `fresh` = a captura tem quadro novo esperando; `held` = há um último quadro para repetir; `since_send` = tempo desde o último envio.
+    pub fn step(&mut self, now: Instant, fresh: bool, held: bool, since_send: Duration) -> Tick {
+        if now < self.next { return Tick::Wait((self.next - now).min(Duration::from_millis(5))); }
+        if fresh { self.advance(now); return Tick::Fresh; }
+        // ainda sem quadro nenhum (início, janela minimizada): olha de novo em 1 ms, e a grade começa no 1º quadro que chegar —
+        // assim ela nasce em fase com a captura, em vez de meio período atrasada
+        if !held { self.next = now + Self::POLL; return Tick::Idle; }
+        if !self.repeat { self.advance(now); return if since_send >= Duration::from_secs(1) { Tick::Repeat } else { Tick::Idle }; }
+        let limit = self.next + self.grace();
+        if now < limit { return Tick::Wait((limit - now).min(Self::POLL)); }
+        self.advance(now);
+        Tick::Repeat
+    }
+    /// Próximo instante da grade. Atrasou mais de um período (codificador lento, máquina travada): recomeça a grade daqui, sem
+    /// rajada de quadros para "recuperar".
+    fn advance(&mut self, now: Instant) { self.next += self.period; if self.next <= now { self.next = now + self.period; } }
+}
+
+/// FPS mostrado no chip de quem assiste: quadros decodificados / tempo da janela (a janela fecha entre 1,00 e ~1,05 s; contar os
+/// quadros sem dividir dava 31–32 numa transmissão de 30). E, como a contagem de uma janela de 1 s sempre oscila ±1 quadro com o
+/// fluxo perfeitamente regular (o quadro da borda cai de um lado ou do outro), uma diferença de até 1 mantém o número anterior:
+/// o chip só muda quando a taxa muda de verdade.
+pub fn steady_fps(prev: u64, frames: u64, secs: f64) -> u64 {
+    let m = frames as f64 / secs.max(0.5);
+    if frames > 0 && prev > 0 && (m - prev as f64).abs() <= 1.0 { prev } else { m.round() as u64 }
+}
+
 /// Bitrate do codificador para um orçamento de rede: desconta cabeçalhos RTP/UDP/IP e a folga das retransmissões.
 fn enc_bps(budget: u32) -> u32 { (budget as f64 * 0.85) as u32 }
 
@@ -381,12 +453,15 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
         let mut est = Estimator::new(ctl.top_ceil());
         let mut dec = ctl.decide(est.est);
         let mut fps = dec.level.fps;
-        let mut period = Duration::from_micros(1_000_000 / fps as u64);
+        let _fine = FineTimer::acquire();   // esperas de 1 ms (pacer e este laço) enquanto a transmissão está no ar
+        let mut cad = Cadence::new(Instant::now(), fps);
+        cad.repeat = std::env::var("BRIKS_SHARE_NO_REPEAT").is_err();
         let mut cap = cap;
         let mut enc: Option<H264Enc> = None;
         let mut pv = preview.and_then(|p| FrameSink::create(&p).ok());
-        let (mut last_send, mut next) = (Instant::now() - Duration::from_secs(5), Instant::now());
+        let mut last_send = Instant::now() - Duration::from_secs(5);
         let mut held: Option<video::Yuv> = None;
+        let mut repeated = 0u64;   // quadros repetidos na janela (telemetria: FPS enviado − repetidos = o que a tela de fato mudou)
         let (mut frames, mut bytes, mut enc_ns, mut skipped) = (0u64, 0u64, 0u128, 0u64);
         let (mut win_t, mut win_cpu) = (Instant::now(), cpu_ms());
         let (mut cap_frames0, mut conv_ns0, mut nacks0) = (0u64, 0u64, 0u64);
@@ -410,9 +485,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 closed_reason = { let r = cap.shared.close_reason.lock().unwrap_or_else(|e| e.into_inner()).clone(); if r.is_empty() { "A janela foi fechada".into() } else { r } };
                 break;
             }
-            let now = Instant::now();
-            if now < next { std::thread::sleep((next - now).min(Duration::from_millis(5))); continue; }
-            next += period; if next < now { next = now + period; }
+            // grade fixa no FPS alvo: quadro novo se houver; senão, passado um instante de tolerância, o último de novo
+            let has_fresh = { let l = cap.shared.latest.lock().unwrap_or_else(|e| e.into_inner()); l.w != 0 && l.yuv.is_some() };
+            let tick = cad.step(Instant::now(), has_fresh, held.is_some(), last_send.elapsed());
+            if let Tick::Wait(d) = tick { std::thread::sleep(d); continue; }
             // ---- uma vez por segundo: mede, estima a banda, decide o nível e publica a telemetria ----
             if win_t.elapsed() >= Duration::from_secs(1) {
                 let secs = win_t.elapsed().as_secs_f64();
@@ -442,7 +518,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     if d.level != dec.level {
                         just_changed = true;
                         trans_win = true;
-                        fps = d.level.fps; period = Duration::from_micros(1_000_000 / fps as u64);
+                        fps = d.level.fps; cad.set_fps(fps);
                         cap.shared.retarget(fps, d.level.h);
                         if let Some(e) = enc.as_mut() { if !e.set_fps(fps) { enc = None; } }
                         announce = true;
@@ -471,10 +547,10 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                     "target_kbps": enc_bps(dec.bps) / 1000, "est_kbps": (est.est / 1000.0).round(), "target_fps": dec.level.fps, "target_h": dec.level.h, "level": ctl.idx,
                     "loss_pct": (loss * 1000.0).round() / 10.0, "rtt_ms": rtt.round(), "jitter_ms": jit.round(), "nacks": nacks.saturating_sub(nacks0), "plis": plis, "idrs": idrs,
                     "blackout_held": std::mem::take(&mut held_win), "bpp_floor": (ctl.bpp_floor * 1000.0).round() / 1000.0, "cpu_idx": ctl.cpu_idx, "why": why,
-                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
+                    "adapting": adapting, "reason": est.reason, "left_out": left_out, "overshoot": (ctl.overshoot * 100.0).round() / 100.0, "pacer_drops": std::mem::take(&mut pacer_drops), "repeated": std::mem::take(&mut repeated), "lost_pkts": lost_new, "rtx": out_rtx.0.swap(0, Ordering::Relaxed), "rtx_skipped": out_rtx.1.swap(0, Ordering::Relaxed), "pacer_queue_kb": queued.load(Ordering::Relaxed) / 1000 }));
                 idrs0 = idrs; trans_win = false; frames = 0; bytes = 0; enc_ns = 0; skipped = 0; win_t = Instant::now(); win_cpu = cpu; cap_frames0 = capf; conv_ns0 = convn; nacks0 = nacks;
             }
-            // quadro novo (ou reenvio de 1 s numa tela parada, para o decodificador não secar)
+            // quadro novo, ou o último de novo quando a tela não mudou neste período (a cadência fica no FPS alvo)
             let (yuv, pvw, raw, src) = {
                 let mut l = cap.shared.latest.lock().unwrap_or_else(|e| e.into_inner());
                 if l.w == 0 { continue; }
@@ -483,13 +559,14 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 (fresh, l.preview.take(), l.raw.take(), (l.w, l.h))
             };
             if let (Some(p), Some((pw, ph, px))) = (pv.as_mut(), pvw) { p.write(pw, ph, &px); }
-            let yuv = match (yuv, &held) {
-                (Some(y), _) => y,
-                (None, Some(_)) if last_send.elapsed() >= Duration::from_millis(1000) => held.take().unwrap(),
-                _ => continue,
+            let (yuv, is_repeat) = match yuv {
+                Some(y) => (y, false),   // (um quadro que chegou entre a consulta e aqui também vale como novo)
+                None if tick == Tick::Repeat => match held.take() { Some(y) => { repeated += 1; (y, true) } None => continue },
+                None => continue,
             };
-            // troca de aba / repintura: não deixa o preto passageiro chegar ao espectador (segura o último quadro bom)
-            if guard.hold(Instant::now(), dark_fraction(&yuv.y)) { held_win += 1; continue; }
+            // troca de aba / repintura: não deixa o preto passageiro chegar ao espectador (segura o último quadro bom). O quadro
+            // repetido já passou por aqui quando era novo.
+            if !is_repeat && guard.hold(Instant::now(), dark_fraction(&yuv.y)) { held_win += 1; continue; }
             // fila do pacer acima de ~0,3 s do bitrate atual: a rede não dá vazão. Pula este quadro SEM codificar (a cadeia de
             // referência fica intacta; nada de quadro-chave, que só pioraria o congestionamento)
             if let Some(e) = enc.as_ref() { if queued.load(Ordering::Relaxed) * 8 > (e.bps as u64 * 3 / 10).max(250_000) { pacer_drops += 1; held = Some(yuv); continue; } }
@@ -530,7 +607,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                         }
                         match sup.on_create_error(Instant::now(), &e.to_string()) {
                             Recovery::GiveUp(m) => { closed_reason = m; break; }
-                            _ => { std::thread::sleep(Duration::from_millis(100)); continue; }
+                            _ => { held = Some(yuv); std::thread::sleep(Duration::from_millis(100)); continue; }   // tenta de novo com este quadro, mesmo se a tela não mudar
                         }
                     }
                 }
@@ -800,6 +877,7 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut last_pkt, mut stalled) = (Instant::now(), false);   // rede de segurança: sem pacote nenhum por 3 s, a UI tira a última imagem
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
+    let mut shown_fps = 0u64;   // FPS publicado na última janela (ver `steady_fps`)
     let mut rx_bytes = 0u64;   // bytes de vídeo recebidos na janela de 1 s (vira o "kbps" que quem assiste vê)
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
@@ -833,7 +911,9 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         if win.elapsed() >= Duration::from_secs(1) {
             let f = st.frames.load(Ordering::Relaxed);
             let (pid, slot) = split_key(&peer);
-            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": f.saturating_sub(frames0), "kbps": (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
+            let got = f.saturating_sub(frames0);
+            shown_fps = steady_fps(shown_fps, got, win.elapsed().as_secs_f64());
+            let _ = ev.try_send(json!({ "ev": ev_rx, "peer_id": pid, "slot": slot, "fps": shown_fps, "frames": got, "kbps": (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, "plis": plis, "lost_frames": jb.lost_frames, "recovered": jb.recovered,
                 "fed": st.fed.load(Ordering::Relaxed), "dec_err": st.dec_err.load(Ordering::Relaxed), "dec_none": st.dec_none.load(Ordering::Relaxed) }));
             frames0 = f; win = Instant::now(); rx_bytes = 0;
         }
@@ -888,6 +968,116 @@ mod jb_tests {
         assert!(jb.pop(t + Duration::from_millis(610)).0.is_empty(), "P sem referência não é entregue");
         jb.push(pk(18, 600, true, true));
         assert_eq!(jb.pop(t + Duration::from_millis(620)).0.len(), 1, "volta no quadro-chave");
+    }
+}
+
+#[cfg(test)]
+mod cadence_tests {
+    use super::*;
+
+    /// Roda a grade por `secs` segundos de relógio simulado. `arrivals` = instantes (ms) em que a captura entrega um quadro novo.
+    /// Devolve os instantes (ms) e o tipo de cada envio.
+    fn run(c: &mut Cadence, t0: Instant, secs: f64, arrivals: &[f64]) -> Vec<(f64, Tick)> {
+        let (mut t, mut out, mut ai, mut fresh, mut held, mut last) = (0.0f64, vec![], 0usize, false, false, -5000.0f64);
+        while t < secs * 1000.0 {
+            while ai < arrivals.len() && arrivals[ai] <= t { fresh = true; ai += 1; }
+            let now = t0 + Duration::from_secs_f64(t / 1000.0);
+            match c.step(now, fresh, held, Duration::from_secs_f64((t - last) / 1000.0)) {
+                Tick::Wait(d) => t += d.as_secs_f64() * 1000.0,
+                Tick::Idle => {}
+                k => { fresh = false; held = true; last = t; out.push((t, k)); }
+            }
+        }
+        out
+    }
+    fn count(v: &[(f64, Tick)], k: Tick) -> usize { v.iter().filter(|x| x.1 == k).count() }
+    fn worst_gap(v: &[(f64, Tick)]) -> f64 { v.windows(2).map(|w| w[1].0 - w[0].0).fold(0.0, f64::max) }
+
+    /// Tela parada (um quadro no início e mais nada): antes saía 1 quadro por segundo; agora a cadência fica nos 30.
+    #[test]
+    fn a_still_screen_keeps_the_target_cadence_by_repeating_the_last_frame() {
+        let t0 = Instant::now();
+        let v = run(&mut Cadence::new(t0, 30), t0, 3.0, &[0.0]);
+        assert!((89..=91).contains(&v.len()), "{} quadros em 3 s", v.len());
+        assert_eq!(count(&v, Tick::Fresh), 1);
+        assert!(worst_gap(&v[1..]) < 34.5, "repetições espaçadas por um período: {:.1} ms", worst_gap(&v[1..]));
+        // comportamento antigo (diagnóstico): só o reenvio de 1 s
+        let mut old = Cadence::new(t0, 30); old.repeat = false;
+        let v = run(&mut old, t0, 3.0, &[0.0]);
+        assert!((3..=4).contains(&v.len()), "{}", v.len());
+    }
+
+    /// Conteúdo que muda a 14 qps (o "14 FPS" do relato) numa transmissão de 30: saem 30 por segundo, 14 novos e 16 repetidos, e
+    /// nenhum quadro novo é perdido.
+    #[test]
+    fn content_changing_at_14_fps_is_still_sent_at_30() {
+        let t0 = Instant::now();
+        let arr: Vec<f64> = (0..140).map(|i| 3.0 + i as f64 * 1000.0 / 14.0).collect();
+        let v = run(&mut Cadence::new(t0, 30), t0, 10.0, &arr);
+        assert!((298..=302).contains(&v.len()), "{} quadros em 10 s", v.len());
+        assert_eq!(count(&v, Tick::Fresh), 140, "todo quadro novo é enviado");
+        assert!(worst_gap(&v) < 46.0, "sem buracos: {:.1} ms", worst_gap(&v));
+    }
+
+    /// Captura no mesmo FPS da grade, mas fora de fase (o quadro chega 4 ms DEPOIS do instante da grade) e com oscilação: a
+    /// tolerância espera por ele. Sem ela, cada período repetia o quadro velho e o novo ficava um período inteiro atrasado.
+    #[test]
+    fn a_capture_slightly_out_of_phase_is_neither_repeated_nor_dropped() {
+        let t0 = Instant::now();
+        let p = 1000.0 / 30.0;
+        let arr: Vec<f64> = (0..300).map(|i| i as f64 * p + 4.0 + ((i * 7) % 5) as f64).collect();   // 4 a 8 ms depois da grade
+        let v = run(&mut Cadence::new(t0, 30), t0, 10.0, &arr);
+        assert_eq!(count(&v, Tick::Fresh), 300, "todos os quadros novos saem");
+        assert_eq!(count(&v, Tick::Repeat), 0, "nenhuma repetição");
+        // e o quadro sai até 1 ms depois de chegar (não espera o período seguinte)
+        for (k, (t, _)) in v.iter().enumerate() { assert!(*t - arr[k] <= 1.5, "quadro {k}: chegou {:.1}, saiu {t:.1}", arr[k]); }
+    }
+
+    /// O laço travou meio segundo (codificador recriado, máquina ocupada): a grade recomeça dali, sem rajada para compensar.
+    #[test]
+    fn a_stall_restarts_the_grid_without_a_burst() {
+        let t0 = Instant::now();
+        let mut c = Cadence::new(t0, 30);
+        assert_eq!(c.step(t0, true, false, Duration::ZERO), Tick::Fresh);
+        let late = t0 + Duration::from_millis(500);
+        assert_eq!(c.step(late, true, true, Duration::ZERO), Tick::Fresh);
+        assert!(matches!(c.step(late + Duration::from_millis(1), true, true, Duration::ZERO), Tick::Wait(_)), "o próximo só um período depois");
+        // troca de FPS (adaptação): o período novo vale a partir do quadro seguinte
+        c.set_fps(15);
+        assert_eq!(c.period(), Duration::from_micros(66_666));
+    }
+
+    #[test]
+    fn viewer_chip_fps_is_frames_over_time_and_does_not_flicker_by_one() {
+        assert_eq!(steady_fps(0, 31, 1.04), 30, "31 quadros em 1,04 s são 30 FPS (antes o chip mostrava 31)");
+        assert_eq!(steady_fps(30, 29, 1.0), 30, "±1 quadro na borda da janela não muda o chip");
+        assert_eq!(steady_fps(30, 31, 1.0), 30);
+        assert_eq!(steady_fps(30, 28, 1.0), 28, "queda de verdade aparece");
+        assert_eq!(steady_fps(30, 14, 1.0), 14);
+        assert_eq!(steady_fps(30, 0, 1.0), 0, "sem quadros é zero (a UI usa isso para avisar)");
+        assert_eq!(steady_fps(1, 0, 1.0), 0);
+    }
+
+    /// Ponta a ponta do emissor, sem rede: a fonte de teste entrega MENOS quadros que o FPS pedido (ela dorme um período inteiro e
+    /// ainda gasta o tempo de desenhar), como uma tela que muda pouco. O que sai do codificador tem de ficar nos 30 por segundo.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_source_slower_than_the_target_is_still_sent_at_the_target_fps() {
+        let out = VideoOut::new();
+        let (tx, mut rx) = mpsc::channel(256);
+        let cfg = ShareCfg { kind: SourceKind::Test, height: 360, fps: 30, kbps: 0, label: "Cadencia".into(), audio: crate::procaudio::AudioMode::None, content: crate::adapt::Content::Detail, codec: Default::default(), adaptive: false };
+        let s = start_sender(1, Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(Default::default())), cfg, out.clone(), tx, None, None).expect("emissor");   // `out` fica vivo: é ele que mantém o pacer rodando
+        let mut wins = vec![];
+        let t0 = Instant::now();
+        while wins.len() < 6 && t0.elapsed() < Duration::from_secs(20) {
+            if let Ok(Some(v)) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await { if v["ev"] == "share.stats" { wins.push(v); } }
+        }
+        s.stop();
+        assert!(wins.len() >= 6, "sem estatísticas do emissor");
+        for w in &wins[2..] {   // as duas primeiras janelas pegam a abertura do codificador
+            eprintln!("enviado {} FPS (repetidos {}, a fonte ofereceu {}), {} kbps, {} ms/quadro", w["fps"], w["repeated"], w["offered_fps"], w["kbps"], w["work_ms"]);
+            let f = w["fps"].as_f64().unwrap_or(0.0);
+            assert!((28.5..=31.0).contains(&f), "FPS enviado fora do alvo: {w}");
+        }
     }
 }
 

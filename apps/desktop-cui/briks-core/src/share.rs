@@ -840,6 +840,48 @@ impl JitterBuf {
     }
 }
 
+/// Fila entre o montador de quadros e a thread do decodificador. O canal para a thread é curto (6); antes, com ele cheio (decodificador
+/// mais lento que a chegada: 27–115 ms por quadro medidos no rede.log a 30 qps), o quadro era DESCARTADO e os seguintes continuavam
+/// indo ao decodificador — P-quadros sem a referência deles: blocos, "datamoshing" e legendas duplicadas até o próximo quadro-chave.
+/// Agora nenhum quadro some no meio da cadeia: o excesso espera aqui; se o atraso passa de `LIMIT`, descarta TUDO até o próximo
+/// quadro-chave (a última imagem boa fica parada um instante, em vez de imagem corrompida) e pede um.
+pub struct DecodeFeed {
+    pending: std::collections::VecDeque<Option<(Codec, Vec<u8>)>>,
+    /// descartando até o próximo quadro-chave
+    skipping: bool,
+    /// quadros descartados por atraso do decodificador (telemetria)
+    pub dropped: u64,
+}
+impl DecodeFeed {
+    /// Quadros esperando o decodificador além dos 6 do canal: ~0,4 s a 30 qps.
+    pub const LIMIT: usize = 12;
+    pub fn new() -> Self { DecodeFeed { pending: Default::default(), skipping: false, dropped: 0 } }
+    /// Reinício do decodificador (voltou a assistir, troca de codec, descontinuidade): o que esperava é do fluxo antigo.
+    pub fn reset(&mut self) { self.pending.clear(); self.pending.push_back(None); self.skipping = false; }
+    /// Entra uma unidade de acesso. Devolve true se é preciso pedir um quadro-chave (o decodificador ficou para trás).
+    pub fn push(&mut self, codec: Codec, au: Vec<u8>, key: bool) -> bool {
+        if self.skipping { if !key { self.dropped += 1; return false; } self.skipping = false; }
+        // um quadro-chave torna dispensável tudo o que esperava antes dele: é a chance de tirar o atraso (um reinício pendente fica)
+        if key && self.pending.len() > 2 { let n = self.pending.iter().filter(|m| m.is_some()).count(); self.dropped += n as u64; self.pending.retain(|m| m.is_none()); }
+        if self.pending.len() >= Self::LIMIT {
+            self.dropped += self.pending.iter().filter(|m| m.is_some()).count() as u64 + 1;
+            self.pending.retain(|m| m.is_none());
+            self.skipping = true;
+            return true;
+        }
+        self.pending.push_back(Some((codec, au)));
+        false
+    }
+    /// Entrega ao decodificador o que couber, em ordem. `send` devolve o item de volta quando o canal está cheio.
+    pub fn drain(&mut self, mut send: impl FnMut(Option<(Codec, Vec<u8>)>) -> Result<(), Option<(Codec, Vec<u8>)>>) {
+        while let Some(m) = self.pending.pop_front() { if let Err(back) = send(m) { self.pending.push_front(back); break; } }
+    }
+    pub fn waiting(&self) -> usize { self.pending.len() }
+    /// Está descartando até o próximo quadro-chave (quem chama continua pedindo um enquanto isto for true).
+    pub fn skipping(&self) -> bool { self.skipping }
+}
+impl Default for DecodeFeed { fn default() -> Self { Self::new() } }
+
 /// Lê o RTP da faixa de vídeo do peer. Só decodifica enquanto `watching`; sem espectador descarta os pacotes (custo ~zero).
 /// `pli` pede um quadro-chave ao emissor (início, perda sem conserto, erro de decodificação).
 /// Tabela payload type → codec negociada com o par (para o receptor reconhecer a troca de codec feita pelo emissor com `replace_track`).
@@ -889,11 +931,14 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         }
     });
     let mut jb = JitterBuf::with_codec(rx_codec);
+    let mut feed = DecodeFeed::new();
+    let to_dec = |m: Option<(Codec, Vec<u8>)>| dtx.try_send(m).map_err(|e| match e { std::sync::mpsc::TrySendError::Full(m) | std::sync::mpsc::TrySendError::Disconnected(m) => m });
     let mut my_epoch = 0u64;
     let (mut was, mut last_pli, mut last_frame) = (false, Instant::now() - Duration::from_secs(10), Instant::now());
     let (mut last_pkt, mut stalled) = (Instant::now(), false);   // rede de segurança: sem pacote nenhum por 3 s, a UI tira a última imagem
     let (mut plis, mut win, mut frames0) = (0u64, Instant::now(), 0u64);
     let mut shown_fps = 0u64;   // FPS publicado na última janela (ver `steady_fps`)
+    let mut log_frames0 = 0u64;   // quadros decodificados até a última linha do rede.log
     let mut rx_bytes = 0u64;   // bytes de vídeo recebidos na janela de 1 s (vira o "kbps" que quem assiste vê)
     let mut ask = |last_pli: &mut Instant, plis: &mut u64, min: Duration| { if last_pli.elapsed() > min { pli(); *last_pli = Instant::now(); *plis += 1; } };
     loop {
@@ -906,21 +951,28 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
         let ep = st.epoch.load(Ordering::Relaxed);
         if !was || ep != my_epoch {
             was = true; my_epoch = ep; jb = JitterBuf::with_codec(rx_codec);
-            st.frames.store(0, Ordering::Relaxed); frames0 = 0; last_frame = Instant::now();
-            let _ = dtx.try_send(None);
+            st.frames.store(0, Ordering::Relaxed); frames0 = 0; log_frames0 = 0; last_frame = Instant::now();
+            feed.reset();
             ask(&mut last_pli, &mut plis, Duration::ZERO);
         }
         if let Some(p) = pkt {
             // troca de codec no meio da transmissão (o emissor fez replace_track): outro payload type = outro empacotamento
             if let Some(c) = pts.iter().find(|(pt, _)| *pt == p.header.payload_type).map(|(_, c)| *c) {
-                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); let _ = dtx.try_send(None); ask(&mut last_pli, &mut plis, Duration::ZERO); }
+                if c != rx_codec { rx_codec = c; jb = JitterBuf::with_codec(c); feed.reset(); ask(&mut last_pli, &mut plis, Duration::ZERO); }
             }
             rx_bytes += p.payload.len() as u64;
             jb.push(p);
         }
         let (aus, want) = jb.pop(Instant::now());
-        if std::mem::take(&mut jb.fresh) { let _ = dtx.try_send(None); }   // descontinuidade: decodificador novo para o quadro-chave
-        for au in aus { if dtx.try_send(Some((rx_codec, au))).is_err() { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); } last_frame = Instant::now(); }
+        if std::mem::take(&mut jb.fresh) { feed.reset(); }   // descontinuidade: decodificador novo para o quadro-chave
+        for au in aus {
+            let key = if rx_codec == Codec::H264 { crate::mfenc::nals(&au).iter().any(|n| n.0 == 5) } else { crate::codec::is_key_frame(rx_codec, &au) };
+            // decodificador para trás: nada de pular um quadro no meio da cadeia (ver `DecodeFeed`); descarta até o quadro-chave pedido
+            if feed.push(rx_codec, au, key) { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }
+            last_frame = Instant::now();
+        }
+        feed.drain(to_dec);
+        if feed.skipping() { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }   // o pedido pode ter se perdido: repete até o quadro-chave chegar
         if want || st.want_pli.swap(false, Ordering::Relaxed) { ask(&mut last_pli, &mut plis, Duration::from_millis(800)); }
         // sem quadros há 2 s (o quadro-chave pedido se perdeu): pede outro
         if last_frame.elapsed() > Duration::from_secs(2) { ask(&mut last_pli, &mut plis, Duration::from_secs(2)); }
@@ -936,9 +988,11 @@ pub async fn run_remote_video_as(evp: &'static str, peer: String, track: Arc<Tra
                 if RXLOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
                     let (fed, ns) = (st.fed.load(Ordering::Relaxed), st.dec_ns.swap(0, Ordering::Relaxed));
                     let name = st.dec_name.lock().map(|n| n.clone()).unwrap_or_default();
-                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, tempo medio de decodificar {:.1} ms (unidades {fed})",
-                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed),
-                        if got > 0 { ns as f64 / got as f64 / 1e6 } else { 0.0 }));
+                    crate::netlog::write(&format!("assistindo {pid}: decodificador {name}, decodificou {got} quadros/s (publicado {shown_fps:.1}), {} kbps, perdidos {}, recuperados {}, erros {}, sem saida {}, pedidos de quadro-chave {plis}, descartados por atraso do decodificador {}, tempo medio de decodificar {:.1} ms (unidades {fed})",
+                        (rx_bytes as f64 * 8.0 / 1000.0 / win.elapsed().as_secs_f64().max(0.5)).round() as u64, jb.lost_frames, jb.recovered, st.dec_err.load(Ordering::Relaxed), st.dec_none.load(Ordering::Relaxed), feed.dropped,
+                        // o tempo acumula desde a última linha (~5 s): divide pelos quadros do MESMO período. Antes dividia pelos quadros de
+                        // 1 s só, e o log mostrava ~5x o tempo real ("27 ms" eram ~5,5 ms).
+                        { let n5 = f.saturating_sub(log_frames0); log_frames0 = f; if n5 > 0 { ns as f64 / n5 as f64 / 1e6 } else { 0.0 } }));
                 }
             }
             frames0 = f; win = Instant::now(); rx_bytes = 0;
@@ -962,6 +1016,46 @@ mod jb_tests {
         p.header.sequence_number = seq; p.header.timestamp = ts; p.header.marker = marker;
         p.payload = Bytes::from(vec![if idr { 0x65 } else { 0x41 }, 1, 2, 3]);   // NAL único: 5 = IDR, 1 = P
         p
+    }
+
+    /// Decodificador lento: nenhum quadro some no meio da cadeia. O que não cabe espera; estourou o limite, descarta até o quadro-chave.
+    #[test]
+    fn decode_feed_never_skips_a_frame_inside_the_reference_chain() {
+        let mut feed = DecodeFeed::new();
+        let mut got: Vec<u8> = vec![];
+        // canal "cheio": nada sai, tudo espera em ordem
+        assert!(!feed.push(Codec::H264, vec![0], true));
+        for i in 1..DecodeFeed::LIMIT as u8 { assert!(!feed.push(Codec::H264, vec![i], false)); }
+        feed.drain(Err);
+        assert_eq!(feed.waiting(), DecodeFeed::LIMIT);
+        // o canal abre 3 vagas: saem os 3 primeiros, na ordem, e o resto continua esperando
+        let mut room = 3;
+        feed.drain(|m| if room > 0 { room -= 1; got.push(m.unwrap().1[0]); Ok(()) } else { Err(m) });
+        assert_eq!(got, vec![0, 1, 2]);
+        // enche de novo até estourar: descarta o que esperava, pede quadro-chave e ignora os P-quadros seguintes
+        let mut asked = false;
+        for i in 0..8u8 { asked |= feed.push(Codec::H264, vec![100 + i], false); }
+        assert!(asked && feed.skipping() && feed.waiting() == 0, "estourou: pede quadro-chave e esvazia");
+        assert!(!feed.push(Codec::H264, vec![200], false) && feed.waiting() == 0, "P-quadro sem referência não entra");
+        // o quadro-chave retoma, e os seguintes entram normalmente
+        assert!(!feed.push(Codec::H264, vec![201], true) && !feed.skipping());
+        assert!(!feed.push(Codec::H264, vec![202], false));
+        got.clear();
+        feed.drain(|m| { got.push(m.unwrap().1[0]); Ok(()) });
+        assert_eq!(got, vec![201, 202]);
+        assert!(feed.dropped >= 9);
+    }
+
+    /// Um quadro-chave que chega com fila acumulada tira o atraso; o reinício do decodificador pendente não se perde.
+    #[test]
+    fn decode_feed_keyframe_clears_backlog_and_keeps_the_reset() {
+        let mut feed = DecodeFeed::new();
+        feed.reset();
+        for i in 0..5u8 { feed.push(Codec::H264, vec![i], i == 0); }
+        feed.push(Codec::H264, vec![50], true);
+        let mut got = vec![];
+        feed.drain(|m| { got.push(m.map(|x| x.1[0])); Ok(()) });
+        assert_eq!(got, vec![None, Some(50)]);
     }
 
     #[test]

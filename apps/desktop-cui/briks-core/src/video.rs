@@ -482,6 +482,39 @@ mod tests {
 #[cfg(test)]
 mod bench {
     use super::*;
+    /// Onde vai o tempo de quem assiste: decodificação pura (Media Foundation, sem converter) x NV12→RGBA x cópia para a memória
+    /// compartilhada, a 1080p e 720p, com conteúdo em movimento. `BRIKS_DECODER=openh264` compara o decodificador de software.
+    #[test]
+    #[ignore]
+    fn bench_decode_split() {
+        for (w, h) in [(1920usize, 1080usize), (1280, 720)] {
+            let mut enc = H264Enc::new(w, h, 30.0, 6_000_000).unwrap();
+            let mut aus = vec![];
+            for i in 0..90 { let f = super::tests::pattern(w, h, i * 3); aus.extend(enc.encode(&bgra_to_i420(&f, w, h, w, h)).unwrap()); }
+            let n = aus.len() as f64;
+            let mut raw = crate::mfenc::MfDec::new().unwrap();
+            let (mut keep, mut frames) = (None, 0);
+            let t = std::time::Instant::now();
+            for a in &aus { let _ = raw.decode(a, |w, h, y, uv, stride| { frames += 1; if keep.is_none() { keep = Some((w, h, y.to_vec(), uv.to_vec(), stride)); } }); }
+            let dec_ms = t.elapsed().as_secs_f64() * 1000.0 / n;
+            let (kw, kh, y, uv, stride) = keep.unwrap();
+            let mut out = vec![255u8; kw * kh * 4];
+            let t = std::time::Instant::now();
+            for _ in 0..60 { nv12_to_rgba(&y, &uv, stride, kw, kh, &mut out); }
+            let conv_ms = t.elapsed().as_secs_f64() * 1000.0 / 60.0;
+            let dir = std::env::temp_dir().join(format!("briks-bench-{}", std::process::id()));
+            let mut sink = FrameSink::create(&dir.join("b.bin")).unwrap();
+            let t = std::time::Instant::now();
+            for _ in 0..60 { sink.write(kw, kh, &out); }
+            let sink_ms = t.elapsed().as_secs_f64() * 1000.0 / 60.0;
+            let mut full = H264Dec::new().unwrap();
+            let t = std::time::Instant::now();
+            for a in &aus { let _ = full.decode(a); }
+            let full_ms = t.elapsed().as_secs_f64() * 1000.0 / n;
+            eprintln!("[decodificar {w}x{h}] {frames} quadros de {n}: Media Foundation puro {dec_ms:.1} ms, NV12→RGBA {conv_ms:.1} ms, gravar no quadro compartilhado {sink_ms:.1} ms, H264Dec completo ({}) {full_ms:.1} ms", full.name);
+        }
+    }
+
     #[test]
     #[ignore]
     fn bench_convert_and_encode() {
@@ -498,10 +531,10 @@ mod bench {
             let mut aus = vec![]; let mut et = 0.0f64;
             let t = std::time::Instant::now();
             for i in 0..60 { let f2 = super::tests::pattern(sw, sh, i * 3); let y2 = bgra_to_i420(&f2, sw, sh, dw, dh); if i == 10 || i == 30 { enc.force_idr(); } let t1 = std::time::Instant::now(); let o = enc.encode(&y2).unwrap(); if o.len() != 1 { eprintln!("quadro {i}: {} saídas", o.len()); } aus.extend(o); et += t1.elapsed().as_secs_f64(); }
-            let _ = t; let e = et * 50.0;
+            let _ = t; let e = et * 1000.0 / 60.0;   // ms por quadro (antes multiplicava por 50: mostrava 3x o tempo real)
             let t = std::time::Instant::now();
             let mut okd = 0; for a in &aus { if a.is_empty() { continue; } match dec.decode(a) { Ok(Some(_)) => okd += 1, Ok(None) => {}, Err(e) => eprintln!("erro em au de {} bytes: {e}", a.len()) } } eprintln!("decodificou {okd} de {}", aus.len());
-            let d = t.elapsed().as_secs_f64() * 50.0;
+            let d = t.elapsed().as_secs_f64() * 1000.0 / aus.len().max(1) as f64;
             eprintln!("[{}] {sw}x{sh}->{dw}x{dh}: conversão {conv:.1} ms (CPU {ccpu:.1} ms), codificação (quadro parado) {e:.1} ms, decodificação+RGBA {d:.1} ms", enc.name);
         }
     }
@@ -636,6 +669,75 @@ mod qualidade {
                 for au in enc.encode(&yuv).unwrap() { if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() { let up = if (dw, dh) == (w, h) { rgba.to_vec() } else { amplia(rgba, dw, dh, w, h) }; if t >= 52 && t <= 72 { linha.push(format!("{}:{:.1}({}KB)", t, luma_psnr(&f, &up), au.len() / 1024)); } } }
             }
             eprintln!("[{}] {} a {:.1} Mbps, IDR forçado no quadro 60 — quadro:luma PSNR(tamanho): {}", enc.name, nome, bps as f64 / 1e6, linha.join(" "));
+        }
+    }
+
+    /// Quadro de "filme": fundo em degradê que se desloca (panorâmica), formas que andam, grão leve que muda a cada quadro, corte de
+    /// cena a cada 4 s e uma legenda (texto claro sobre a imagem) que troca a cada 2 s. É o conteúdo das queixas de blocos/"fantasmas".
+    fn filme(w: usize, h: usize, t: usize, fps: usize) -> Vec<u8> {
+        let mut f = vec![255u8; w * h * 4];
+        let cena = t / (4 * fps);
+        // amplitude do grão em níveis (BRIKS_Q_GRAO; 4 = filme limpo, 15 = grão pesado / jogo caótico)
+        let grao: u32 = std::env::var("BRIKS_Q_GRAO").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+        let (pan, mut rng) = (t * 3, (t as u32).wrapping_mul(747796405).wrapping_add(2891336453));
+        for y in 0..h { for x in 0..w {
+            let o = (y * w + x) * 4;
+            let (xx, yy) = (x + pan + cena * 517, y + cena * 211);
+            let base = ((xx as f32 * 0.011).sin() * 40.0 + (yy as f32 * 0.017).cos() * 40.0 + ((xx + yy) as f32 * 0.004).sin() * 30.0) as i32;
+            rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+            let g = (rng % (2 * grao + 1)) as i32 - grao as i32;   // grão de filme (o que mais custa bits e o que vira blocos quando o bitrate falta)
+            let tex = (((xx / 3) ^ (yy / 3)) & 7) as i32 * 4 - 14;   // textura fina que anda com a panorâmica
+            let c = |k: i32| (110 + base * k / 3 + g + tex + (cena as i32 * 23) % 40).clamp(0, 255) as u8;
+            f[o] = c(2); f[o + 1] = c(3); f[o + 2] = c(1);
+        } }
+        // formas que andam (personagens)
+        for k in 0..4usize { let cx = (200 + k * 420 + t * (4 + k)) % w; let cy = h / 3 + k * 90; for y in cy.saturating_sub(70)..(cy + 70).min(h) { for x in cx.saturating_sub(50)..(cx + 50).min(w) { let o = (y * w + x) * 4; f[o] = 40 + (k * 50) as u8; f[o + 1] = 60; f[o + 2] = 200 - (k * 40) as u8; } } }
+        // legenda: duas linhas de "texto" de traço de 3 px, troca a cada 2 s
+        let fala = t / (2 * fps);
+        for ln in 0..2usize { for c in 0..36usize { if (c * 5 + fala * 7 + ln) % 8 < 6 { let gl = glyph((fala * 131 + ln * 17 + c) as u32); let (x0, y0) = (w / 2 - 36 * 13 + c * 26, h - 150 + ln * 46);
+            for (ry, bits) in gl.iter().enumerate() { for rx in 0..5 { if bits >> rx & 1 == 1 { for dy in 0..4 { for dx in 0..4 { let (px, py) = (x0 + rx * 4 + dx, y0 + ry * 4 + dy); if px < w && py < h { let o = (py * w + px) * 4; f[o] = 245; f[o + 1] = 245; f[o + 2] = 245; } } } } } } } } }
+        f
+    }
+
+    /// Filme a 1080p: PSNR médio e mínimo, PSNR só da faixa da legenda logo depois de cada troca de fala (o "fantasma" da legenda
+    /// antiga aparece aqui), bitrate real e maior quadro, com quadro-chave periódico (BRIKS_Q_IDR_S, 0 = só o inicial).
+    /// BRIKS_Q_CASOS = mbps:altura; BRIKS_Q_FPS; mais as variáveis de diagnóstico do codificador (BRIKS_ENC_*).
+    #[test]
+    #[ignore]
+    fn filme_por_bitrate() {
+        let (w, h) = (1920usize, 1080usize);
+        let fps: usize = std::env::var("BRIKS_Q_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+        let idr_s: usize = std::env::var("BRIKS_Q_IDR_S").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+        let lista: Vec<(u32, usize)> = std::env::var("BRIKS_Q_CASOS").unwrap_or("1.5:1080,3:1080,6:1080".into()).split(',').map(|v| { let (a, b) = v.split_once(':').unwrap(); ((a.parse::<f64>().unwrap() * 1e6) as u32, b.parse().unwrap()) }).collect();
+        for (bps, eh) in lista {
+            let ew = eh * 16 / 9 / 2 * 2;
+            let mut enc = H264Enc::new(ew, eh, fps as f32, bps).unwrap();
+            let mut dec = H264Dec::new().unwrap();
+            let n = 10 * fps;
+            let (mut bytes, mut psum, mut pmin, mut got, mut maxq, mut leg_sum, mut leg_min, mut leg_n, mut enc_ms, mut win_max) = (0usize, 0.0f64, 99.0f64, 0usize, 0usize, 0.0f64, 99.0f64, 0usize, 0.0f64, 0usize);
+            let mut win: std::collections::VecDeque<usize> = Default::default();
+            for t in 0..n {
+                let f = filme(w, h, t, fps);
+                let yuv = bgra_to_i420(&f, w, h, ew, eh);
+                if idr_s > 0 && t > 0 && t % (idr_s * fps) == 0 { enc.force_idr(); }
+                let t0 = std::time::Instant::now();
+                let aus = enc.encode(&yuv).unwrap();
+                enc_ms += t0.elapsed().as_secs_f64() * 1000.0;
+                let mut q = 0;
+                for au in aus {
+                    bytes += au.len(); maxq = maxq.max(au.len()); q += au.len();
+                    if let Some((dw, dh, rgba)) = dec.decode(&au).unwrap() {
+                        let up = if (dw, dh) == (w, h) { rgba.to_vec() } else { amplia(rgba, dw, dh, w, h) };
+                        if t >= fps { let p = luma_psnr(&f, &up); psum += p; pmin = pmin.min(p); got += 1; }   // o 1º segundo é aquecimento
+                        // faixa da legenda nos 6 quadros depois de cada troca de fala
+                        if t >= fps && t % (2 * fps) < 6 { let (a, b) = ((h - 160) * w * 4, (h - 50) * w * 4); let p = luma_psnr(&f[a..b], &up[a..b]); leg_sum += p; leg_min = leg_min.min(p); leg_n += 1; }
+                    }
+                }
+                // maior volume em qualquer janela de 1 s (o que o pacer e a rede têm de aguentar)
+                win.push_back(q); if win.len() > fps { win.pop_front(); } if t >= fps { win_max = win_max.max(win.iter().sum()); }
+            }
+            eprintln!("[{}] filme {:.1} Mbps {}p {} fps, IDR a cada {} s: real {:.2} Mbps (pico de 1 s {:.2}), luma PSNR médio {:.1} mín {:.1} dB, legenda pós-troca média {:.1} mín {:.1} dB, maior quadro {} KB, codificar {:.1} ms/quadro",
+                enc.name, bps as f64 / 1e6, eh, fps, idr_s, bytes as f64 * 8.0 / (n as f64 / fps as f64) / 1e6, win_max as f64 * 8.0 / 1e6, psum / got.max(1) as f64, pmin, leg_sum / leg_n.max(1) as f64, leg_min, maxq / 1024, enc_ms / n as f64);
         }
     }
 

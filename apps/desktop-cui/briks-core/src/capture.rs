@@ -64,26 +64,27 @@ pub struct Shared {
     pub want_preview: bool,
     pub want_raw: AtomicBool,
     pub preview_every: u64,
-    /// intervalo mínimo entre quadros aceitos (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado sem converter)
-    pub min_interval_us: AtomicU64,
-    pub last_accept: Mutex<Option<std::time::Instant>>,
+    /// período alvo entre quadros aceitos, em µs (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado sem converter)
+    pub period_us: AtomicU64,
+    /// instante da grade em que o próximo quadro é esperado (ver `accept_at`); None = aceita o próximo
+    pub next_due: Mutex<Option<std::time::Instant>>,
     pub dropped: AtomicU64,
 }
 
 impl Shared {
     /// Adaptação: novo FPS e nova altura de envio, valendo a partir do próximo quadro.
     pub fn retarget(&self, fps: u32, h: usize) {
-        self.min_interval_us.store(800_000 / fps.clamp(1, 120) as u64, Ordering::Relaxed);
+        self.period_us.store(1_000_000 / fps.clamp(1, 120) as u64, Ordering::Relaxed);
         self.target_h.store(h, Ordering::Relaxed);
     }
     /// Recebe um quadro BGRA (sem preenchimento de linha) da captura e guarda o I420 pronto para codificar.
     /// Este quadro entra? (a captura pode entregar mais rápido que o FPS pedido: o excesso é descartado ANTES de converter)
     pub fn accept(&self) -> bool {
-        let mut la = self.last_accept.lock().unwrap_or_else(|e| e.into_inner());
-        let now = std::time::Instant::now();
-        if let Some(t) = *la { if now.duration_since(t) < Duration::from_micros(self.min_interval_us.load(Ordering::Relaxed)) { self.dropped.fetch_add(1, Ordering::Relaxed); return false; } }
-        *la = Some(now);
-        true
+        let mut due = self.next_due.lock().unwrap_or_else(|e| e.into_inner());
+        let (ok, next) = accept_at(*due, std::time::Instant::now(), Duration::from_micros(self.period_us.load(Ordering::Relaxed)));
+        *due = next;
+        if !ok { self.dropped.fetch_add(1, Ordering::Relaxed); }
+        ok
     }
 
     /// Quadro já convertido na GPU (I420 no tamanho de envio). `conv` = tempo gasto na conversão.
@@ -127,6 +128,28 @@ impl Shared {
         if raw.is_some() { l.raw = raw; }
     }
 }
+
+/// Limitador de quadros da captura, por GRADE em vez de "intervalo desde o último aceito". `due` = instante em que o próximo quadro é
+/// esperado; devolve (aceita?, novo `due`). Aceita o quadro que chega até 25% do período antes do esperado
+/// (a 75 Hz os quadros vêm a 0,8 período um do outro: com essa folga entram 4 de cada 5 = 30 qps).
+///
+/// O limitador antigo recusava todo quadro que chegasse a menos de 0,8 período do ANTERIOR. Com a captura já no FPS alvo (monitor de
+/// 60 Hz a 60 qps, ou 30 qps = um a cada dois vsyncs) bastava UM quadro atrasar alguns ms (GPU ocupada por um jogo, conversão do quadro
+/// anterior) para o seguinte, pontual, cair a menos de 0,8 período dele e ser descartado: cada atraso custava um quadro. Na grade, o
+/// quadro pontual depois de um atrasado (até 0,75 período de atraso) entra; e a taxa média continua limitada a um quadro por período
+/// (o antigo deixava passar 36 qps de um monitor de 144 Hz numa transmissão de 30).
+pub fn accept_at(due: Option<std::time::Instant>, now: std::time::Instant, period: Duration) -> (bool, Option<std::time::Instant>) {
+    let Some(d) = due else { return (true, Some(now + period)) };
+    if now + period.mul_f64(0.25) < d { return (false, Some(d)); }
+    (true, Some((d + period).max(now + period.mul_f64(0.5))))
+}
+
+/// Intervalo mínimo pedido à captura do Windows: 60% do período do FPS alvo. Pedir o período exato (33 ms para 30 qps) deixava a
+/// conta na borda — a tela compõe a cada 16,67 ms, dois vsyncs dão 33,3 ms, e com qualquer oscilação o Windows media "32,9 ms, ainda
+/// não", pulava para o vsync seguinte (50 ms = 20 qps naquele trecho). E em monitores cujo vsync não divide o período sobrava menos
+/// ainda: a 75 Hz, 33 ms viravam 40 ms (25 qps); a 144 Hz, 34,7 ms (28,8 qps). Com 60% há folga dos dois lados; o que vier a mais é
+/// descartado por `accept_at` antes de converter.
+pub fn wgc_interval(fps: u32) -> Duration { Duration::from_micros(600_000 / fps.clamp(1, 120) as u64) }
 
 /// Prévia local: reduz para no máximo 1280 de largura (média da área coberta por cada pixel novo; o vizinho mais próximo
 /// pulava pixels e deixava o texto serrilhado e quebrado) e troca BGRA → RGBA.
@@ -185,7 +208,7 @@ impl GraphicsCaptureApiHandler for Handler {
             match g.convert(&tex, w, h, tw as u32, th as u32) {
                 Ok(yuv) => { self.shared.push_yuv(yuv, w as usize, h as usize, t0.elapsed()); return Ok(()); }
                 Err(e) => { eprintln!("conversão na GPU indisponível ({e}); usando a CPU");
-                    if let Ok(f) = std::env::var("BRIKS_CAPTURE_LOG") { use std::io::Write; if let Ok(mut o) = std::fs::OpenOptions::new().create(true).append(true).open(f) { let _ = writeln!(o, "GPU falhou em {w}x{h}: {e}"); } } self.gpu = None; *self.shared.last_accept.lock().unwrap() = None; }
+                    if let Ok(f) = std::env::var("BRIKS_CAPTURE_LOG") { use std::io::Write; if let Ok(mut o) = std::fs::OpenOptions::new().create(true).append(true).open(f) { let _ = writeln!(o, "GPU falhou em {w}x{h}: {e}"); } } self.gpu = None; *self.shared.next_due.lock().unwrap() = None; }
             }
         }
         unsafe {
@@ -299,9 +322,9 @@ impl Capture {
     pub fn start(kind: SourceKind, fps: u32, target_h: usize, preview: bool, raw: bool) -> Result<Capture> {
         let shared = Arc::new(Shared { latest: Mutex::new(Latest::default()), closed: AtomicBool::new(false), close_reason: Mutex::new(String::new()), frames: AtomicU64::new(0), target_h: std::sync::atomic::AtomicUsize::new(target_h), conv_ns: AtomicU64::new(0), want_preview: preview,
             want_raw: AtomicBool::new(raw), preview_every: if matches!(kind, SourceKind::Camera(_)) { 2 } else { (fps as u64 / 10).max(1) },
-            min_interval_us: AtomicU64::new(800_000 / fps.clamp(1, 120) as u64), last_accept: Mutex::new(None), dropped: AtomicU64::new(0) });
+            period_us: AtomicU64::new(1_000_000 / fps.clamp(1, 120) as u64), next_due: Mutex::new(None), dropped: AtomicU64::new(0) });
         let stop = Arc::new(AtomicBool::new(false));
-        let interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis((1000 / fps.clamp(1, 120)) as u64));
+        let interval = MinimumUpdateIntervalSettings::Custom(wgc_interval(fps));
         let handle = match kind {
             SourceKind::TestMotion => {
                 let (sh, st) = (shared.clone(), stop.clone());
@@ -559,5 +582,58 @@ mod preview_tests {
         assert_eq!((pw, ph), (1280, 720));
         let pure = out.chunks(4).filter(|p| p[0] == 0 || p[0] == 255).count();
         assert!(pure * 10 < out.len() / 4, "{pure} pixels puros de {}", out.len() / 4);
+    }
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// Alimenta o limitador com quadros nos instantes `ts` (ms) e devolve os instantes aceitos.
+    fn feed(ts: &[f64], fps: u32) -> Vec<f64> {
+        let (t0, period) = (Instant::now(), Duration::from_micros(1_000_000 / fps as u64));
+        let (mut due, mut out) = (None, vec![]);
+        for t in ts { let (ok, d) = accept_at(due, t0 + Duration::from_secs_f64(t / 1000.0), period); due = d; if ok { out.push(*t); } }
+        out
+    }
+
+    /// Captura já no FPS alvo (60 Hz a 60 qps) com um quadro atrasado 5 ms: o seguinte, pontual, tem de entrar. O limitador antigo
+    /// (0,8 período desde o anterior = 13,3 ms) descartava-o: 11,7 ms depois do atrasado.
+    #[test]
+    fn a_late_frame_does_not_cost_the_next_one() {
+        let v = 1000.0 / 60.0;
+        let mut ts: Vec<f64> = (0..60).map(|i| i as f64 * v).collect();
+        for k in [7usize, 20, 33, 46] { ts[k] += 5.0; }
+        assert_eq!(feed(&ts, 60).len(), 60, "todos os quadros entram, mesmo com quatro atrasados");
+        // a 30 qps num monitor de 60 Hz: um a cada dois vsyncs, com ou sem atraso
+        let ts: Vec<f64> = (0..120).map(|i| i as f64 * v + if i % 17 == 0 { 6.0 } else { 0.0 }).collect();
+        let got = feed(&ts, 30);
+        assert!((59..=61).contains(&got.len()), "30 qps de uma tela de 60 Hz: {}", got.len());
+        assert!(got.windows(2).all(|w| w[1] - w[0] > 20.0), "nunca dois quadros colados");
+    }
+
+    /// A taxa média nunca passa do alvo, qualquer que seja o monitor (o antigo deixava 36 qps de um monitor de 144 Hz a 30).
+    #[test]
+    fn average_rate_stays_at_the_target_for_any_refresh_rate() {
+        for (hz, fps) in [(60.0, 30u32), (75.0, 30), (144.0, 30), (165.0, 60), (240.0, 60), (144.0, 120)] {
+            let step = wgc_interval(fps).as_secs_f64() * 1000.0;
+            // o que o Windows entrega: o primeiro vsync depois do intervalo mínimo pedido
+            let (vs, mut ts, mut t) = (1000.0 / hz, vec![], 0.0f64);
+            while t < 10_000.0 { ts.push(t); t = ((t + step) / vs - 1e-9).ceil() * vs; }
+            let got = feed(&ts, fps).len() as f64 / 10.0;
+            assert!(got <= fps as f64 * 1.02 && got >= fps as f64 * 0.93, "{hz} Hz a {fps} qps: {got:.1} qps aceitos");
+        }
+    }
+
+    #[test]
+    fn capture_interval_leaves_room_on_both_sides_of_the_vsync() {
+        assert_eq!(wgc_interval(30), Duration::from_millis(20));   // entre 16,7 (1 vsync a 60 Hz) e 33,3 (2 vsyncs)
+        assert_eq!(wgc_interval(60), Duration::from_millis(10));
+        // depois de uma pausa (tela parada) o primeiro quadro entra na hora e a grade recomeça dele
+        let (t0, p) = (Instant::now(), Duration::from_millis(33));
+        let (ok, due) = accept_at(Some(t0), t0 + Duration::from_secs(5), p);
+        assert!(ok && due.unwrap() > t0 + Duration::from_secs(5));
+        assert!(!accept_at(due, t0 + Duration::from_millis(5005), p).0, "sem rajada depois da pausa");
     }
 }

@@ -723,6 +723,36 @@ mod qualidade {
         eprintln!("[{nome}] grão pesado, pedido {:.1} Mbps: {}", bps as f64 / 1e6, linha.join(" | "));
     }
 
+    /// O intra refresh do codificador recupera a imagem sem quadro-chave? Codifica 150 quadros de filme (720p, 3 Mbps, sem quadro-chave
+    /// periódico), entrega ao decodificador o quadro 0 e depois PULA os quadros 30 a 39 (perda sem conserto), seguindo do 40 em diante.
+    /// Mostra o PSNR da luminância logo depois do buraco e 1, 2 e 3 s depois, com o intra refresh desligado e ligado, e o maior quadro.
+    #[test]
+    #[ignore]
+    fn intra_refresh_recupera() {
+        let (w, h, fps, bps) = (1280usize, 720usize, 30usize, 3_000_000u32);
+        for modo in ["0", "1", "2", "30"] {
+            if modo == "0" { std::env::remove_var("BRIKS_ENC_INTRA_REFRESH"); } else { std::env::set_var("BRIKS_ENC_INTRA_REFRESH", modo); }
+            let mut enc = H264Enc::new(w, h, fps as f32, bps).unwrap();
+            let mut dec = H264Dec::new().unwrap();
+            let (mut linha, mut maior, mut idrs, mut bytes) = (vec![], 0usize, 0usize, 0usize);
+            for t in 0..150usize {
+                let f = filme(w, h, t, fps);
+                for au in enc.encode(&bgra_to_i420(&f, w, h, w, h)).unwrap() {
+                    if t > 0 { maior = maior.max(au.len()); bytes += au.len(); }
+                    if crate::mfenc::nals(&au).iter().any(|n| n.0 == 5) { idrs += 1; }
+                    if (30..40).contains(&t) { continue; }   // perdidos
+                    match dec.decode(&au) {
+                        Ok(Some((dw, dh, rgba))) if (dw, dh) == (w, h) => { if [29, 40, 45, 70, 100, 130, 149].contains(&t) { linha.push(format!("q{t}: {:.1} dB", luma_psnr(&f, rgba))); } }
+                        Ok(_) => { if [40, 45, 70, 100, 130, 149].contains(&t) { linha.push(format!("q{t}: sem saída")); } }
+                        Err(e) => { if [40, 45, 70, 100, 130, 149].contains(&t) { linha.push(format!("q{t}: erro {e}")); } }
+                    }
+                }
+            }
+            eprintln!("[{}] intra refresh {}: {} | quadros-chave {idrs}, maior quadro depois do 1º {} KB, {:.2} Mbps", enc.name, if modo == "0" { "desligado".to_string() } else { format!("ligado (valor {modo})") }, linha.join(", "), maior / 1024, bytes as f64 * 8.0 / (149.0 / fps as f64) / 1e6);
+        }
+        std::env::remove_var("BRIKS_ENC_INTRA_REFRESH");
+    }
+
     /// Filme a 1080p: PSNR médio e mínimo, PSNR só da faixa da legenda logo depois de cada troca de fala (o "fantasma" da legenda
     /// antiga aparece aqui), bitrate real e maior quadro, com quadro-chave periódico (BRIKS_Q_IDR_S, 0 = só o inicial).
     /// BRIKS_Q_CASOS = mbps:altura; BRIKS_Q_FPS; mais as variáveis de diagnóstico do codificador (BRIKS_ENC_*).

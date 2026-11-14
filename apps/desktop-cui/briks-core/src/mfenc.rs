@@ -160,6 +160,8 @@ impl MfEnc {
         // seguido de P-quadros quase vazios que refinam devagar: é o "reload/zoom" que o usuário vê. Com 28 o IDR sai ~36 dB (medido).
         set("MaxQP", &CODECAPI_AVEncVideoMaxQP, envu("BRIKS_ENC_MAXQP").unwrap_or(max_qp.clamp(10, 51)));
         if let Some(q) = envu("BRIKS_ENC_MINQP") { set("MinQP", &CODECAPI_AVEncVideoMinQP, q); }
+        // Intra refresh (diagnóstico, desligado por padrão): BRIKS_ENC_INTRA_REFRESH = 1 liga a renovação gradual; ver `video::qualidade::intra_refresh_recupera`
+        if let Some(v) = envu("BRIKS_ENC_INTRA_REFRESH") { set("GradualIntraRefresh", &CODECAPI_AVEncVideoGradualIntraRefresh, v); }
         if let Some(c) = &codec {
             let ll = std::env::var("BRIKS_ENC_LOWLAT").map(|v| v != "0").unwrap_or(true);
             let r1 = c.SetValue(&CODECAPI_AVLowLatencyMode, &var_bool(ll)); let r2 = c.SetValue(&CODECAPI_AVEncCommonRealTime, &var_bool(ll));
@@ -362,6 +364,36 @@ pub fn i420_to_nv12(y: &[u8], u: &[u8], v: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(y);
     out.resize(n, 0);
     for ((o, a), b) in out[y.len()..].chunks_exact_mut(2).zip(u).zip(v) { o[0] = *a; o[1] = *b; }
+}
+
+/// Medição (ignorado): o que o codificador H264 de hardware desta máquina expõe pelo ICodecAPI além do que já usamos — intra refresh,
+/// quadros de referência de longo prazo, camadas temporais, B-quadros. `IsSupported` diz se a propriedade existe; `SetValue` se aceita.
+#[cfg(test)]
+mod sonda {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn o_que_o_codificador_de_hardware_expoe() {
+        let enc = MfEnc::new(1280, 720, 30, 3_000_000, true).expect("codificador");
+        let Some(c) = &enc.codec else { eprintln!("[sonda] {} sem ICodecAPI", enc.name); return };
+        let props: [(&str, GUID, u32); 9] = [
+            ("AVEncVideoGradualIntraRefresh (intra refresh)", CODECAPI_AVEncVideoGradualIntraRefresh, 1),
+            ("AVEncVideoLTRBufferControl (referência de longo prazo)", CODECAPI_AVEncVideoLTRBufferControl, 1),
+            ("AVEncVideoTemporalLayerCount (camadas temporais / SVC)", CODECAPI_AVEncVideoTemporalLayerCount, 2),
+            ("AVEncMPVDefaultBPictureCount (B-quadros)", CODECAPI_AVEncMPVDefaultBPictureCount, 2),
+            ("AVEncVideoMaxQP", CODECAPI_AVEncVideoMaxQP, 30),
+            ("AVEncVideoMaxNumRefFrame", CODECAPI_AVEncVideoMaxNumRefFrame, 2),
+            ("AVEncCommonQualityVsSpeed", CODECAPI_AVEncCommonQualityVsSpeed, 50),
+            ("AVEncVideoEncodeQP", CODECAPI_AVEncVideoEncodeQP, 26),
+            ("AVEncH264CABACEnable", CODECAPI_AVEncH264CABACEnable, 1),
+        ];
+        for (nome, g, v) in props {
+            let sup = unsafe { c.IsSupported(&g).is_ok() };
+            let set = unsafe { c.SetValue(&g, &var_u32(v)) };
+            eprintln!("[sonda] {} ({}): suportada = {sup}, SetValue({v}) = {}", nome, if enc.hardware { "hardware" } else { "software" }, if set.is_ok() { "ok".to_string() } else { format!("{:?}", set.err().map(|e| e.code())) });
+        }
+        eprintln!("[sonda] codificador: {}", enc.name);
+    }
 }
 
 #[cfg(test)]

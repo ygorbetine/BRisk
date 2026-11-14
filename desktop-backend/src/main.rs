@@ -268,7 +268,8 @@ async fn main() -> anyhow::Result<()> {
             local_token_guard,
         ));
 
-    let web_origin = env::var("BRIKS_WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
+    let web_origin =
+        env::var("BRIKS_WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
     let app = Router::new()
         .route("/health", get(health))
         .merge(protected)
@@ -399,12 +400,15 @@ async fn reset_password(
 ) -> Result<Json<TokenResponse>, ApiError> {
     validate_password(&input.new_password)?;
     let email = normalize_email(&input.email)?;
-    let user_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email=? COLLATE NOCASE")
-        .bind(&email)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| ApiError::Bad("Nenhuma conta com esse e-mail neste computador".into()))?;
+    let user_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email=? COLLATE NOCASE")
+            .bind(&email)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| {
+                ApiError::Bad("Nenhuma conta com esse e-mail neste computador".into())
+            })?;
     let salt = SaltString::generate(&mut OsRng);
     let password_hash = Argon2::default()
         .hash_password(input.new_password.as_bytes(), &salt)

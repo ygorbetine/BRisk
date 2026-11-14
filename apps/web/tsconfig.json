@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"jsx":"react-jsx","noEmit":true},"include":["src","vite.config.ts"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"jsx":"react-jsx","noEmit":true},"include":["src","vite.config.ts"],"exclude":["src/services/rtc/edge-kick.test.ts"]}

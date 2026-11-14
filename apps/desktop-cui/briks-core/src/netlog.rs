@@ -3,6 +3,8 @@
 use std::io::Write;
 
 pub fn write(line: &str) {
+    // os testes não escrevem no rede.log de verdade do usuário (misturava linhas falsas com o diagnóstico real); com BRIKS_CORE_DATA apontando para uma pasta de teste, escrevem lá
+    if cfg!(test) && std::env::var_os("BRIKS_CORE_DATA").is_none() { return; }
     let dir = std::env::var("BRIKS_CORE_DATA").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into())).join("Briks-CUI"));
     let p = dir.join("rede.log");

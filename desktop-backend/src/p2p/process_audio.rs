@@ -67,10 +67,20 @@ pub fn group_audio_apps(sessions: Vec<(String, bool)>, skip: &[&str]) -> Vec<Aud
         }
         match apps.iter_mut().find(|app| app.name == name) {
             Some(app) => app.playing |= playing,
-            None => apps.push(AudioApp { label: friendly_app_label(&name), name, playing, path: String::new() }),
+            None => apps.push(AudioApp {
+                label: friendly_app_label(&name),
+                name,
+                playing,
+                path: String::new(),
+            }),
         }
     }
-    apps.sort_by(|left, right| right.playing.cmp(&left.playing).then_with(|| left.name.cmp(&right.name)));
+    apps.sort_by(|left, right| {
+        right
+            .playing
+            .cmp(&left.playing)
+            .then_with(|| left.name.cmp(&right.name))
+    });
     apps
 }
 
@@ -154,8 +164,15 @@ mod windows_impl {
             },
             "screen" => None,
             "apps" => {
-                if request.include_names.iter().all(|name| name.trim().is_empty()) {
-                    return error_response(StatusCode::BAD_REQUEST, "Escolha ao menos um aplicativo.");
+                if request
+                    .include_names
+                    .iter()
+                    .all(|name| name.trim().is_empty())
+                {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        "Escolha ao menos um aplicativo.",
+                    );
                 }
                 None
             }
@@ -178,8 +195,10 @@ mod windows_impl {
 
         let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(64);
         let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
-        let mut excluded: HashSet<String> =
-            DEFAULT_EXCLUDED.iter().map(|name| name.to_string()).collect();
+        let mut excluded: HashSet<String> = DEFAULT_EXCLUDED
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
         excluded.extend(request.exclude_names.iter().map(|name| name.to_lowercase()));
 
         let thread_stop = stop.clone();
@@ -187,7 +206,10 @@ mod windows_impl {
             .name("briks-process-audio".into())
             .spawn(move || mixer_thread(window_pid, excluded, included, thread_stop, tx, ready_tx));
         if spawned.is_err() {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao iniciar a captura.");
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Falha ao iniciar a captura.",
+            );
         }
 
         match tokio::time::timeout(Duration::from_secs(4), ready_rx).await {
@@ -242,7 +264,12 @@ mod windows_impl {
                 }
                 a.store(false, Ordering::SeqCst);
             });
-        Source { pid, buffer, stop, alive }
+        Source {
+            pid,
+            buffer,
+            stop,
+            alive,
+        }
     }
 
     fn capture_process(
@@ -255,14 +282,18 @@ mod windows_impl {
         let init = || -> Result<_, String> {
             wasapi::initialize_mta().ok().map_err(|e| e.to_string())?;
             let format = WaveFormat::new(32, 32, &SampleType::Float, RATE as usize, CHANNELS, None);
-            let mut client = AudioClient::new_application_loopback_client(pid, true).map_err(|e| {
-                format!("O Windows não permitiu capturar o áudio deste processo: {e}")
-            })?;
+            let mut client =
+                AudioClient::new_application_loopback_client(pid, true).map_err(|e| {
+                    format!("O Windows não permitiu capturar o áudio deste processo: {e}")
+                })?;
             client
                 .initialize_client(
                     &format,
                     &Direction::Capture,
-                    &StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 },
+                    &StreamMode::EventsShared {
+                        autoconvert: true,
+                        buffer_duration_hns: 0,
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             let event = client.set_get_eventhandle().map_err(|e| e.to_string())?;
@@ -369,7 +400,13 @@ mod windows_impl {
             if window_pid.is_none() {
                 if last_reconcile.elapsed() >= RECONCILE_EVERY {
                     last_reconcile = Instant::now();
-                    reconcile_screen_sources(&mut sources, &mut system, &excluded, included.as_ref(), &stop);
+                    reconcile_screen_sources(
+                        &mut sources,
+                        &mut system,
+                        &excluded,
+                        included.as_ref(),
+                        &stop,
+                    );
                 }
                 sources.retain(|source| source.alive.load(Ordering::Relaxed));
             }
@@ -421,7 +458,10 @@ mod windows_impl {
             .map(|p| p.as_u32());
 
         let parent_of = |pid: u32| -> Option<u32> {
-            system.process(Pid::from_u32(pid)).and_then(|p| p.parent()).map(|p| p.as_u32())
+            system
+                .process(Pid::from_u32(pid))
+                .and_then(|p| p.parent())
+                .map(|p| p.as_u32())
         };
         let is_excluded = |pid: u32| -> bool {
             let mut current = Some(pid);
@@ -430,7 +470,9 @@ mod windows_impl {
                 if id == own_pid || Some(id) == own_root {
                     return true;
                 }
-                let Some(process) = system.process(Pid::from_u32(id)) else { break };
+                let Some(process) = system.process(Pid::from_u32(id)) else {
+                    break;
+                };
                 if excluded.contains(&process.name().to_string_lossy().to_lowercase()) {
                     return true;
                 }
@@ -516,29 +558,43 @@ mod windows_impl {
         let own_pid = std::process::id();
         let mut sessions: Vec<(String, bool)> = Vec::new();
         let mut paths: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let Ok(enumerator) = DeviceEnumerator::new() else { return Vec::new() };
+        let Ok(enumerator) = DeviceEnumerator::new() else {
+            return Vec::new();
+        };
         let Ok(collection) = enumerator.get_device_collection(&Direction::Render) else {
             return Vec::new();
         };
         for device in &collection {
             let Ok(device) = device else { continue };
-            let Ok(manager) = device.get_iaudiosessionmanager() else { continue };
-            let Ok(list) = manager.get_audiosessionenumerator() else { continue };
+            let Ok(manager) = device.get_iaudiosessionmanager() else {
+                continue;
+            };
+            let Ok(list) = manager.get_audiosessionenumerator() else {
+                continue;
+            };
             let count = list.get_count().unwrap_or(0);
             for index in 0..count {
-                let Ok(control) = list.get_session(index) else { continue };
+                let Ok(control) = list.get_session(index) else {
+                    continue;
+                };
                 let state = control.get_state().unwrap_or(SessionState::Expired);
                 if state == SessionState::Expired {
                     continue;
                 }
-                let Ok(pid) = control.get_process_id() else { continue };
+                let Ok(pid) = control.get_process_id() else {
+                    continue;
+                };
                 if pid == 0 || pid == own_pid {
                     continue;
                 }
-                let Some(process) = system.process(Pid::from_u32(pid)) else { continue };
+                let Some(process) = system.process(Pid::from_u32(pid)) else {
+                    continue;
+                };
                 let executable = process.name().to_string_lossy().to_string();
                 if let Some(path) = process.exe() {
-                    paths.entry(executable.trim().to_lowercase()).or_insert_with(|| path.to_string_lossy().to_string());
+                    paths
+                        .entry(executable.trim().to_lowercase())
+                        .or_insert_with(|| path.to_string_lossy().to_string());
                 }
                 sessions.push((executable, state == SessionState::Active));
             }
@@ -546,7 +602,13 @@ mod windows_impl {
         // Discord e o próprio Briks nunca entram na transmissão, então nem aparecem na lista.
         let mut apps = group_audio_apps(
             sessions,
-            &["discord.exe", "discordptb.exe", "discordcanary.exe", "briks.exe", "briks-desktop-backend.exe"],
+            &[
+                "discord.exe",
+                "discordptb.exe",
+                "discordcanary.exe",
+                "briks.exe",
+                "briks-desktop-backend.exe",
+            ],
         );
         for app in &mut apps {
             if let Some(path) = paths.remove(&app.name) {
@@ -558,17 +620,25 @@ mod windows_impl {
 
     fn active_render_pids() -> Vec<u32> {
         let mut pids = Vec::new();
-        let Ok(enumerator) = DeviceEnumerator::new() else { return pids };
+        let Ok(enumerator) = DeviceEnumerator::new() else {
+            return pids;
+        };
         let Ok(collection) = enumerator.get_device_collection(&Direction::Render) else {
             return pids;
         };
         for device in &collection {
             let Ok(device) = device else { continue };
-            let Ok(manager) = device.get_iaudiosessionmanager() else { continue };
-            let Ok(sessions) = manager.get_audiosessionenumerator() else { continue };
+            let Ok(manager) = device.get_iaudiosessionmanager() else {
+                continue;
+            };
+            let Ok(sessions) = manager.get_audiosessionenumerator() else {
+                continue;
+            };
             let count = sessions.get_count().unwrap_or(0);
             for index in 0..count {
-                let Ok(control) = sessions.get_session(index) else { continue };
+                let Ok(control) = sessions.get_session(index) else {
+                    continue;
+                };
                 let active = control
                     .get_state()
                     .map(|state| state == SessionState::Active)
@@ -609,14 +679,25 @@ mod tests {
             ],
             &["discord.exe"],
         );
-        let names: Vec<_> = apps.iter().map(|app| (app.name.as_str(), app.playing)).collect();
+        let names: Vec<_> = apps
+            .iter()
+            .map(|app| (app.name.as_str(), app.playing))
+            .collect();
         assert_eq!(names, vec![("chrome.exe", true), ("spotify.exe", true)]);
     }
 
     #[test]
     fn app_em_pausa_continua_na_lista() {
         let apps = group_audio_apps(vec![("spotify.exe".into(), false)], &[]);
-        assert_eq!(apps, vec![AudioApp { name: "spotify.exe".into(), label: "Spotify".into(), playing: false, path: String::new() }]);
+        assert_eq!(
+            apps,
+            vec![AudioApp {
+                name: "spotify.exe".into(),
+                label: "Spotify".into(),
+                playing: false,
+                path: String::new()
+            }]
+        );
     }
 
     /// Manual: imprime os apps com sessão de áudio deste PC. `cargo test -- --ignored --nocapture lista_real`.
@@ -637,7 +718,11 @@ mod tests {
     #[test]
     #[ignore]
     fn captura_real_do_app() {
-        use std::{collections::HashSet, sync::{atomic::AtomicBool, Arc}, time::{Duration, Instant}};
+        use std::{
+            collections::HashSet,
+            sync::{atomic::AtomicBool, Arc},
+            time::{Duration, Instant},
+        };
         let app = std::env::var("BRIKS_TEST_APP").unwrap_or_else(|_| "spotify.exe".into());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, mut rx) = tokio::sync::mpsc::channel(256);
@@ -654,8 +739,11 @@ mod tests {
         while start.elapsed() < Duration::from_secs(3) {
             if let Some(Ok(chunk)) = rx.blocking_recv() {
                 bytes += chunk.len();
-                for sample in chunk.chunks_exact(4) {
-                    peak = peak.max(f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]).abs());
+                for i in (0..chunk.len() / 4 * 4).step_by(4) {
+                    peak = peak.max(
+                        f32::from_le_bytes([chunk[i], chunk[i + 1], chunk[i + 2], chunk[i + 3]])
+                            .abs(),
+                    );
                 }
             } else {
                 break;

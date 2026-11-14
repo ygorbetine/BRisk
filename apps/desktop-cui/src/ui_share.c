@@ -1273,9 +1273,14 @@ static bool video_tile(cui_ctx *ui, int key, cui_texture tex, int tw, int th, co
         {   /* botão direito na transmissão de alguém: o mesmo menu do bloco da chamada, com volume/mudo da PESSOA e da TRANSMISSÃO, cada um no seu controle */
             const int peer = (key >= 0 && key < BRIKS_MAX_PEERS) ? key : (key >= FV_N && key < FV_N + BRIKS_MAX_PEERS) ? key - FV_N : -1;
             if (!compact && g_vt_s && peer >= 0 && g_vt_s->rtc_peers[peer].id[0]) {
-                app_state_t *as = g_vt_s; const cui_rect vr = cui_get_rect(ui, cui_make_id(ui, "vt")); const cui_vec2 mp = cui_mouse_pos(ui);
-                if (!s_modal_hint && !briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && vr.w > 0 && pt_in(vr, mp)) cui_popover_open(ui, "svmenu");
-                cui_popover(ui, "svmenu", .placement = CUI_PLACE_TOP_START, .pad = 6, .gap = 8) {
+                static int g_svm_key = -2; static cui_vec2 g_svm_at;
+                app_state_t *as = g_vt_s; const cui_rect vr =cui_get_rect(ui, cui_make_id(ui, "vt")); const cui_vec2 mp = cui_mouse_pos(ui);
+                if (!s_modal_hint && !briks_blocked() && cui_mouse_clicked(ui, CUI_MOUSE_RIGHT) && vr.w > 0 && pt_in(vr, mp)) { g_svm_key = key; g_svm_at = mp; cui_popover_open(ui, "svmenu"); }
+                /* 1.5.21: o menu abre onde o botão direito foi clicado e com o tamanho normal (âncora de 1 px nesse ponto), não esticado no topo da transmissão */
+                if (g_svm_key == key && vr.w > 0) cui_box(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_START, .justify = CUI_JUSTIFY_START, .pad_left = fmaxf(g_svm_at.x - vr.x, 0.0f), .pad_top = fmaxf(g_svm_at.y - vr.y, 0.0f)) {
+                    cui_canvas(ui, "svpos", CUI_PX(1), CUI_PX(1), NULL, NULL, 0);
+                }
+                cui_popover(ui, "svmenu", .anchor = cui_make_id(ui, "svpos"), .placement = CUI_PLACE_BOTTOM_START, .pad = 6, .gap = 4) {
                     cui_menu_label(ui, as->rtc_peers[peer].name[0] ? as->rtc_peers[peer].name : "Participante");
                     cui_menu_label(ui, "Voz");
                     if (!as->rtc_peers[peer].vol_set) { as->rtc_peers[peer].vol_set = true; as->rtc_peers[peer].volume = 100.0f; }

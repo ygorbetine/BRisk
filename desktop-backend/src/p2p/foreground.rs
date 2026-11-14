@@ -23,7 +23,9 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn foreground() -> Json<Option<ForegroundApp>> {
-    let app = tokio::task::spawn_blocking(current_foreground).await.unwrap_or(None);
+    let app = tokio::task::spawn_blocking(current_foreground)
+        .await
+        .unwrap_or(None);
     Json(app)
 }
 
@@ -31,8 +33,14 @@ async fn foreground() -> Json<Option<ForegroundApp>> {
 pub fn is_ignored(executable: &str) -> bool {
     matches!(
         executable.trim().to_lowercase().as_str(),
-        "" | "explorer.exe" | "searchhost.exe" | "startmenuexperiencehost.exe" | "shellexperiencehost.exe"
-            | "lockapp.exe" | "applicationframehost.exe" | "briks.exe" | "briks-desktop-backend.exe"
+        "" | "explorer.exe"
+            | "searchhost.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "lockapp.exe"
+            | "applicationframehost.exe"
+            | "briks.exe"
+            | "briks-desktop-backend.exe"
     )
 }
 
@@ -66,7 +74,10 @@ fn current_foreground() -> Option<ForegroundApp> {
     if is_ignored(&executable) {
         return None;
     }
-    let path = process.exe().map(|path| path.to_string_lossy().to_string()).unwrap_or_default();
+    let path = process
+        .exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
     Some(ForegroundApp {
         name: executable.trim().to_lowercase(),
         label: super::process_audio::friendly_app_label(executable.trim()),

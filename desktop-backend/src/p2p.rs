@@ -1,7 +1,7 @@
 pub(crate) mod attachments;
-mod process_audio;
 mod foreground;
 mod input;
+mod process_audio;
 mod screen_audio;
 
 use super::{bearer, internal, ApiError, AppState};

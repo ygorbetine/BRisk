@@ -77,7 +77,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/screen-audio/prepare", post(prepare))
         .route("/screen-audio/stop", post(stop))
-        .route("/screen-audio/process-capture", post(super::process_audio::process_capture))
+        .route(
+            "/screen-audio/process-capture",
+            post(super::process_audio::process_capture),
+        )
         .route("/screen-audio/apps", get(list_apps))
 }
 

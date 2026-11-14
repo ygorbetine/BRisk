@@ -541,6 +541,15 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
                 // obedece o bitrate neste conteúdo (piso de bits por pixel), "rede" = banda estimada
                 let why = if !cfg.adaptive || ctl.idx == 0 { "" } else if dec.cpu_limited || (ctl.cpu_idx > 0 && ctl.cpu_idx >= ctl.idx) { "cpu" } else if ctl.floor_driven { "conteudo" } else { "rede" };
                 let adapting = if !cfg.adaptive { "" } else if dec.cpu_limited || (ctl.cpu_idx > 0 && ctl.cpu_idx >= ctl.idx) { "cpu" } else if ctl.idx > 0 || (dec.bps as f64) < ctl.top_ceil() * 0.9 { "rede" } else { "" };
+                {   // diagnóstico de desempenho: uma linha a cada ~5 s no rede.log (codificador, FPS enviado x alvo, CPU do Briks, por que o nível caiu)
+                    static LOGN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if LOGN.fetch_add(1, Ordering::Relaxed) % 5 == 0 {
+                        let (en, hw) = enc.as_ref().map(|e| (e.name.to_string(), e.hardware)).unwrap_or_default();
+                        crate::netlog::write(&format!("transmissao: {en} ({}) {tw}x{th} enviou {:.1} fps (alvo {}) {} kbps, captura ofereceu {:.0} fps, cpu do briks {:.0}% de 1 nucleo, tempo por quadro {:.1} ms (codificar {:.1} ms), nivel {} motivo '{}'",
+                            if hw { "hardware" } else { "software" }, sent_fps, dec.level.fps, (sent_bps / 1000.0).round(), offered, (cpu - win_cpu) / (secs * 1000.0) * 100.0,
+                            work_ms, if frames > 0 { enc_ns as f64 / frames as f64 / 1e6 } else { 0.0 }, ctl.idx, why));
+                    }
+                }
                 let _ = ev.try_send(json!({ "ev": "share.stats", "gen": gen, "fps": (sent_fps * 10.0).round() / 10.0, "kbps": (sent_bps / 1000.0).round(),
                     "enc_ms": if frames > 0 { (enc_ns as f64 / frames as f64 / 1e6 * 10.0).round() / 10.0 } else { 0.0 }, "work_ms": (work_ms * 10.0).round() / 10.0,
                     "skipped": skipped, "w": tw, "h": th, "cpu_pct": ((cpu - win_cpu) / (secs * 1000.0) * 100.0).round(), "cap_dropped": dropped, "offered_fps": offered.round(),
@@ -614,6 +623,7 @@ pub fn start_sender(gen: u64, idr: Arc<AtomicBool>, net: Arc<Mutex<crate::adapt:
             }
             let e = enc.as_mut().unwrap();
             if std::mem::take(&mut announce) {
+                crate::netlog::write(&format!("transmissao iniciada: codificador {} ({}) codec {} {tw}x{th} a {fps} fps, {} kbps", e.name, if e.hardware { "hardware" } else { "software" }, out_codec.name(), e.bps / 1000));
                 let _ = ev.try_send(json!({ "ev": "share.local", "gen": gen, "state": "on", "w": tw, "h": th, "fps": fps, "kbps": e.bps / 1000, "src_w": src.0, "src_h": src.1,
                     "label": cfg.label, "encoder": e.name, "codec": out_codec.name(), "hardware": e.hardware, "max_h": cfg.height, "max_fps": max_fps }));
             }

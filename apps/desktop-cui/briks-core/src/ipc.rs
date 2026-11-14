@@ -1034,6 +1034,20 @@ async fn handle(s: TcpStream, token: &str, cfg: &Config, accounts: Arc<crate::ac
     for (_, r) in roster_ch.drain() { r.close().await; }
     for (_, l) in dm_links.drain() { let _ = l.cmd.send(MeshCmd::Close).await; if let Some(k) = l.knock { k.close().await; } }
     if let Some(r) = inbox.take() { r.close().await; }
-    if let Some(c) = mesh_cmd.take() { let _ = c.send(MeshCmd::Close).await; }
+    if let Some(c) = mesh_cmd.take() { close_call(c, mesh_ev.take(), CLOSE_WAIT).await; }
     Ok(())
+}
+
+/// Quanto o core espera a chamada terminar de sair antes de encerrar. A UI fecha o socket e dá 1 s ao core antes de matá-lo
+/// (`core_stop` em core.c), então tem de caber nisso com folga.
+pub(crate) const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Fecha a chamada e ESPERA ela terminar de sair (até `max`). Fechar o app com a chamada aberta só enfileirava o `Close` e o processo
+/// terminava em seguida, sem garantia de que o aviso de saída ("peer.bye" na malha, LeaveRequest no SFU) tivesse sido enviado; sem ele
+/// quem fica na chamada continua vendo a pessoa por 10 s ou mais (o "amigo fantasma"). Não foi possível reproduzir a perda do aviso em
+/// teste (ver `tests::closing_the_app_mid_call_still_says_goodbye`); a espera torna a saída determinística e custa ~150 ms na malha.
+/// O ator solta o canal de eventos quando termina; é isso que se espera aqui.
+pub(crate) async fn close_call(cmd: mpsc::Sender<MeshCmd>, ev: Option<mpsc::Receiver<MeshEvent>>, max: std::time::Duration) {
+    let _ = cmd.send(MeshCmd::Close).await;
+    if let Some(mut ev) = ev { let _ = tokio::time::timeout(max, async { while ev.recv().await.is_some() {} }).await; }
 }

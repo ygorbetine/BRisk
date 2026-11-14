@@ -90,6 +90,56 @@ async fn a_peer_that_hangs_up_disappears_at_once_despite_the_10_s_presence_grace
     let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
 }
 
+/// Fechar o APP com a chamada aberta: o processo termina logo depois de pedir o fechamento. O Beto roda num runtime só dele, que é
+/// derrubado assim que `ipc::close_call` volta (como o processo saindo); a Ana, com o prazo de graça padrão de 10 s, tem de vê-lo sair
+/// na hora. ATENÇÃO ao que este teste prova: que o caminho de fechar o app manda o aviso e cabe no 1 s que a UI dá ao core. Ele NÃO
+/// prova que a espera de `close_call` é necessária — com a espera zerada o aviso também chegou aqui (derrubar o runtime dentro do
+/// mesmo processo não reproduz a corrida de um processo de verdade terminando). A espera fica porque torna a saída determinística.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_the_app_mid_call_still_says_goodbye() {
+    let port = crate::mock::start(0).await.unwrap();
+    fn mk(port: u16, peer: &str, name: &str) -> MeshHandle {
+        let cfg = RealtimeCfg::new(&format!("ws://127.0.0.1:{port}"), "chave-de-teste");   // prazo de graça padrão (10 s)
+        let topic = topic_name("room", &secure_room_id("room", "fechar-app"));
+        let (rt, rx) = realtime::connect(cfg, topic, peer.into(), json!({ "peerId": peer, "joinedAt": 1, "clientVersion": "teste" }));
+        mesh::spawn(MeshCfg { namespace: "room".into(), room: "fechar-app".into(), local_peer: peer.into(), display_name: name.into(), ice_servers: vec![], audio: None, owner_fp: None, joined_at: 1 }, Arc::new(Identity::generate()), rt, rx)
+    }
+    let mut a = mk(port, PA, "Ana");
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let beto = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let waited = rt.block_on(async move {
+            let mut b = mk(port, PB, "Beto");
+            assert!(authed(&mut b, 1, 40).await, "o Beto não autenticou a Ana");
+            let _ = ready_tx.send(());
+            tokio::task::spawn_blocking(move || { let _ = go_rx.recv(); }).await.unwrap();
+            let t = std::time::Instant::now();
+            crate::ipc::close_call(b.cmd, Some(b.events), crate::ipc::CLOSE_WAIT).await;
+            t.elapsed()
+        });
+        rt.shutdown_background();   // o "processo" acabou: nada do que restava roda mais
+        waited
+    });
+    assert!(authed(&mut a, 1, 40).await, "a Ana não autenticou o Beto");
+    ready_rx.await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let t0 = std::time::Instant::now();
+    go_tx.send(()).unwrap();
+    let end = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match timeout(end.saturating_duration_since(std::time::Instant::now()), a.events.recv()).await {
+            Ok(Some(MeshEvent::Peer { peer_id, state })) if peer_id == PB && state == "fechado" => break,
+            Ok(Some(_)) => {}
+            _ => panic!("a Ana ainda via o Beto {:.1} s depois de ele fechar o app", t0.elapsed().as_secs_f32()),
+        }
+    }
+    let waited = beto.join().unwrap();
+    eprintln!("fechar o app: a Ana viu o Beto sair em {:.2} s; o core dele esperou {:.0} ms a saída limpa (limite {} ms)", t0.elapsed().as_secs_f64(), waited.as_secs_f64() * 1000.0, crate::ipc::CLOSE_WAIT.as_millis());
+    assert!(waited < crate::ipc::CLOSE_WAIT + Duration::from_millis(100), "a espera tem de caber no 1 s que a UI dá ao core");
+    let _ = a.cmd.send(MeshCmd::Close).await;
+}
+
 /// Medição (ignorado): quanto demora a malha P2P para fechar com 2, 3 e 4 pessoas, com áudio (como numa chamada). Dois cenários:
 /// todos entram juntos, e o último entra 2 s depois dos outros. Mostra, por nó, o tempo até autenticar todos os outros.
 ///   cargo test --release -- --ignored --nocapture --test-threads=1 medicao_tempo_de_conexao_da_malha

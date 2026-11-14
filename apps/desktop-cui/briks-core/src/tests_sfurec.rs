@@ -268,3 +268,31 @@ async fn sfu_everyone_sees_how_many_watch_a_share() {
     for c in cs { let _ = c.cmd.send(MeshCmd::Close).await; }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// O "amigo fantasma" no SFU: quem desliga some da lista dos outros na hora? Três clientes num livekit-server real; a Cida fecha a
+/// chamada (saída limpa: LeaveRequest) e mede-se quanto demora para a Ana e o Beto receberem "peer:<cida>:fechado".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sfu_participant_that_hangs_up_disappears_at_once() {
+    let Some(_srv) = start_server() else { eprintln!("PULADO: BRIKS_LIVEKIT_SERVER_BIN não definido"); return };
+    let room = format!("tchau-{}", uuid::Uuid::new_v4().simple());
+    let a = client(&room, A, "Ana", 1000, 3600).await;
+    let b = client(&room, B, "Beto", 2000, 3600).await;
+    let d = client(&room, D, "Cida", 3000, 3600).await;
+    for c in [&a, &b] { assert!(c.wait(20, &format!("info:{D}:")).await, "{} não conheceu a Cida", c.ident); }
+    assert!(d.wait(20, &format!("info:{A}:")).await && d.wait(20, &format!("info:{B}:")).await, "a Cida não conheceu os outros");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let t0 = Instant::now();
+    d.cmd.send(MeshCmd::Close).await.unwrap();
+    let gone = format!("peer:{D}:fechado");
+    let mut tempos = vec![];
+    for c in [&a, &b] {
+        assert!(c.wait(30, &gone).await, "{} ainda via a Cida 30 s depois de ela desligar", c.ident);
+        tempos.push(t0.elapsed().as_secs_f64());
+    }
+    eprintln!("SFU: quem desligou sumiu para os outros em {:.2} s e {:.2} s", tempos[0], tempos[1]);
+    assert!(tempos[1] < 3.0, "demorou {:.1} s", tempos[1]);
+    // a Ana e o Beto continuam na chamada um do outro
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(a.count(&format!("peer:{B}:fechado")) + b.count(&format!("peer:{A}:fechado")), 0, "os que ficaram não podem se perder");
+    let _ = a.cmd.send(MeshCmd::Close).await; let _ = b.cmd.send(MeshCmd::Close).await;
+}
